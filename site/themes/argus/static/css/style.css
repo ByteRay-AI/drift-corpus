@@ -130,7 +130,8 @@ a:hover { color: var(--argus-cyan); }
   line-height: 1.02;
   letter-spacing: -0.025em;
   margin: 0 0 20px;
-  max-width: 16ch;
+  max-width: none;
+  white-space: nowrap;
 }
 .hero h1 .accent { color: var(--argus-cyan); }
 .hero .lede {
@@ -333,3 +334,7 @@ a.chip:hover { color: var(--argus-ink); border-color: var(--argus-line-strong); 
 .sev-low           { color:var(--argus-cyan);      background:rgba(8,145,178,0.06);  border-color:rgba(8,145,178,0.30); }
 .sev-informational { color:var(--argus-ink-mute);  background:rgba(90,98,122,0.06);  border-color:rgba(90,98,122,0.25); }
 .sev-none          { color:var(--argus-ink-faint); background:rgba(156,163,175,0.05);border-color:rgba(156,163,175,0.22); }
+
+@media (max-width: 640px) {
+  .hero h1 { white-space: normal; max-width: 18ch; }
+}

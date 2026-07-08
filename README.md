@@ -43,6 +43,6 @@ If you use the Drift Corpus in your vulnerability research, academic papers, or 
   year = {2026},
   publisher = {GitHub},
   journal = {GitHub repository},
-  howpublished = {\url{[https://github.com/byteray/drift-corpus-2026](https://github.com/byteray/drift-corpus-2026)}},
+  howpublished = {\url{[https://github.com/ByteRay-AI/drift-corpus](https://github.com/ByteRay-AI/drift-corpus)}},
   note = {Generated via Argus-Systems Drift Automatic Reverse Engineering Engine}
 }

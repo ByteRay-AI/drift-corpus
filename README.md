@@ -13,9 +13,7 @@ As once said by Derek Soeder, **we left the exploitation of these vulnerabilitie
 
 ## ⚠️ Binary Distribution
 
-**We do not distribute Microsoft binaries.** This repository contains only the JSON metadata, analysis, and assembly diffs.
-
-To reconstruct the full research environment and download the actual `.sys`, `.exe`, and `.dll` files referenced in this corpus, you can use the KB number listed in the `metadata.json` with [PatchPair](https://github.com/ByteRay-AI/patchpair) project.
+**We do not distribute Microsoft binaries.** This repository contains only the JSON metadata, analysis, and assembly diffs. To reconstruct the full research environment and download the actual `.sys`, `.exe`, and `.dll` files referenced in this corpus, you can use the KB number listed in the `metadata.json` with [PatchPair](https://github.com/ByteRay-AI/patchpair) project.
 
 ## 📂 Dataset Structure
 

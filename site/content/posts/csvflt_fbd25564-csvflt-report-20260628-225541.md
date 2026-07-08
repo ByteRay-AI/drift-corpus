@@ -4,6 +4,7 @@ Slug: csvflt_fbd25564-csvflt-report-20260628-225541
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: High
 
 ## 1. Overview
 
@@ -285,7 +286,7 @@ A **dangling PagedPool pointer dereference** on a `0x28`-byte `CVCA`-tagged allo
 - `+0x20` (32-bit length) — compared against the attacker's `arg1+0xd4`.
 - `+0x18` (data pointer) — passed as the `Buf2` (source) argument to `memcmp (sub_1c0008940)`, compared against `arg1+0xd8` for `+0x20` bytes.
 
-### Limits of the primitive (what the binaries actually show)
+### Limits of the primitive
 
 The value returned to the caller through `memcmp (sub_1c0008940)` is used only as a match/no-match boolean: on mismatch the function clears its `ok` flag (`r14b`) and takes a WPP trace branch. It is **not** a data-return channel — the bytes read from `+0x18` are never copied back to the caller, only compared. The binaries therefore demonstrate a **use-after-free / pool-corruption** condition (dangling read of freed pool, and a stale pointer used as a `memcmp` source). They do **not** demonstrate a controlled kernel-read/info-leak oracle, KASLR defeat, or a token-theft/code-execution chain; any such escalation would require additional primitives that are not present in or evidenced by these binaries. The confirmed, reachable impact is kernel memory corruption leading to denial of service (bugcheck), with the usual caveat that a UAF of this shape can, in principle, be developed further by a researcher who supplies their own reclamation and control primitives.
 

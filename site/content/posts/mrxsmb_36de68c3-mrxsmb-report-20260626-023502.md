@@ -4,6 +4,7 @@ Slug: mrxsmb_36de68c3-mrxsmb-report-20260626-023502
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: Medium
 
 ---
 
@@ -32,7 +33,7 @@ Summary: KB5075912
 - **Affected function:** `SmbCeCompleteSrvCallConstructionPhase2 @ 0x1C0011E10`
 - **Reference primitive at issue:** `VctReferenceEndpoint @ 0x1C000EE90` (called late from `0x1C001207E` in the feature-disabled path)
 
-**Root cause (plain English):**
+**Root cause:**
 `SmbCeCompleteSrvCallConstructionPhase2` finishes constructing an SMB server call after the negotiate response arrives. To operate on the per-connection `VcEndpoint` object safely it must hold a reference so the endpoint cannot be freed underneath it.
 
 In the unpatched build a WIL feature-staging flag (`Feature_84197691__private_IsEnabledDeviceUsage`) selects between two orderings:
@@ -255,7 +256,7 @@ bp mrxsmb!GetDialectInfoFromNegotiateResponse       ; 0x1C00158DC (negotiate par
 
 At function entry, `RCX` is the work-item context: `[RCX+0x18]` = ServerEntry, `[RCX+0x20]` = negotiate buffer, `[RCX+0x8]` = NTSTATUS, `[RCX+0x10]` = RDBSS context. After the `mrxsmb+0x11E60` call, `EAX == 0` indicates the deferred path is selected on this build. At `mrxsmb+0x1207E`, `RCX` is the `VcEndpoint`; `[RCX+0x8]` is its reference count — a value of 0 there before the `lock xadd` is the resurrection condition.
 
-Relevant offsets (verified against the diff):
+Relevant offsets:
 
 ```text
 VcEndpoint

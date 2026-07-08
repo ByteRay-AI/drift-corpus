@@ -4,6 +4,7 @@ Slug: iorate_aa6f06d6-iorate-report-20260626-005725
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `iorate_unpatched.sys`

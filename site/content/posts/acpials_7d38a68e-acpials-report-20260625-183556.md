@@ -4,6 +4,7 @@ Slug: acpials_7d38a68e-acpials-report-20260625-183556
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ## 1. Overview
 - **Unpatched Binary:** `acpials_unpatched.sys`

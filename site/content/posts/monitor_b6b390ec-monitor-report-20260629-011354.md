@@ -4,6 +4,7 @@ Slug: monitor_b6b390ec-monitor-report-20260629-011354
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 

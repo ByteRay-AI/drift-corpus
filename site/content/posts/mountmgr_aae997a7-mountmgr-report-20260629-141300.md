@@ -4,6 +4,7 @@ Slug: mountmgr_aae997a7-mountmgr-report-20260629-141300
 Category: Corpus
 Author: Argus
 Summary: KB5082142
+Severity: None
 
 ## 1. Overview
 
@@ -240,7 +241,7 @@ For completeness, the reconcile work item is reachable through the IOCTL device-
 
 ## 6. Changed Functions — Full Triage
 
-### Functionally relevant (the actual change)
+### Functionally relevant
 
 | Function | Change |
 |---|---|

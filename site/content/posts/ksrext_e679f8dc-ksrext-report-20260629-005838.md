@@ -4,6 +4,7 @@ Slug: ksrext_e679f8dc-ksrext-report-20260629-005838
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ## 1. Overview
 - **Unpatched Binary:** `ksrext_unpatched.sys`

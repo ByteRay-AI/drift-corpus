@@ -4,6 +4,7 @@ Slug: mssecwfp_c5fb4ff2-mssecwfp-report-20260703-220917
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: None
 
 ## 1. Overview
 
@@ -51,7 +52,7 @@ The byte at rule `+0x1C` is likewise not a "wrong offset." In the unpatched buil
 
 None of these changes removes a reachable memory-safety defect or a reachable policy bypass from the unpatched build; they add a new, opt-in comparison mode and richer telemetry.
 
-#### Entry point and mechanism (corrected)
+#### Entry point and mechanism
 
 The dispatch is **not** a per-packet classify callback and the compared data is **not** live network traffic. The reachable entry point is the WFP filter-assignment guard:
 

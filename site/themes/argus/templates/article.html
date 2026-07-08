@@ -10,6 +10,7 @@
         <header class="post-header">
             <div class="row">
                 {% if article.category %}<span class="state">{{ article.category }}</span>{% endif %}
+                {% if article.severity %}<span class="sev sev-{{ article.severity|lower }}">{{ article.severity }}</span>{% endif %}
                 <time class="mono muted" datetime="{{ article.date.isoformat() }}" style="font-size:0.85rem;">{{ article.date|strftime('%Y-%m-%d') }}</time>
                 {% if article.author %}<span class="mono muted" style="font-size:0.85rem;">by {{ article.author }}</span>{% endif %}
             </div>

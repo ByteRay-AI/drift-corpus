@@ -4,6 +4,7 @@ Slug: condrv_98e27fa8-condrv-report-20260628-221048
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Medium
 
 ## 1. Overview
 
@@ -29,7 +30,7 @@ Summary: KB5078752
 - **Class:** CWE-416 Use-After-Free (kernel pool)
 - **Reach:** `\Device\ConDrv` via `IRP_MJ_DEVICE_CONTROL`
 
-#### Root cause (plain English)
+#### Root cause
 
 `CdCreateDefaultObjectClient (sub_1C000A170)` handles a console-connection / server-IO-completion IOCTL in `condrv.sys`. It obtains a referenced pointer to a console *file object* — call it `Object` — either via a fast IRP-stack cached pointer, or via the slow path through `CdGetProcessConnection (sub_1c00098b0)` (`ObReferenceObjectByHandle` + `ObfReferenceObject`). From `Object` it derives two pointers it will reuse heavily:
 
@@ -52,7 +53,7 @@ If, racing against another thread that is closing the same console handle, `Obje
 | `0x1c000ba75` | `mov [rbx+0x8], rdi` | Stores a dangling `rdi_1` into a freshly allocated structure |
 | `0x1c000ba79` | `lock inc qword [rdi+0x18]` | Atomic increment on freed pool memory |
 
-Reachability constraints (both verified from the code):
+Reachability constraints:
 - The `rsi` accesses only occur on the slow path (`CdGetProcessConnection`), where `rsi` (the connection data) is non-NULL. On the fast path `rsi == 0`, so the `test rsi,rsi` at `0x1c000a2a9` short-circuits and none of the three accesses above are reached.
 - The last two accesses (`mov [rbx+0x8], rdi` and `lock inc [rdi+0x18]`) are additionally gated behind `PsIsSystemProcess(*(rsi+0x20)) != 0` — they are reached only if the connection's owning process is the System process. That predicate is not attacker-controlled for an ordinary connection, so the dangling-store and atomic-increment writes are not a general unprivileged primitive. The `*(rsi+0x20)` read fed to `PsIsSystemProcess` is itself the freed-pool access that fires first on the slow path.
 

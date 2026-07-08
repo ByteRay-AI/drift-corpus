@@ -4,6 +4,7 @@ Slug: mrxsmb_9b5ecc54-mrxsmb-report-20260629-132319
 Category: Corpus
 Author: Argus
 Summary: KB5094127
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `mrxsmb_unpatched.sys`

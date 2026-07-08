@@ -4,6 +4,7 @@ Slug: kbldfltr_c1c5cfbf-kbldfltr-report-20260626-105044
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ---
 
@@ -297,7 +298,7 @@ Because acquire (`0x1c0001053`) and release (`0x1c00012c0`) bracket the entire i
 00000001C000724C  lea     r8, [rbp+var_20]              ; &WDFMEMORY out
 00000001C0007250  mov     rcx, cs:WdfDriverGlobals
 00000001C0007257  mov     rax, [rax+858h]               ; WdfRequestRetrieveInputMemory
-00000001C000725E  call    cs:__guard_dispatch_icall_fptr   ; rdx still = Request (correct)
+00000001C000725E  call    cs:__guard_dispatch_icall_fptr   ; rdx still = Request
 
 ; PATCHED (@ 0x1c0007210): DbgPrintEx clobbers rdx, so it is reloaded
 00000001C0007290  call    cs:__imp_DbgPrintEx           ; "Enter IOCTL_KBFILTR_SET_KEYBOARD..." (clobbers rdx)
@@ -331,7 +332,7 @@ Because there is no reachable memory-corruption or bypass primitive, there is no
 
 ---
 
-## 7. Debugger Playbook (behavioral confirmation only)
+## 7. Debugger Playbook
 
 The following breakpoints let a reviewer confirm the synchronization discipline described above. They are for behavioral confirmation, not for reproducing a crash (there is no crash to reproduce).
 

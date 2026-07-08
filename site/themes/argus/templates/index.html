@@ -8,7 +8,7 @@
     <div class="hero-bg"></div>
     <div class="container">
         <p class="eyebrow">{{ SITESUBTITLE }}</p>
-        <h1>The Argus <span class="accent">Blog.</span></h1>
+        <h1>The Drift Corpus: <span class="accent">Ring 0</span></h1>
     </div>
 </header>
 
@@ -25,6 +25,7 @@
                 <div class="post-meta">
                     <time datetime="{{ article.date.isoformat() }}">{{ article.date|strftime('%Y-%m-%d') }}</time>
                     {% if article.category %}<span class="state">{{ article.category }}</span>{% endif %}
+                    {% if article.severity %}<span class="sev sev-{{ article.severity|lower }}">{{ article.severity }}</span>{% endif %}
                 </div>
                 <div class="post-body">
                     <h3 class="post-title"><a href="{{ SITEURL }}/{{ article.url }}">{{ article.title }}</a></h3>

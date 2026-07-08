@@ -4,6 +4,7 @@ Slug: modemcsa_41192ac1-modemcsa-report-20260629-142625
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ## 1. Overview
 
@@ -34,7 +35,7 @@ The receiving object is the lower device in the modem's device stack (the file o
 
 ## 3. Decompilation Diff
 
-The real decompiled bodies of both builds:
+The decompiled bodies of both builds:
 
 ```c
 // UNPATCHED WaveAction @ 0x1C00010D0
@@ -177,7 +178,7 @@ Drive a `KSPROPERTY_CONNECTION_STATE` set to `KSSTATE_RUN` (3) or `KSSTATE_PAUSE
 
 ## 8. Changed Functions — Full Triage
 
-By content, the only security-relevant change is `WaveAction` (Section 2). The remaining differences are compiler code generation and pool-API modernization, verified against both builds:
+By content, the only security-relevant change is `WaveAction` (Section 2). The remaining differences are compiler code generation and pool-API modernization:
 
 **Pool API modernization (`ExAllocatePoolWithTag` → `ExAllocatePool2`).** The newer form returns zeroed pool by default, so paired explicit `memset` calls are dropped. Observed in `AllocateIrpForModem`, `AllocateStreamIrp`, `InitializeDevIoPin`, `FilterDispatchCreate`, `GetModemDeviceName`, and `DriverEntry`. In `GetModemDeviceName` the allocation size is still the length returned by the first `QueryPdoInformation` call (`edx` from `[rsp+arg_10]` at `0x1C00095DC`); the decompiler's collapsed argument list is a display artifact, not a zero-size allocation.
 
@@ -194,5 +195,5 @@ No driver functions were added or deleted; all logic differences are inline modi
 
 ## 10. Confidence & Caveats
 
-- **Confidence Level:** High for the mechanism. The unpatched decompilation and disassembly both show only `buffer[0x18]` and `buffer[0x1C]` initialized before the IOCTL, and the patched build adds the zeroing of `buffer[0x00..0x17]` and `buffer[0x20..0x23]` (`and`/`xorps`/`movdqu`) directly resolving the CWE-908 issue. Direction confirmed: the unpatched build is the vulnerable one; the patched build is stricter.
+- **Confidence Level:** High for the mechanism. The unpatched decompilation and disassembly both show only `buffer[0x18]` and `buffer[0x1C]` initialized before the IOCTL, and the patched build adds the zeroing of `buffer[0x00..0x17]` and `buffer[0x20..0x23]` (`and`/`xorps`/`movdqu`) directly resolving the CWE-908 issue. The unpatched build is the vulnerable one; the patched build is stricter.
 - **Severity rationale:** Rated Low because, while uninitialized kernel stack memory demonstrably crosses a device boundary, disclosure of that memory to a lower-privileged attacker is not demonstrated in these binaries — it would require the lower device to reflect the input back toward user mode. If, in a specific deployment, the lower device is shown to return these bytes to an unprivileged caller, the impact would rise to Medium (kernel information disclosure, CWE-200).

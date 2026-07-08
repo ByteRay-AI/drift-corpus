@@ -4,6 +4,7 @@ Slug: appvstrm_1e621cba-appvstrm-report-20260625-191516
 Category: Corpus
 Author: Argus
 Summary: KB5073724
+Severity: Informational
 
 ---
 

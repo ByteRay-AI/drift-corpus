@@ -72,7 +72,7 @@
           "At 0x1c002755c: rax = [rbp+arg_18] = computed offset; compare against edi (block size) — OOB when rax > edi (by 1-2).",
           "At 0x1c0027560: rsi after 'add rsi, rax' = buffer + offset = the read pointer (1-2 bytes past block in the OOB case).",
           "At 0x1c0027563: edi after 'sub edi, eax' = size - offset = wraps to 0xFFFFFFFE/0xFFFFFFFF; used only as a non-zero flag.",
-          "At 0x1c0027838: dw @rcx L2 = the two 16-bit words read at buffer + offset (the actual OOB bytes)."
+          "At 0x1c0027838: dw @rcx L2 = the two 16-bit words read at buffer + offset (the OOB bytes)."
         ],
         "key_offsets": [
           "0x1c002755c: 'mov rax, [rbp+arg_18]' — loads the unchecked offset; the patch adds 'cmp r14, rax; jbe skip' here.",

@@ -4,6 +4,7 @@ Slug: csvfs_adb6dbff-csvfs-report-20260628-221951
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: High
 
 ---
 
@@ -33,7 +34,7 @@ Summary: KB5078752
 - **Affected function:** `csvfs!CsvCamSetSecurityInfo` (`sub_1C00BCAAC`, `0x1C00BCAAC` in both builds)
 - **Affected object:** The global `Encryption*` pointer `EncryptionManager` (`?EncryptionManager@@3PEAVEncryption@@EA`), a 0x28-byte object, tag `'CVCA'` (`0x41435643`).
 
-**Root cause (plain English):**
+**Root cause:**
 
 `CsvCamSetSecurityInfo` updates the global `Encryption` signing manager used for Cluster Shared Volumes. It touches two globals:
 

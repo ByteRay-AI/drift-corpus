@@ -4,6 +4,7 @@ Slug: dxgkrnl_6ac125d5-dxgkrnl-report-20260626-092344
 Category: Corpus
 Author: Argus
 Summary: KB5073724
+Severity: Critical
 
 ## 1. Overview
 

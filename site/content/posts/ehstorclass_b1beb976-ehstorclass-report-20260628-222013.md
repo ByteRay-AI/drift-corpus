@@ -4,6 +4,7 @@ Slug: ehstorclass_b1beb976-ehstorclass-report-20260628-222013
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ## 1. Overview
 
@@ -375,7 +376,7 @@ Only one function changed between the two builds:
   - Restructured the epilogue: the `STATUS_INVALID_PARAMETER` reject path now stores the status into `r14d` and reaches a single early-return check (`test r14d, r14d; js` at patched `0x1c0005927`). This is behaviorally equivalent to the unpatched direct jump to the epilogue — a refactoring artifact, not a new security check.
   - **Relocation-only differences:** the completion-routine target address changed from `0x1c0005b50` to `0x1c0005ba0`, and the WPP trace-string reference shifted. Both follow from the `0x50`-byte growth of this function shifting all later code/data; neither is a behavioral change.
 
-The completion routine `FilterDeviceWdmIoctlCompletionRoutine` is byte-identical between builds (verified instruction-by-instruction; only relocated branch targets differ). No other function changed.
+The completion routine `FilterDeviceWdmIoctlCompletionRoutine` is byte-identical between builds (only relocated branch targets differ). No other function changed.
 
 ---
 

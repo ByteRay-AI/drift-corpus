@@ -4,6 +4,7 @@ Slug: datascrn_ee658b81-datascrn-report-20260625-221333
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Informational
 
 ---
 
@@ -34,7 +35,7 @@ Summary: KB5073723
 | **Affected function** | `SrmAppendPath` (unpatched @ `0x1C001DE10`, patched @ `0x14001E88C`) |
 | **Primitive** | None |
 
-**What actually changed (plain English):**
+**What actually changed:**
 
 `SrmAppendPath` concatenates a source `UNICODE_STRING` (`a2`) onto a destination `UNICODE_STRING` (`a1`). When `RtlAppendUnicodeStringToString` reports `STATUS_BUFFER_TOO_SMALL` (`0xC0000023`), the function allocates a new pool buffer, copies the existing string, then copies the appended string, and updates `a1`. The two `memmove` calls write exactly `a1->Length + a2->Length` bytes, and the buffer is sized as `(size + 0x1FF) & 0xFFFFFE00` (round up to 512) capped at `0xFFFE`.
 
@@ -55,7 +56,7 @@ The pool tag `0x706D7253` (bytes `53 72 6D 70` in memory) is ASCII `"Srmp"`; it 
 | **Affected function** | `SrmCanInsertPrefixTreePath` (unpatched @ `0x1C001D4E8`, patched @ `0x14001E974`) |
 | **Primitive** | None |
 
-**What actually changed (plain English):**
+**What actually changed:**
 
 There is no security-relevant difference between the two builds. While walking a multi-component path through the prefix tree, both builds dissect the path and, before calling `DataScreenCheckPrefixTreeNodeTxStatusCallback`, set `Source.Length = a2->Length - remaining.Length` and pass `&Source`. That `Source` value is the **already-processed path prefix** in both builds:
 
@@ -155,7 +156,7 @@ Both builds pass `&Source` (the processed prefix). The only decompiler-visible d
 
 ## 4. Assembly Analysis
 
-### `SrmAppendPath` — real disassembly
+### `SrmAppendPath`
 
 **Unpatched @ `0x1C001DE10`** (allocation and copy):
 

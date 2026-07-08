@@ -4,6 +4,7 @@ Slug: netio_7eaf807a-netio-report-20260703-220743
 Category: Corpus
 Author: Argus
 Summary: KB5082142
+Severity: None
 
 ## 1. Overview
 
@@ -29,7 +30,7 @@ Summary: KB5082142
 **Function:** `netio!NsiEnumerateObjectsAllParametersEx` (unpatched `0x1C00153F0`, patched `0x14002F5C0`).
 **Severity:** None (no delivered change to the arithmetic; inputs are not attacker-controlled).
 
-**What the code actually does (plain English):**
+**What the code actually does:**
 
 The function computes a per-entry record size by summing a handful of field widths taken from the targeted NSI module provider's descriptor table, then multiplies by the entry count and allocates a pool buffer. The per-entry sum is accumulated in a 32-bit register in **both** builds. The field widths (`*v32`, `v32[1]`, `v32[2]`, `v32[3]` in the decompilation; `[rsi]`, `[rsi+4]`, `[rsi+8]`, `[rsi+0Ch]` in assembly) come from the provider's registration descriptor at `provider_table + index*0x68`. These are fixed sizes declared by the kernel NSI provider (for example the built-in TCP/IP modules), not values supplied by the user-mode caller. A medium-integrity user cannot register an NSI module provider (that path requires a kernel NMR provider registration), so these widths are trusted constants.
 
@@ -137,7 +138,7 @@ Patched size computation (`0x14002F5C0`), copied from the disassembly:
 000000014002FA50  call    NsipAllocateLowPriority   ; no 0xFFFFFFFF guard
 ```
 
-The accumulation is 32-bit in both builds. The unpatched build additionally validates the 64-bit product against `0xFFFFFFFF`; the patched build performs the multiply in 32 bits and drops the explicit guard. The per-entry copies use `memmove` (a real import) in both builds, not a private copy helper.
+The accumulation is 32-bit in both builds. The unpatched build additionally validates the 64-bit product against `0xFFFFFFFF`; the patched build performs the multiply in 32 bits and drops the explicit guard. The per-entry copies use `memmove` in both builds, not a private copy helper.
 
 ### Finding #2 — `NsiGetParameterEx`
 

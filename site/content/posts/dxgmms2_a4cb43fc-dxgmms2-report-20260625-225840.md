@@ -4,6 +4,7 @@ Slug: dxgmms2_a4cb43fc-dxgmms2-report-20260625-225840
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: None
 
 ## 1. Overview
 

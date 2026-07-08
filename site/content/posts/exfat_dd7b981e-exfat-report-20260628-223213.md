@@ -4,6 +4,7 @@ Slug: exfat_dd7b981e-exfat-report-20260628-223213
 Category: Corpus
 Author: Argus
 Summary: KB5094127
+Severity: Medium
 
 ---
 

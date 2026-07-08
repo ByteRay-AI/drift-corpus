@@ -4,6 +4,7 @@ Slug: ksecpkg_111e8a9c-ksecpkg-report-20260629-125630
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: Medium
 
 ---
 
@@ -42,7 +43,7 @@ Summary: KB5094128
   - plus a new extracted helper `TlsDecryptMessage` in the patched build that carries the same checks
 - **Entry point:** Schannel record decryption on an established TLS/DTLS context (`SslUnsealMessage*` / `Tls*DecryptHandler`), processing an inbound encrypted record whose bytes are attacker-controlled.
 
-**Root cause (plain English).** These handlers parse an inbound TLS/DTLS record. They read fixed byte offsets from the record buffer to determine the record type/version and the declared record length: offsets `+1`, `+3`, `+4` for a TLS record header (needs at least 5 bytes) and offsets `+0xB` and `+0xC` for a DTLS record header (needs at least 13 bytes, because the DTLS record header carries the sequence bytes there). In the unpatched build the only length check performed before these reads is `cbBuffer >= cipher_overhead`, where `cipher_overhead` is a context-derived value (`ctx[0x40] + ctx[0x44]`). That comparison does not guarantee the record contains the bytes at the fixed header offsets, so a truncated record that satisfies `cbBuffer >= cipher_overhead` but is shorter than the header still reaches `movzx ..., byte ptr [rec+0xB]` / `[rec+0xC]` (or `[rec+3]`/`[rec+4]`), reading past the end of the input buffer.
+**Root cause.** These handlers parse an inbound TLS/DTLS record. They read fixed byte offsets from the record buffer to determine the record type/version and the declared record length: offsets `+1`, `+3`, `+4` for a TLS record header (needs at least 5 bytes) and offsets `+0xB` and `+0xC` for a DTLS record header (needs at least 13 bytes, because the DTLS record header carries the sequence bytes there). In the unpatched build the only length check performed before these reads is `cbBuffer >= cipher_overhead`, where `cipher_overhead` is a context-derived value (`ctx[0x40] + ctx[0x44]`). That comparison does not guarantee the record contains the bytes at the fixed header offsets, so a truncated record that satisfies `cbBuffer >= cipher_overhead` but is shorter than the header still reaches `movzx ..., byte ptr [rec+0xB]` / `[rec+0xC]` (or `[rec+3]`/`[rec+4]`), reading past the end of the input buffer.
 
 The patched build inserts an explicit minimum-length gate immediately before those reads:
 
@@ -78,7 +79,7 @@ These cover the **identical value set** `{7,8,10}`; no index is newly rejected o
 
 ## 3. Pseudocode Diff
 
-### Finding #1 — TLS/DTLS record header length gate (real intent)
+### Finding #1 — TLS/DTLS record header length gate
 
 ```c
 // UNPATCHED — reads fixed header offsets guarded only by cipher-overhead
@@ -143,7 +144,7 @@ if (Src != nullptr) {
 
 ## 4. Assembly Analysis
 
-### Finding #1 — `Tls13DecryptHandler`, header-parse region (real instructions)
+### Finding #1 — `Tls13DecryptHandler`, header-parse region
 
 ```
 ; === UNPATCHED (0x1C000AE4C .. 0x1C000AEAC) ===

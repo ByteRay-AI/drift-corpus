@@ -4,6 +4,7 @@ Slug: dmvsc_5c1d1aa0-dmvsc-report-20260628-224237
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Informational
 
 ## 1. Overview
 

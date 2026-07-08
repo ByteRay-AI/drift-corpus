@@ -4,6 +4,7 @@ Slug: msnfsflt_e6c6e3a7-msnfsflt-report-20260703-212711
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Medium
 
 ## 1. Overview
 

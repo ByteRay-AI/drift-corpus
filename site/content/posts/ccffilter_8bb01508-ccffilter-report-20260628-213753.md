@@ -4,6 +4,7 @@ Slug: ccffilter_8bb01508-ccffilter-report-20260628-213753
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Medium
 
 ---
 
@@ -31,7 +32,7 @@ Summary: KB5078752
 - **Class:** Use-after-free / double-free, kernel pool lifetime (CWE-416)
 - **Affected function:** `CCFPreCreate` (`sub_1c0007760`), the `IRP_MJ_CREATE` pre-operation callback registered via `FltRegisterFilter`.
 
-#### Root Cause (plain English)
+#### Root Cause
 
 `ccffilter.sys` is the FltMgr minifilter that backs Windows Cluster Shared Volumes. When a user-mode process opens a file on a CSV path with an EA buffer carrying a "CCFF" app-instance EA, the create path in `CCFPreCreate` allocates a `GUID_ECP_NETWORK_APP_INSTANCE` Extra Create Parameter (0x14 bytes, pool tag "CCFF") and passes it to `CCFAddEcpToCreate` (`sub_1c00090a8`). That helper:
 

@@ -4,6 +4,7 @@ Slug: ksrext_09c01e1d-ksrext-report-20260629-004612
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: Low
 
 ## 1. Overview
 

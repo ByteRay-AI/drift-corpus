@@ -4,6 +4,7 @@ Slug: fsdepends_89ca1ca9-fsdepends-report-20260628-231341
 Category: Corpus
 Author: Argus
 Summary: KB5087545
+Severity: None
 
 ## 1. Overview
 
@@ -145,7 +146,7 @@ No functions were added or removed (`unmatched_unpatched: 0`, `unmatched_patched
 **Confidence: High that this patch carries no security-relevant code change.**
 
 - The `DependentFSCheckFileHandle` dependency loop, including its context comparison, is opcode-identical between the two builds; the function's 0.9844 similarity is fully accounted for by `cmovb`↔branch and `test`↔`bt` idiom swaps plus reordering.
-- `DepFSHandleQueryDependentVolume` has an identical set of guard instructions in both builds (verified by comparing the full sorted `test`/`cmp`/`jz` sets); its differences are register allocation.
+- `DepFSHandleQueryDependentVolume` has an identical set of guard instructions in both builds (comparing the full sorted `test`/`cmp`/`jz` sets); its differences are register allocation.
 - The lower-similarity enumeration routines (`DepFSForEachDependency`, `DepFSGenerateDependencyList`, `DepFSCheckDependencies`, `DependentFSRegister`) were diffed at the control-flow level; each retains its complete set of comparisons and calls, differing only by register names and WPP-block placement.
 - The one deliberate behavioral change, `FLT_REGISTRATION.Flags 0 → 8`, enables Windows Container OS (`WCOS`) volume support for the filter and has no bearing on memory safety.
 - All VA references assume each binary is loaded at its preferred base.

@@ -4,6 +4,7 @@ Slug: cdrom_ad9dd120-cdrom-report-20260626-132557
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `cdrom_unpatched.sys`

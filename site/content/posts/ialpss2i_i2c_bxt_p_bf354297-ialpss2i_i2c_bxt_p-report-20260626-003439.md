@@ -4,6 +4,7 @@ Slug: ialpss2i_i2c_bxt_p_bf354297-ialpss2i_i2c_bxt_p-report-20260626-003439
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ## 1. Overview
 
@@ -42,7 +43,7 @@ Summary: KB5073723
 
 The DesignWare register bit meanings are confirmed by the driver's own trace strings in this function (`and eax, 0x600`; `cmp 0x200 → "| STOP"`, `cmp 0x400 → "| RESTART"`, `cmp 0x600 → "| RESTART | STOP"`). So `0x200` is STOP and `0x400` is RESTART. This is standard DesignWare behavior: RESTART on the first read byte, STOP on the last. Nothing here omits a STOP.
 
-**What changed:** only the way the `0x100`-vs-`0x500` selection is computed. The unpatched build uses `cmovz`; the patched build uses `neg`/`sbb`/`and`/`add`. The `bts esi, 9` STOP-on-last-byte logic is present and identical in both builds. See Section 4 for the real disassembly of both.
+**What changed:** only the way the `0x100`-vs-`0x500` selection is computed. The unpatched build uses `cmovz`; the patched build uses `neg`/`sbb`/`and`/`add`. The `bts esi, 9` STOP-on-last-byte logic is present and identical in both builds. See Section 4 for the disassembly of both.
 
 ### Change B — `ControllerInitialize` (branchless codegen of the same RX-FIFO threshold select)
 
@@ -64,7 +65,7 @@ This selection is present and produces the same result in both builds. The unpat
 
 ---
 
-## 3. Logic Diff (real, both builds equivalent)
+## 3. Logic Diff (both builds equivalent)
 
 ### Change A — `ControllerDoReadPrepare`
 
@@ -93,7 +94,7 @@ This selection is present and produces the same result in both builds. The unpat
 
 ---
 
-## 4. Assembly Analysis (real disassembly from both builds)
+## 4. Assembly Analysis (disassembly from both builds)
 
 ### Change A — `ControllerDoReadPrepare` command selection
 

@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "classpnp.sys (Windows Storage Class Driver) - ClasspProcessCloseZone SCSI Zone-Command CDB Builder, cross-build review (no confirmed OOB)",
+    "title": "classpnp.sys (Windows Storage Class Driver) - ClasspProcessCloseZone SCSI Zone-Command CDB Builder, cross-build review",
     "id_unpatched": "classpnp_unpatched.sys",
     "id_patched": "classpnp_patched.sys",
     "overall_similarity": 0.7332,

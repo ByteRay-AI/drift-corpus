@@ -41,7 +41,7 @@
         "NtfsCommonQueryInformation / NtfsCommonDirControl",
         "NtfsFillStatInfoFromMftRecord"
       ],
-      "vulnerability_class": "No security-relevant change (claimed CWE-125 / CWE-129 not supported by the binaries)",
+      "vulnerability_class": "No security-relevant change",
       "description": "The reported out-of-bounds read when processing a non-resident reparse point attribute in NtfsFillStatInfoFromMftRecord could not be reproduced. In BOTH builds the routine rejects non-resident $REPARSE_POINT (type 0xC0) attributes via the byte at attribute-header offset +8 and caps resident reparse data length at 0x4000 before any reparse data is consumed. There is no missing bounds check and no relaxation. The function originally named as the vulnerable helper (0x1C02A8BC8) is EdpEnforcementLog_FileRequiresEncryption, an EDP/WIP enforcement-telemetry routine unrelated to reparse parsing, and its supposed patched counterpart (0x140252D28) is a different function (EdpEnforcementLog_AutomaticEncryption). The telemetry string cited as naming the bug does not exist in either build.",
       "trigger_conditions": "None. No reachable out-of-bounds read exists on this path; non-resident reparse attributes are rejected and resident length is capped in both builds.",
       "primitive": "None. No kernel-pool out-of-bounds read, information-disclosure, or denial-of-service primitive is supported by the binaries on this path.",

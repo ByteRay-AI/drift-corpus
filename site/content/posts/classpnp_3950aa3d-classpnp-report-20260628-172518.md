@@ -4,6 +4,7 @@ Slug: classpnp_3950aa3d-classpnp-report-20260628-172518
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: Informational
 
 ## 1. Overview
 
@@ -27,7 +28,7 @@ Summary: KB5094128
 
 | Field | Value |
 |---|---|
-| **Severity** | Informational (no security change verified) |
+| **Severity** | Informational |
 | **Class** | Zone-command CDB construction; descriptor-offset scan bounded in both builds |
 | **Function** | `ClasspProcessCloseZone` (`sub_1C0037854`) |
 | **Patched equivalent** | `ClasspProcessCloseZone` (`sub_14002F770`) |

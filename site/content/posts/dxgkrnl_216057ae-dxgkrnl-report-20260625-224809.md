@@ -4,6 +4,7 @@ Slug: dxgkrnl_216057ae-dxgkrnl-report-20260625-224809
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: Low
 
 ### 1. Overview
 - **Unpatched Binary:** `dxgkrnl_unpatched.sys`

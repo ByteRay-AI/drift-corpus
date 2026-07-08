@@ -4,6 +4,7 @@ Slug: hvcrash_706d8ffd-hvcrash-report-20260629-002358
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ## 1. Overview
 
@@ -25,7 +26,7 @@ Summary: KB5078752
 **Reachability:**
 This runs during crash-dump writer initialization, reached through the driver's WDF device-control (`EvtIoDeviceControl`) handler. It is part of the crash/dump-preparation machinery, not a routine exposed to an ordinary untrusted caller. The recipient of the leaked bytes is a lower kernel-mode driver in the device stack (all ring 0). There is no demonstrated path by which an unprivileged user, or a party outside the guest, controls this trigger or observes the leaked bytes.
 
-**Call chain (verified):**
+**Call chain:**
 1. A device I/O control request with control code `0x2D164B` reaches the driver's WDF I/O queue.
 2. `HvCrashEvtDeviceAdd` (`@0x1C00080E0`) registered `HvCrashDeviceControl` (`@0x1C00088D0`) as the `EvtIoDeviceControl` callback.
 3. `HvCrashDeviceControl` switches on the control code; case `0x2D164B` (decimal `2954827`) calls `CrashdumpShim::GetDumpInfo`.

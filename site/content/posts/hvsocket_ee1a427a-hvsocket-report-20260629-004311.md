@@ -4,6 +4,7 @@ Slug: hvsocket_ee1a427a-hvsocket-report-20260629-004311
 Category: Corpus
 Author: Argus
 Summary: KB5087538
+Severity: Medium
 
 ## 1. Overview
 - **Unpatched Binary:** `hvsocket_unpatched.sys`
@@ -16,7 +17,7 @@ Summary: KB5087538
 ### Finding: UAF / race on loopback endpoint (feature-staged fix, Medium)
 - **Severity:** Medium
 - **Vulnerability Class:** Use-After-Free (CWE-416) / Race Condition (CWE-362)
-- **Affected Functions (real symbol names):** `VmbusTlLoopbackSend` (`0x1C00065EC`), `VmbusTlLoopbackNotifyReceiveConsumed` (`0x1C0006F50`), `VmbusTlLoopbackDisconnect` (`0x1C0006C30`), `VmbusTlLoopbackAcceptConnection` (`0x1C001B630`), `VmbusTlNotifyListenerAccept` (`0x1C0005F18`), `VmbusTlCommonConnectCompletion` (`0x1C0002670`), `VmbusTlProcessNewConnectionForListener` (`0x1C0019E60`), `VmbusTlProviderListen` (`0x1C001E420`).
+- **Affected Functions:** `VmbusTlLoopbackSend` (`0x1C00065EC`), `VmbusTlLoopbackNotifyReceiveConsumed` (`0x1C0006F50`), `VmbusTlLoopbackDisconnect` (`0x1C0006C30`), `VmbusTlLoopbackAcceptConnection` (`0x1C001B630`), `VmbusTlNotifyListenerAccept` (`0x1C0005F18`), `VmbusTlCommonConnectCompletion` (`0x1C0002670`), `VmbusTlProcessNewConnectionForListener` (`0x1C0019E60`), `VmbusTlProviderListen` (`0x1C001E420`).
 
 **Root Cause:**
 `EvaluateCurrentState` (`0x1C0001D78`) is a Windows feature-staging check. It calls `EvaluateFeature` (`0x1C0001D00`), which resolves a cached feature descriptor via `EvaluateCurrentStateFromRegistry` and returns whether the cached feature state is not equal to `1`. It is **not** a loopback-vs-VMBus connection-type test; the same loopback endpoint field (`connection+0x2B8`) is used on both branches. In the unpatched build this gate is called 18 times across the functions listed above, each time selecting between two ways of reaching the loopback endpoint:
@@ -164,7 +165,7 @@ These addresses are real instructions in the unpatched image (base `0x1C0000000`
 - `0x1C0006C6F` / `0x1C0006C76` — the disconnect feature check and the `jz 0x1C0006C8B` that skips the `connection+0x48` spinlock on the legacy path.
 - `0x1C0006C8B` / `0x1C0006C92` — the disconnect read-and-null of `connection+0x2B8` on the legacy path.
 
-Structure offsets (verified against the disassembly):
+Structure offsets:
 
 - **Connection object:** `+0x48` = `KSPIN_LOCK`; `+0x2B8` = loopback endpoint pointer.
 - **Endpoint object:** `+0x08` = reference count; `+0x50` = cleanup callback (dispatched via the guard-check indirect call); `+0x68` = delivery-queue / peer pointer; `+0x210` = flags dword.

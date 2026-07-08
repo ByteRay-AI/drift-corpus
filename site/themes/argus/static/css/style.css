@@ -1,5 +1,5 @@
 /* ============================================================
-   Argus Blog
+   The Drift Corpus: Ring 0
    Visual language adapted from argus-systems.ai
    ============================================================ */
 
@@ -322,3 +322,14 @@ a.chip:hover { color: var(--argus-ink); border-color: var(--argus-line-strong); 
   .hero { padding: 150px 0 64px; }
   .hero-eye { opacity: 0.16; background-position: center; }
 }
+
+/* Severity badges */
+.sev { display:inline-block; padding:2px 9px; border-radius:999px; font-family:var(--font-mono);
+       font-size:0.70rem; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;
+       border:1px solid transparent; margin-top:6px; white-space:nowrap; }
+.sev-critical      { color:#B91C1C; background:rgba(185,28,28,0.08);  border-color:rgba(185,28,28,0.35); }
+.sev-high          { color:#C2410C; background:rgba(194,65,12,0.08);  border-color:rgba(194,65,12,0.35); }
+.sev-medium        { color:#B45309; background:rgba(180,83,9,0.08);   border-color:rgba(180,83,9,0.30); }
+.sev-low           { color:var(--argus-cyan);      background:rgba(8,145,178,0.06);  border-color:rgba(8,145,178,0.30); }
+.sev-informational { color:var(--argus-ink-mute);  background:rgba(90,98,122,0.06);  border-color:rgba(90,98,122,0.25); }
+.sev-none          { color:var(--argus-ink-faint); background:rgba(156,163,175,0.05);border-color:rgba(156,163,175,0.22); }

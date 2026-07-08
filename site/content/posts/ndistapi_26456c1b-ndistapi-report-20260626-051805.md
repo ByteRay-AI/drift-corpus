@@ -4,6 +4,7 @@ Slug: ndistapi_26456c1b-ndistapi-report-20260626-051805
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Low
 
 ## 1. Overview
 
@@ -287,7 +288,7 @@ For an analyst using a kernel debugger against the **unpatched** binary:
 
 ## 10. Confidence & Caveats
 
-- **Confidence:** High on the mechanism (verified in both `.asm` and `.c`): the driver's own allocations move from non-zeroing `ExAllocatePoolWithTag` to zero-initializing `ExAllocatePool2`, and two of those buffers reach a provider callback with uninitialized header gaps in the unpatched build.
+- **Confidence:** High on the mechanism (in both `.asm` and `.c`): the driver's own allocations move from non-zeroing `ExAllocatePoolWithTag` to zero-initializing `ExAllocatePool2`, and two of those buffers reach a provider callback with uninitialized header gaps in the unpatched build.
 - **Severity:** Low. The uninitialized bytes are exposed only to the in-kernel TAPI provider callback. No path in this driver returns uninitialized header bytes to the user-mode caller; the user output buffer receives only the initialized data region.
 - **Assumptions:**
   - Reaching the vulnerable allocation requires a registered, matching TAPI provider; without one the IOCTL fails early.

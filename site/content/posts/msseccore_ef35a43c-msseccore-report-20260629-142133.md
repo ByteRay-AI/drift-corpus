@@ -4,6 +4,7 @@ Slug: msseccore_ef35a43c-msseccore-report-20260629-142133
 Category: Corpus
 Author: Argus
 Summary: KB5078885
+Severity: Low
 
 ## 1. Overview
 
@@ -31,7 +32,7 @@ This is a **signing-level / trust-policy tightening**, not a memory-corruption b
 - **Vulnerability class:** Improper verification of cryptographic signature / insufficient required signing level (CWE-347)
 - **Affected function:** `SecKernelIntegrityCheck` @ `0x1C00081B8` (unpatched) / `0x1C0008178` (patched)
 
-**Root cause (plain English).**
+**Root cause.**
 `SecKernelIntegrityCheck` builds a small descriptor on the stack and passes it to a function pointer held in `qword_1C0007008`. That pointer is an OS-supplied kernel-integrity callback: it is captured by the driver's own `SecKernelIntegrityCallback` (`0x1C0001080`), which stores the callback's `Argument1` into `qword_1C0007008` and hands back `&SecProtectedRanges`. The callback object is created and registered during driver initialization via `ExCreateCallback`/`ExRegisterCallback`. One field in the descriptor — the required signing level — is a hard-coded constant.
 
 In the unpatched binary the constant is `0xA000006`:

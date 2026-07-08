@@ -4,6 +4,7 @@ Slug: ndproxy_9e1b54ed-ndproxy-report-20260703-214656
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ## 1. Overview
 
@@ -32,7 +33,7 @@ Summary: KB5073723
 | **Function** | `PxIODispatch` @ `0x1C0003B80` (IRP_MJ_DEVICE_CONTROL dispatch for `\Device\NDProxy`) |
 | **Entry point** | `DeviceIoControl` on `\Device\NDProxy`, IOCTL `0x8FFF23DC`, METHOD_BUFFERED |
 
-**Root cause (plain English):**
+**Root cause:**
 
 The unpatched `PxIODispatch` recognizes IOCTL codes `0x8FFF23C0`, `0x8FFF23C4`, the `0x8FFF23C8`/`0x8FFF23CC` pair, `0x8FFF23D0`, `0x8FFF23D4`, and `0x8FFF23D8`, but does **not** recognize `0x8FFF23DC`. When that code arrives, the dispatch chain tests every known code, fails all comparisons, and falls through to the default path at `0x1C0003C18`, which sets `ebx = 0xC000000D` (`STATUS_UNSUCCESSFUL`) and completes the IRP. No processing occurs, no output is written, no lock is held, and no state is mutated — the fall-through is benign.
 
@@ -94,7 +95,7 @@ DC_handler:                             // *** NEW HANDLER, 0x1C0003C2E ***
 
 ## 4. Assembly Analysis
 
-### Unpatched dispatch tail and default path (real disassembly)
+### Unpatched dispatch tail and default path
 
 ```asm
 ; ---- PxIODispatch @ 0x1C0003B80 (unpatched) ----
@@ -142,7 +143,7 @@ DC_handler:                             // *** NEW HANDLER, 0x1C0003C2E ***
 00000001C000406C  call    cs:__imp_IofCompleteRequest
 ```
 
-### Patched-only insertion (the actual delta, real disassembly)
+### Patched-only insertion
 
 ```asm
 ; ---- PxIODispatch @ 0x1C0003B80 (patched) ----

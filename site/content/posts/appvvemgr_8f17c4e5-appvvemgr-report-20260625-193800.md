@@ -4,6 +4,7 @@ Slug: appvvemgr_8f17c4e5-appvvemgr-report-20260625-193800
 Category: Corpus
 Author: Argus
 Summary: KB5073724
+Severity: Informational
 
 ---
 
@@ -389,7 +390,7 @@ bp appvvemgr_unpatched!VirtualEnvironmentManager::SetJITVInjectionAllowList
 // WHY: Under a mutex (scoped_lock), edits the package-config doubly_linked_list.
 //      No SeAccessCheck/token call is present inside this function.
 
-// Process notification callback (confirmed identical — reference only)
+// Process notification callback (identical — reference only)
 bp appvvemgr_unpatched!ProcessNotifyCallbackEx
 // = bp 0x1c0015340
 // WHY: Process create/exit callback; calls FltGetFileNameInformationUnsafe and

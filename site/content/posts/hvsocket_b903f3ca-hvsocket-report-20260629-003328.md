@@ -4,6 +4,7 @@ Slug: hvsocket_b903f3ca-hvsocket-report-20260629-003328
 Category: Corpus
 Author: Argus
 Summary: KB5082123
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `hvsocket_unpatched.sys`
@@ -71,7 +72,7 @@ void* VmbusTlLoopbackDisconnect(void* arg1) {
 ```
 
 ### 4. Assembly Analysis
-**Unpatched `VmbusTlLoopbackDisconnect` (`0x1C0006C30`)** — the conditional spinlock and the unsynchronized read/clear (real disassembly):
+**Unpatched `VmbusTlLoopbackDisconnect` (`0x1C0006C30`)** — the conditional spinlock and the unsynchronized read/clear:
 
 ```assembly
 00000001C0006C6F  call    EvaluateCurrentState                 ; feature-staging check

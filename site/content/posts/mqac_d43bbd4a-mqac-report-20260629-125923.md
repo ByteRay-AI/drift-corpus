@@ -4,6 +4,7 @@ Slug: mqac_d43bbd4a-mqac-report-20260629-125923
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: None
 
 ## 1. Overview
 - **Unpatched Binary**: `mqac_unpatched.sys` — FileVersion 10.0.28000.2336

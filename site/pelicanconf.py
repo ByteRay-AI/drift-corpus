@@ -1,5 +1,5 @@
 AUTHOR = "Argus"
-SITENAME = "Argus Drift Corpus"
+SITENAME = "The Drift Corpus: Ring 0"
 SITESUBTITLE = "Diff work corpus browser"
 SITEURL = ""
 
@@ -15,7 +15,13 @@ THEME = "themes/argus"
 
 ARTICLE_URL = "item/{slug}.html"
 ARTICLE_SAVE_AS = "item/{slug}.html"
-ARTICLE_ORDER_BY = "reversed-date"
+_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "informational": 1, "none": 0}
+
+
+def ARTICLE_ORDER_BY(article):
+    # Highest severity first, then newest date first within the same severity.
+    sev = (getattr(article, "severity", "none") or "none").strip().lower()
+    return (-_SEV_RANK.get(sev, 0), -article.date.toordinal())
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 
 FEED_ALL_ATOM = None

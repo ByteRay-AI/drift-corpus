@@ -4,6 +4,7 @@ Slug: ksecdd_527d8cd3-ksecdd-report-20260629-011930
 Category: Corpus
 Author: Argus
 Summary: KB5082200
+Severity: None
 
 ## 1. Overview
 
@@ -33,7 +34,7 @@ The remaining changed functions are WIL feature-staging plumbing that supports t
   - `SecFreeForKsecCaller` (`0x1C00017F0`) — reached via the SSPI `FreeContextBuffer` internal free path.
   - `SecFreeCommon` (`0x1C00051FC`) — reached via the `KsecIoctlFreePool` (`0x1C000EA08`) IOCTL handler.
 
-**What the code does (plain English).** Both routines free a caller-supplied `BaseAddress`. They first classify the caller. If the KSec LSA state is valid and the caller is the registered `KsecSystemProcess` or the context owner, the free goes through the shared validated path (`KsecRemoveValidAddressCommon`). Otherwise, if `PsIsProtectedProcess(PsGetCurrentProcess())` is true, the code takes a "protected process" branch that calls `KsecRemoveValidVm(process, BaseAddress)`.
+**What the code does.** Both routines free a caller-supplied `BaseAddress`. They first classify the caller. If the KSec LSA state is valid and the caller is the registered `KsecSystemProcess` or the context owner, the free goes through the shared validated path (`KsecRemoveValidAddressCommon`). Otherwise, if `PsIsProtectedProcess(PsGetCurrentProcess())` is true, the code takes a "protected process" branch that calls `KsecRemoveValidVm(process, BaseAddress)`.
 
 `KsecRemoveValidVm` (`0x1C0003EB4`) looks the `(EPROCESS*, BaseAddress)` pair up in the `KsecValidVm` tracking table under `KsecValidAddressLock`. It returns the entry's first qword — the tracked *handle* — or `0` if the pair is not present. The free dispatcher then runs only if that returned handle is non-null: it `ZwClose`s the handle and, at `0x1C00018BE`/`0x1C00018D6`, frees `BaseAddress` via `ExFreePoolWithTag` when `BaseAddress >= MmUserProbeAddress`, otherwise via `ZwFreeVirtualMemory`.
 

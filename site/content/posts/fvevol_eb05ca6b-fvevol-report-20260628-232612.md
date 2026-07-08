@@ -4,6 +4,7 @@ Slug: fvevol_eb05ca6b-fvevol-report-20260628-232612
 Category: Corpus
 Author: Argus
 Summary: KB5094127
+Severity: Low
 
 ## 1. Overview
 

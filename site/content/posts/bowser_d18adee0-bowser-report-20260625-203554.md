@@ -4,6 +4,7 @@ Slug: bowser_d18adee0-bowser-report-20260625-203554
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `bowser_unpatched.sys`

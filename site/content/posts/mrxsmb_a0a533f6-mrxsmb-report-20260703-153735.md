@@ -4,6 +4,7 @@ Slug: mrxsmb_a0a533f6-mrxsmb-report-20260703-153735
 Category: Corpus
 Author: Argus
 Summary: KB5094126
+Severity: None
 
 ## 1. Overview
 - **Binaries Analyzed:** `mrxsmb_unpatched.sys` vs `mrxsmb_patched.sys`

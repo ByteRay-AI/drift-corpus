@@ -4,6 +4,7 @@ Slug: microsoft.bluetooth.legacy.leenumerator_5a475369-microsoft.bluetooth.legac
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ### 1. Overview
 - **Unpatched Binary:** `microsoft.bluetooth.legacy.leenumerator_unpatched.sys`

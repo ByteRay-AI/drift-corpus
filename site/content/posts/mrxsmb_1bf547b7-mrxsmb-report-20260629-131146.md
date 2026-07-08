@@ -4,6 +4,7 @@ Slug: mrxsmb_1bf547b7-mrxsmb-report-20260629-131146
 Category: Corpus
 Author: Argus
 Summary: KB5095051
+Severity: None
 
 ---
 
@@ -32,7 +33,7 @@ Summary: KB5095051
 - **Class:** WIL feature-staging library churn — no security relevance
 - **Function:** `wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState` at `0x14003AD00`
 
-**What this function actually is (plain English):**
+**What this function actually is:**
 
 This is the WIL feature-staging helper that recomputes and caches whether a compile-time-registered feature flag is enabled. Its first argument (`rcx`, the target of the atomic compare-exchange) points at a per-feature 32-bit cache cell in the module's WIL feature-state cache — a global bookkeeping variable, not a per-connection object. It reads the current desired state via `wil_details_GetCurrentFeatureEnabledState`, folds it into a packed state word, and publishes the result with `lock cmpxchg` in a standard lock-free update loop. The neighbouring functions in the same region (`wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath`, `wil_details_GetCurrentFeatureEnabledState`, `wil_details_RegisterFeatureUsageProvider`) confirm this is the WIL feature-cache machinery.
 

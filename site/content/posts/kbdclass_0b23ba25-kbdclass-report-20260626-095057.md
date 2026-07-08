@@ -4,6 +4,7 @@ Slug: kbdclass_0b23ba25-kbdclass-report-20260626-095057
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ## 1. Overview
 

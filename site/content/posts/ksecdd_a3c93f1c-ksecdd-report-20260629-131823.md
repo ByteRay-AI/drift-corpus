@@ -4,6 +4,7 @@ Slug: ksecdd_a3c93f1c-ksecdd-report-20260629-131823
 Category: Corpus
 Author: Argus
 Summary: KB5082123
+Severity: Informational
 
 ## 1. Overview
 
@@ -40,7 +41,7 @@ Summary: KB5082123
 - The arbitrary-kernel-free condition the check would guard is not demonstrably reachable in the unpatched build (§6): the only tracking-table entries an attacker can seed with a kernel address are inserted with a **null** handle, so `KsecRemoveValidVm` returns null and the free is skipped.
 - Both branches are PPL-gated regardless.
 
-**Entry points (real, verified).**
+**Entry points.**
 
 SSPI path:
 1. `FreeContextBuffer` (`0x1C001D8A0`, exported) calls `SecFreeForKsecCaller(pvContextBuffer)` directly.
@@ -106,7 +107,7 @@ The same delta is mirrored in `SecFreeCommon` (`0x1C0004F30` → `0x1C0004F70`),
 
 ## 4. Assembly Analysis
 
-### `SecFreeForKsecCaller` (`0x1C0001240`) — UNPATCHED (real disassembly, protected branch and free site)
+### `SecFreeForKsecCaller` (`0x1C0001240`) — UNPATCHED (protected branch and free site)
 
 ```
 00000001C000128E  mov     rcx, rbx
@@ -137,7 +138,7 @@ The same delta is mirrored in `SecFreeCommon` (`0x1C0004F30` → `0x1C0004F70`),
 00000001C0001310  call    cs:__imp_ExFreePoolWithTag      ; kernel-address free routine
 ```
 
-### `SecFreeForKsecCaller` — PATCHED (real disassembly, inserted gate)
+### `SecFreeForKsecCaller` — PATCHED (inserted gate)
 
 ```
 00000001C000129D  test    eax, eax
@@ -162,7 +163,7 @@ The `cmp rcx, [MmUserProbeAddress]` free-site comparison exists identically in b
 
 ### `SecFreeCommon` (`0x1C0004F30` unpatched / `0x1C0004F70` patched) — same delta
 
-UNPATCHED protected branch (real):
+UNPATCHED protected branch:
 ```
 00000001C0004F95  cmp     esi, 0FFFFFFFDh                 ; package == -3 ?
 00000001C0004F98  jnz     short loc_1C0004FD3
@@ -207,7 +208,7 @@ The patched redirect (kernel addresses → `KsecRemoveValidAddressCommon`) is th
 
 ---
 
-## 7. Observation Aids (real offsets)
+## 7. Observation Aids
 
 These are the real instruction offsets for observing the two code paths in a kernel debugger against the modules. They confirm control flow only; they do not constitute an exploit, and (per §6) the protected branch does not reach `ExFreePoolWithTag` with an attacker-chosen kernel address via the seeding IOCTLs.
 
@@ -225,7 +226,7 @@ Referenced globals: `MmUserProbeAddress` (free-site routine selector, both build
 
 ## 8. Changed Functions — Full Triage
 
-| Function (real name @ addr) | Change type | Note |
+| Function (name @ address) | Change type | Note |
 |---|---|---|
 | `EvaluateCurrentState` (`0x1C00065D0` → `0x1C0006630`) | Feature-staging plumbing | Refactored from a hardcoded-descriptor form (unpatched evaluates `g_Feature_263211323_55489181` and ignores its argument) to a parameterized form that dereferences the passed `reg_FeatureDescriptor*`. Return contract unchanged: `state != 1`. Not security-relevant. (Note: `0x1C00065D0` is reused in the patched build for `rbc_InitializeFeatureStaging`.) |
 | `SecFreeForKsecCaller` (`0x1C0001240`) | Behavioral (feature-gated) | Adds the `EvaluateCurrentState(&g_Feature_4032523578_59197666)` + `MmHighestUserAddress` redirect before the protected-branch `KsecRemoveValidVm` call. Legacy path retained when the feature is disabled. Defense-in-depth (see §6). |

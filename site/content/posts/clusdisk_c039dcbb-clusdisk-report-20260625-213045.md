@@ -4,6 +4,7 @@ Slug: clusdisk_c039dcbb-clusdisk-report-20260625-213045
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ---
 

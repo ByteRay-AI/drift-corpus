@@ -4,6 +4,7 @@ Slug: cimfs_c3a00cc5-cimfs-report-20260625-211100
 Category: Corpus
 Author: Argus
 Summary: KB5073724
+Severity: Low
 
 ---
 

@@ -4,6 +4,7 @@ Slug: cldflt_021bde84-cldflt-report-20260628-213327
 Category: Corpus
 Author: Argus
 Summary: KB5078885
+Severity: Medium
 
 ## 1. Overview
 

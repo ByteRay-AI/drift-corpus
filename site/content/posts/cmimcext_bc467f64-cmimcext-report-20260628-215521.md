@@ -4,6 +4,7 @@ Slug: cmimcext_bc467f64-cmimcext-report-20260628-215521
 Category: Corpus
 Author: Argus
 Summary: KB5082123
+Severity: Low
 
 ---
 
@@ -235,7 +236,7 @@ bp cmimcext_unpatched+0x131b      ; call McGenEventWrite -> EtwWriteTransfer
 - **At `+0x12e8` (inside sink):**
   - `eax` just before `add eax, eax` — equals `r9w` from the caller.
   - `eax` just after — equals `2 * r9w`. This becomes `EVENT_DATA_DESCRIPTOR.Size` (stored to frame slot `var_38`).
-- **Cross-check (confirmation):**
+- **Cross-check:**
   ```
   !pool <key_name_buffer>
   ```

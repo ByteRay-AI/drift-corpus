@@ -4,6 +4,7 @@ Slug: ltotape_dbe369fc-ltotape-report-20260703-143628
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ### 1. Overview
 - **Unpatched Binary:** `ltotape_unpatched.sys`

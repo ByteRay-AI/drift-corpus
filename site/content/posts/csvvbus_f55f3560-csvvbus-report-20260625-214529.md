@@ -4,6 +4,7 @@ Slug: csvvbus_f55f3560-csvvbus-report-20260625-214529
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: High
 
 ## 1. Overview
 

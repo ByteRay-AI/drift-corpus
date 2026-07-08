@@ -4,6 +4,7 @@ Slug: bthpan_0ad4ad12-bthpan-report-20260628-172631
 Category: Corpus
 Author: Argus
 Summary: KB5094127
+Severity: None
 
 - **Unpatched Binary:** `bthpan_unpatched.sys`
 - **Patched Binary:** `bthpan_patched.sys`

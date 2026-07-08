@@ -4,6 +4,7 @@ Slug: intelide_81aada9c-intelide-report-20260629-131532
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: Informational
 
 ## 1. Overview
 

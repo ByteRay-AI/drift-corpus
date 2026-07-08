@@ -4,6 +4,7 @@ Slug: ccffilter_aec44ab5-ccffilter-report-20260625-204530
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: High
 
 ---
 
@@ -32,7 +33,7 @@ Summary: KB5073723
 - **Affected function:** `ccffilter_unpatched!CCFFilterAppInstanceEA` @ `0x1c000990c`
 - **Patched instruction:** `0x1c00099f7` — opcode `0F 82` (`jb`) → `0F 87` (`ja`)
 
-**Root cause (plain English).** The minifilter walks the EA chain supplied with an `IRP_MJ_CREATE` looking for an EA named `ClusteredApplicationInstance`. When found, it expects the EA's value to be either a 16-byte GUID (`EaValueLength == 0x10`) or a 20-byte GUID+version structure (`EaValueLength >= 0x14`). For the 20-byte case, the function loads `eax = 0x14`, compares it against `EaValueLength` (in `dx`), and is *supposed* to bail out to an error path (`STATUS 0xC0000053`) whenever `EaValueLength < 0x14`. Instead, the branch is `jb` ("jump if 0x14 below EaValueLength"), which only sends values *greater than* `0x14` to the error path. Every value from `0x00–0x0F` and `0x11–0x13` falls through to two unconditional reads — a 16-byte `movups` and a 4-byte `mov dword` — that pull 20 bytes from a buffer the attacker sized arbitrarily small. The patch replaces `jb` with `ja`, restoring the intended semantics.
+**Root cause.** The minifilter walks the EA chain supplied with an `IRP_MJ_CREATE` looking for an EA named `ClusteredApplicationInstance`. When found, it expects the EA's value to be either a 16-byte GUID (`EaValueLength == 0x10`) or a 20-byte GUID+version structure (`EaValueLength >= 0x14`). For the 20-byte case, the function loads `eax = 0x14`, compares it against `EaValueLength` (in `dx`), and is *supposed* to bail out to an error path (`STATUS 0xC0000053`) whenever `EaValueLength < 0x14`. Instead, the branch is `jb` ("jump if 0x14 below EaValueLength"), which only sends values *greater than* `0x14` to the error path. Every value from `0x00–0x0F` and `0x11–0x13` falls through to two unconditional reads — a 16-byte `movups` and a 4-byte `mov dword` — that pull 20 bytes from a buffer the attacker sized arbitrarily small. The patch replaces `jb` with `ja`, restoring the intended semantics.
 
 **Attacker-reachable entry point & call chain.**
 

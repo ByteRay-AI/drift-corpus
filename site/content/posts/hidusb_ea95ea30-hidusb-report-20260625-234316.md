@@ -4,6 +4,7 @@ Slug: hidusb_ea95ea30-hidusb-report-20260625-234316
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ### 1. Overview
 

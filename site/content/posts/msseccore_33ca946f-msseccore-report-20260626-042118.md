@@ -4,6 +4,7 @@ Slug: msseccore_33ca946f-msseccore-report-20260626-042118
 Category: Corpus
 Author: Argus
 Summary: KB5073724
+Severity: Low
 
 ### 1. Overview
 

@@ -4,6 +4,7 @@ Slug: csc_be32bbfb-csc-report-20260628-230945
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 
@@ -31,7 +32,7 @@ Summary: KB5078752
 | **Nature of change** | A feature-gated NULL check is made unconditional (WIL staging gate removed) |
 | **Worst-case impact if feature disabled** | Kernel NULL dereference → bug check (local DoS). No controlled data, no escalation. |
 
-### What actually changed (plain English)
+### What actually changed
 
 The handler loads a logical-view (LView) pointer that can legitimately be NULL:
 

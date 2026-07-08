@@ -4,6 +4,7 @@ Slug: appvstrm_bdba58c2-appvstrm-report-20260625-192534
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Informational
 
 ---
 
@@ -34,7 +35,7 @@ Summary: KB5073723
 - **Class:** Design note (per-message authorization is not re-checked inside the dispatcher). This is not a missing-authorization vulnerability for unprivileged callers: the communication port is built with `FltBuildDefaultSecurityDescriptor`, which restricts access to Administrators and SYSTEM. No code or port-descriptor change exists between the two builds.
 - **Affected surface:** `Streaming::Messaging::UserCommunication::ProcessMessage` (`0x1C0012B80`) dispatch, reached through the port created in `Streaming::Messaging::UserCommunication::Initialize` (`0x1C0012A80`) via `FltCreateCommunicationPort`.
 
-#### Description (plain English)
+#### Description
 
 `appvstrm.sys` is a Windows kernel minifilter that exposes a set of staging operations to a connected client through a filter communication port (`FltSendMessage` / user-mode `FilterSendMessage`). `ProcessMessage` selects an operation from the leading DWORD of the input buffer:
 

@@ -4,6 +4,7 @@ Slug: fastfat_b86c186d-fastfat-report-20260628-232510
 Category: Corpus
 Author: Argus
 Summary: KB5082142
+Severity: Informational
 
 ### 1. Overview
 - **Unpatched Binary:** `fastfat_unpatched.sys` (version 10.0.20348.5020)

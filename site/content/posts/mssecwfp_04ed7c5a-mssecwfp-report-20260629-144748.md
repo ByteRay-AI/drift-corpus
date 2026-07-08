@@ -4,6 +4,7 @@ Slug: mssecwfp_04ed7c5a-mssecwfp-report-20260629-144748
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 

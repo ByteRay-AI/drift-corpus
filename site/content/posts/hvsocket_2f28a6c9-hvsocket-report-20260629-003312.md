@@ -4,6 +4,7 @@ Slug: hvsocket_2f28a6c9-hvsocket-report-20260629-003312
 Category: Corpus
 Author: Argus
 Summary: KB5078885
+Severity: Medium
 
 ## 1. Overview
 

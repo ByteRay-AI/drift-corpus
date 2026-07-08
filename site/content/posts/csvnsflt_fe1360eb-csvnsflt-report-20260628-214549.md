@@ -4,6 +4,7 @@ Slug: csvnsflt_fe1360eb-csvnsflt-report-20260628-214549
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: High
 
 ## 1. Overview
 

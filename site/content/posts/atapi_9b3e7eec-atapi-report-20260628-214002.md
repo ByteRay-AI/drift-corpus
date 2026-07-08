@@ -4,6 +4,7 @@ Slug: atapi_9b3e7eec-atapi-report-20260628-214002
 Category: Corpus
 Author: Argus
 Summary: KB5087545
+Severity: Low
 
 ## 1. Overview
 

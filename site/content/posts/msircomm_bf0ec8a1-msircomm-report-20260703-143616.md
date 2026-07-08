@@ -4,6 +4,7 @@ Slug: msircomm_bf0ec8a1-msircomm-report-20260703-143616
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ## 1. Overview
 

@@ -4,6 +4,7 @@ Slug: mssecflt_d7e598a5-mssecflt-report-20260629-151630
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Medium
 
 ### 1. Overview
 - **Unpatched Binary:** `mssecflt_unpatched.sys`
@@ -104,7 +105,7 @@ void SecEnumerateProcessContexts(callback_t callback, void* context) {
 
 ### 4. Assembly Analysis
 
-Unpatched `SecEnumerateProcessContexts`, real disassembly, showing the callback invoked while the shared lock is held with no reference on the entry.
+Unpatched `SecEnumerateProcessContexts`, showing the callback invoked while the shared lock is held with no reference on the entry.
 
 ```assembly
 ; ---- SecEnumerateProcessContexts @ 0x14002CF04 (unpatched) ----
@@ -235,7 +236,7 @@ bp mssecflt_unpatched!SecCleanupProcessContexts          ; 0x14002c3a4 entry tea
 
 ### 10. Confidence & Caveats
 
-- **Confidence:** High for the mechanism. The unpatched callback-under-shared-lock traversal and the patched reference-pin + snapshot + release-then-callback path are both confirmed in the real disassembly of `SecEnumerateProcessContexts`, and the same treatment is confirmed for `SecPerformProcessAssertionsForAllProcesses`.
+- **Confidence:** High for the mechanism. The unpatched callback-under-shared-lock traversal and the patched reference-pin + snapshot + release-then-callback path are both present in the disassembly of `SecEnumerateProcessContexts`, and the same treatment applies to `SecPerformProcessAssertionsForAllProcesses`.
 - **Direction:** The default (feature bit clear) path is the safe one; the old vulnerable path runs only when `SecData+0x510` bit 0 is set. The feature block is zero-initialized and then optionally overwritten from a registry binary value, so the safe path is the default and the old path is a registry-controlled fallback.
 - **Caveats:**
   - The severity is bounded by demonstrable impact: a kernel-mode use-after-free/race during enumeration. Reclaiming the freed allocation with controlled contents, and any resulting control-flow or write primitive, are not demonstrated by the diff and are not claimed.

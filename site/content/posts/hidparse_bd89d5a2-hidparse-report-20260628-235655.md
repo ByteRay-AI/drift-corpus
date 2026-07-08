@@ -4,6 +4,7 @@ Slug: hidparse_bd89d5a2-hidparse-report-20260628-235655
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Informational
 
 ### 1. Overview
 - **Unpatched Binary:** `hidparse_unpatched.sys`

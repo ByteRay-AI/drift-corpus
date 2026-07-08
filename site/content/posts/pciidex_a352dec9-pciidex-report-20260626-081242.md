@@ -4,6 +4,7 @@ Slug: pciidex_a352dec9-pciidex-report-20260626-081242
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Low
 
 ## 1. Overview
 
@@ -193,6 +194,6 @@ Neither introduces new security behavior.
 
 ## 10. Confidence & Caveats
 
-- **Confidence Level (change is real):** High. The API replacement (`MmMapIoSpace` -> `MmMapIoSpaceEx` with `0x204`) is present in both the decompilation and the disassembly of `GenPopulateAccessRange`, matches at the exact call sites (`0x1C0009025` vs `0x1C000A19C`), and aligns with Microsoft's deprecation of `MmMapIoSpace` in favour of `MmMapIoSpaceEx`.
+- **Confidence Level:** High. The API replacement (`MmMapIoSpace` -> `MmMapIoSpaceEx` with `0x204`) is present in both the decompilation and the disassembly of `GenPopulateAccessRange`, matches at the exact call sites (`0x1C0009025` vs `0x1C000A19C`), and aligns with Microsoft's deprecation of `MmMapIoSpace` in favour of `MmMapIoSpaceEx`.
 - **Severity rationale (Low):** The change enforces NX on MMIO mappings but does not, on its own, constitute a reachable exploit. The mapped physical addresses come from PnP-assigned PCI BAR resource descriptors rather than attacker-controlled input, and turning an executable MMIO page into code execution would require both control of the mapped physical memory contents and a separate control-flow hijack. Under HVCI/VBS the two builds behave identically.
 - **Verification Note:** The executable-vs-NX difference is observable via `!pte` on the returned VA in the two builds; this confirms the fix direction but is not a code-execution demonstration.

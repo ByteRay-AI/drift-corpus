@@ -4,6 +4,7 @@ Slug: fastfat_0e9db596-fastfat-report-20260628-230826
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: None
 
 ---
 

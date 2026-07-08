@@ -4,6 +4,7 @@ Slug: ksrext_6a5dd972-ksrext-report-20260629-133944
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: None
 
 ## 1. Overview
 
@@ -69,7 +70,7 @@ The following describes the real control flow of both builds (no reconstructed p
 
 ## 4. Assembly Evidence
 
-Unpatched `KsrPersistMemoryPartition` (real instructions):
+Unpatched `KsrPersistMemoryPartition`:
 
 ```assembly
 ; --- shared-lock acquisition for the 'already persisted?' check ---
@@ -96,7 +97,7 @@ Unpatched `KsrPersistMemoryPartition` (real instructions):
 00000001C0008A83  call    cs:__imp_ZwClose      ; error path only
 ```
 
-Patched `KsrPersistMemoryPartition` (real instructions):
+Patched `KsrPersistMemoryPartition`:
 
 ```assembly
 ; --- exclusive lock held across check + insert ---
@@ -120,7 +121,7 @@ Patched `KsrPersistMemoryPartition` (real instructions):
 
 ## 5. Reachability
 
-`KsrPersistMemoryPartition`, `KsrQueryPersistedMemoryPartition`, and the new `KsrUnpersistMemoryPartition` are KSR (Kernel Soft Restart) infrastructure functions. Neither the unpatched nor the patched image creates a device object, registers an IRP/IOCTL dispatch, or exposes a symbolic link (verified: no `IoCreateDevice`, `IRP_MJ*`, or `IoCreateSymbolicLink` references in either build). These routines are invoked by the kernel's soft-restart/servicing path, not from an unprivileged user-mode context. There is no demonstrated local trigger.
+`KsrPersistMemoryPartition`, `KsrQueryPersistedMemoryPartition`, and the new `KsrUnpersistMemoryPartition` are KSR (Kernel Soft Restart) infrastructure functions. Neither the unpatched nor the patched image creates a device object, registers an IRP/IOCTL dispatch, or exposes a symbolic link (no `IoCreateDevice`, `IRP_MJ*`, or `IoCreateSymbolicLink` references in either build). These routines are invoked by the kernel's soft-restart/servicing path, not from an unprivileged user-mode context. There is no demonstrated local trigger.
 
 ## 6. Exploit Primitive
 

@@ -4,6 +4,7 @@ Slug: ntfs_15bc0fdb-ntfs-report-20260703-144115
 Category: Corpus
 Author: Argus
 Summary: KB5078885
+Severity: Low
 
 ---
 
@@ -37,7 +38,7 @@ The three findings below are one coordinated change: a missing lower-bound check
 | **Entry point** | `NtSetInformationFile` / `ZwSetInformationFile`, `FileInformationClass = FileEndOfFileInformation` (20 / `0x14`), dispatched by `NtfsCommonSetInformation` @ `0x1C00E7C40` (unpatched) case `20` |
 | **User-mode API** | `NtSetInformationFile` / `SetEndOfFile` |
 
-**Root cause (plain English):**
+**Root cause:**
 
 `NtfsSetEndOfFileInfo` reads the caller's `FILE_END_OF_FILE_INFORMATION.EndOfFile` — a signed 64-bit value copied into `Irp->AssociatedIrp.SystemBuffer` (METHOD_BUFFERED). The unpatched code compares this value against the maximum file size with a **signed** comparison (`cmp rdi, [rax+1E90h]; jg`) and against the current sizes with `jl` / `jge`. A negative value is smaller than every positive bound, so it passes all of these checks and is then committed as the file's size (`mov [rbx+20h], rdi`, the SCB allocation-size field). There is no check that the value is `>= 0`.
 
@@ -160,7 +161,7 @@ case 14:
 
 There is no `test rdi, rdi; jns` (or equivalent `>= 0`) guard anywhere before these uses.
 
-### Patched — the added feature-gated sign check (real disassembly)
+### Patched — the added feature-gated sign check
 
 ```asm
 00000001C00E8FD6  call    NtfsUpdateScbFromAttribute

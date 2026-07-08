@@ -4,6 +4,7 @@ Slug: dumpfve_a71680ba-dumpfve-report-20260628-225907
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Informational
 
 ## 1. Overview
 

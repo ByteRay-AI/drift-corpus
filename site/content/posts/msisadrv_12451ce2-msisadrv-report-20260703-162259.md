@@ -4,6 +4,7 @@ Slug: msisadrv_12451ce2-msisadrv-report-20260703-162259
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: Informational
 
 ## 1. Overview
 - **Unpatched Binary**: `msisadrv_unpatched.sys`

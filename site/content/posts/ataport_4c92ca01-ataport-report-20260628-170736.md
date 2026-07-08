@@ -4,6 +4,7 @@ Slug: ataport_4c92ca01-ataport-report-20260628-170736
 Category: Corpus
 Author: Argus
 Summary: KB5082142
+Severity: Medium
 
 ## 1. Overview
 

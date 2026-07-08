@@ -4,6 +4,7 @@ Slug: ksrext_63e9d4fb-ksrext-report-20260629-010327
 Category: Corpus
 Author: Argus
 Summary: KB5082123
+Severity: None
 
 ## 1. Overview
 - **Unpatched Binary ID:** `ksrext_unpatched.sys`
@@ -195,5 +196,5 @@ None identified. Neither change corresponds to a demonstrable, reachable memory-
 ---
 
 ## 10. Confidence & Caveats
-- **Confidence:** High that neither suspected pattern is a delivered security fix. The unpatched consumers invoke callbacks while holding the shared pushlock (verified by instruction ordering across all seven consumers), so the read/clear/call race is not present; and the MDL size arithmetic is byte-identical across builds, so the `ExAllocatePool2` migration does not alter overflow behaviour.
+- **Confidence:** High that neither suspected pattern is a delivered security fix. The unpatched consumers invoke callbacks while holding the shared pushlock across all seven consumers, so the read/clear/call race is not present; and the MDL size arithmetic is byte-identical across builds, so the `ExAllocatePool2` migration does not alter overflow behaviour.
 - **Caveat:** `KsrMmAllocatePagesForMdlEx` is a kernel-internal Soft Restart allocator; its arguments originate from the secure kernel / loader path, not from a user-mode IOCTL surface in this driver. A reviewer wishing to bound the `TotalBytes` argument can trace cross-references from `securekernel.exe` / `ntoskrnl.exe`, but the arithmetic itself is unchanged by this patch.

@@ -4,6 +4,7 @@ Slug: http_d26aca0f-http-report-20260628-234324
 Category: Corpus
 Author: Argus
 Summary: KB5083769
+Severity: Informational
 
 ---
 

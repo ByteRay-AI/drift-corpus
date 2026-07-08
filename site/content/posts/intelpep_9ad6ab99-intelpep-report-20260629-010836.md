@@ -4,6 +4,7 @@ Slug: intelpep_9ad6ab99-intelpep-report-20260629-010836
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 

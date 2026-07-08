@@ -4,6 +4,7 @@ Slug: fsdepends_308a0c48-fsdepends-report-20260625-233200
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: Medium
 
 ## 1. Overview
 

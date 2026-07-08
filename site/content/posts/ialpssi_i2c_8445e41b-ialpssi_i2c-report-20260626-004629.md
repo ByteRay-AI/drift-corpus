@@ -4,6 +4,7 @@ Slug: ialpssi_i2c_8445e41b-ialpssi_i2c-report-20260626-004629
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ---
 
@@ -46,7 +47,7 @@ In the patched build the SCL-count writes are moved inside that same speed-mode 
 - The `SPK_Cnt` values are populated by `GetDefaultSettings` (constants), `GetRegistrySettings` (registry, i.e. administrator-controlled), and `OverrideDefaultsForHardware` (hardware-ID constants). None is reachable from an untrusted input surface.
 - The hardware reset value of `SPKLEN`/`HS_SPKLEN` on the target silicon cannot be read from these binaries, so the claim that the unpatched driver leaves "no spike filtering" cannot be substantiated. Any effect of the added programming is at most a bus-reliability improvement under real electrical conditions, not a security boundary.
 
-**Code path that reaches the changed function (function names/addresses verified in the unpatched build):**
+**Code path that reaches the changed function:**
 
 1. An SPB (Simple Peripheral Bus) I2C read/write/sequence request handled by `OnRead` (`0x140004ec8`), `OnWrite` (`0x140005b90`), `OnSequence` (`0x1400055b4`), or `PbcRequestConfigureForNonSequence` (`0x140006298`).
 2. `ControllerConfigureForTransfer_PassiveLevel` (`0x140002434`) - WDF passive-level work-item callback.
@@ -128,7 +129,7 @@ HWREG<unsigned long>::Write(mmio + 0x6c, 1);  // enable controller
 
 ## 4. Assembly Analysis
 
-### Unpatched `ControllerConfigureForTransfer` - speed-register block (verified)
+### Unpatched `ControllerConfigureForTransfer` - speed-register block
 
 The following instructions are copied from the unpatched disassembly (`rsi` = `PBC_DEVICE*`, `[rsi+8]` = MMIO base). The register-programming block runs from `0x1400087e0` through the speed-mode check at `0x140008878`:
 
@@ -172,7 +173,7 @@ The following instructions are copied from the unpatched disassembly (`rsi` = `P
 
 No instruction anywhere in the unpatched function targets `MMIO+0xA0` (`SPKLEN`) or `MMIO+0xA4` (`HS_SPKLEN`) - confirmed by scanning the full function body (`0x1400083c0`–`0x140009bf8`) for `add rcx, 0A0h` / `0A4h`, which yields no match.
 
-### Patched `ControllerConfigureForTransfer` - added writes (verified)
+### Patched `ControllerConfigureForTransfer` - added writes
 
 In the patched function (`0x140008360`–`0x140009c50`) the same scan finds the new writes: `add rcx, 0A0h` at `0x1400087be`, `0x140008830`, `0x140008892`, `0x140008901` (the `SPKLEN` writes across the Standard, both Fast sub-paths, and HighSpeed branches) and `add rcx, 0A4h` at `0x14000893d` (the `HS_SPKLEN` write in the HighSpeed branch). Each is reached only inside its speed-mode branch.
 
@@ -233,7 +234,7 @@ bp 0x14000be00    ;; HWREG<unsigned long>::Write
 - **Unpatched:** MMIO `0xA0` and `0xA4` are never written; the SCL-count registers for all three speed groups are written on every configuration.
 - **Patched:** MMIO `0xA0` is written in each speed-mode branch and `0xA4` in the HighSpeed branch; only the selected mode's SCL-count registers are written.
 
-### `PBC_DEVICE` field layout (verified)
+### `PBC_DEVICE` field layout
 
 The patch inserts one `SPK_Cnt` DWORD after each speed-mode group, growing `PBC_DEVICE` by `0x10` bytes and cascading all later field offsets by `+0x10`.
 
@@ -289,7 +290,7 @@ The binary-diff similarity threshold flagged six functions. An independent funct
 
 ### 6. `I2CInitDma` (similarity 0.9927) - non-security
 
-- `MmAllocateContiguousMemorySpecifyCache` `CacheType` changed from `MmNonCached` (`0`) to `MmCached` (`1`) for the DMA contiguous buffer (verified in both decompilations). A performance/correctness change, not security-relevant.
+- `MmAllocateContiguousMemorySpecifyCache` `CacheType` changed from `MmNonCached` (`0`) to `MmCached` (`1`) for the DMA contiguous buffer. A performance/correctness change, not security-relevant.
 - DMA-related struct offsets shift `+0x10`; register-allocation differences are cosmetic.
 
 ---

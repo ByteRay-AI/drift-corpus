@@ -4,6 +4,7 @@ Slug: ndiswan_99146e1f-ndiswan-report-20260704-092311
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 
@@ -30,7 +31,7 @@ The originally suspected double-free is **not reachable in the unpatched build**
 |---|---|---|
 | **None (no reachable vulnerability)** | Return-value / ownership-contract refactor (defense-in-depth) | `ReceivePPP` (`0x1C002D820`), `DoMultilinkProcessing` (`0x1C002BE9C`) |
 
-### What the code actually does (plain English)
+### What the code actually does
 
 `DoMultilinkProcessing` (`0x1C002BE9C`) is the PPP Multilink Protocol (MP) reassembly routine. It parses the MP sequence number and either inserts the received-frame descriptor into a sorted reorder list, replaces it with a freshly allocated copy, or frees/rejects it. It reports its outcome to its only caller, `ReceivePPP`.
 

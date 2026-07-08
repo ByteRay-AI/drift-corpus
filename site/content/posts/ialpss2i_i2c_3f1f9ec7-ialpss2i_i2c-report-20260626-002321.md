@@ -4,6 +4,7 @@ Slug: ialpss2i_i2c_3f1f9ec7-ialpss2i_i2c-report-20260626-002321
 Category: Corpus
 Author: Argus
 Summary: KB5073723
+Severity: None
 
 ### 1. Overview
 - **Unpatched Binary:** `ialpss2i_i2c_unpatched.sys`
@@ -41,12 +42,12 @@ The unpatched build routes `{version 4, revision < 0xF0}` through the version di
 - The version and revision values originate from hardware identity (PCI configuration space / device enumeration), not from attacker-controllable software input. There is no IOCTL or user-mode path that sets these values.
 - No memory-safety primitive (no OOB read/write, no UAF, no integer overflow) is introduced or removed. The change is purely which `NTSTATUS` the function returns for one hardware-identity combination.
 
-**Call Chain (verified):**
+**Call Chain:**
 1. PnP Manager enumerates the device and invokes the WDF `EvtDriverDeviceAdd` callback `OnDeviceAdd` (`0x140001000`).
 2. `OnDeviceAdd` calls `CheckSupportedHardware` at `0x1400012DE` (unpatched) / `0x1400012D4` (patched).
 3. `CheckSupportedHardware` calls `GetHardwareVersion`, `GetHardwareRevision`, `GetHardwareInstance`, stores the results into the device context, and runs the version/revision dispatch.
 
-(The report's earlier framing of `OnPrepareHardware` as the caller is not supported by the binaries; the only caller of `CheckSupportedHardware` is `OnDeviceAdd`.)
+The only caller of `CheckSupportedHardware` is `OnDeviceAdd`.
 
 ---
 

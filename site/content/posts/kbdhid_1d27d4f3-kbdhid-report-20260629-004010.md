@@ -4,6 +4,7 @@ Slug: kbdhid_1d27d4f3-kbdhid-report-20260629-004010
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 - **Unpatched Binary:** `kbdhid_unpatched.sys`

@@ -4,6 +4,7 @@ Slug: cmimcext_999b73d3-cmimcext-report-20260628-223224
 Category: Corpus
 Author: Argus
 Summary: KB5094128
+Severity: None
 
 ## 1. Overview
 

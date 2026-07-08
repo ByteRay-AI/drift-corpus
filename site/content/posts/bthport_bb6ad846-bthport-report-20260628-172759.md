@@ -4,6 +4,7 @@ Slug: bthport_bb6ad846-bthport-report-20260628-172759
 Category: Corpus
 Author: Argus
 Summary: KB5094127
+Severity: None
 
 ## 1. Overview
 
@@ -23,7 +24,7 @@ Summary: KB5094127
 **What actually changed:**
 In the unpatched build the per-request teardown is performed inline: under the coordinator spinlock, for each pending request the code atomically reads-and-clears the IRP cancel-routine pointer at request `+0x68` (`xchg rax, [rdi-40h]` at `0x1C0074DD9`), compares it against `OnAdvertisementRequestCancelThunk` (`0x1C00719E0`) and `OnPendingAdvertisementRequestCancelThunk` (`0x1C00718A0`), and for a recognized thunk decrements the operation-guard reference count at `Event+0x18` (`lock xadd [rbp+18h]` at `0x1C0074DF6`, signalling via `KeSetEvent` on reaching zero). It then re-installs the pending cancel thunk at `+0x68` (`0x1C0074E1E`) and, if the byte flag at `+0x44` is set, clears it again.
 
-The patched build extracts that exact read-clear-validate-and-release sequence into a new helper, `ClearRequestCancellationRoutine` (`0x1C0072854`), which performs the identical atomic exchange, the identical two-thunk comparison, and the identical `lock xadd [Event+0x18]` / `KeSetEvent` decrement (verified below). The call to the helper is placed behind `Feature_1166795066__private_IsEnabledDeviceUsage` (`0x1C0075A04`): the feature-enabled branch (`0x1C0074E1B`) and the feature-disabled legacy branch (`0x1C0074E4A`) both call the same helper and both re-install the pending thunk, differing only in whether the request's cancelled flag (bit `0x4`) is set when the cancel-routine field was already `NULL`, and in how the end-of-iteration guard release is selected. The guard is still acquired once (`lock inc [Event+0x18]`) and released at most once per iteration in every path.
+The patched build extracts that exact read-clear-validate-and-release sequence into a new helper, `ClearRequestCancellationRoutine` (`0x1C0072854`), which performs the identical atomic exchange, the identical two-thunk comparison, and the identical `lock xadd [Event+0x18]` / `KeSetEvent` decrement. The call to the helper is placed behind `Feature_1166795066__private_IsEnabledDeviceUsage` (`0x1C0075A04`): the feature-enabled branch (`0x1C0074E1B`) and the feature-disabled legacy branch (`0x1C0074E4A`) both call the same helper and both re-install the pending thunk, differing only in whether the request's cancelled flag (bit `0x4`) is set when the cancel-routine field was already `NULL`, and in how the end-of-iteration guard release is selected. The guard is still acquired once (`lock inc [Event+0x18]`) and released at most once per iteration in every path.
 
 The feature flag is new to the patched image (0 occurrences in the unpatched disassembly, 3 in the patched). Because the else branch preserves the pre-patch behaviour, when the flag is disabled the patched driver behaves as the unpatched driver.
 
@@ -101,7 +102,7 @@ The extracted `ClearRequestCancellationRoutine` performs exactly the inline read
 
 ## 5. Assembly Analysis
 
-### `MarkingAllAdvertisingRequestAsNewEntry` (Legacy) — real disassembly
+### `MarkingAllAdvertisingRequestAsNewEntry` (Legacy) — disassembly
 
 **Unpatched inline teardown (`0x1C0074D10`):**
 ```

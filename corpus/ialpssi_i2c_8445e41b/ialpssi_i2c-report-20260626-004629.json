@@ -57,7 +57,7 @@
       "key_changes": [
         "UNPATCHED: writes the Standard (0x14/0x18), Fast/FastPlus (0x1c/0x20) and HighSpeed (0x24/0x28) SCL high/low count registers as a linear sequence. The active speed mode is still programmed into IC_CON at MMIO offset 0 ((2*(mode&3))|0x61); the mode switch selects only the SDA-hold value written to 0x7c.",
         "UNPATCHED: does not program SPKLEN (offset 0xA0) or HS_SPKLEN (offset 0xA4) - confirmed by scanning the full function (0x1400083c0-0x140009bf8) for add rcx,0A0h/0A4h, which yields no match.",
-        "PATCHED: moves the SCL-count writes inside the existing speed-mode switch so each branch writes only its own group (verified in decompilation, function 0x140008360).",
+        "PATCHED: moves the SCL-count writes inside the existing speed-mode switch so each branch writes only its own group (function 0x140008360).",
         "PATCHED: adds SPKLEN (0xA0) write in every branch (add rcx,0A0h at 0x1400087be/0x140008830/0x140008892/0x140008901).",
         "PATCHED: adds HS_SPKLEN (0xA4) write in the HighSpeed branch (add rcx,0A4h at 0x14000893d)."
       ],

@@ -4,6 +4,7 @@ Slug: fileinfo_fb868054-fileinfo-report-20260628-233857
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: None
 
 ## 1. Overview
 

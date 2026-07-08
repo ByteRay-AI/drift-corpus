@@ -4,6 +4,7 @@ Slug: nwifi_e4f5b8cd-nwifi-report-20260703-213713
 Category: Corpus
 Author: Argus
 Summary: KB5075912
+Severity: None
 
 ---
 

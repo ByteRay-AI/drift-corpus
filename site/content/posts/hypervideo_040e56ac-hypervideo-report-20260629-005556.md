@@ -4,6 +4,7 @@ Slug: hypervideo_040e56ac-hypervideo-report-20260629-005556
 Category: Corpus
 Author: Argus
 Summary: KB5078752
+Severity: Low
 
 ---
 
@@ -42,7 +43,7 @@ Summary: KB5078752
 
 Because the callee is an external function reached only through the channel object's function-pointer table (populated by the VMBus channel library, not this module), the callee's true parameter count is not visible in these binaries. If the callee reads seven parameters, the unpatched build passed it up to four bytes of uninitialized kernel-stack data; if it reads six, the slot is harmless. That ambiguity is why this finding is rated Low and the disclosure is stated as unconfirmed rather than demonstrated.
 
-**Entry point & data flow (verified in the decompilation):**
+**Entry point & data flow:**
 
 1. `DriverEntry` (0x1C000C008) publishes the miniport callback table; `HvdDdiSystemDisplayWrite` is stored at table slot `[35]` and `HvdDdiStartDevice` at slot `[2]`.
 2. `CrashHvdSendMessage` has exactly two in-module callers: `HvdDdiSystemDisplayWrite` (0x1C0001490) and `CrashHvdInitialize` (0x1C0001764). Both are part of the crash/bugcheck synthetic-video path (`DxgkDdiSystemDisplayWrite` is the callback the OS uses to paint the screen during a bugcheck, when the normal display pipeline is unavailable).

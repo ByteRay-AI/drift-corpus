@@ -1,3 +1,4 @@
+[![Browse the corpus](https://img.shields.io/badge/Browse%20the%20corpus-0891B2?style=flat&logo=readthedocs&logoColor=white)](https://byteray-ai.github.io/drift-corpus)
 [![Discord](https://img.shields.io/badge/Discord-Join%20our%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/46ndug98k)
 
 # The Drift Corpus: Ring 0

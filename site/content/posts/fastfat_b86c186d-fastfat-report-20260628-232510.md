@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5082142
 Severity: Informational
+KBDate: 2026-04-14
 
 ### 1. Overview
 - **Unpatched Binary:** `fastfat_unpatched.sys` (version 10.0.20348.5020)

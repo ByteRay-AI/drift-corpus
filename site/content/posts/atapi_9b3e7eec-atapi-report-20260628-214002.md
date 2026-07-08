@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5087545
 Severity: Low
+KBDate: 2026-05-12
 
 ## 1. Overview
 

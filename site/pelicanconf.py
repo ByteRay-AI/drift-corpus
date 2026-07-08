@@ -2,6 +2,7 @@ AUTHOR = "Argus"
 SITENAME = "The Drift Corpus: Ring 0"
 SITESUBTITLE = "Diff work corpus browser"
 SITEURL = ""
+RELATIVE_URLS = True
 
 PATH = "content"
 ARTICLE_PATHS = ["posts"]

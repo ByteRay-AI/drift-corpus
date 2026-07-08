@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5075912
 Severity: None
+KBDate: 2026-02-10
 
 ## 1. Overview
 - **Unpatched Binary**: `mqac_unpatched.sys` — FileVersion 10.0.28000.2336

@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5078752
 Severity: Medium
+KBDate: 2026-03-10
 
 ### 1. Overview
 - **Unpatched Binary:** `cdrom_unpatched.sys`

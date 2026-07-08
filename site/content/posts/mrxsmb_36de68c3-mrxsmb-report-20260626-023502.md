@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5075912
 Severity: Medium
+KBDate: 2026-02-10
 
 ---
 

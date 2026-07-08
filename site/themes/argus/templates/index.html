@@ -30,6 +30,7 @@
                 <div class="post-body">
                     <h3 class="post-title"><a href="{{ SITEURL }}/{{ article.url }}">{{ article.title }}</a></h3>
                     {% if article.summary %}<p class="post-summary">{{ article.summary|striptags }}</p>{% endif %}
+                    {% if article.kbdate %}<p class="kb-pub">KB published {{ article.kbdate }}</p>{% endif %}
                     <div class="chips">
                         {% if article.author %}<span class="chip chip-author">{{ article.author }}</span>{% endif %}
                         {% for tag in article.tags %}<a class="chip" href="{{ SITEURL }}/{{ tag.url }}">#{{ tag }}</a>{% endfor %}

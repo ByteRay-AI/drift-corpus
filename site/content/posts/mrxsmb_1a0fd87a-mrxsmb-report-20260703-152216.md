@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5089549
 Severity: Medium
+KBDate: 2026-05-12
 
 ## 1. Overview
 - **Unpatched Binary ID:** `mrxsmb_unpatched.sys`

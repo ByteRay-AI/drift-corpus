@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5094128
 Severity: Informational
+KBDate: 2026-06-09
 
 ## 1. Overview
 - **Unpatched Binary**: `msisadrv_unpatched.sys`

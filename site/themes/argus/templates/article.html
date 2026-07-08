@@ -13,6 +13,7 @@
                 {% if article.severity %}<span class="sev sev-{{ article.severity|lower }}">{{ article.severity }}</span>{% endif %}
                 <time class="mono muted" datetime="{{ article.date.isoformat() }}" style="font-size:0.85rem;">{{ article.date|strftime('%Y-%m-%d') }}</time>
                 {% if article.author %}<span class="mono muted" style="font-size:0.85rem;">by {{ article.author }}</span>{% endif %}
+                {% if article.kbdate %}<span class="mono muted" style="font-size:0.85rem;">KB published {{ article.kbdate }}</span>{% endif %}
             </div>
             <h1>{{ article.title }}</h1>
             {% if article.summary %}<p class="lede">{{ article.summary|striptags }}</p>{% endif %}

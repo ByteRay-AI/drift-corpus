@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5094128
 Severity: Medium
+KBDate: 2026-06-09
 
 ### 1. Overview
 - **Unpatched Binary:** `hvsocket_unpatched.sys`

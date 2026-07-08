@@ -338,3 +338,5 @@ a.chip:hover { color: var(--argus-ink); border-color: var(--argus-line-strong); 
 @media (max-width: 640px) {
   .hero h1 { white-space: normal; max-width: 18ch; }
 }
+
+.kb-pub { margin:-8px 0 14px; font-family:var(--font-mono); font-size:0.8rem; color:var(--argus-ink-mute); }

@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5094126
 Severity: None
+KBDate: 2026-06-09
 
 ## 1. Overview
 - **Binaries Analyzed:** `mrxsmb_unpatched.sys` vs `mrxsmb_patched.sys`

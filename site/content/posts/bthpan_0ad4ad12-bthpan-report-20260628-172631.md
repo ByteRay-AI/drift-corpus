@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5094127
 Severity: None
+KBDate: 2026-06-09
 
 - **Unpatched Binary:** `bthpan_unpatched.sys`
 - **Patched Binary:** `bthpan_patched.sys`

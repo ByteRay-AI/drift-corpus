@@ -5,6 +5,7 @@ Category: Corpus
 Author: Argus
 Summary: KB5078752
 Severity: Low
+KBDate: 2026-03-10
 
 ## 1. Overview
 - **Unpatched Binary:** `ksrext_unpatched.sys`

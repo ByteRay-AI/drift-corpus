@@ -1,0 +1,94 @@
+{
+  "binaries": {
+    "title": "ndproxy.sys (NDIS Proxy Driver) - No security-relevant change: new IOCTL 0x8FFF23DC query handler added (returns an already-exposed counter)",
+    "id_unpatched": "ndproxy_unpatched.sys",
+    "id_patched": "ndproxy_patched.sys",
+    "overall_similarity": 0.9913,
+    "matched": 148,
+    "changed": 1,
+    "identical": 147,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "PxIODispatch",
+      "address": "0x1C0003B80",
+      "similarity": 0.9555,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new IOCTL 0x8FFF23DC dispatch check (cmp ecx, 8FFF23DCh; jz loc_1C0003C2E) at 0x1C0003C1C, before the default path at the end of the IOCTL dispatch chain",
+        "Added new handler body for 0x8FFF23DC at 0x1C0003C2E: validates InputBufferLength >= 8 and OutputBufferLength >= 4 (else STATUS_BUFFER_TOO_SMALL 0xC0000023), acquires global spin lock qword_1C0009748, reads global DWORD dword_1C0009738 into the METHOD_BUFFERED system buffer, sets IoStatus.Information = 4, releases the spin lock",
+        "The spin-lock release + completion tail at 0x1C0003C5D is shared with the existing 0x8FFF23C0 handler, which reaches it via jmp loc_1C0003C5D at 0x1C0004084",
+        "Register reallocation throughout the function (e.g. SystemBuffer pointer rsi->rdi, IRP pointer rdi->rbp, status seed register change), causing relocation of most loc_ labels and of the default/error/completion addresses (default 0x1C0003C18->0x1C0003C24, size-error 0x1C0003C27->0x1C0003C7D, completion 0x1C0004053->0x1C0004092)",
+        "All existing IOCTL handlers (0x8FFF23C0, 0x8FFF23C4, 0x8FFF23C8/CC, 0x8FFF23D0, 0x8FFF23D4, 0x8FFF23D8) are semantically identical between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "The patch adds a new IOCTL 0x8FFF23DC handler to the IRP_MJ_DEVICE_CONTROL dispatch function PxIODispatch (0x1C0003B80) for \\Device\\NDProxy. In the unpatched build, IOCTL 0x8FFF23DC is not recognized: it misses every comparison (0x8FFF23C0, C4, C8/CC, D0, D4, D8) and falls through to the default path at 0x1C0003C18, which sets ebx = 0xC000000D (STATUS_UNSUCCESSFUL) and completes the IRP with no side effects (no lock held, no state mutated, no output written). The new handler reads the global DWORD dword_1C0009738 (the same value already returned by the existing 0x8FFF23C0 handler) and writes it to the output buffer, with correct buffer-size validation and spin-lock synchronization. This is a functionality/compatibility addition, not a security fix. It enlarges the driver's readable IOCTL surface rather than closing any hole; the value returned is already reachable via 0x8FFF23C0, so no new information is disclosed, and no memory-corruption, use-after-free, or type-confusion condition is created or removed. CWE-478 (missing default case in switch) does not apply because both builds retain a working default path; only a specific additional case was added."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "PxIODispatch",
+      "address": "0x1C0003B80",
+      "entry_point": "IOCTL 0x8FFF23DC via IRP_MJ_DEVICE_CONTROL on \\Device\\NDProxy (METHOD_BUFFERED)",
+      "call_chain": [
+        "DeviceIoControl(\\Device\\NDProxy, 0x8FFF23DC, ...) -> IRP_MJ_DEVICE_CONTROL",
+        "DriverEntry (0x1C00142BC) sets DriverObject->MajorFunction[14] = PxIODispatch",
+        "PxIODispatch: validates MajorFunction (0x0E) and device object (DeviceExtension+0x10), then dispatches on IoStackLocation->Parameters.DeviceIoControl.IoControlCode ([r8+0x18])",
+        "Unpatched: 0x8FFF23DC misses C0/C4/C8-CC/D0/D4/D8 checks and reaches the default path at 0x1C0003C18 (STATUS_UNSUCCESSFUL)"
+      ],
+      "vulnerability_class": "New IOCTL handler added (feature/compatibility); no security impact",
+      "description": "The unpatched PxIODispatch (0x1C0003B80) does not recognize IOCTL code 0x8FFF23DC. When this IOCTL is sent to \\Device\\NDProxy, the dispatch chain checks codes 0x8FFF23C0, C4, the C8/CC pair, D0, D4 and D8 but does not match 0x8FFF23DC, falling through to the default path at 0x1C0003C18 which returns STATUS_UNSUCCESSFUL (0xC000000D) with no side effects. The patch adds a handler that validates InputBufferLength >= 8 and OutputBufferLength >= 4, acquires the global spin lock at qword_1C0009748, reads the global DWORD dword_1C0009738, writes it to the output system buffer, and returns with IoStatus.Information = 4. This DWORD is also returned by the existing 0x8FFF23C0 handler, so the new handler provides an alternate query path for a value that is already reachable from user mode. No memory-safety issue is created or removed, no new information is disclosed, and the unpatched fall-through for this code is safe. This is not a security-relevant change.",
+      "trigger_conditions": "1. Open a handle to \\Device\\NDProxy (the device is created in DriverEntry via WdmlibIoCreateDeviceSecure at 0x1C001210C with a security descriptor). 2. Call DeviceIoControl with dwIoControlCode = 0x8FFF23DC (METHOD_BUFFERED), lpInBuffer with >= 8 bytes, lpOutBuffer with >= 4 bytes. 3. In the unpatched build: PxIODispatch loads IoControlCode at 0x1C0003BC9, passes through the C0/C4/C8-CC/D0/D4/D8 comparisons, and falls to the default at 0x1C0003C18 (mov ebx, 0xC000000D; jmp complete), completing with STATUS_UNSUCCESSFUL. 4. In the patched build: the new cmp ecx, 8FFF23DCh at 0x1C0003C1C matches and the handler at 0x1C0003C2E processes the request.",
+      "primitive": "None. In the unpatched build, IOCTL 0x8FFF23DC returns STATUS_UNSUCCESSFUL with no kernel state modified. In the patched build, the handler returns dword_1C0009738, a value already returned by the existing 0x8FFF23C0 handler; no additional information disclosure occurs. There is no memory-corruption, use-after-free, type-confusion, or privilege primitive in either direction for this change.",
+      "evidence": "=== UNPATCHED dispatch tail (real disassembly) ===\n00000001C0003C10  cmp     ecx, 8FFF23D8h\n00000001C0003C16  jz      short loc_1C0003C22   ; D8 handler\n00000001C0003C18  mov     ebx, 0C000000Dh       ; STATUS_UNSUCCESSFUL <- 0x8FFF23DC lands here (no side effects)\n00000001C0003C1D  jmp     loc_1C0004053         ; complete\n\n=== PATCHED dispatch tail + new DC handler (real disassembly) ===\n00000001C0003C14  cmp     ecx, 8FFF23D8h\n00000001C0003C1A  jz      short loc_1C0003C87   ; D8 handler (relocated)\n00000001C0003C1C  cmp     ecx, 8FFF23DCh        ; NEW\n00000001C0003C22  jz      short loc_1C0003C2E   ; -> DC handler\n00000001C0003C24  mov     ebx, 0C000000Dh       ; STATUS_UNSUCCESSFUL (default, shifted)\n00000001C0003C29  jmp     loc_1C0004092\n00000001C0003C2E  cmp     edx, 8                ; InputBufferLength >= 8?\n00000001C0003C31  jb      short loc_1C0003C7D   ; -> STATUS_BUFFER_TOO_SMALL (0xC0000023)\n00000001C0003C33  cmp     r15d, 4               ; OutputBufferLength >= 4?\n00000001C0003C37  jb      short loc_1C0003C7D\n00000001C0003C39  lea     rsi, qword_1C0009748\n00000001C0003C40  mov     rcx, rsi\n00000001C0003C43  call    cs:__imp_KeAcquireSpinLockRaiseToDpc\n00000001C0003C4F  mov     cs:byte_1C0009750, al\n00000001C0003C55  mov     eax, cs:dword_1C0009738   ; same value as 0x8FFF23C0\n00000001C0003C5B  mov     [rdi], eax                ; *SystemBuffer = counter\n00000001C0003C5D  mov     dl, cs:byte_1C0009750      ; shared release+complete tail (also used by 0x8FFF23C0)\n00000001C0003C63  mov     r14d, 4                   ; IoStatus.Information = 4\n00000001C0003C69  mov     rcx, rsi\n00000001C0003C6C  call    cs:__imp_KeReleaseSpinLock\n00000001C0003C78  jmp     loc_1C0004092             ; complete",
+      "assembly": "=== UNPATCHED PxIODispatch @ 0x1C0003B80 - dispatch, D8 handler, completion (real disassembly) ===\n00000001C0003B94  mov     r8, [rdx+0B8h]         ; r8 = IoStackLocation\n00000001C0003B9B  xor     ebx, ebx\n00000001C0003B9D  mov     rsi, [rdx+18h]         ; rsi = IRP->AssociatedIrp.SystemBuffer\n00000001C0003BA1  mov     rdi, rdx               ; rdi = IRP\n00000001C0003BA6  cmp     byte ptr [r8], 0Eh     ; MajorFunction == IRP_MJ_DEVICE_CONTROL?\n00000001C0003BAA  mov     edx, [r8+10h]          ; edx = InputBufferLength\n00000001C0003BAE  mov     r15d, [r8+8]           ; r15d = OutputBufferLength\n00000001C0003BB2  jnz     loc_1C000407C          ; not DEVICE_CONTROL -> STATUS_INVALID_DEVICE_REQUEST\n00000001C0003BB8  mov     rax, cs:DeviceExtension\n00000001C0003BBF  cmp     rcx, [rax+10h]         ; validate device object\n00000001C0003BC3  jnz     loc_1C000407C\n00000001C0003BC9  mov     ecx, [r8+18h]          ; ecx = IoControlCode\n00000001C0003BCD  mov     r14d, 103h\n00000001C0003BD3  cmp     ecx, 8FFF23C0h\n00000001C0003BD9  jz      loc_1C0003FA3          ; C0 handler (reads dword_1C0009738)\n00000001C0003BDF  cmp     ecx, 8FFF23C4h\n00000001C0003BE5  jz      loc_1C0003F0B          ; C4 handler\n00000001C0003BEB  lea     eax, [rcx+7000DC38h]\n00000001C0003BF1  test    eax, 0FFFFFFFBh\n00000001C0003BF6  jz      loc_1C0003DC4          ; C8/CC range handler\n00000001C0003BFC  cmp     ecx, 8FFF23D0h\n00000001C0003C02  jz      loc_1C0003D07          ; D0 handler\n00000001C0003C08  cmp     ecx, 8FFF23D4h\n00000001C0003C0E  jz      short loc_1C0003C51    ; D4 handler\n00000001C0003C10  cmp     ecx, 8FFF23D8h\n00000001C0003C16  jz      short loc_1C0003C22    ; D8 handler\n00000001C0003C18  mov     ebx, 0C000000Dh        ; STATUS_UNSUCCESSFUL <- 0x8FFF23DC lands here\n00000001C0003C1D  jmp     loc_1C0004053          ; complete\n\n; === D8 handler (semantically identical in both builds) ===\n00000001C0003C22  cmp     edx, 8                 ; InputBufferLength >= 8?\n00000001C0003C25  jnb     short loc_1C0003C31\n00000001C0003C27  mov     ebx, 0C0000023h        ; STATUS_BUFFER_TOO_SMALL\n00000001C0003C2C  jmp     loc_1C0004053\n00000001C0003C31  mov     ecx, [rsi]             ; ecx = SystemBuffer[0] (user-controlled ID)\n00000001C0003C33  lea     rdx, [rsp+58h+arg_10]\n00000001C0003C38  call    IsTapiLineValid        ; 0x1C001014C\n00000001C0003C3D  test    al, al\n00000001C0003C3F  jz      short loc_1C0003C18    ; not found -> error\n00000001C0003C41  mov     rax, [rsp+58h+arg_10]  ; found object\n00000001C0003C46  mov     ecx, [rsi+4]           ; SystemBuffer[1] (user-controlled value)\n00000001C0003C49  mov     [rax+20h], ecx         ; write to object+0x20\n00000001C0003C4C  jmp     loc_1C0004053\n\n; === Completion path ===\n00000001C0004053  mov     ecx, ebp\n00000001C0004057  mov     [rdi+38h], rcx         ; IoStatus.Information\n00000001C000405B  mov     rcx, [rdi+0B8h]\n00000001C0004062  mov     [rdi+30h], ebx         ; IoStatus.Status\n00000001C0004069  mov     rcx, rdi\n00000001C000406C  call    cs:__imp_IofCompleteRequest",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndproxy!PxIODispatch",
+            "address": "0x1C0003B80",
+            "why": "Entry point of the IRP_MJ_DEVICE_CONTROL handler. At hit: rcx = device object, rdx = IRP, r8 = IoStackLocation. IoControlCode is loaded at 0x1C0003BC9 into ecx. For IOCTL 0x8FFF23DC in the unpatched build, execution falls through all dispatch checks to the default path at 0x1C0003C18."
+          },
+          {
+            "symbol": "ndproxy!PxIODispatch+0x98",
+            "address": "0x1C0003C18",
+            "why": "Default path for unrecognized IOCTL codes in the unpatched build. This is where IOCTL 0x8FFF23DC ends up: sets ebx = 0xC000000D (STATUS_UNSUCCESSFUL) and jumps to completion with no side effects. In the patched build this address is 0x1C0003C24 and is only reached if the new DC check at 0x1C0003C1C also fails."
+          },
+          {
+            "symbol": "ndproxy!PxIODispatch+0xa2",
+            "address": "0x1C0003C22",
+            "why": "Unpatched D8 handler entry. When sending IOCTL 0x8FFF23DC this breakpoint is NOT hit in the unpatched build (the D8 comparison fails for DC), confirming DC falls past D8 to the default path."
+          }
+        ],
+        "watch": [
+          "ecx after 0x1C0003BC9: IoControlCode from IoStackLocation[0x18] - watch for 0x8FFF23DC",
+          "edx at function entry: InputBufferLength from IoStackLocation[0x10]",
+          "r15d at function entry: OutputBufferLength from IoStackLocation[0x8]",
+          "rsi (unpatched) / rdi (patched): IRP->AssociatedIrp.SystemBuffer (METHOD_BUFFERED kernel copy)",
+          "dword_1C0009738: global DWORD returned by the 0x8FFF23C0 handler and by the new (patched) DC handler",
+          "qword_1C0009748: KSPIN_LOCK used by the C0, C4, D4 and new DC handlers"
+        ],
+        "key_offsets": [
+          "0x1C0003BC9: mov ecx, [r8+0x18] loads IoControlCode; cmp ecx, 8FFF23C0h is the first dispatch check",
+          "0x1C0003C10: unpatched D8 dispatch check (cmp ecx, 8FFF23D8h) - 0x8FFF23DC does NOT match, falls through",
+          "0x1C0003C18: unpatched default path (mov ebx, 0xC000000D; jmp complete) - where 0x8FFF23DC ends up",
+          "0x1C0003C1C: PATCHED-only inserted check (cmp ecx, 8FFF23DCh; jz loc_1C0003C2E)",
+          "0x1C0003C2E: PATCHED-only DC handler InputBufferLength check (cmp edx, 8)",
+          "0x1C0003C5D: PATCHED shared spin-lock release + completion tail (used by 0x8FFF23C0 and 0x8FFF23DC)",
+          "0x1C0004053 (unpatched) / 0x1C0004092 (patched): IRP completion path (IofCompleteRequest)"
+        ],
+        "trigger_setup": "1) Open \\Device\\NDProxy (created in DriverEntry via WdmlibIoCreateDeviceSecure with a security descriptor). 2) Call DeviceIoControl with dwIoControlCode = 0x8FFF23DC, lpInBuffer >= 8 bytes, lpOutBuffer >= 4 bytes. The IOCTL uses METHOD_BUFFERED (low 2 bits of the code = 0). 3) In the unpatched build the IRP completes with STATUS_UNSUCCESSFUL (0xC000000D) and no data is written. 4) In the patched build the handler reads dword_1C0009738 and returns it as a 4-byte value in the output buffer.",
+        "expected_observation": "Unpatched: DeviceIoControl returns FALSE, the IRP completes with STATUS_UNSUCCESSFUL (0xC000000D), output buffer unchanged. Patched: DeviceIoControl returns TRUE with lpBytesReturned = 4 and the output buffer holds the 4-byte value from dword_1C0009738. Confirm the path by breaking at 0x1C0003C18 (unpatched default) for the DC code and verifying 0x1C0003C22 (D8 entry) is NOT hit.",
+        "notes": "IOCTL codes handled by PxIODispatch: 0x8FFF23C0 (returns dword_1C0009738 and walks the provider list marking connected), 0x8FFF23C4 (walks the provider list marking disconnected), 0x8FFF23C8/CC (TAPI request via a function-pointer table with guarded indirect call), 0x8FFF23D0 (line-events request, may pend the IRP), 0x8FFF23D4 (assign sequential IDs to all adapters), 0x8FFF23D8 (look up a single object via IsTapiLineValid and write SystemBuffer[1] to object+0x20), and 0x8FFF23DC (patched only: read dword_1C0009738). All use METHOD_BUFFERED. The device object is validated at dispatch entry by comparing the incoming device object against the stored DeviceObject at DeviceExtension+0x10. The global spin lock qword_1C0009748 protects the provider/adapter globals. IsTapiLineValid (0x1C001014C) acquires the NDIS RW-lock qword_1C00096F8, and on a match takes the per-object spin lock at object+0x78 and increments the reference count at object+0x10; this code is byte-equivalent in both builds and is not modified by this patch."
+      }
+    }
+  ],
+  "summary": "The patch to ndproxy.sys modifies a single function (PxIODispatch @ 0x1C0003B80, the IRP_MJ_DEVICE_CONTROL handler for \\Device\\NDProxy) by adding a new handler for IOCTL code 0x8FFF23DC. In the unpatched build this IOCTL is unrecognized: it misses every comparison (0x8FFF23C0, C4, C8/CC, D0, D4, D8) and falls through to the default path at 0x1C0003C18, which returns STATUS_UNSUCCESSFUL (0xC000000D) with no side effects. The new handler validates buffer sizes (InputBufferLength >= 8, OutputBufferLength >= 4), acquires the global spin lock qword_1C0009748, reads the global DWORD dword_1C0009738 (the same value already returned by the existing 0x8FFF23C0 handler), writes it to the output buffer, and completes with Information = 4; its spin-lock release + completion tail at 0x1C0003C5D is shared with the 0x8FFF23C0 handler. All existing handlers are semantically identical between builds; the remaining differences are compiler register reallocation and the resulting label/address relocation. This is a functionality/compatibility addition, not a security fix: it adds readable IOCTL surface for a value already exposed via 0x8FFF23C0 and neither creates nor removes any memory-safety, information-disclosure, or privilege condition. CWE-478 does not apply because both builds retain a working default path."
+}

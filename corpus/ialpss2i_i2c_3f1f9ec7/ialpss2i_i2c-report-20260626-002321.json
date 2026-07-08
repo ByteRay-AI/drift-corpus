@@ -1,0 +1,202 @@
+{
+  "binaries": {
+    "id_unpatched": "ialpss2i_i2c_unpatched.sys",
+    "id_patched": "ialpss2i_i2c_patched.sys",
+    "overall_similarity": 0.9476,
+    "matched": 169,
+    "changed": 99,
+    "identical": 70,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CheckSupportedHardware",
+      "similarity": 0.7273,
+      "change_type": "behavioral_non_security",
+      "key_changes": [
+        "The only behavioral difference in the whole diff. CheckSupportedHardware reads a hardware version value (device context +0x44) and a PCI revision value (+0x48) and dispatches on version/revision against the threshold 0xF0. The single reject sentinel 'mov r14d, 0C0000260h' (STATUS_DEVICE_DATA_ERROR) exists at address 0x140013B92 in BOTH builds.",
+        "Across all reachable version/revision paths the outcomes are identical between builds EXCEPT the combination {version 4, revision < 0xF0}: the unpatched build (0x14001373C) lets this case fall through the version dispatch into the generic reject at 0x140013B92 (returns STATUS_DEVICE_DATA_ERROR); the patched build (0x1400136A4) handles it directly in the version-4 branch (0x1400139AD) and returns STATUS_SUCCESS.",
+        "Direction is a RELAXATION: the patched driver accepts hardware the unpatched driver rejected. This is a device-support/compatibility gate change, not a safety gate being added.",
+        "Called only from OnDeviceAdd (WDF EvtDriverDeviceAdd) at 0x1400012DE (unpatched) / 0x1400012D4 (patched). It is not called from OnPrepareHardware."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not security relevant. The version and revision values are hardware-identity values read from PCI configuration space / device enumeration by GetHardwareVersion and GetHardwareRevision; they are not controllable through any software (IOCTL / user-mode) input path. No memory-safety primitive is introduced or removed. The change only alters which NTSTATUS CheckSupportedHardware returns for one hardware-identity combination, and in the direction of accepting more hardware (previously rejected) rather than rejecting it. The prior claim that the patch ADDS a rejection of version 5 with revision < 0xF0 is incorrect: version 5 with revision < 0xF0 returns success in both builds, and the actual changed cell is version 4 with revision < 0xF0 (reject in unpatched, accept in patched).",
+      "assembly_diff": "Unpatched CheckSupportedHardware @ 0x14001373C, version 4 handling (ecx = 0xF0):\n0x140013A3B  cmp eax, 4\n0x140013A3E  jnz short loc_140013AB7\n0x140013A40  cmp [rdi+48h], ecx        ; revision vs 0xF0\n0x140013A43  jb short loc_140013A79    ; revision < 0xF0\n0x140013A79  cmp eax, 4\n0x140013A7C  jnz short loc_140013AB7\n0x140013A7E  cmp [rdi+48h], ecx\n0x140013A81  jb short loc_140013AB7    ; revision < 0xF0 -> dispatch continues\n; version==4 fails remaining version tests (5,6,5,7) -> generic reject:\n0x140013B92  mov r14d, 0C0000260h      ; STATUS_DEVICE_DATA_ERROR (REJECT)\n\nPatched CheckSupportedHardware @ 0x1400136A4, version 4 handling:\n0x1400139AD  cmp eax, 4\n0x1400139B0  jnz loc_140013A49\n0x1400139B6  cmp dword ptr [rdi+48h], 0F0h\n0x1400139BD  jnb short loc_140013A04   ; revision >= 0xF0 -> success trace 0x18\n; revision < 0xF0 falls through -> success trace 0x17:\n0x1400139FA  mov edx, 17h\n0x1400139FF  jmp loc_140013B7C         ; WPP_SF_ds trace then SUCCESS tail\n\nError sentinel identical in both builds:\n; unpatched  0x140013B92  mov r14d, 0C0000260h\n; patched    0x140013B92  mov r14d, 0C0000260h"
+    },
+    {
+      "name": "GetCurrentDmaTransferLeft",
+      "similarity": 0.8411,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming (rsi→r14, r14→rbp, r13→rsi) due to compiler differences",
+        "ETW trace GUID rename (WPP hash change)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerInitialize",
+      "similarity": 0.8664,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Branch-to-branchless optimization (cmp/jne → dec/neg/sbb pattern)",
+        "ETW trace GUID rename"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerConfigureForTransfer",
+      "similarity": 0.909,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable/register renaming (i→r12, r13→rsi)",
+        "ETW trace GUID renames throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerProcessInterrupts",
+      "similarity": 0.9191,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address changes due to binary layout differences",
+        "ETW trace GUID renames"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DmaInitSw",
+      "similarity": 0.9237,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames",
+        "Compiler restructuring of WPP trace guard checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvtProgramDmaRx",
+      "similarity": 0.9257,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes",
+        "ETW trace GUID renames"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FillDmaTxLliBuffer",
+      "similarity": 0.9337,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace additions and restructuring",
+        "Core DMA LLI buffer fill logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FillDmaRxLliBuffer",
+      "similarity": 0.9707,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames",
+        "Core DMA LLI buffer fill logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerCompleteTransfer",
+      "similarity": 0.9908,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames (WPP_75b4760c... → WPP_83e3b9f1...)",
+        "Template_hqqxq → McTemplateK0hqqxq rename"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OverrideDefaultsForHardware",
+      "similarity": 0.9668,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames throughout",
+        "Compiler removed redundant WPP_GLOBAL_Control reloads",
+        "Hardware parameter configuration logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetHardwareVersion",
+      "similarity": 0.9668,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames",
+        "Register renaming (r15→r12, rsi→r14)",
+        "Hardware ID matching table and logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnPrepareHardware",
+      "similarity": 0.96,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID renames",
+        "Register allocation differences",
+        "MmMapIoSpaceEx call parameters unchanged (hardcoded size 0x204)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnDeviceAdd",
+      "similarity": 0.9625,
+      "change_type": "cosmetic",
+      "key_changes": ["ETW trace GUID renames", "Compiler restructuring"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "non_security_changes": [
+    {
+      "function": "CheckSupportedHardware",
+      "entry_point": "OnDeviceAdd (WDF EvtDriverDeviceAdd callback) - called during device add via PnP manager",
+      "call_chain": ["PnP Manager", "OnDeviceAdd (EvtDriverDeviceAdd)", "CheckSupportedHardware", "GetHardwareVersion / GetHardwareRevision / GetHardwareInstance"],
+      "change_class": "Hardware-support / device-compatibility gate relaxation (not security relevant)",
+      "description": "CheckSupportedHardware reads a hardware version value (device context +0x44) and a PCI revision value (+0x48) and runs a version/revision dispatch against the threshold 0xF0. Tracing every reachable path in both builds, all outcomes are identical except the combination {version 4, revision < 0xF0}: the unpatched build (0x14001373C) rejects it (falls into the generic STATUS_DEVICE_DATA_ERROR sentinel at 0x140013B92), while the patched build (0x1400136A4) accepts it (version-4 branch at 0x1400139AD returns STATUS_SUCCESS). The patch therefore RELAXES the gate, accepting hardware the unpatched driver refused. The STATUS_DEVICE_DATA_ERROR sentinel at 0x140013B92 is present identically in both builds.",
+      "why_not_security": "The version and revision values are hardware-identity values read from PCI configuration space / device enumeration; they are not influenced by any software (IOCTL or user-mode) input. No memory-safety primitive is introduced or removed. The direction is a relaxation (more hardware accepted), which is the opposite of a safety gate being added. There is no demonstrable reachable impact.",
+      "correction_of_prior_claim": "The prior draft claimed the patch ADDS rejection of version 5 with revision < 0xF0 and rated it Medium. That is incorrect on three counts: (1) version 5 with revision < 0xF0 returns success in BOTH builds; (2) the actual changed cell is version 4 with revision < 0xF0; (3) the direction is reject->accept (relaxation), not accept->reject (hardening). The 'mov r14d, 0xC0000260' error value is not new in the patched build.",
+      "evidence": "Unpatched (0x14001373C), version 4 with revision < 0xF0 falls through to the generic reject:\n0x140013A3B  cmp eax, 4\n0x140013A3E  jnz short loc_140013AB7\n0x140013A40  cmp [rdi+48h], ecx        ; ecx = 0xF0\n0x140013A43  jb short loc_140013A79    ; revision < 0xF0\n0x140013A7E  cmp [rdi+48h], ecx\n0x140013A81  jb short loc_140013AB7    ; continues, version 4 fails all remaining version tests\n0x140013B92  mov r14d, 0C0000260h      ; STATUS_DEVICE_DATA_ERROR\n\nPatched (0x1400136A4), version 4 with revision < 0xF0 returns success:\n0x1400139AD  cmp eax, 4\n0x1400139B0  jnz loc_140013A49\n0x1400139B6  cmp dword ptr [rdi+48h], 0F0h\n0x1400139BD  jnb short loc_140013A04   ; revision >= 0xF0 -> success\n0x1400139FA  mov edx, 17h              ; revision < 0xF0 -> success trace\n0x1400139FF  jmp loc_140013B7C"
+    }
+  ],
+  "summary": "This binary diff between two versions of the Intel LPSS2 I2C controller driver (ialpss2i_i2c.sys) contains 99 changed functions, 98 of which show only ETW/WPP tracing infrastructure changes (GUID hash renames, Template_* -> McTemplateK0* naming, WPP_GLOBAL_Control relocation) and compiler optimization differences (register allocation, branch-to-branchless transforms). The single behavioral change is in CheckSupportedHardware (similarity 0.7273): the patched build accepts an Intel I2C controller enumerated as hardware version 4 with PCI revision ID below 0xF0, a combination the unpatched build rejected with STATUS_DEVICE_DATA_ERROR. This is a hardware-support/compatibility gate relaxation, reached only via hardware-identity values (PCI version/revision) that are not attacker-controllable through software input, and it introduces no memory-safety primitive. There is no security-relevant change in this patch. A prior draft's claim of a Medium-severity added safety gate for version 5 with revision < 0xF0 was incorrect: that combination returns success in both builds, the actually-changed cell is version 4, and the change direction is reject->accept rather than accept->reject."
+}

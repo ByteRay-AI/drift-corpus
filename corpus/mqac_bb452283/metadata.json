@@ -1,0 +1,188 @@
+{
+  "binary": "mqac.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "5.0.1.1",
+    "sha256": "bb452283450d5a8acec87bc327f2073fa0448a303a517661440c4a66ff887735",
+    "file": "mqac_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "2d34e3e0e1ee84ba1e7914a932f0e5b5f02fdaeec21f01b422e135b3bd23bd8d",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Message Queuing Device Driver",
+      "FileVersion": "10.0.17763.8510 (WinBuild.160101.0800)",
+      "InternalName": "MQAC.SYS",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MQAC.SYS",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.8510"
+    }
+  },
+  "prev": {
+    "version": "5.0.1.1",
+    "sha256": "b6bb80642946deea6fe4aa653ddb441a65172d4420d055bcb1f63f099631319e",
+    "kb_numbers": [
+      "KB5095091"
+    ],
+    "win_versions": [
+      "11-26H1"
+    ],
+    "file": "mqac_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Message Queuing Device Driver",
+      "FileVersion": "10.0.28000.2336 (WinBuild.160101.0800)",
+      "InternalName": "MQAC.SYS",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MQAC.SYS",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.28000.2336"
+    },
+    "selection_tier": 3,
+    "selection_tier_description": "any strictly older distinct version"
+  }
+}

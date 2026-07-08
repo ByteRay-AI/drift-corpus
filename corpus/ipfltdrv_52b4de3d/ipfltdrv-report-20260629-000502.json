@@ -1,0 +1,51 @@
+{
+  "binaries": {
+    "title": "ipfltdrv.sys - No security-relevant change (recompilation: register allocation and basic-block scheduling)",
+    "id_unpatched": "ipfltdrv_unpatched.sys",
+    "id_patched": "ipfltdrv_patched.sys",
+    "overall_similarity": 0.9875,
+    "matched": 166,
+    "changed": 2,
+    "identical": 164,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MatchFilterp",
+      "address_unpatched": "0x1C00010D0",
+      "address_patched": "0x1C00010D0",
+      "similarity": 0.966,
+      "change_type": "non_security",
+      "key_changes": [
+        "Register allocation differences across the whole function (e.g. r12<->r15, r9<->r11, rsi<->r12). Example: unpatched 'xor r15d, r15d' vs patched 'xor r12d, r12d' for the same zeroed accumulator.",
+        "Basic-block scheduling: exit and NDIS lock-release tails emitted in a different order, occasionally merged or duplicated, changing jump targets and instruction counts of otherwise identical code.",
+        "Local stack-slot renaming: the same local is referenced as var_18 in one build and var_8 in the other, with no change to stored values.",
+        "No change to reference counting, control flow, data flow, or lock balance."
+      ],
+      "security_relevant": false,
+      "security_notes": "The earlier reference-count-imbalance / Use-After-Free hypothesis was tested against both builds and refuted. The reference-count decrement 'lock dec dword ptr [rbx+10h]' claimed to be missing in the unpatched build is in fact present there (14 occurrences unpatched vs 13 patched; the patched build has one fewer because two exit paths were merged into a shared tail). At the specific cited location the decrement exists in both builds: unpatched 0x1C00016C3 and patched 0x1C00016BA. The reference-count increment exists in both (unpatched 0x1C00013F3 'lock inc [rbx+10h]', patched 0x1C00013F3 'lock inc [rcx+10h]' - same instruction, base register renamed by the allocator). The 'test r14, r14' reverse-context null check appears 4 times in each build. The 'mov [rbx+38h], r14' reverse-context store is present in both builds (unpatched 0x1C0008D60/0x1C0008F00/0x1C000906C, patched 0x1C0008D84/0x1C0008F24/0x1C00090A2). NDIS read/write lock balance is unchanged (2 acquires in each build; the +1 release site in the patched build is a duplicated exit tail from block re-layout, not an added release). The change is a recompilation artifact with no security relevance.",
+      "assembly_diff": "Reference-count increment present in both builds:\n  unpatched 0x1C00013F3  lock inc dword ptr [rbx+10h]\n  patched   0x1C00013F3  lock inc dword ptr [rcx+10h]   (base register renamed rbx->rcx)\n\nReference-count decrement present in both builds at the cited location:\n  unpatched 0x1C00016C3  lock dec dword ptr [rbx+10h]\n  patched   0x1C00016BA  lock dec dword ptr [rbx+10h]\n\nReverse-context store present in both builds:\n  unpatched 0x1C0008D60  mov [rbx+38h], r14\n  patched   0x1C0008D84  mov [rbx+38h], r14\n\nRepresentative register-allocation difference:\n  unpatched  xor r15d, r15d\n  patched    xor r12d, r12d"
+    },
+    {
+      "name": "MatchV6Filter",
+      "address_unpatched": "0x1C00074F0",
+      "address_patched": "0x1C00074F0",
+      "similarity": 0.9929,
+      "change_type": "non_security",
+      "key_changes": [
+        "Call and jump target addresses shifted by a small constant as a side effect of the layout change in preceding code.",
+        "No semantic logic changes detected."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation ripple only. Instruction logic is identical between builds.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The two functions flagged as changed in ipfltdrv.sys (MatchFilterp at 0x1C00010D0 and MatchV6Filter at 0x1C00074F0) differ only by register allocation, basic-block scheduling, and local stack-slot naming, all of which are recompilation artifacts. The reference-count-imbalance / Use-After-Free hypothesis was refuted directly against both builds: the reference-count decrement 'lock dec dword ptr [rbx+10h]', the 'test r14, r14' reverse-context null check, and the 'mov [rbx+38h], r14' reverse-context store all exist identically in both the unpatched and patched builds (the unpatched build actually contains one more '+0x10' decrement than the patched build). NDIS lock acquire/release balance is unchanged. No Use-After-Free, reference-count imbalance, or lock leak is introduced or removed by the patch."
+}

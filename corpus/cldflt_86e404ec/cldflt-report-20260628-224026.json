@@ -1,0 +1,177 @@
+{
+  "binaries": {
+    "title": "cldflt.sys (Cloud Files Minifilter) - Feature-gated file-range validation made unconditional (missing sign/bounds/overflow checks)",
+    "id_unpatched": "cldflt_unpatched.sys",
+    "id_patched": "cldflt_patched.sys",
+    "overall_similarity": 0.9917,
+    "matched": 1010,
+    "changed": 3,
+    "identical": 1007,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "HsmiOpDehydrateNotificationCallback (0x1C007A2A0)",
+      "similarity": 0.9642,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the `Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage()` gate around the sign/bounds check on the dehydration range start offset (Parameters+0x10, decompiled v79), making `if (offset < 0 || offset > stream_size)` unconditional",
+        "Unpatched: when the feature is not enabled, the strict check is skipped and execution falls through to `else if (v79 > v32)` only - a signed comparison that a negative offset passes",
+        "Patched: the combined check `if (v82 < 0 || v82 > v32)` runs unconditionally and the feature predicate is removed from the binary",
+        "An unvalidated negative/oversized offset flows into HsmiMarkFileRangeNoLock (range bookkeeping) and the FSCTL_SET_ZERO_DATA (0x980C8) request; the value is a file offset, not a dereferenced pointer"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the pre-operation callback registered for the cloud-files dehydrate operation (via HsmpCldNotifyPreOperation). The checked value v79 = *((_QWORD *)Parameters + 2) is the start offset of the file range being dehydrated, taken from the HSM control message - it is NOT the IRP_MJ_CREATE AllocationSize. In the unpatched build the strict check `if (v79 < 0 || v79 > v32)` (v32 = stream size) is placed inside `if (Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0)`. When the feature is not enabled, execution falls through to `else if (v79 > v32)`, which a negative offset passes (signed: negative < positive). The unvalidated offset then reaches HsmiMarkFileRangeNoLock (pool tags 0x4244/0x4256) and FltFsControlFile with FSCTL_SET_ZERO_DATA (0x980C8). The value is a file offset/length used in comparisons and masking; it is not dereferenced as a kernel pointer, and no memory-corruption primitive is demonstrable from the binaries. The patch removes the feature predicate and makes the check unconditional.",
+      "assembly_diff": "; UNPATCHED sign/bounds check gated behind the feature predicate (0x1C007A2A0):\n0x1C007A831: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C007A836: test    eax, eax\n0x1C007A838: jz      loc_1C007A897              ; feature not enabled -> skip strict check\n; --- strict check reached only when the feature is enabled: ---\n0x1C007A83A: mov     rax, [rbp+57h+var_B8]      ; reload range offset (Parameters+0x10)\n0x1C007A83E: test    rax, rax\n0x1C007A841: js      loc_1C007A84C             ; offset < 0 -> reject\n0x1C007A843: cmp     rax, rbx                  ; offset vs stream size\n0x1C007A846: jle     loc_1C007A8E8             ; offset <= size -> proceed\n; --- fallthrough when the feature is not enabled: ---\n0x1C007A897: cmp     [rbp+57h+var_B8], rbx     ; offset vs stream size only\n0x1C007A89B: jle     loc_1C007A8E8             ; signed: negative offset proceeds\n\n; PATCHED unconditional check (0x1C007A290):\n0x1C007A824: test    rcx, rcx\n0x1C007A827: js      loc_1C007AEB2             ; offset < 0 -> error (unconditional)\n0x1C007A82D: cmp     rcx, rax                  ; offset vs stream size\n0x1C007A830: jg      loc_1C007AEB2             ; offset > size -> error (unconditional)\n; error path at 0x1C007AEB2: mov ebx, 0C000CF0Bh"
+    },
+    {
+      "name": "CldiPortProcessTransfer (0x1C0062258)",
+      "similarity": 0.985,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the feature operand from the short-circuit AND on the reject branch of the transfer dispatcher, making the sign+integer-overflow check on v16/v26 unconditional",
+        "Unpatched: `if (Feature_...IsEnabledDeviceUsage() != 0 && (v16 < 0 || v26 != -1 && (v26 < 0 || v26 > 0x7FFFFFFFFFFFFFFF - v16)))` - when the feature is not enabled the AND is false, so the reject branch is skipped",
+        "Patched: `if (v16 < 0 || v26 != -1 && (v26 < 0 || v26 > 0x7FFFFFFFFFFFFFFF - v16))` - always checked",
+        "v16 and v26 are offset/length values parsed from the transfer message that flow into the 0x101-0x106 handlers"
+      ],
+      "security_relevant": true,
+      "security_notes": "This function dispatches transfer messages (codes 0x101-0x106) on the cloud-files communication port. v16 (r14) and v26 (rdi) are a size/offset pair; v26 is read from the message body (*(_QWORD *)(v24 + v8)) after header validation. The reject condition uses a short-circuit AND with the feature predicate, so when the feature is not enabled the sign+overflow check is skipped and the values reach the transfer handlers unchecked. WPP_SF_qiiDiid (0x1C0009D20) and WPP_SF_qiiDqDd (0x1C0009DCC) are WPP software-trace helpers on the error branch, not memory-copy routines. The patch removes the feature operand so the check always runs. No memory-corruption primitive is demonstrable from the binaries.",
+      "assembly_diff": "; UNPATCHED (0x1C0062258):\n0x1C0062477: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C006247C: test    eax, eax\n0x1C006247E: jz      loc_1C0062520              ; feature not enabled -> skip check, go to dispatch\n0x1C0062484: test    r14, r14\n0x1C0062487: js      loc_1C00624AA\n0x1C0062489: cmp     rdi, -1\n0x1C006248D: jz      loc_1C0062520\n0x1C0062493: test    rdi, rdi\n0x1C0062496: js      loc_1C00624AA\n0x1C0062498: mov     rax, 7FFFFFFFFFFFFFFFh\n0x1C00624A2: sub     rax, r14\n0x1C00624A5: cmp     rdi, rax\n0x1C00624A8: jle     loc_1C0062520\n0x1C00624AA: mov     ebx, 0C000CF0Bh           ; reject\n; PATCHED (0x1C0062258) - feature call removed, check runs first:\n0x1C0062477: test    r14, r14\n0x1C006247A: js      loc_1C006249D\n0x1C006247C: cmp     rdi, -1\n0x1C0062480: jz      loc_1C0062513\n0x1C0062486: test    rdi, rdi\n0x1C0062489: js      loc_1C006249D\n0x1C006248B: mov     rax, 7FFFFFFFFFFFFFFFh\n0x1C0062495: sub     rax, r14\n0x1C0062498: cmp     rdi, rax\n0x1C006249B: jle     loc_1C0062513\n0x1C006249D: mov     ebx, 0C000CF0Bh           ; reject\n; WPP error-branch callees relocated (WPP_SF_qiiDiid/qiiDqDd moved) because the feature-predicate functions were removed - address churn only."
+    },
+    {
+      "name": "HsmiOpUpdatePlaceholderFile (0x1C007BD14)",
+      "similarity": 0.9889,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the feature operand from the short-circuit AND guarding the negative-offset check `v64 < 0`, making it unconditional",
+        "Unpatched: `if (Feature_...IsEnabledDeviceUsage() != 0 && v64 < 0)` - when the feature is not enabled the AND is false and the check is skipped",
+        "Patched: `if (v64 < 0)` - always checked",
+        "v64 is a page-aligned file offset computed from the update range list that flows into HsmiMarkFileRangeNoLock (pool tag 0x4244)"
+      ],
+      "security_relevant": true,
+      "security_notes": "In a loop over the placeholder-update range list, the code computes an aligned file offset v64 and, in the unpatched build, only rejects a negative v64 when the feature is enabled (short-circuit AND). When the feature is not enabled, v64 reaches HsmiMarkFileRangeNoLock as the range offset without the sign check. The patch collapses the condition to `if (v64 < 0)`. Because v64 is a page-aligned value derived from the update entries, a negative result is an edge case; rated Low.",
+      "assembly_diff": "; UNPATCHED (0x1C007BD14):\n0x1C007C8E7: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C007C8EC: test    eax, eax\n0x1C007C8EE: jz      loc_1C007C8F9             ; feature not enabled -> skip r12 check\n0x1C007C8F0: test    r12, r12                  ; offset sign check\n0x1C007C8F3: js      loc_1C007C98F             ; offset < 0 -> reject\n; PATCHED (0x1C007BCA4):\n0x1C007C877: test    r12, r12                  ; sign check always runs\n0x1C007C87A: js      loc_1C007CAE8             ; unconditional negative-offset rejection"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "HsmiOpDehydrateNotificationCallback (0x1C007A2A0)",
+      "entry_point": "IRP_MJ_FILE_SYSTEM_CONTROL HSM dehydrate control (control code 0x9043C) on a cloud-backed file - dispatched by HsmFltPreFILE_SYSTEM_CONTROL, NOT IRP_MJ_CREATE / NtCreateFile AllocationSize",
+      "call_chain": ["IRP_MJ_FILE_SYSTEM_CONTROL HSM control (0x9043C)", "HsmFltPreFILE_SYSTEM_CONTROL (0x1C0076D40)", "HsmFltProcessHSMControl (0x1C002FE70)", "HsmFltProcessDehydrate (0x1C0078674) (registers callback via HsmpCldNotifyPreOperation 0x1C0038910)", "HsmiOpDehydrateNotificationCallback (0x1C007A2A0)"],
+      "vulnerability_class": "Missing sign/bounds validation of a file-range offset (CWE-20: Improper Input Validation; CWE-670: Always-Incorrect Control Flow Implementation)",
+      "description": "The pre-operation dehydrate callback validates the dehydration range start offset (v79 = *((_QWORD *)Parameters + 2), loaded at 0x1C007A2FB from Parameters+0x10). In the unpatched build the strict check `if (v79 < 0 || v79 > v32)` (v32 = stream size) is placed inside `if (Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0)`. When the feature is not enabled, the strict check is skipped and execution falls through to `else if (v79 > v32)` only - a signed comparison a negative offset passes. The unvalidated offset then reaches alignment math (v39 = v79 - 1), a size argument to HsmiMarkFileRangeNoLock (0x1C0052BD8, pool tags 0x4244/0x4256), and the FILE_ZERO_DATA_INFORMATION offset passed to FltFsControlFile with FSCTL_SET_ZERO_DATA (0x980C8). The value is a file offset, not a kernel address, and is not dereferenced as a pointer. The patch makes the check unconditional (`if (v82 < 0 || v82 > v32)`) and removes the feature predicate.",
+      "trigger_conditions": "1. cldflt.sys is loaded on a volume backing cloud-synced files. 2. A caller able to send the HSM dehydrate control (IRP_MJ_FILE_SYSTEM_CONTROL, control code 0x9043C) for a cloud-backed placeholder. 3. The request carries a range whose start offset (Parameters+0x10) is negative (bit 63 set) or exceeds the stream size. 4. The feature Feature_Servicing_PostRelOutlookHangIssue is not enabled, so the strict check is skipped and the fallthrough `v79 > v32` does not catch a negative offset.",
+      "primitive": "Missing input validation: an unvalidated negative/oversized file offset reaches internal file-range bookkeeping (HsmiMarkFileRangeNoLock) and a FSCTL_SET_ZERO_DATA request. The value is a file offset/length, not a kernel pointer. No out-of-bounds memory access, info-leak, or pool-corruption primitive is demonstrable from the binaries; the underlying file system independently validates the SET_ZERO_DATA range.",
+      "evidence": "// UNPATCHED HsmiOpDehydrateNotificationCallback (0x1C007A2A0):\nv79 = *((_QWORD *)Parameters + 2);               // dehydrate range start offset (Parameters+0x10)\nv80 = v79 + *((_QWORD *)Parameters + 3);         // range end = offset + length (used in comparisons/masking, not dereferenced)\n...\nif ( Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0 ) {  // FEATURE GATE\n    if ( v79 < 0 || v79 > v32 ) { InformationFile = 0xC000CF0B; goto reject; }            // strict check (skipped when feature not enabled)\n}\nelse if ( v79 > v32 ) { InformationFile = 0xC000CF0B; goto reject; }                      // signed cmp only; negative v79 NOT caught\n// proceeds with unchecked offset:\nv39 = v79 - 1;\nHsmiMarkFileRangeNoLock(v8, 0x4256u, v78, v77, ...);\nFltFsControlFile(Instance, FileObject, 0x980C8 /*FSCTL_SET_ZERO_DATA*/, &InputBuffer, 0x10, ...);\n\n// PATCHED HsmiOpDehydrateNotificationCallback (0x1C007A290):\nif ( v82 < 0 || v82 > v32 ) { InformationFile = 0xC000CF0B; goto reject; }                // UNCONDITIONAL",
+      "assembly": "; UNPATCHED gated check (0x1C007A2A0):\n0x1C007A831: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C007A836: test    eax, eax\n0x1C007A838: jz      loc_1C007A897          ; feature not enabled -> skip strict check\n0x1C007A83A: mov     rax, [rbp+57h+var_B8]  ; reload range offset (Parameters+0x10)\n0x1C007A83E: test    rax, rax\n0x1C007A841: js      loc_1C007A84C          ; offset < 0 -> reject\n0x1C007A843: cmp     rax, rbx               ; offset vs stream size\n0x1C007A846: jle     loc_1C007A8E8          ; offset <= size -> proceed\n0x1C007A897: cmp     [rbp+57h+var_B8], rbx  ; fallthrough: offset vs stream size only\n0x1C007A89B: jle     loc_1C007A8E8          ; signed: negative offset proceeds\n; downstream: 0x1C007AB2A call HsmiMarkFileRangeNoLock ; 0x1C007ADF0 call FltFsControlFile (FSCTL 0x980C8)\n; PATCHED unconditional check (0x1C007A290):\n0x1C007A824: test    rcx, rcx\n0x1C007A827: js      loc_1C007AEB2\n0x1C007A82D: cmp     rcx, rax\n0x1C007A830: jg      loc_1C007AEB2",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!HsmiOpDehydrateNotificationCallback",
+            "address": "0x1C007A2A0",
+            "why": "Entry to the dehydrate pre-operation callback. The checked offset is loaded at 0x1C007A2FB (mov rcx, [r15+10h] = Parameters+0x10) and saved to [rbp+var_B8]."
+          },
+          {
+            "symbol": "cldflt_unpatched!Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage",
+            "address": "0x1C00097F8",
+            "why": "WIL feature-staging predicate. It reads the cached feature-enabled state (WPP_MAIN_CB.Dpc.DeferredContext, bit 0x10 selects bit 0) and otherwise falls back to wil_details_IsEnabledFallback. When the feature is not enabled it returns 0, which skips the strict check at 0x1C007A838. This function is removed in the patched build."
+          },
+          {
+            "symbol": "cldflt_unpatched!HsmiOpDehydrateNotificationCallback+0x591",
+            "address": "0x1C007A831",
+            "why": "The feature call inside the function. Single-step past 0x1C007A838 (jz 0x1C007A897) to confirm the strict sign/bounds check is bypassed when the feature is not enabled."
+          }
+        ],
+        "watch": [
+          "offset at 0x1C007A2FB: *(Parameters+0x10), the dehydration range start offset saved to [rbp+var_B8]",
+          "eax after the feature call at 0x1C007A836: 0 when the feature is not enabled, which takes jz 0x1C007A897 and skips the strict check",
+          "rbx at 0x1C007A843: the stream size (from HsmpGetStreamSize) used as the upper bound"
+        ],
+        "key_offsets": [
+          "0x1C007A2FB: offset = *(Parameters+0x10) - the dehydration range start offset",
+          "0x1C007A831: call Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage - the feature gate",
+          "0x1C007A838: jz 0x1C007A897 - skip the strict check when the feature is not enabled",
+          "0x1C007A83A-0x1C007A846: strict sign+bounds check reached only when the feature is enabled",
+          "0x1C007A897-0x1C007A89B: fallthrough check (offset > stream size) that does not catch a negative offset",
+          "0x1C007AB2A: call HsmiMarkFileRangeNoLock (range bookkeeping)",
+          "0x1C007ADF0: call FltFsControlFile (FSCTL 0x980C8 SET_ZERO_DATA)"
+        ],
+        "trigger_setup": "Issue an HSM dehydrate control (IRP_MJ_FILE_SYSTEM_CONTROL, code 0x9043C) for a cloud-backed placeholder with a range whose start offset is negative or exceeds the stream size, on a build where Feature_Servicing_PostRelOutlookHangIssue is not enabled.",
+        "expected_observation": "On the unpatched build, the strict check at 0x1C007A83A-0x1C007A846 is skipped (jz 0x1C007A897 taken) and the negative/oversized offset reaches HsmiMarkFileRangeNoLock and the FSCTL_SET_ZERO_DATA request. This is a missing-validation defect; a memory-corruption outcome is not demonstrable from the binaries.",
+        "notes": "The same feature-gated-validation pattern appears in all three changed functions (HsmiOpDehydrateNotificationCallback, CldiPortProcessTransfer, HsmiOpUpdatePlaceholderFile). The patch removes Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage from all three and deletes the predicate and its fallback from the binary."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "CldiPortProcessTransfer (0x1C0062258)",
+      "entry_point": "Transfer message (codes 0x101-0x106) on the cloud-files communication port",
+      "call_chain": ["Transfer message code 0x101-0x106 on the cloud-files communication port", "CldiPortProcessTransfer (0x1C0062258)", "0x101-0x106 handlers (CldiPortProcessTransferData / CldiPortProcessAckData / CldiPortProcessRetrieveData / CldiPortProcessRestartHydration / CldiPortProcessTransferPlaceholders / CldiPortProcessReportProgress) with v16/v26"],
+      "vulnerability_class": "Missing sign + integer-overflow validation (CWE-190: Integer Overflow; CWE-20: Improper Input Validation)",
+      "description": "The transfer dispatcher's reject branch uses a short-circuit AND: `if (Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0 && (v16 < 0 || (v26 != -1 && (v26 < 0 || v26 > 0x7FFFFFFFFFFFFFFF - v16))))`. When the feature is not enabled the left operand is 0, so the sign+overflow reject branch is skipped and the dispatcher proceeds to the transfer handlers with v16 (r14) and v26 (rdi) unchecked. v26 is read from the message body after header validation. WPP_SF_qiiDiid (0x1C0009D20) and WPP_SF_qiiDqDd (0x1C0009DCC) are WPP trace-logging helpers on the error branch, not memory-copy routines. The patch removes the feature operand so the check always runs.",
+      "trigger_conditions": "1. A client connected to the cloud-files communication port. 2. A transfer message with code 0x101-0x106 whose parsed v16/v26 are negative or whose sum exceeds 0x7FFFFFFFFFFFFFFF. 3. The feature is not enabled, so the reject branch is skipped and the values reach the transfer handler unchecked.",
+      "primitive": "Missing sign+overflow validation of a size/offset pair (v16, v26) that flows into the 0x101-0x106 transfer handlers. No memory-corruption primitive is demonstrable from the binaries. WPP_SF_qiiDiid/WPP_SF_qiiDqDd are trace-logging helpers on the error branch, not copy sinks.",
+      "evidence": "// UNPATCHED CldiPortProcessTransfer (0x1C0062258):\nif ( Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0     // feature not enabled -> AND is false\n    && (v16 < 0 || v26 != -1 && (v26 < 0 || v26 > 0x7FFFFFFFFFFFFFFF - v16)) )           // reject branch skipped\n{\n    v17 = 0xC000CF0B;\n    return v17;\n}\n// proceeds to the 0x101-0x106 transfer handlers with v16 / v26\n\n// PATCHED CldiPortProcessTransfer (0x1C0062258):\nif ( v16 < 0 || v26 != -1 && (v26 < 0 || v26 > 0x7FFFFFFFFFFFFFFF - v16) )                // ALWAYS checked\n{\n    v17 = 0xC000CF0B;\n    return v17;\n}",
+      "assembly": "; UNPATCHED (0x1C0062258):\n0x1C0062477: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C006247C: test    eax, eax\n0x1C006247E: jz      loc_1C0062520          ; feature not enabled -> skip check, go to dispatch\n0x1C0062484: test    r14, r14\n0x1C0062487: js      loc_1C00624AA\n0x1C0062489: cmp     rdi, -1\n0x1C006248D: jz      loc_1C0062520\n0x1C0062493: test    rdi, rdi\n0x1C0062496: js      loc_1C00624AA\n0x1C0062498: mov     rax, 7FFFFFFFFFFFFFFFh\n0x1C00624A2: sub     rax, r14\n0x1C00624A5: cmp     rdi, rax\n0x1C00624A8: jle     loc_1C0062520\n0x1C00624AA: mov     ebx, 0C000CF0Bh\n; PATCHED (0x1C0062258) - feature call removed, check runs first:\n0x1C0062477: test    r14, r14\n0x1C006247A: js      loc_1C006249D\n0x1C006247C: cmp     rdi, -1\n0x1C0062480: jz      loc_1C0062513\n0x1C0062486: test    rdi, rdi\n0x1C0062489: js      loc_1C006249D\n0x1C006248B: mov     rax, 7FFFFFFFFFFFFFFFh\n0x1C0062495: sub     rax, r14\n0x1C0062498: cmp     rdi, rax\n0x1C006249B: jle     loc_1C0062513\n0x1C006249D: mov     ebx, 0C000CF0Bh",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!CldiPortProcessTransfer",
+            "address": "0x1C0062258",
+            "why": "Transfer dispatcher entry. Watch r14 (v16) and rdi (v26) - the size/offset pair from the transfer message. The feature call at 0x1C0062477 gates the sign+overflow reject branch."
+          }
+        ],
+        "watch": [
+          "r14 (v16): offset/size value from the transfer message",
+          "rdi (v26): length/offset value read from the message body after header validation",
+          "eax after the feature call at 0x1C006247C: 0 when the feature is not enabled, which takes jz 0x1C0062520 and skips the sign+overflow check"
+        ],
+        "key_offsets": [
+          "0x1C0062477: call Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage - the feature gate",
+          "0x1C006247E: jz 0x1C0062520 - skip the sign+overflow check when the feature is not enabled",
+          "0x1C0062484-0x1C00624A8: sign+overflow check reached only when the feature is enabled"
+        ],
+        "trigger_setup": "Send a transfer message with code 0x101-0x106 on the cloud-files communication port whose parsed v16/v26 are negative or whose sum overflows int64, on a build where the feature is not enabled.",
+        "expected_observation": "The sign+overflow reject branch is skipped and the unchecked v16/v26 reach the transfer handler. No memory-corruption outcome is demonstrable from the binaries.",
+        "notes": "Same feature-gated-validation pattern as HsmiOpDehydrateNotificationCallback. The short-circuit AND means the check is defeated whenever the feature is not enabled."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "HsmiOpUpdatePlaceholderFile (0x1C007BD14)",
+      "entry_point": "Placeholder-update handler in the cloud-files minifilter",
+      "call_chain": ["Placeholder-update operation", "HsmiOpUpdatePlaceholderFile (0x1C007BD14)", "HsmiMarkFileRangeNoLock (0x1C0052BD8) with the computed offset v64"],
+      "vulnerability_class": "Missing sign check on a computed file offset (CWE-20: Improper Input Validation; CWE-670)",
+      "description": "In a loop over the update range list, the handler computes a page-aligned file offset v64 and, in the unpatched build, rejects a negative v64 only when the feature is enabled: `if (Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0 && v64 < 0)` (short-circuit AND). When the feature is not enabled, v64 reaches HsmiMarkFileRangeNoLock (pool tag 0x4244) as the range offset without the sign check. The patch collapses the condition to `if (v64 < 0)`. Because v64 is a page-aligned value derived from the update entries, a negative result is an edge case; rated Low.",
+      "trigger_conditions": "A placeholder-update operation whose range list yields a negative computed aligned offset v64, on a build where the feature is not enabled.",
+      "primitive": "Missing sign check on a computed file offset that flows into HsmiMarkFileRangeNoLock. No memory-corruption primitive is demonstrable from the binaries.",
+      "evidence": "// UNPATCHED HsmiOpUpdatePlaceholderFile (0x1C007BD14):\nif ( Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage() != 0 && v64 < 0 )   // feature not enabled -> AND false -> skipped\n{\n    // negative-offset error handling\n}\nHsmiMarkFileRangeNoLock(a2, 0x4244u, v64, v65, ...);\n\n// PATCHED HsmiOpUpdatePlaceholderFile (0x1C007BCA4):\nif ( v64 < 0 )                        // UNCONDITIONAL\n{\n    // negative-offset error handling\n}",
+      "assembly": "; UNPATCHED (0x1C007BD14):\n0x1C007C8E7: call    Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n0x1C007C8EC: test    eax, eax\n0x1C007C8EE: jz      loc_1C007C8F9          ; feature not enabled -> skip r12 check\n0x1C007C8F0: test    r12, r12               ; offset sign check\n0x1C007C8F3: js      loc_1C007C98F          ; offset < 0 -> reject\n; PATCHED (0x1C007BCA4):\n0x1C007C877: test    r12, r12               ; sign check always runs\n0x1C007C87A: js      loc_1C007CAE8          ; unconditional negative-offset rejection",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!HsmiOpUpdatePlaceholderFile",
+            "address": "0x1C007BD14",
+            "why": "Placeholder-update handler. Watch r12 (v64), the computed page-aligned offset, for a negative value that bypasses the sign check when the feature is not enabled."
+          }
+        ],
+        "watch": [
+          "r12 (v64): computed page-aligned file offset from the update range list",
+          "eax after the feature call at 0x1C007C8EC: 0 when the feature is not enabled, which skips the sign check"
+        ],
+        "key_offsets": [
+          "0x1C007C8E7: call Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage - the feature gate before the v64 sign check"
+        ],
+        "trigger_setup": "Perform a placeholder-update operation whose range list yields a negative computed offset v64, on a build where the feature is not enabled.",
+        "expected_observation": "The negative v64 reaches HsmiMarkFileRangeNoLock without the sign check. No memory-corruption outcome is demonstrable from the binaries.",
+        "notes": "Third instance of the same feature-gated-validation pattern removed by the patch."
+      }
+    }
+  ],
+  "summary": "The patch removes the WIL feature-staging predicate Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage (0x1C00097F8 in the unpatched build) from three functions in cldflt.sys and makes the validations it gated unconditional, with no legacy branch retained - a delivered fix rather than a staged rollout. The three checks are: a sign/bounds check on the dehydration range start offset in HsmiOpDehydrateNotificationCallback (reached via the HSM dehydrate control on IRP_MJ_FILE_SYSTEM_CONTROL, not via NtCreateFile AllocationSize), a sign+integer-overflow check on a size/offset pair from a cloud-files transfer message in CldiPortProcessTransfer, and a negative-offset check on a computed file offset in HsmiOpUpdatePlaceholderFile. In the unpatched build, while the feature is not enabled, C short-circuit evaluation skips each check, allowing an unvalidated negative/oversized/overflowing file offset or length to reach internal range bookkeeping (HsmiMarkFileRangeNoLock), a FSCTL_SET_ZERO_DATA request, and the transfer handlers. The values are file offsets/lengths, not kernel pointers; no out-of-bounds memory access, info-leak, or pool-corruption primitive is demonstrable from these two builds. Severity is Medium for the dehydrate and transfer paths and Low for the placeholder-update path."
+}

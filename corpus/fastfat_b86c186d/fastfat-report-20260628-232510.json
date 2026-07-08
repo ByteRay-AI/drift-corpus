@@ -1,0 +1,149 @@
+{
+  "binaries": {
+    "title": "fastfat.sys - FAT boot-sector (BPB) parameter computation reviewed across a cross-branch build pair; overflow validation present in both builds",
+    "id_unpatched": "fastfat_unpatched.sys",
+    "id_patched": "fastfat_patched.sys",
+    "overall_similarity": 0.8428,
+    "matched": 800,
+    "changed": 484,
+    "identical": 316,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FatSetupAllocationSupport (sub_1C0025258) / sub_140023300 (BPB parameter computation - computes FAT layout from boot sector fields)",
+      "similarity": 0.6186,
+      "change_type": "recompilation",
+      "key_changes": [
+        "Reads on-disk boot sector (BPB) fields from the VCB: total sectors, sectors-per-FAT (FAT16 and FAT32), root-dir entries, num-FATs, sectors-per-cluster, bytes-per-sector, reserved sectors. Unpatched offsets 0x110-0x12c; patched offsets are +0x10 due to a VCB field insertion.",
+        "Performs chained multiplications and additions on these fields to compute FAT file size (fed to CcSetFileSizes) and the FAT-window pool allocation size (ExAllocatePoolWithTag(size = count * 0xC), tag 'FtaW').",
+        "Both builds guard the arithmetic with the same unsigned-overflow and bounds checks and reject malformed volumes via ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR, 0xC0000102): entry check reserved+numFATs*sectorsPerFAT wrap and bound; 32*rootEntries/bytesPerSector wrap and bound; FAT file-size wrap; allocation-count (rootDirBytes+0xFFFF) wrap.",
+        "Structural differences are recompilation artifacts: +0x10 VCB offset shift, the inlined log2 bit-scan loops factored into helper sub_140021EE0, and the entry wrap+bound checks merged into a single expression in the patched build. The set of rejected inputs is the same.",
+        "CcSetFileSizes and ExAllocatePoolWithTag('FtaW') are reached with the same guarded values in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "FatSetupAllocationSupport parses attacker-controllable FAT boot-sector fields and computes kernel allocation and cache-file sizes from chained arithmetic. In both the unpatched (10.0.20348.5020) and patched (10.0.28000.1896) builds the arithmetic feeding ExAllocatePoolWithTag('FtaW') and CcSetFileSizes is guarded by equivalent unsigned-overflow and bounds checks that reject malformed boot sectors with STATUS_FILE_CORRUPT_ERROR. The validation is present in both builds, so this function makes no security-relevant change. The differences are recompilation artifacts across two servicing branches: a +0x10 VCB offset shift and factoring a log2 bit-scan loop into sub_140021EE0.",
+      "assembly_diff": "Unpatched FatSetupAllocationSupport (sub_1C0025258) validated arithmetic:\n\n  v14 = reserved + numFATs * sectorsPerFAT16;\n  if ( v14 < reserved ) ExRaiseStatus(0xC0000102);   // wrap -> reject\n  v12 = 32 * rootEntries / bytesPerSector + v14;\n  if ( v12 < v14 ) ExRaiseStatus(0xC0000102);        // wrap -> reject\n  if ( sectorsPerFAT < v12 ) ExRaiseStatus(0xC0000102); // bound -> reject\n  ...\n  v39 = bytesPerSector*sectorsPerFATtotal + bytesPerSector*reserved;\n  if ( v39 < bytesPerSector*reserved ) ExRaiseStatus(0xC0000102);\n  FileSizes.FileSize = v39; CcSetFileSizes(FileObject, &FileSizes);\n  if ( entryFmt==32 && rootDirBytes>0x10000 ) {\n    if ( rootDirBytes+0xFFFF < rootDirBytes ) ExRaiseStatus(0xC0000102);\n    count = (rootDirBytes+0xFFFF) >> 16;\n  } else count = 1;\n  *(a2+208) = ExAllocatePoolWithTag(0x411, 12*count, 'FtaW');\n\nPatched sub_140023300: same checks, offsets +0x10, entry wrap+bound merged into one 'if (v16 < v15 || bound < v16)' expression; allocation at *(a2+224)."
+    },
+    {
+      "name": "FatVerifyVolume (sub_1C0044490) / sub_140042848 (volume verification)",
+      "similarity": 0.6546,
+      "change_type": "recompilation",
+      "key_changes": [
+        "Volume-verification routine. Changes are predominantly +0x10 offset shifts from the VCB field insertion and register renumbering.",
+        "No new security logic; differences are recompile-driven across the two servicing branches."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation differences only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EfspHasPrivilege (sub_1C0007620) / sub_140007EF0 (privilege check)",
+      "similarity": 0.6928,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Walks the token privilege array via SeQueryInformationToken(TokenPrivileges) looking for LUID 0x12 (SeManageVolumePrivilege) with the enabled attribute set; loop restructured by compiler but logic identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EdpEnforcementLog_AutomaticEncryption (sub_1C005D144) / sub_140058A58 (EDP enforcement logging)",
+      "similarity": 0.5976,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Enterprise Data Protection enforcement logging for automatic encryption; trace/event formatting differs slightly across the recompile. No security impact."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IsExcludedExtension (sub_1C0009F5C) / sub_14000A774 (extension exclusion check)",
+      "similarity": 0.6827,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Checks whether a file extension is on an exclusion list; search loop restructured by compiler, comparison logic identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FatQueryFsAttributeInfo (sub_1C004EFD0) / sub_14004A3F8 (FS attribute query)",
+      "similarity": 0.6954,
+      "change_type": "recompilation",
+      "key_changes": [
+        "Reports filesystem attribute/name information (FAT12/FAT16/FAT32). Offset shifts and minor flag-computation refactor; no security logic change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "FatSetupAllocationSupport (sub_1C0025258) (BPB / FAT volume parameter computation)",
+      "entry_point": "FAT volume online path — boot-sector (BPB) fields parsed into the VCB are consumed by FatSetupAllocationSupport to compute the FAT layout, cache file size, and the FAT-window pool allocation.",
+      "call_chain": [
+        "FAT volume brought online; boot-sector (BPB) fields parsed into the VCB",
+        "FatSetupAllocationSupport (sub_1C0025258) computes layout, validates arithmetic, calls CcSetFileSizes and ExAllocatePoolWithTag('FtaW')"
+      ],
+      "vulnerability_class": "None identified in the diff — integer-overflow validation on BPB arithmetic is present in both builds (CWE-190 guards emitted in both)",
+      "description": "FatSetupAllocationSupport reads FAT boot-sector fields from the VCB (bytes-per-sector, reserved sectors, number of FATs, sectors-per-FAT for FAT16/FAT32, root-directory entries, sectors-per-cluster) and performs chained multiplication/addition to compute: (1) the FAT file size handed to CcSetFileSizes, and (2) the FAT-window pool allocation size for ExAllocatePoolWithTag (size = count * 0xC, count = (rootDirBytes + 0xFFFF) >> 16, tag 'FtaW' / 0x57746146). Both the unpatched (10.0.20348.5020) and patched (10.0.28000.1896) builds guard every one of these chains with unsigned-overflow and bounds checks and reject malformed boot sectors via ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR, 0xC0000102). Because the guards are present and semantically equivalent in both builds, this function makes no security-relevant change. The two builds differ only by recompilation artifacts: a +0x10 field insertion in the VCB that shifts struct offsets, and one inlined log2 bit-scan loop factored into helper sub_140021EE0.",
+      "trigger_conditions": "FatSetupAllocationSupport runs while a FAT volume is being brought online after its boot-sector fields are parsed into the VCB. A boot sector whose products overflow 32-bit arithmetic (for example numFATs * sectorsPerFAT wrapping, or the root-directory computation wrapping) takes one of the ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR) paths and the volume is rejected. This rejection behavior is the same on both builds; the overflow does not reach an undersized allocation on either.",
+      "primitive": "None. The FAT-window count feeding ExAllocatePoolWithTag('FtaW', 12*count) is guarded by an explicit wrap check ((rootDirBytes+0xFFFF) wrap -> reject), and the FAT file size feeding CcSetFileSizes is guarded by its own wrap check, in both builds.",
+      "evidence": "Unpatched FatSetupAllocationSupport (sub_1C0025258) — guarded arithmetic:\n\n    v14 = reserved + numFATs * sectorsPerFAT16;\n    if ( v14 < reserved ) ExRaiseStatus(0xC0000102);      // wrap -> reject\n    v12 = 32 * rootEntries / bytesPerSector + v14;\n    if ( v12 < v14 ) ExRaiseStatus(0xC0000102);           // wrap -> reject\n    if ( sectorsPerFAT < v12 ) ExRaiseStatus(0xC0000102); // bound -> reject\n    ...\n    v39 = bytesPerSector*sectorsPerFATtotal + bytesPerSector*reserved;\n    if ( v39 < bytesPerSector*reserved ) ExRaiseStatus(0xC0000102);\n    FileSizes.FileSize = v39;   // -> CcSetFileSizes\n    if ( rootDirBytes+0xFFFF < rootDirBytes ) ExRaiseStatus(0xC0000102);\n    count = (rootDirBytes+0xFFFF) >> 16;\n    *(a2+208) = ExAllocatePoolWithTag(0x411, 12*count, 0x57746146);\n\nPatched sub_140023300 — same guards, offsets +0x10, entry wrap+bound merged:\n    v15 = reserved + numFATs * sectorsPerFAT16;\n    if ( v15 < reserved ) ExRaiseStatus(0xC0000102);\n    v16 = 32 * rootEntries / bytesPerSector + v15;\n    if ( v16 < v15 || bound < v16 ) ExRaiseStatus(0xC0000102);\n    ... if ( v36 < bytesPerSector*reserved ) ExRaiseStatus(0xC0000102);\n    ... if ( rootDirBytes+0xFFFF < rootDirBytes ) ExRaiseStatus(0xC0000102);\n    *(a2+224) = ExAllocatePoolWithTag(0x411, 12*count, 0x57746146);",
+      "assembly": "Unpatched FatSetupAllocationSupport starts at 0x1C0025258 in fastfat_unpatched.sys. Verified call/branch sites:\n  0x1C0025315: call ExRaiseStatus            (STATUS_FILE_CORRUPT_ERROR on entry-check failure)\n  0x1C0025332: imul r11d, r9d                (numFATs * sectorsPerFAT, followed by wrap check)\n  0x1C00256A0: call CcSetFileSizes           (FileSize from guarded arithmetic)\n  0x1C00256E2: call ExRaiseStatus            (STATUS_FILE_CORRUPT_ERROR on allocation-count wrap)\n  0x1C0025709: call ExAllocatePoolWithTag    (size = 12*count, tag 'FtaW' 0x57746146)\n  0x1C002580C: call ExRaiseStatus            (STATUS_FILE_CORRUPT_ERROR)\nThe patched build sub_140023300 emits the same sequence with +0x10 offsets and register reallocation; the inlined log2 bit-scan loops (guard KeBugCheckEx(0x23,0x21309,...)) are moved into helper sub_140021EE0 (guard code 0x2131B).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fastfat_unpatched!FatSetupAllocationSupport (sub_1C0025258)",
+            "address": "0x1c0025258",
+            "why": "Entry to the parameter computation. rcx = context (IrpContext), rdx = VCB. Parsed BPB fields sit at fixed offsets from the VCB base (unpatched: +0x110 bytes-per-sector, +0x112 sectors-per-cluster, +0x114 reserved sectors, +0x116 numFATs, +0x118 root-directory entries, +0x11A total sectors (16-bit), +0x11E sectors-per-FAT (16-bit), +0x12C sectors-per-FAT (32-bit))."
+          },
+          {
+            "symbol": "ExAllocatePoolWithTag (called from FatSetupAllocationSupport)",
+            "address": "0x1c0025709",
+            "why": "FAT-window allocation. r8 (size) = 12 * count, r9 (tag) = 0x57746146 ('FtaW'). count = (rootDirBytes+0xFFFF)>>16 is guarded by a wrap check, so it cannot reach here wrapped to a small value."
+          },
+          {
+            "symbol": "CcSetFileSizes (called from FatSetupAllocationSupport)",
+            "address": "0x1c00256a0",
+            "why": "FileSizes.FileSize is computed from arithmetic guarded by a wrap check (if (v39 < bytesPerSector*reserved) reject)."
+          },
+          {
+            "symbol": "ExRaiseStatus rejection sites (STATUS_FILE_CORRUPT_ERROR)",
+            "address": "0x1c0025315 / 0x1c00256e2 / 0x1c002580c",
+            "why": "A malformed BPB that overflows any guarded chain lands on one of these and the volume is rejected with 0xC0000102."
+          }
+        ],
+        "watch": [
+          "rdx+0x110 (bytes_per_sector), rdx+0x112 (sectors_per_cluster), rdx+0x114 (reserved_sectors), rdx+0x116 (numFATs), rdx+0x118 (root_dir_entries), rdx+0x11A (total_sectors_16), rdx+0x11E (sectors_per_fat_16), rdx+0x12C (sectors_per_fat_32)",
+          "reserved + numFATs*sectorsPerFAT — followed by unsigned wrap check (reject on wrap)",
+          "(rootDirBytes+0xFFFF) — followed by unsigned wrap check before >>16 and 12*count allocation",
+          "Pool tag 0x57746146 ('FtaW') — FAT-window array allocation"
+        ],
+        "key_offsets": [
+          "0x1c0025315 — ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR), entry-check rejection",
+          "0x1c0025332 — imul r11d, r9d (numFATs * sectorsPerFAT), guarded by following wrap check",
+          "0x1c00256a0 — CcSetFileSizes call with guarded FileSize",
+          "0x1c00256e2 — ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR), allocation-count wrap rejection",
+          "0x1c0025709 — ExAllocatePoolWithTag(0x411, 12*count, 'FtaW') call",
+          "0x1c002580c — ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR)"
+        ],
+        "trigger_setup": "1. Prepare a FAT16/FAT32 boot sector with BPB fields whose products overflow 32-bit arithmetic. 2. Bring the volume online so its boot sector is parsed into the VCB and FatSetupAllocationSupport runs. 3. Break on the entry and observe which guard fires; overflowing inputs route to ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR).",
+        "expected_observation": "A boot sector engineered to overflow the guarded arithmetic causes the volume to be rejected with STATUS_FILE_CORRUPT_ERROR (0xC0000102) rather than producing an undersized allocation. The same outcome occurs on both builds.",
+        "notes": "The VCB layout differs between the two builds by a +0x10 field insertion; the field offsets above are for the unpatched (10.0.20348.5020) build — add 0x10 for the patched (10.0.28000.1896) build. Symbols in the patched binary are stripped, so its functions appear as sub_<addr>."
+      }
+    }
+  ],
+  "summary": "Across a cross-branch build pair (unpatched fastfat.sys 10.0.20348.5020 vs patched 10.0.28000.1896), the FAT boot-sector (BPB) parameter computation function FatSetupAllocationSupport (sub_1C0025258, paired with sub_140023300 in the patched build) was reviewed for the integer-overflow-to-undersized-pool-allocation pattern (CWE-190/CWE-787). The function reads attacker-controllable on-disk FAT metadata (numFATs, sectorsPerFAT, bytesPerSector, root-directory entries, reserved/total sectors) and performs chained multiplication/addition to compute the FAT file size fed to CcSetFileSizes and the FAT-window pool allocation size fed to ExAllocatePoolWithTag (tag 'FtaW'). Both builds guard every one of these chains with equivalent unsigned-overflow and bounds checks and reject malformed boot sectors via ExRaiseStatus(STATUS_FILE_CORRUPT_ERROR, 0xC0000102). Because the validation is present and semantically equivalent in both builds, this function makes no security-relevant change. The two builds differ only by recompilation artifacts: a +0x10 VCB field insertion that shifts struct offsets, and factoring an inlined log2 bit-scan loop into helper sub_140021EE0. The KB metadata records no CVE attributed to fastfat.sys. Verified offsets: ExRaiseStatus rejection at 0x1C0025315/0x1C00256E2/0x1C002580C, CcSetFileSizes at 0x1C00256A0, ExAllocatePoolWithTag('FtaW') at 0x1C0025709."
+}

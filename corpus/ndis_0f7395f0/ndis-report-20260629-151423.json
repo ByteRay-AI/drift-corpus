@@ -1,0 +1,254 @@
+{
+  "binaries": {
+    "title": "ndis.sys (Windows NDIS Network Driver) - No security-relevant change; per-processor slot free loop differs only by compiler codegen",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9424,
+    "matched": 3576,
+    "changed": 379,
+    "identical": 3197,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ndisFreePerProcessorSlot",
+      "address_unpatched": "0x140050390",
+      "address_patched": "0x140054E30",
+      "similarity": 0.9813,
+      "change_type": "non_security",
+      "key_changes": [
+        "Per-processor slot free loop is bounded by ndisMaxNumberOfProcessors in BOTH builds. The only difference: the unpatched build caches the count in a register before the loop (mov edx, ndisMaxNumberOfProcessors) while the patched build re-reads the global in the loop condition (cmp eax, ndisMaxNumberOfProcessors). No variable substitution occurred; ndisMaxNumberOfProcessors simply relocated between builds.",
+        "Both builds store a single 8-byte zero (mov [rcx+r10], r8 / rdx) at (i << 12) + base per iteration. Neither performs a 4096-byte fill; the << 12 is the per-processor stride, not a store length.",
+        "Both builds validate the descriptor tag via ndisBugCheckEx(0x2C, ...) on mismatch. No bugcheck helper change (unpatched call at 0x14005043B, patched at 0x140054EDF)."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The function frees a per-processor descriptor slot back to a free list. The prior claim of a loop-bound variable substitution (data_14011eb38 -> data_14011ead8) reflected treating one relocated global (ndisMaxNumberOfProcessors) as two variables. The disassembly and decompilation of both builds bound the loop by ndisMaxNumberOfProcessors, store one 8-byte zero per per-processor stride, and validate via ndisBugCheckEx(0x2C). The only real difference is register-caching the count versus re-reading the global, a compiler codegen choice with no behavioral effect. The loop bound is the system processor count, not attacker-controlled.",
+      "assembly_diff": "UNPATCHED @ 0x1400503BE:\n0x1400503BE mov edx, cs:ndisMaxNumberOfProcessors\n0x1400503C4 xor r8d, r8d\n0x1400503C7 mov eax, r8d\n0x1400503CA test edx, edx\n0x1400503CC jz 0x1400503DF\n0x1400503D0 mov ecx, eax\n0x1400503D2 inc eax\n0x1400503D4 shl ecx, 0Ch\n0x1400503D7 mov [rcx+r10], r8\n0x1400503DB cmp eax, edx\n0x1400503DD jb 0x1400503D0\n\nPATCHED @ 0x140054E5E:\n0x140054E5E xor edx, edx\n0x140054E60 cmp cs:ndisMaxNumberOfProcessors, edx\n0x140054E66 mov eax, edx\n0x140054E68 jbe 0x140054E83\n0x140054E70 mov ecx, eax\n0x140054E72 inc eax\n0x140054E74 shl ecx, 0Ch\n0x140054E77 mov [rcx+r10], rdx\n0x140054E7B cmp eax, cs:ndisMaxNumberOfProcessors\n0x140054E81 jb 0x140054E70"
+    },
+    {
+      "name": "EthFilterDprIndicateReceive",
+      "similarity": 0.8942,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Ethernet packet receive indication path restructured: removal of data_14011ead8 version-check branching that controlled whether to use sub_140053820() for bit-test access vs. direct memory access on miniport flags at offset +0x78.",
+        "Multicast/broadcast matching loop restructured: condition ordering changed for rbp_3 (packet type classification) checks against 0xa0 (promiscuous/direct) and 2 (multicast match). The patched version restructures the if-else cascade for packet type matching.",
+        "RWLock acquire/release paths simplified — NdisReleaseRWLock now always uses rbx[0x24] instead of a conditionally-set rcx_17."
+      ],
+      "security_relevant": false,
+      "security_notes": "The core packet matching logic (unicast/multicast/broadcast/promiscuous) appears functionally equivalent. The changes are primarily removal of version-gated code paths and simplification of the control flow. The multicast address comparison (sub_1400625E0 vs sub_1400612F0) and broadcast detection (0xff checks) are structurally preserved.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMSetAttributesEx",
+      "similarity": 0.7311,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching throughout the miniport attribute setting flow.",
+        "Bit-flag manipulation on arg1+0x78 consolidated — the unpatched code had separate paths for data_14011ead8 vs non-data_14011ead8 that both performed the same OR/AND operations.",
+        "Timer initialization callback changed: sub_140094990 → sub_140092B40 for the non-pause-on-filter case.",
+        "Event signaling path changed: sub_14003A2E0 → sub_14000BC50 for data_14011c018 notification."
+      ],
+      "security_relevant": false,
+      "security_notes": "All flag-setting operations (arg4 bit checks for 0x1, 0x2, 0x8, 0x10, 0x40, 0x80, 0x100, 0x200) produce the same results in both versions. The changes are code deduplication of identical operations that were split by the version gate.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMInitializeTimer",
+      "similarity": 0.693,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Timer DPC callback selection: unpatched checks (!(*(arg2 + 0x78) >> 0x12 & 1)) vs patched uses TEST_BITD(*(arg2 + 0x78), 0x12) — same semantics but different helper.",
+        "DPC callback target functions changed: sub_140059980 → sub_140058EC0 and sub_1400D9FF0 → sub_1400DA990."
+      ],
+      "security_relevant": false,
+      "security_notes": "The timer callback selection logic is functionally identical — both choose between two DPC routines based on the same bit at offset +0x78 bit 0x12 of the miniport block.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14007D570 / sub_14007AE20",
+      "similarity": 0.5743,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Significantly restructured miniport halt/shutdown function. The patched version adds a check for *(arg1 + 0x1160) (a new spinlock/context pointer) and performs additional teardown logic including acquiring/releasing this spinlock and checking multiple fields (0x200, 0x204, 0x208, 0x20c, 0x210, 0x214, 0x240, 0x1fc).",
+        "The patched version adds a new code path that calls sub_140163170 for miniports with media type >= 6, vs direct IRQL raise for < 6.",
+        "KeSetEvent and KeAcquireSpinLock sequences restructured with additional event handling for teardown."
+      ],
+      "security_relevant": false,
+      "security_notes": "The restructured teardown adds more thorough cleanup paths but the core halt logic is preserved. The additional spinlock/context checks suggest new hardware support rather than a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMTransferDataComplete",
+      "similarity": 0.8048,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in transfer data completion path.",
+        "MDL array index calculation logic (modulo-3 based) is preserved in both versions.",
+        "Free path logic (ExFreeToNPagedLookasideList vs ExFreePoolWithTag) is functionally identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change — the data_14011ead8 branching removal is cosmetic since both paths produce the same behavior.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMWanIndicateReceive / NdisMWanIndicateReceiveComplete",
+      "similarity": 0.7548,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in WAN (PPP/SLIP) receive indication paths.",
+        "Protocol binding iteration loop (via rdi = *(arg2 + 0x38), following +0x188 links) is structurally identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "WAN receive path changes are purely version-gate refactoring. The core protocol-binding callback invocation logic is unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMWanSendComplete",
+      "similarity": 0.8184,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in WAN send completion path.",
+        "IRQL management logic (KfRaiseIrql/KeLowerIrql) is functionally identical but uses TEST_BITD macro instead of direct bit test."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1400CF1D4 / sub_1400D0054",
+      "similarity": 0.7152,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WMI/GUID registration function restructured: removal of data_14011ead8-guarded ETW telemetry calls (sub_1400D0508 checks).",
+        "Pool allocation size (0x6e8) and ExAllocatePool2 tag (0x6669444e = 'Ndif') are identical.",
+        "GUID copy from arg3 (maximum 0x668 bytes) with bounds check preserved."
+      ],
+      "security_relevant": false,
+      "security_notes": "The GUID registration logic including duplicate detection (STATUS_DUPLICATE_OBJECTID) and linked-list insertion is functionally equivalent. The size bounds check (rax_6 < 0x668 before sub_1400E9980 copy) is preserved in both versions.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisSendNetBufferLists",
+      "similarity": 0.9757,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor refactoring of the NBL send dispatch path — likely data_14011ead8 version-gate removal."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisFIndicateReceiveNetBufferLists",
+      "similarity": 0.9932,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minimal changes in the filter receive indication path — likely data_14011ead8 version-gate removal."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisFSendNetBufferLists",
+      "similarity": 0.993,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minimal changes in the filter send path — likely data_14011ead8 version-gate removal."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMOidRequestComplete",
+      "similarity": 0.8626,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in OID request completion path.",
+        "Filter chain dispatch logic (0x8000000 flag check for async OID) is preserved."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change in the OID completion path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisOpenConfiguration",
+      "similarity": 0.7744,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in configuration open path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMAllocateSharedMemory",
+      "similarity": 0.9609,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in shared memory (DMA) allocation path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMRegisterInterruptEx",
+      "similarity": 0.965,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of data_14011ead8 version-check branching in interrupt registration path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14007BA60 / sub_140089340",
+      "similarity": 0.7076,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function (276 instructions, 54 basic blocks) with substantial restructuring — likely NDIS miniport initialization or registration dispatcher.",
+        "The patched version has significantly more code (524 lines vs 347 in pseudo-C), suggesting added functionality or additional hardware support paths."
+      ],
+      "security_relevant": false,
+      "security_notes": "Without being able to examine the full diff in detail, this appears to be feature expansion rather than a targeted security fix. The function signature changed from uint64_t arg4 to void** arg4, suggesting an API contract change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ndisFreePerProcessorSlot",
+      "address_unpatched": "0x140050390",
+      "address_patched": "0x140054E30",
+      "entry_point": "NDIS internal teardown — frees a per-processor descriptor slot back to a free list",
+      "call_chain": ["NDIS per-processor descriptor slot free path", "ndis!ndisFreePerProcessorSlot"],
+      "vulnerability_class": "No security-relevant change (compiler codegen difference)",
+      "description": "ndisFreePerProcessorSlot releases a per-processor descriptor slot. It validates the tag stored in the descriptor page (bugchecking with code 0x2C on mismatch), walks each processor's per-CPU region writing a single 8-byte zeroing store per slot, then relinks the slot onto the ndisPerProcessorDescriptorLock-protected free list. Both the unpatched (0x140050390) and patched (0x140054E30) builds are behaviorally identical: both bound the loop by the global ndisMaxNumberOfProcessors, both store one 8-byte zero at (i << 12) + base per iteration (the << 12 is the per-processor stride, not a store length), and both validate via ndisBugCheckEx(0x2C). The only difference is that the unpatched build caches ndisMaxNumberOfProcessors in a register before the loop while the patched build re-reads the global in the loop condition — a loop-invariant-load codegen choice with no behavioral effect. The earlier reading of a loop-bound variable substitution (data_14011eb38 -> data_14011ead8) came from treating one relocated global (ndisMaxNumberOfProcessors) as two distinct variables.",
+      "trigger_conditions": "None. There is no vulnerability. The loop bound is the system processor count (ndisMaxNumberOfProcessors), not attacker-controlled, and both builds bound and store identically.",
+      "primitive": "None. No out-of-bounds write, out-of-bounds read, or information leak is introduced or removed by this change.",
+      "evidence": "Unpatched decompilation (ndis_unpatched.c, ndisFreePerProcessorSlot @ 0x140050390):\n```\n  v5 = ndisMaxNumberOfProcessors;\n  for ( i = 0; i < v5; *(_QWORD *)((v7 << 12) + BugCheckParameter2) = 0 )\n    v7 = i++;\n```\n\nPatched decompilation (ndis_patched.c, ndisFreePerProcessorSlot @ 0x140054E30):\n```\n  for ( i = 0; i < ndisMaxNumberOfProcessors; *(_QWORD *)((v6 << 12) + BugCheckParameter2) = 0 )\n    v6 = i++;\n```\nBoth bound by ndisMaxNumberOfProcessors and store one 8-byte zero per stride. The tag check ndisBugCheckEx(0x2C, ...) is identical in both.",
+      "assembly": "UNPATCHED @ 0x1400503BE: mov edx, cs:ndisMaxNumberOfProcessors; ...; shl ecx,0Ch; mov [rcx+r10], r8; cmp eax, edx; jb loop. PATCHED @ 0x140054E5E: cmp cs:ndisMaxNumberOfProcessors, edx; ...; shl ecx,0Ch; mov [rcx+r10], rdx; cmp eax, cs:ndisMaxNumberOfProcessors; jb loop. Both use the same global bound and the same single 8-byte store.",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [
+          "Unpatched loop: 0x1400503BE (mov edx, ndisMaxNumberOfProcessors) through 0x1400503DD (jb).",
+          "Patched loop: 0x140054E5E (cmp ndisMaxNumberOfProcessors, edx) through 0x140054E81 (jb)."
+        ],
+        "trigger_setup": "Not applicable — no security behavior to reproduce.",
+        "expected_observation": "Not applicable.",
+        "notes": "ndisMaxNumberOfProcessors is the same global in both builds; it relocates between builds, which produced the appearance of two distinct count variables in the earlier reading."
+      }
+    }
+  ],
+  "summary": "The ndis.sys binary diff shows 379 changed functions with 0 unmatched, consistent with a version-to-version rebuild (94.24% overall similarity). No security-relevant change was identified. The function previously flagged as a fix, ndisFreePerProcessorSlot (unpatched 0x140050390, patched 0x140054E30), is behaviorally identical in both builds: both bound the per-processor slot free loop by ndisMaxNumberOfProcessors, both write a single 8-byte zero per per-processor stride, and both validate via ndisBugCheckEx(0x2C). The only difference is register-caching the processor count versus re-reading the global in the loop condition, a compiler codegen choice. There is no loop-bound variable substitution, no store-size change, and no bugcheck-helper change. A targeted review of attacker-facing paths (OID request completion, receive/send NBL paths, filter paths, WAN receive/send) surfaced only refactoring of the same character, with no added or removed bounds/length/validation check."
+}

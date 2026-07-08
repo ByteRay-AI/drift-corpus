@@ -1,0 +1,246 @@
+{
+  "binaries": {
+    "id_unpatched": "atapi_unpatched.sys",
+    "id_patched": "atapi_patched.sys",
+    "overall_similarity": 0.9583,
+    "matched": 51,
+    "changed": 18,
+    "identical": 33,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 1
+  },
+  "changed_functions": [
+    {
+      "name": "AtapiSendAtaIdentify (sub_1C00020C0)",
+      "similarity": 0.8824,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation between unpatched and patched versions (e.g., rsi/rbp/rbx role swaps)",
+        "IDENTIFY command dispatch logic is semantically identical between versions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHandleMiniportCommand (sub_1C000272C)",
+      "similarity": 0.9143,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Control flow restructuring in the miniport request handler — if-else branch ordering changed but logic is equivalent",
+        "Register assignments differ but all paths compute the same results"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiProcessInterrupt (sub_1C0002AA0)",
+      "similarity": 0.9163,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Byte-load optimization: unpatched uses 'mov al, byte [mem]' at 0x1c0002c25 then 'movzx eax, al' before multiply; patched uses 'movzx eax, byte [mem]' at load point — functionally identical since unpatched zero-extends before any computation",
+        "Bit-test encoding: unpatched uses 'mov ecx, 0x200; test word [mem], cx' at 0x1c0002ada; patched uses 'bt word [mem], 9' — same semantics",
+        "The 'remaining < count' clamp (if v12 < v15, v15 = v12) that bounds the port-buffer copy to the residual DataTransferLength is present and identical in both versions",
+        "Register reallocation throughout the interrupt data-transfer handler"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WaitOnBusyUntil (sub_1C00012C8)",
+      "similarity": 0.9184,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Wait-loop break handling restructured — different branch layout but identical loop semantics",
+        "Register assignment differences only"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiInitializeDevice (sub_1C0001D64)",
+      "similarity": 0.9338,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Loop counter tracking changed from 'rax += 1; jne' to 'rax_2 = r8; r8 += 1; jne' — same iteration semantics",
+        "Register reallocation in mode setup function"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiNoDeviceConnected (sub_1C0001FC8)",
+      "similarity": 0.9379,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Status 0xFF early-return check moved from both callers (AtapiSendAtaCommand, AtapiSendAtaIdentify) into this callee in the patched version",
+        "Refactoring — both call sites carried the 0xFF check inline in the unpatched build, so centralizing it in the callee preserves identical behavior for both callers"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSendAtapiCommand (sub_1C0002500)",
+      "similarity": 0.9397,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Load-and-test fold: unpatched uses 'mov al, [rcx+rdi+0xB4]' at 0x1c0002624 followed by 'test al, 2'; patched folds both into 'test byte ptr [rcx+rdi+0xB4], 2' at 0x1c0002638 — same flag result, no multiply involved",
+        "The 'DataTransferLength >= 0x10000' clamp to 0xFFFE before writing the ATAPI byte-count registers is present and identical in both versions (unpatched 'cmp ebp, 10000h' / 'mov ebp, 0FFFEh' at 0x1c00025c6; patched 'cmp dword ptr [rbx+18h], 10000h' / 'mov ebp, 0FFFEh' at 0x1c00025d3)",
+        "Register reallocation in the ATAPI command send path"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSendAtaCommand (sub_1C0002200)",
+      "similarity": 0.9518,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Byte-load optimization in the ATA command send / PIO write path: unpatched uses 'mov al, byte [rcx+rdi+0xb]' at 0x1c00023a3 followed by 'movzx eax, al' at 0x1c00023b4 before 'imul esi, eax' at 0x1c00023b7; patched uses 'movzx eax, byte [rcx+rdi+0xb]' at 0x1c00023d0 before 'imul esi, eax' at 0x1c00023e2 — both produce identical zero-extended results before multiply",
+        "The 'remaining < count' transfer-size clamp (if v18 < v21, v21 = remaining) bounding the port-buffer write is present and identical in both versions",
+        "Register reallocation throughout the ATA command send path"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiResetAtapiDevices (sub_1C00039C0)",
+      "similarity": 0.9676,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation in the ATAPI device reset routine",
+        "No behavioral changes detected"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwStartIo (sub_1C0001700)",
+      "similarity": 0.9694,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IRB dispatch entry point: bit-test encoding change from 'mov ecx, 0x200; test word [mem], cx' to 'bt [mem], 9' — identical semantics",
+        "No behavioral changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetDmaTransferModeAsync (sub_1C0003C80)",
+      "similarity": 0.972,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Loop counter pattern change from 'rax += 1' to 'rax_2 = r8; r8 += 1' — same semantics",
+        "Register reallocation in DMA transfer mode setup"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwBuildIo (sub_1C0001690)",
+      "similarity": 0.9744,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Bit-test encoding change: 'test word [mem], 0x200' → 'bt [mem], 9' — identical semantics",
+        "Build-IO request validation logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiWaitStatusAsync (sub_1C0003730)",
+      "similarity": 0.9808,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation in the asynchronous status-wait routine",
+        "No behavioral changes detected"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetBlockSizeAsync (sub_1C0003EC0)",
+      "similarity": 0.9823,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation in the asynchronous block-size setup routine",
+        "No behavioral changes detected"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetupGeometryAsync (sub_1C0003DF0)",
+      "similarity": 0.9835,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation in the asynchronous geometry setup routine",
+        "No behavioral changes detected"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetPioTransferModeAsync (sub_1C0003BD0)",
+      "similarity": 0.9864,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Loop counter pattern change and register reallocation in the asynchronous PIO transfer mode setup routine",
+        "No behavioral changes detected"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon (sub_1C0003FFC)",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable type change in the stack-cookie (GS) exception handler helper (different register width for intermediate value)",
+        "No behavioral impact"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiCompleteRequest (sub_1C0002DDC)",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Bit-test encoding change: 'mov ecx, 0x200; test word [mem], cx' → 'bt [mem], 9' in the request completion handler — identical semantics",
+        "No behavioral changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      {
+        "name": "_guard_xfg_dispatch_icall_nop",
+        "address": "0x1C00040B0",
+        "note": "eXtended Flow Guard (XFG) indirect-call dispatch thunk emitted by the newer toolchain. A control-flow-integrity mitigation stub, not a fix for any specific flaw in the driver logic."
+      }
+    ]
+  },
+  "security_findings": [],
+  "summary": "Exhaustive analysis of all 18 changed functions between atapi_unpatched.sys and atapi_patched.sys revealed NO security vulnerability. Every changed function exhibits only compiler-generated differences: register reallocation (e.g., rsi↔rbp, rbx↔r15 swaps), instruction optimization (mov al + movzx eax,al → movzx eax,byte [mem]), bit-test encoding changes (mov+test → bt), and control flow restructuring (loop counter tracking, branch reordering). The most security-relevant candidate — the byte-load zero-extension pattern in the PIO/DMA data transfer size calculation path (AtapiSendAtaCommand @ sub_1C0002200 0x1c00023a3-0x1c00023b7, AtapiProcessInterrupt @ sub_1C0002AA0 0x1c0002c25-0x1c0002c3a) — was conclusively verified as functionally identical in both versions, because the unpatched version always includes a compensating 'movzx eax, al' before the 'imul' instruction, ensuring no stale upper bits reach any computation. The residual-DataTransferLength bounds clamp that limits the port-buffer copy is present and identical in both binaries (AtapiProcessInterrupt: 'if (residual < count) count = residual'; AtapiSendAtaCommand: same), as is the ATAPI 0xFFFE byte-count clamp in AtapiSendAtapiCommand (sub_1C0002500 0x1c00025c6 vs 0x1c00025d3). The only structural difference beyond recompilation noise is a new eXtended Flow Guard dispatch thunk (_guard_xfg_dispatch_icall_nop @ 0x1C00040B0) in the patched build, a control-flow-integrity mitigation stub rather than a targeted fix. The patch appears to be a compiler recompilation with a newer toolchain, not a targeted security fix. No PoC is applicable."
+}

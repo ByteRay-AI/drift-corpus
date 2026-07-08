@@ -1,0 +1,354 @@
+{
+  "binaries": {
+    "title": "ci.dll (Windows Code Integrity) - Security-relevant change: custom-kernel-signer trust-decision hardening (CWE-863), plus SymCrypt ML-DSA rejection-sampling termination hardening",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9803,
+    "matched": 2585,
+    "changed": 51,
+    "identical": 2534,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (unpatched 0x18002A17C / patched 0x180027128)",
+      "similarity": 0.9187,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added fixed iteration counter 'esi' capped at 0x1e1 (481) to the byte/nibble rejection loop that previously looped until 256 coefficients were written",
+        "On cap exhaustion the function now returns error code 0x8008 (mov edi, 8008h at 0x1800272A9) instead of continuing",
+        "Loop input is SHAKE sponge output from SymCryptKeccakExtract, seeded earlier by SymCryptKeccakAppend; the rejected 0x80 sentinel comes from the sponge, not from the caller's input buffer"
+      ],
+      "security_relevant": false,
+      "security_notes": "Unpatched: the do-while loop reads a byte via SymCryptKeccakExtract (0x18002BC88), splits it into two nibbles, and skips writing a coefficient when a decoded nibble is the 0x80 sentinel; it exits only when 256 coefficients are written (edi >= 0x100), with the loop-back at 0x18002A2DC having no counter. The patch adds a counter capped at 481 that returns 0x8008. Because the sampled bytes are pseudorandom SHAKE output of a sponge seeded inside the function, an attacker controls only the seed, never the output; producing enough consecutive sentinels to reach the cap would require breaking SHAKE. This is SymCrypt library termination hardening, not an attacker-reachable defect. This function is reached via SymCryptMlDsaExpandS on the key-generation/signing path, not the signature-verification path.",
+      "assembly_diff": "UNPATCHED (SymCryptMlDsaRejBoundedPoly @ 0x18002A17C) key loop:\n0x18002A1FB: xor     r9d, r9d\n0x18002A1FE: lea     rdx, [rsp+140h+var_11F]\n0x18002A203: lea     rcx, [rsp+140h+var_110]\n0x18002A208: lea     r8d, [r9+1]\n0x18002A20C: call    SymCryptKeccakExtract     ; read 1 sponge byte\n0x18002A292: cmp     r8b, 80h                  ; sentinel from decode\n0x18002A296: jz      0x18002A2B1               ; skip store, no edi increment\n0x18002A2AF: inc     edi\n0x18002A2B4: cmp     dl, 80h\n0x18002A2B6: cmp     edi, 100h\n0x18002A2DC: jb      0x18002A1FB               ; loop-back, no iteration counter\n\nPATCHED (SymCryptMlDsaRejBoundedPoly @ 0x180027128) adds:\n0x1800271A6: cmp     esi, 1E1h                 ; iteration cap (481)\n0x1800271AC: jnb     0x1800272A9               ; -> return 0x8008\n0x18002724F: inc     esi                       ; count every read\n0x1800272A9: mov     edi, 8008h"
+    },
+    {
+      "name": "SymCryptMlDsaSampleInBall (unpatched 0x18002A3F8 / patched 0x1800273E0)",
+      "similarity": 0.763,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added fixed iteration counter 'edi' capped at 0x79 (121) to the inner rejection loop that reads a byte and compares it against the running threshold ebx",
+        "On cap exhaustion the function returns 0x8008 (mov r14d, 8008h at 0x180027502)",
+        "Loop input is SHAKE sponge output from SymCryptKeccakExtract"
+      ],
+      "security_relevant": false,
+      "security_notes": "Unpatched: the inner loop at 0x18002A4B6 reads a byte via SymCryptKeccakExtract and re-reads while the byte value exceeds the threshold ebx (ja 0x18002A4B6), with no counter. The patch caps the inner loop at 121 reads and returns 0x8008. The bytes are sponge output; an attacker controls only the challenge seed absorbed into the sponge, not its output, so the cap cannot be reached with any crafted input without breaking SHAKE. Reached from SymCryptMlDsaVerifyEx during signature verification, but not as a reachable hang.",
+      "assembly_diff": "UNPATCHED (SymCryptMlDsaSampleInBall @ 0x18002A3F8) inner loop:\n0x18002A4B6: xor     r9d, r9d\n0x18002A4B9: lea     rdx, [rsp+160h+var_140]\n0x18002A4BE: mov     r8, rsi\n0x18002A4C1: lea     rcx, [rsp+160h+var_130]\n0x18002A4C6: call    SymCryptKeccakExtract     ; read 1 sponge byte\n0x18002A4CB: movzx   eax, byte [rsp+160h+var_140]\n0x18002A4D0: cmp     eax, ebx                  ; compare to threshold\n0x18002A4D2: ja      0x18002A4B6               ; re-read, no iteration counter\n\nPATCHED (SymCryptMlDsaSampleInBall @ 0x1800273E0) adds:\n0x18002749E: cmp     edi, 79h                  ; iteration cap (121)\n0x1800274A1: jnb     0x180027502               ; -> return 0x8008\n0x1800274BE: inc     edi                       ; count every read\n0x180027502: mov     r14d, 8008h"
+    },
+    {
+      "name": "SymCryptMlDsaRejNttPoly (unpatched 0x18002A31C / patched 0x1800272EC)",
+      "similarity": 0.5277,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added fixed iteration counter 'r14d' capped at 0x12a (298) to the 3-byte rejection loop",
+        "On cap exhaustion returns 0x8008 (mov edi, 8008h at 0x1800273AD)",
+        "Loop input is SHAKE sponge output; rejected values (>= 0x7fe001) come from the sponge, not from the caller's input buffer"
+      ],
+      "security_relevant": false,
+      "security_notes": "Unpatched: the loop at 0x18002A39E reads a 3-byte value via SymCryptKeccakExtract, masks it to 23 bits, and re-reads while the value is >= 0x7fe001 (jnb 0x18002A39E), exiting when 256 coefficients are stored (rbx reaches 0). The patch caps sponge reads at 298 and returns 0x8008. 0x7FE001 is the ML-DSA prime q; the per-sample rejection probability is about 0.098% (8191/8388608), so the loop terminates almost surely far below the cap on any SHAKE output. An attacker controls only the sponge seed (rho, in a malformed public key via ExpandA/PkDecode), never the output, so the cap is unreachable by crafted input. SymCrypt termination hardening, not an attacker-reachable defect.",
+      "assembly_diff": "UNPATCHED (SymCryptMlDsaRejNttPoly @ 0x18002A31C) loop:\n0x18002A399: mov     ebx, 100h                 ; 256 coefficients to place\n0x18002A39E: xor     r9d, r9d\n0x18002A3A1: lea     rdx, [rsp+130h+var_110]\n0x18002A3A6: lea     rcx, [rsp+130h+var_100]\n0x18002A3AB: lea     r8d, [r9+3]\n0x18002A3AF: call    SymCryptKeccakExtract     ; read 3 sponge bytes\n0x18002A3B4: and     byte [rsp+130h+var_110+2], 7Fh\n0x18002A3B9: mov     eax, [rsp+130h+var_110]\n0x18002A3BD: cmp     eax, 7FE001h\n0x18002A3C2: jnb     0x18002A39E               ; reject: re-read, no counter\n0x18002A3C4: mov     [rdi], eax\n0x18002A3C6: add     rdi, 4\n0x18002A3CA: sub     rbx, 1\n0x18002A3CE: jnz     0x18002A39E\n\nPATCHED (SymCryptMlDsaRejNttPoly @ 0x1800272EC) adds:\n0x180027369: cmp     r14d, 12Ah                ; iteration cap (298)\n0x180027370: jnb     0x1800273AD               ; -> return 0x8008\n0x18002738D: inc     r14d                      ; count every read\n0x1800273AD: mov     edi, 8008h"
+    },
+    {
+      "name": "SymCryptMlDsaExpandA (unpatched 0x1800293F4 / patched 0x180026374)",
+      "similarity": 0.4969,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched code checks the return value of SymCryptMlDsaRejNttPoly (patched 0x1800272EC) inside its nested loop and exits on error",
+        "Unpatched code assigns the return value but does not act on it"
+      ],
+      "security_relevant": false,
+      "security_notes": "Caller-side plumbing for the RejNttPoly iteration cap: the patched version exits the nested loop when the decoder returns 0x8008. Because that error condition is not attacker-reachable (sponge output), this is defense-in-depth error propagation, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaExpandS (unpatched 0x180029594 / patched 0x18002651C)",
+      "similarity": 0.7159,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched code checks the return value of SymCryptMlDsaRejBoundedPoly (patched 0x180027128) and exits on error",
+        "Unpatched code ignores the decoder return value"
+      ],
+      "security_relevant": false,
+      "security_notes": "Caller-side plumbing for the RejBoundedPoly iteration cap. On the key-generation/signing path; error condition not attacker-reachable. Defense-in-depth, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaPkDecode (unpatched 0x180029950 / patched 0x1800268FC)",
+      "similarity": 0.9432,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched code checks the SymCryptMlDsaExpandA (patched 0x180026374) return before proceeding",
+        "Unpatched code proceeds unconditionally"
+      ],
+      "security_relevant": false,
+      "security_notes": "Caller-side plumbing for the ExpandA error return. Defense-in-depth, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaSignEx (unpatched 0x180020D8C / patched 0x180021394)",
+      "similarity": 0.5245,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added an overall iteration bound to the signing rejection loop",
+        "Added a NULL check before final processing",
+        "Propagates errors from SymCryptMlDsaSampleInBall (patched 0x1800273E0) and SymCryptMlDsaExpandMask"
+      ],
+      "security_relevant": false,
+      "security_notes": "Signing-path hardening (bounded rejection loop and error propagation). Not reachable from attacker-supplied public keys or signatures during image verification; not an attacker-reachable defect.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (unpatched 0x180021278 / patched 0x180021890)",
+      "similarity": 0.9432,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched code checks the SymCryptMlDsaSampleInBall (patched 0x1800273E0) return and only proceeds on success",
+        "Unpatched code proceeds unconditionally"
+      ],
+      "security_relevant": false,
+      "security_notes": "Caller-side plumbing for the SampleInBall error return during signature verification. Error condition not attacker-reachable. Defense-in-depth, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_180002d3c / sub_18000e324 (signature math verification)",
+      "similarity": 0.7447,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored loop structure from while(true) with internal break to do-while with explicit bounds",
+        "Added new parameter arg7 (flags) controlling additional verification path with sub_180025e1c call",
+        "Changed conditional logic for verification mode selection"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800c0e9c / sub_180062c74",
+      "similarity": 0.3846,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete function rewrite with different parameter types and processing logic",
+        "Signature changed from (void*, FILE_OBJECT*, int128_t*, int32_t, char, int32_t, char) to (char, GUID*, GUID*, char)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Different functions matched by callgraph heuristic - likely a function relocation/reordering, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_18006396c / sub_1800638fc (code integrity logging)",
+      "similarity": 0.8245,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added sub_180018ed8() feature check for CustomKernelSignerLockedEnabled",
+        "Modified signer selection logic with additional flag checks (0x300000)",
+        "Refactored loop control flow for code integrity event processing"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-gated CustomKernelSigner locking work with the prior path retained (staged rollout), not a security vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800e1814 / sub_1800e2478 (CI performance tracking)",
+      "similarity": 0.876,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new post-processing path calling sub_1800656d8 when CustomKernelSignerLockedEnabled flags are set",
+        "Changed array indexing from pointer arithmetic (rbp_2) to direct element access"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for custom kernel signer support, not a vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipApplyTrustedLaunchPolicy (sub_180070364) / sub_180018de8 (registry value handler)",
+      "similarity": 0.0459,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete rewrite: unpatched processes complex object structures, patched reads/writes 'CustomKernelSignerLockedEnabled' registry value"
+      ],
+      "security_relevant": false,
+      "security_notes": "Function relocation - the unpatched function at this address was moved/replaced with registry handling for the new custom kernel signer feature.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800df8d8 / sub_1800e0458 (CI violation logging)",
+      "similarity": 0.9485,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed violation error code from 0x2718 to 0x273e in DbgPrint",
+        "Added sub_180018ed8() feature check for signer object selection",
+        "Minor refactoring of telemetry/logging calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry and feature-flag changes, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_18002b49c / sub_1800284a4 (table initialization)",
+      "similarity": 0.6953,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Reordered field initialization sequence to fix struct member offset calculation",
+        "Changed from rsi-based to rdi-based pointer for the primary cursor variable"
+      ],
+      "security_relevant": false,
+      "security_notes": "Register reallocation and field ordering change, no security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_18000beb8 / sub_18000e224 (structure parser)",
+      "similarity": 0.2465,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete rewrite: unpatched does manual inline structure walking with custom magic-value matching, patched delegates to helper sub_18001dc20"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of structure parsing into a separate helper function, no security boundary change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_180077a14 / sub_1800785ac",
+      "similarity": 0.8934,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation and minor control flow changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_18007067c / SIPolicyReadPrimitiveArray (sub_180077984)",
+      "similarity": 0.8776,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_18007075c / sub_18007128c",
+      "similarity": 0.9061,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SIPolicyAreCustomKernelSignersAllowed (unpatched 0x180073964 / patched 0x1800764A8)",
+      "similarity": 0.1707,
+      "change_type": "security_fix",
+      "key_changes": [
+        "Added a registry-backed global lock gate: if byte_180048F08 (CustomKernelSignerLockedEnabled) is 0 the function returns FALSE unconditionally without inspecting any policy flags (cmp cs:byte_180048F08, r9b at 0x1800764BD; xor al,al at 0x1800764C6)",
+        "Restricted the flag evaluation to the base policy only: the scan calls SIPolicyIsBasePolicy on each handle and aborts (returns FALSE) at the first non-base policy (0x1800764E4 call SIPolicyIsBasePolicy / 0x1800764EB jz), instead of the unpatched OR-across-all-policies loop",
+        "Split the per-policy check into SIPolicyCheckCustomKernelSignersAllowed (0x18007652C), which re-checks the lock byte and the mode argument before honoring flag bits 0x8/0x10",
+        "The boolean result is folded into g_CiDeveloperMode bit 0xD at both call sites (0x18001A7AC, 0x18006BC0C), the flag CI consults for unsigned/custom-kernel-signer driver allowance"
+      ],
+      "security_relevant": true,
+      "security_notes": "Trust-decision hardening (CWE-863, Incorrect Authorization), Medium severity. Unpatched: SIPolicyAreCustomKernelSignersAllowed loops over ALL loaded SI policies (g_SiPolicyHandles[0..g_NumberOfSiPolicies)) and returns TRUE if ANY policy's flags field (+0x708) has bit 0x18 or bit 0x4 set (depending on the caller mode byte), with no lock check and no base-policy restriction. That TRUE is folded into g_CiDeveloperMode bit 0xD, which controls whether unsigned/self-signed (custom-kernel-signer) kernel-mode drivers are treated as allowed. A supplemental (non-base, less-trusted) SI policy that merely sets the flag bit could therefore override the base policy's trust decision. Patched: the function returns FALSE unless the registry-backed lock byte byte_180048F08 (CustomKernelSignerLockedEnabled, populated by CipUpdateCustomKernelSignerEnabledState at 0x180018DE8 via ZwQueryValueKey/ZwSetValueKey and SIPolicySetCustomKernelSignersLockedEnabled at 0x180076558) is set, and it consults only the base policy (SIPolicyIsBasePolicy), aborting the scan at the first non-base policy. The old permissive path is fully replaced, not retained behind a feature flag, so this is a delivered incorrect-authorization fix, not WIL feature staging. Direction is correct: the patched build can only return TRUE in a strict subset of the unpatched cases. SI policies including supplemental ones are loaded via documented SIPolicy update mechanisms, making a supplemental policy administrator/attacker-reachable input to this decision.",
+      "assembly_diff": "UNPATCHED (SIPolicyAreCustomKernelSignersAllowed @ 0x180073964) - OR across ALL policies, no gate:\n0x18007396A: cmp     r9d, cs:g_NumberOfSiPolicies   ; loop over ALL policies\n0x180073971: jnb     0x18007399B\n0x180073973: mov     rax, cs:g_SiPolicyHandles\n0x18007397D: mov     rax, [rax+rdx*8]               ; handle[i]\n0x180073981: mov     eax, [rax+708h]                ; policy flags\n0x180073987: test    cl, cl                         ; caller mode byte\n0x180073989: jz      0x18007398F\n0x18007398B: test    al, 18h                        ; mode!=0: bits 0x8|0x10\n0x18007398F: test    al, 4                          ; mode==0: bit 0x4\n0x180073991: jnz     0x180073998\n0x180073993: inc     r9d                            ; keep scanning\n0x180073998: mov     r8b, 1                         ; ANY policy sets it -> TRUE\n\nPATCHED (SIPolicyAreCustomKernelSignersAllowed @ 0x1800764A8) - lock gate + base-policy only:\n0x1800764BD: cmp     cs:byte_180048F08, r9b         ; r9b=0: lock byte set?\n0x1800764C4: jnz     0x1800764CA\n0x1800764C6: xor     al, al                         ; lock clear -> FALSE\n0x1800764C8: jmp     0x180076513\n0x1800764DE: mov     rdi, [r11]                     ; handle[i]\n0x1800764E1: mov     rcx, rdi\n0x1800764E4: call    SIPolicyIsBasePolicy\n0x1800764E9: test    al, al\n0x1800764EB: jz      0x180076510                    ; not base -> abort scan (FALSE)\n0x1800764ED: mov     ecx, [rdi+708h]                ; base policy flags\n0x1800764F3: mov     dl, sil                        ; mode byte\n0x1800764F6: call    SIPolicyCheckCustomKernelSignersAllowed\n\nPATCHED helper (SIPolicyCheckCustomKernelSignersAllowed @ 0x18007652C):\n0x18007652C: cmp     cs:byte_180048F08, 0           ; lock byte again\n0x180076533: jz      0x18007654C                    ; clear -> FALSE\n0x180076535: test    dl, dl                         ; mode argument\n0x180076537: jz      0x18007654C                    ; unset -> FALSE\n0x180076539: test    cl, 8                          ; flag bit 0x8 -> TRUE\n0x18007653E: shr     ecx, 4\n0x180076541: and     cl, 1                          ; else flag bit 0x10\n0x18007654C: xor     al, al                         ; FALSE"
+    },
+    {
+      "name": "sub_180058b4c / sub_18006be10",
+      "similarity": 0.2463,
+      "change_type": "cosmetic",
+      "key_changes": ["Function matched by call sequence - likely relocated"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800b7930 / sub_1800e1860",
+      "similarity": 0.2006,
+      "change_type": "cosmetic",
+      "key_changes": ["Single basic block with inline data - likely relocated"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SIPolicyIsPolicyPlatformSecured (sub_180074838) / SIPolicyIsPolicyPlatformSecured (sub_180075318)",
+      "similarity": 0.9342,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800d80f0 / sub_1800d8c30",
+      "similarity": 0.9153,
+      "change_type": "behavioral",
+      "key_changes": ["Minor logic changes in large function"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1800e1f7c / sub_1800e2c18",
+      "similarity": 0.9493,
+      "change_type": "behavioral",
+      "key_changes": ["Large function (887 instructions) with minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_180062cfc / sub_180070c4c",
+      "similarity": 0.4315,
+      "change_type": "behavioral",
+      "key_changes": ["Function matched by loop count heuristic - likely significant refactoring"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-863",
+      "function": "SIPolicyAreCustomKernelSignersAllowed (unpatched 0x180073964 / patched 0x1800764A8), helper SIPolicyCheckCustomKernelSignersAllowed (patched 0x18007652C)",
+      "entry_point": "CI initialization / SI-policy-load path. Called at unpatched 0x18001A5F0 and patched 0x18001A7AC and 0x18006BC0C; the boolean result is folded directly into g_CiDeveloperMode bit 0xD.",
+      "call_chain": [
+        "CipInitializeSiPolicy / SI policy load routine folds the result into g_CiDeveloperMode bit 0xD (patched 0x18001A7AC..0x18001A7C7: and eax,1 / shl eax,0Dh / btr ebx,0Dh / or eax,ebx / mov cs:g_CiDeveloperMode, eax)",
+        "g_CiDeveloperMode bit 0xD is the custom-kernel-signer / test-signing allowance flag CI consults on the driver/image signature-enforcement path",
+        "SI policies (including supplemental, non-base policies) are loaded via documented SIPolicy update mechanisms, so a supplemental policy is administrator/attacker-reachable input to this decision"
+      ],
+      "vulnerability_class": "Incorrect authorization / policy confusion (an over-broad OR-across-all-policies trust decision)",
+      "description": "In the unpatched build, SIPolicyAreCustomKernelSignersAllowed (0x180073964) loops over ALL loaded SI policies (g_SiPolicyHandles[0..g_NumberOfSiPolicies)) and returns TRUE if ANY policy's flags field at offset +0x708 has bit 0x18 or bit 0x4 set (selected by the caller's mode byte). There is no gating check and no restriction to the base policy. The TRUE result is folded into g_CiDeveloperMode bit 0xD, the global flag that governs whether unsigned / self-signed (custom-kernel-signer) kernel-mode drivers are treated as allowed. Consequently a supplemental (non-base, less-trusted) SI policy that merely sets the relevant flag bit could override the base policy's decision and enable custom kernel signers system-wide, a policy-confusion trust bypass.\n\nThe patched build (0x1800764A8) closes this in two ways. First, it adds a registry-backed global gate: if the lock byte byte_180048F08 (CustomKernelSignerLockedEnabled) is 0 the function returns FALSE unconditionally and never inspects any policy flags. Second, it restricts evaluation to the base policy: it calls SIPolicyIsBasePolicy(handle) and aborts the scan (returns FALSE) at the first non-base policy, so a supplemental policy can no longer contribute. The per-policy test is delegated to SIPolicyCheckCustomKernelSignersAllowed (0x18007652C), which re-checks the lock byte and the mode argument before honoring flag bits 0x8/0x10. The lock byte is populated from the registry by CipUpdateCustomKernelSignerEnabledState (0x180018DE8) via ZwQueryValueKey (with a ZwSetValueKey create-fallback) and SIPolicySetCustomKernelSignersLockedEnabled (0x180076558); neither byte_180048F08 nor CipUpdateCustomKernelSignerEnabledState exists in the unpatched build. The old permissive path is fully replaced, not retained behind a feature flag, so this is a delivered incorrect-authorization fix rather than staged feature work.",
+      "trigger_conditions": "An SI policy (base or supplemental) loaded through the documented SIPolicy update mechanisms whose flags field (+0x708) sets the custom-kernel-signer bit read by this function. In the unpatched build, a supplemental (non-base) policy setting that bit is sufficient to set g_CiDeveloperMode bit 0xD; in the patched build it is not, because a supplemental policy is skipped and the registry lock must be enabled.",
+      "primitive": "Trust-decision bypass: a less-trusted supplemental policy overriding the base policy's decision on whether unsigned/self-signed kernel-mode signers are allowed. No memory-safety primitive.",
+      "evidence": "See the assembly field. Direction is correct: the patched function can only return TRUE in a strict subset of the unpatched cases (registry lock set AND base policy AND flag bit AND mode), whereas the unpatched function returns TRUE if any policy at all sets the bit.",
+      "assembly": "UNPATCHED (SIPolicyAreCustomKernelSignersAllowed @ 0x180073964) - OR across ALL policies:\n0x18007396A: cmp     r9d, cs:g_NumberOfSiPolicies   ; loop over ALL policies\n0x180073971: jnb     0x18007399B\n0x180073973: mov     rax, cs:g_SiPolicyHandles\n0x18007397D: mov     rax, [rax+rdx*8]               ; handle[i]\n0x180073981: mov     eax, [rax+708h]                ; policy flags\n0x180073987: test    cl, cl                         ; caller mode byte\n0x18007398B: test    al, 18h                        ; mode!=0: bits 0x8|0x10\n0x18007398F: test    al, 4                          ; mode==0: bit 0x4\n0x180073991: jnz     0x180073998\n0x180073993: inc     r9d\n0x180073998: mov     r8b, 1                         ; ANY policy sets it -> TRUE\n\nPATCHED (SIPolicyAreCustomKernelSignersAllowed @ 0x1800764A8) - lock gate + base-policy only:\n0x1800764BD: cmp     cs:byte_180048F08, r9b         ; r9b=0: lock byte set?\n0x1800764C4: jnz     0x1800764CA\n0x1800764C6: xor     al, al                         ; lock clear -> FALSE\n0x1800764E4: call    SIPolicyIsBasePolicy\n0x1800764EB: jz      0x180076510                    ; not base -> abort scan (FALSE)\n0x1800764ED: mov     ecx, [rdi+708h]                ; base policy flags\n0x1800764F6: call    SIPolicyCheckCustomKernelSignersAllowed\n\nPATCHED helper (SIPolicyCheckCustomKernelSignersAllowed @ 0x18007652C):\n0x18007652C: cmp     cs:byte_180048F08, 0           ; lock byte again -> FALSE if clear\n0x180076535: test    dl, dl                         ; mode argument -> FALSE if unset\n0x180076539: test    cl, 8                          ; flag bit 0x8 -> TRUE\n0x18007653E: shr     ecx, 4\n0x180076541: and     cl, 1                          ; else flag bit 0x10\n\nCALL SITE folding into g_CiDeveloperMode (patched @ 0x18001A7AC):\n0x18001A7AC: call    SIPolicyAreCustomKernelSignersAllowed\n0x18001A7B7: and     eax, 1\n0x18001A7BA: shl     eax, 0Dh\n0x18001A7BD: btr     ebx, 0Dh\n0x18001A7C1: or      eax, ebx\n0x18001A7C7: mov     cs:g_CiDeveloperMode, eax       ; result -> bit 0xD",
+      "debugging_aids": {
+        "notes": "byte_180048F08 is the CustomKernelSignerLockedEnabled lock byte; CipUpdateCustomKernelSignerEnabledState (0x180018DE8) reads the 'CustomKernelSignerLockedEnabled' registry value via ZwQueryValueKey and stores it through SIPolicySetCustomKernelSignersLockedEnabled (0x180076558). Offset +0x708 is the SI policy flags field. g_CiDeveloperMode bit 0xD is the custom-kernel-signer / test-signing allowance bit. Addresses are RVAs from the preferred base 0x180000000."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "SymCryptMlDsaRejBoundedPoly (0x18002A17C) / SymCryptMlDsaSampleInBall (0x18002A3F8) / SymCryptMlDsaRejNttPoly (0x18002A31C)",
+      "entry_point": "Statically-linked SymCrypt ML-DSA rejection sampling. Reachable from SymCryptMlDsaSelftest (0x180022158, hardcoded test vectors) and from HashpVerifyMldsaSignature (0x180087408) via SymCryptMlDsaVerify.",
+      "call_chain": [
+        "HashpVerifyMldsaSignature (0x180087408)",
+        "SymCryptMlDsaVerify (0x180021234) -> SymCryptMlDsaVerifyEx (0x180021278)",
+        "SymCryptMlDsaSampleInBall (0x18002A3F8) directly; SymCryptMlDsaPkDecode (0x180029950) -> SymCryptMlDsaExpandA (0x1800293F4) -> SymCryptMlDsaRejNttPoly (0x18002A31C)",
+        "SymCryptMlDsaRejBoundedPoly (0x18002A17C) is reached only via SymCryptMlDsaExpandS on the keygen/signing path, not on the verification path"
+      ],
+      "vulnerability_class": "None (defense-in-depth termination hardening in statically-linked crypto)",
+      "description": "The patched build adds fixed upper iteration bounds to three ML-DSA (Dilithium) rejection-sampling loops in statically-linked SymCrypt and returns error code 0x8008 (32776) when a bound is reached, plus caller-side error propagation. In each function the sampled bytes come from SymCryptKeccakExtract reading a SHAKE sponge that is initialized inside the function and absorbed from a seed via SymCryptKeccakAppend. The values that are 'rejected' (RejNttPoly: >= 0x7fe001; RejBoundedPoly: 0x80 nibble sentinel; SampleInBall: byte > running threshold) are therefore sponge output, not caller-supplied bytes.\n\nThe unpatched loops terminate almost surely on any real SHAKE output (for RejNttPoly the per-sample rejection probability is about 0.098%). Reaching the added caps would require the sponge to emit hundreds of consecutive rejection values, which an attacker cannot force: an attacker who supplies a malformed public key or signature controls only the sponge seed (rho, or the challenge hash c-tilde), never the sponge output. Producing such output would require a preimage-style break of SHAKE. The bounds are thus a robustness guarantee delivered by the SymCrypt library rebuild, not a fix for an attacker-reachable denial of service. No CI policy or signature-validation logic changed.",
+      "trigger_conditions": "No attacker-reachable trigger exists. The rejection decisions are made on pseudorandom SHAKE sponge output; no crafted PE, public key, or signature can drive any of the three loops to its iteration cap without breaking SHAKE. The self-test path uses compile-time-constant vectors.",
+      "primitive": "None. There is no reachable hang, memory-safety issue, or logic bypass. The change only converts an astronomically improbable non-terminating case into a graceful 0x8008 error.",
+      "evidence": "UNPATCHED SymCryptMlDsaRejNttPoly (0x18002A31C) decompilation - loop input is sponge output:\n    SymCryptKeccakAppend(v8, a1, 34);          // absorb seed\n    v7 = 0;\n    for ( i = 256; i != 0; --i ) {\n        do {\n            SymCryptKeccakExtract(v8, &v7, 3); // read sponge bytes\n            BYTE2(v7) &= ~0x80u;\n            result = v7;\n        } while ( v7 >= 0x7FE001 );            // reject out-of-range sponge value\n        *a3++ = v7;\n    }\n    return result;\n\nPATCHED SymCryptMlDsaRejNttPoly (0x1800272EC):\n    SymCryptKeccakAppend(v10, a1, 34);\n    v9 = 0; v7 = 0;\n    while ( v6 < 0x12A ) {                      // hard cap of 298 sponge reads\n        SymCryptKeccakExtract(v10, &v9, 3);\n        BYTE2(v9) &= ~0x80u;\n        ++v6;\n        if ( v9 < 0x7FE001 ) {\n            *a3 = v9; ++v7; ++a3;\n            if ( v7 >= 0x100 ) return v5;\n        }\n    }\n    return 32776;                              // 0x8008 on cap exhaustion",
+      "assembly": "UNPATCHED SymCryptMlDsaRejNttPoly (0x18002A31C):\n0x18002A399: mov     ebx, 100h                 ; 256 coefficients to place\n0x18002A39E: xor     r9d, r9d\n0x18002A3A1: lea     rdx, [rsp+130h+var_110]\n0x18002A3A6: lea     rcx, [rsp+130h+var_100]\n0x18002A3AB: lea     r8d, [r9+3]\n0x18002A3AF: call    SymCryptKeccakExtract     ; read 3 sponge bytes\n0x18002A3B4: and     byte [rsp+130h+var_110+2], 7Fh\n0x18002A3B9: mov     eax, [rsp+130h+var_110]\n0x18002A3BD: cmp     eax, 7FE001h\n0x18002A3C2: jnb     0x18002A39E               ; reject: re-read, no counter\n0x18002A3C4: mov     [rdi], eax\n0x18002A3C6: add     rdi, 4\n0x18002A3CA: sub     rbx, 1\n0x18002A3CE: jnz     0x18002A39E\n\nPATCHED SymCryptMlDsaRejNttPoly (0x1800272EC) adds the cap:\n0x180027369: cmp     r14d, 12Ah                ; iteration cap (298)\n0x180027370: jnb     0x1800273AD               ; -> return 0x8008\n0x18002738D: inc     r14d                      ; count every read\n0x1800273AD: mov     edi, 8008h\n\nPATCHED SymCryptMlDsaRejBoundedPoly (0x180027128) cap: 0x1800271A6 cmp esi, 1E1h / 0x1800271AC jnb 0x1800272A9 / 0x1800272A9 mov edi, 8008h.\nPATCHED SymCryptMlDsaSampleInBall (0x1800273E0) cap: 0x18002749E cmp edi, 79h / 0x1800274A1 jnb 0x180027502 / 0x180027502 mov r14d, 8008h.",
+      "debugging_aids": {
+        "notes": "The three functions are ML-DSA (Dilithium) rejection-sampling routines statically linked into ci.dll from SymCrypt. 0x7FE001 = 8380417 is the ML-DSA prime q = 2^23 - 2^13 + 1, and the 256-entry outputs are degree-256 ring elements. The added iteration bounds (481, 298, 121) and the 0x8008 return are a SymCrypt termination-hardening change delivered by the library rebuild; the sampled bytes are SHAKE sponge output (SymCryptKeccakAppend then SymCryptKeccakExtract), so the reject conditions are not attacker-controlled and no crafted input reaches the caps. Addresses are RVAs from the preferred base 0x180000000."
+      }
+    }
+  ],
+  "summary": "One security-relevant change plus SymCrypt library hardening. SECURITY FIX (Medium, CWE-863 Incorrect Authorization): SIPolicyAreCustomKernelSignersAllowed (unpatched 0x180073964 / patched 0x1800764A8) previously returned TRUE if ANY loaded SI policy (base or supplemental) set the custom-kernel-signer bit at flags offset +0x708, with no lock gate and no base-policy restriction. That result is folded into g_CiDeveloperMode bit 0xD, which governs whether unsigned/self-signed kernel-mode drivers are allowed, so a supplemental (less-trusted) policy could override the base policy's trust decision. The patch closes this by requiring the registry-backed lock byte byte_180048F08 (CustomKernelSignerLockedEnabled, read by CipUpdateCustomKernelSignerEnabledState at 0x180018DE8) to be set and by restricting the check to the base policy only (SIPolicyIsBasePolicy), delegating the per-policy test to SIPolicyCheckCustomKernelSignersAllowed (0x18007652C). The old permissive OR-across-all-policies path is fully replaced, not retained behind a feature flag; direction is correct (patched strictly stricter). The remaining changes are NOT security-relevant. The patch adds fixed iteration bounds (481, 298, 121) and a 0x8008 error return to three statically-linked SymCrypt ML-DSA rejection-sampling loops (SymCryptMlDsaRejBoundedPoly 0x18002A17C, SymCryptMlDsaRejNttPoly 0x18002A31C, SymCryptMlDsaSampleInBall 0x18002A3F8) and propagates the error through the ML-DSA callers (ExpandA, ExpandS, PkDecode, SignEx, VerifyEx). The rejected values are SHAKE sponge output produced inside each function (SymCryptKeccakAppend seed, then SymCryptKeccakExtract), not caller-supplied bytes. Rejection sampling on a SHAKE stream terminates almost surely far below these caps, and an attacker controls only the sponge seed, never its output, so no crafted PE/public key/signature can reach a cap without breaking SHAKE. The change is SymCrypt library termination hardening (defense-in-depth), not an attacker-reachable kernel denial of service. No CI policy or signature-validation logic changed. Direction is correct (patched build is stricter). The prior HIGH DoS assessment is not supported by the binaries and is downgraded to no security-relevant change."
+}

@@ -1,0 +1,142 @@
+{
+  "binaries": {
+    "title": "ataport.sys - No security-relevant change (cross-version PassThrough refactor and defense-in-depth stack initialization)",
+    "id_unpatched": "ataport_unpatched.sys",
+    "id_patched": "ataport_patched.sys",
+    "overall_similarity": 0.6819,
+    "matched": 550,
+    "changed": 328,
+    "identical": 222,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "PortPassThroughSrbInitialize (sub_1c002a7d0) -> PortPassThroughSrbInitialize (sub_1c002f9d4)",
+      "similarity": 0.0,
+      "change_type": "informational",
+      "key_changes": [
+        "UNPATCHED: When no data buffer (arg5==NULL), the IRB flags field (rbx[3]) is set to transfer_type | 0x20 computed via 'lea ecx, [rax+0x20]' (0xa0/0x60/0xe0, or 0x20 for zero-length). Because 0xa0==0x80|0x20, 0x60==0x40|0x20, and 0xe0==0xc0|0x20, the transfer-type bits are preserved, not discarded.",
+        "PATCHED: When no data buffer, ORs 0x20 onto the transfer-type value via 'or eax, 0x20'.",
+        "Both builds compute the identical final field value (transfer_type | 0x20 | 0x100 in the no-buffer case, transfer_type | 0x100 otherwise) for every input combination.",
+        "Both versions set the final flags via rax_1 | 0x100 (bts eax, 8); the field value is identical between builds. This is a compiler/structure difference, not a behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "The IRB control-flag computation is functionally equivalent between builds. The unpatched no-data-buffer path stores transfer_type + 0x20 (which equals transfer_type | 0x20 because bit 0x20 is clear in 0x80/0x40/0xc0), while the patched path ORs 0x20; both yield the same value. The transfer-type direction bits are preserved in both builds, so there is no mismatched-flag or unintended-DMA condition. This function difference is a refactor with no security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PortPassThroughValidateNormalizedRequest (sub_1c002a63c) -> PortPassThroughValidateNormalizedRequest (sub_1c002fba4)",
+      "similarity": 0.0,
+      "change_type": "informational",
+      "key_changes": [
+        "UNPATCHED: Contains a WinPE registry gate — when ATA command byte (arg1[0x24]) == 0x48, opens registry key '\\Registry\\Machine\\System\\CurrentControlSet\\Control\\MiniNT' via ZwOpenKey; returns STATUS_NOT_SUPPORTED (0xC00000BB) if the key cannot be opened (i.e., non-WinPE environments). This gates command 0x48 to WinPE-only contexts.",
+        "UNPATCHED: Performs inline integer arithmetic for sector-range bounds checking: 'add ecx, edx; cmp ecx, edx; cmovnb r8d, ecx; jb' to compute end-sector = start + count and detect 32-bit overflow.",
+        "PATCHED: Removed the WinPE registry gate entirely, so command 0x48 is no longer environment-gated. Replaced the inline sector-range arithmetic with a call to the RtlULongAdd (sub_1c0013808) helper.",
+        "Direction: the patched build is LESS restrictive (gate removed). Command 0x48 still passes the same sector-range, block-count and device-limit validation in both builds. The inline check and the helper produce equivalent 32-bit overflow handling."
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched validator's inline sector-range arithmetic computes end-sector as a byte (sector count) zero-extended to dword, added to a dword start-sector, and detects 32-bit wraparound via 'cmovnb r8d, ecx; jb'. The patched version computes the same result via the RtlULongAdd (sub_1c0013808) helper; the two produce equivalent overflow handling, so this part is a refactor. The removed WinPE registry gate makes the patched build less restrictive for command 0x48, which is a cross-version policy change rather than a delivered security fix; no dangerous primitive is demonstrably unlocked, and command 0x48 remains subject to the same range and device-limit checks in both builds.",
+      "assembly_diff": "UNPATCHED PortPassThroughValidateNormalizedRequest (sub_1c002a63c) key blocks:\n0x1c002a658 : cmp byte [rcx+0x24], 0x48  ; command == 0x48?\n0x1c002a66c : jnz 0x1c002a6e5\n0x1c002a66e : lea rdx, [rel MiniNT_key]  ; \\Registry\\Machine\\System\\CurrentControlSet\\Control\\MiniNT\n0x1c002a679 : call RtlInitUnicodeString\n0x1c002a6a5 : mov edx, 0x20019           ; KEY_READ\n0x1c002a6bd : call ZwOpenKey\n0x1c002a6c9 : test eax, eax\n0x1c002a6cb : jns 0x1c002a6d4            ; success -> continue\n0x1c002a6cd : mov eax, 0xc00000bb        ; STATUS_NOT_SUPPORTED\n0x1c002a6d2 : jmp return\n; Sector-range arithmetic (inline overflow check):\n0x1c002a6f2 : mov edx, dword [rbx+0x20]  ; start sector\n0x1c002a6f5 : or r8d, 0xffffffff         ; sentinel\n0x1c002a6f9 : movzx ecx, al             ; sector count (byte)\n0x1c002a6fc : add ecx, edx              ; end = start + count\n0x1c002a6fe : cmp ecx, edx              ; overflow check\n0x1c002a700 : cmovnb r8d, ecx           ; if no overflow, r8 = end\n0x1c002a704 : jb 0x1c002a744            ; overflow -> STATUS_INVALID_PARAMETER\nPATCHED (sub_1c002fba4): registry gate removed; 0x1c002fbdb : call RtlULongAdd (sub_1c0013808) for the same sector-range computation."
+    },
+    {
+      "name": "PortPassThroughSendAsync (sub_1c002a3dc) -> PortPassThroughSendAsync (sub_1c002f7d4)",
+      "similarity": 0.686,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored: inline alignment+size+page-count validation moved into dedicated validator function PortPassThroughValidate (sub_1c002faa0).",
+        "Replaced ExAllocatePoolWithTag(NonPagedPoolNx,...) with ExAllocatePool2(POOL_FLAG_NON_PAGED,...) for context allocation.",
+        "Added __builtin_memset zero-initialization of local state struct before use.",
+        "Validation logic (alignment mask check, page-count limit via arg4, size limit via arg5) is mathematically identical between versions."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PortPassThroughBuildIrpEx (sub_1c0015678) -> PortPassThroughBuildIrpEx (sub_1c0005b48)",
+      "similarity": 0.9906,
+      "change_type": "defensive",
+      "key_changes": [
+        "Added explicit zero-initialization of the stack-local KAPC_STATE before passing to KeStackAttachProcess on the cross-process MDL probe path.",
+        "Patched adds xorps/movups (0x1c0005b7b-0x1c0005b88) to zero the APC state buffer before the KeStackAttachProcess call; the functions are otherwise near-identical (similarity 0.9906)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The IRP builder passes a stack-local KAPC_STATE to KeStackAttachProcess when the PassThrough request crosses process boundaries (requestor process != current process). In BOTH builds, KeUnstackDetachProcess and every read of the structure are gated on an attach flag (sil / the var_88 stack byte) that is set to 1 exclusively on the instruction immediately following a successful KeStackAttachProcess (unpatched 0x1c001578e/0x1c0015791; patched 0x1c0005c70/0x1c0005c73). KeStackAttachProcess fully populates the KAPC_STATE on entry, so the structure is never consumed before it is written. The added zero-init therefore has no reachable effect on behavior; it is defense-in-depth stack initialization consistent with a newer toolchain, not a fix for a consumed uninitialized value.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IdeProcessCompletedRequests (sub_1C000D8D0) -> IdeProcessCompletedRequests (sub_1C00036A0)",
+      "similarity": 0.5168,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large request-completion/ETW-telemetry handler (347->840 lines). Mostly version churn with expanded tracing/telemetry paths.",
+        "Added IoGetActivityIdIrp call and additional EtwWrite instrumentation.",
+        "Added PoRequestPowerIrp path for idle power management.",
+        "Not a targeted security patch — reflects version difference."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "PortPassThroughBuildIrpEx (sub_1c0015678, unpatched) -> PortPassThroughBuildIrpEx (sub_1c0005b48, patched)",
+      "entry_point": "ATA PassThrough IOCTL (IRP_MJ_DEVICE_CONTROL / IRP_MJ_INTERNAL_DEVICE_CONTROL) via ATA pass-through direct-IO path, cross-process MDL probe",
+      "call_chain": [
+        "DeviceIoControl / NtDeviceIoControlFile with ATA pass-through IOCTL",
+        "PortPassThroughSendAsync (sub_1c002a3dc, 0x1c002a3dc)",
+        "PortPassThroughBuildIrpEx (sub_1c0015678, 0x1c0015678) — cross-process MDL probe path"
+      ],
+      "vulnerability_class": "No security-relevant change (defense-in-depth stack initialization)",
+      "description": "On the cross-process MDL probe path (requesting process != current process), PortPassThroughBuildIrpEx passes a stack-local KAPC_STATE structure to KeStackAttachProcess. The unpatched build (0x1c0015678) does not zero-initialize this structure before the call at 0x1c0015782; the patched build (0x1c0005b48) zero-initializes it with xorps/movups at 0x1c0005b7b-0x1c0005b88 before the call at 0x1c0005c64. This has no reachable effect: in BOTH builds, KeUnstackDetachProcess and every read of the structure are gated on an attach flag (sil / the var_88 stack byte) that is set to 1 only on the instruction immediately after a successful KeStackAttachProcess, and KeStackAttachProcess fully populates the structure on entry. The structure is therefore never consumed before it is written, so the added zero-init is defense-in-depth stack initialization rather than a fix for a used uninitialized value. The ATA PassThrough IRB control-flag computation in PortPassThroughSrbInitialize (unpatched sub_1c002a7d0 -> patched sub_1c002f9d4) was examined and produces the identical final field value in both builds (transfer_type | 0x20 | 0x100 in the no-data-buffer case): the unpatched alternate values 0xa0/0x60/0xe0 equal 0x80|0x20, 0x40|0x20, 0xc0|0x20 and preserve the transfer-type bits, so that difference is not security-relevant and produces no DMA direction mismatch.",
+      "trigger_conditions": "1. Send an ATA PassThrough IOCTL (dispatching to PortPassThroughSendAsync sub_1c002a3dc) from a context where the requestor process (IoGetRequestorProcess on the IRP) differs from the current process, so the cross-process branch in PortPassThroughBuildIrpEx is taken. 2. The parser PortPassThroughNormalize (sub_1c00153c8) must accept the input. 3. The validator PortPassThroughValidateNormalizedRequest (sub_1c002a63c) must pass. Even when all conditions are met, the two builds behave identically because the KAPC_STATE is populated by KeStackAttachProcess before any read.",
+      "primitive": "None. The stack KAPC_STATE passed to KeStackAttachProcess is fully populated by that call on entry, and in both builds the detach and any read of the structure are gated on a flag set only after the attach call, so no uninitialized value is ever consumed. The added zero-init is defense-in-depth with no reachable impact.",
+      "evidence": "UNPATCHED PortPassThroughBuildIrpEx (sub_1c0015678): no zero-init of ApcState before the attach call:\n0x1c001577a : lea rdx, [rsp+ApcState]\n0x1c0015782 : call KeStackAttachProcess\n\nPATCHED PortPassThroughBuildIrpEx (sub_1c0005b48): KAPC_STATE zero-filled first:\n0x1c0005b7b : xorps xmm0, xmm0\n0x1c0005b7e : movups [rsp+ApcState.ApcListHead], xmm0\n0x1c0005b83 : movups [rsp+ApcState.ApcListHead+10h], xmm0\n0x1c0005b88 : movups [rsp+ApcState.Process], xmm0\n0x1c0005c5c : lea rdx, [rsp+ApcState]\n0x1c0005c64 : call KeStackAttachProcess\n\nThe IRB flag computation in PortPassThroughSrbInitialize is functionally equivalent between builds (0xa0==0x80|0x20, 0x60==0x40|0x20, 0xe0==0xc0|0x20), so it yields no differential behavior.",
+      "assembly": "PortPassThroughBuildIrpEx cross-process probe (patched, sub_1c0005b48):\n0x1c0005b7b : xorps xmm0, xmm0\n0x1c0005b7e : movups xmmword [rsp+ApcState.ApcListHead], xmm0\n0x1c0005b83 : movups xmmword [rsp+ApcState.ApcListHead+10h], xmm0\n0x1c0005b88 : movups xmmword [rsp+ApcState.Process], xmm0\n0x1c0005c37 : call IoGetRequestorProcess\n0x1c0005c4b : call IoGetCurrentProcess\n0x1c0005c57 : cmp rdi, rax              ; requestor != current?\n0x1c0005c5c : lea rdx, [rsp+ApcState]\n0x1c0005c64 : call KeStackAttachProcess\nUNPATCHED (sub_1c0015678): same sequence at 0x1c0015755 (IoGetRequestorProcess) .. 0x1c0015782 (call KeStackAttachProcess) with NO preceding xorps/movups zero-init of ApcState.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ataport!PortPassThroughBuildIrpEx (sub_1c0015678)",
+            "address": "0x1c0015678",
+            "why": "Entry of the IRP/MDL builder. Break here and step to the cross-process branch (IoGetRequestorProcess vs IoGetCurrentProcess) to reach the KeStackAttachProcess call with the uninitialized KAPC_STATE on the unpatched build."
+          },
+          {
+            "symbol": "ataport!PortPassThroughBuildIrpEx (KeStackAttachProcess call site)",
+            "address": "0x1c0015782",
+            "why": "Cross-process MDL probe. Break just before KeStackAttachProcess and dump [rsp+ApcState]; on the unpatched build it holds residual stack data, on the patched build (0x1c0005b7b-0x1c0005b88) it is zero-filled first."
+          },
+          {
+            "symbol": "ataport!PortPassThroughSendAsync (sub_1c002a3dc)",
+            "address": "0x1c002a3dc",
+            "why": "Entry point for ATA pass-through requests. rcx=DeviceObject, rdx=Irp. Inspect the IRP's SystemBuffer to see the ATA pass-through struct fields (transfer length at offset 0xC, task file at offset 0x24)."
+          }
+        ],
+        "watch": [
+          "[rsp+ApcState] KAPC_STATE at PortPassThroughBuildIrpEx before KeStackAttachProcess — uninitialized on unpatched, zero on patched",
+          "Result of IoGetRequestorProcess vs IoGetCurrentProcess — inequality selects the cross-process attach path",
+          "[rbx+0xC] IRB control flags in PortPassThroughSrbInitialize — identical final value in both builds (transfer_type | 0x20 | 0x100 for the no-data-buffer case)"
+        ],
+        "key_offsets": [
+          "0x1c0015782 (unpatched): 'call KeStackAttachProcess' with uninitialized KAPC_STATE",
+          "0x1c0005b7b-0x1c0005b88 (patched): xorps/movups zero-init of KAPC_STATE before KeStackAttachProcess",
+          "0x1c0005c64 (patched): 'call KeStackAttachProcess' after zero-init",
+          "0x1c002a85a (unpatched SrbInitialize): '[rbx+0xC] = eax' — primary transfer-type flag (e.g., 0x80)",
+          "0x1c002a867 (unpatched SrbInitialize): '[rbx+0xC] = ecx' — transfer_type|0x20 (e.g., 0xa0) when arg5==NULL; transfer-type bits preserved",
+          "0x1c002fa54 (patched SrbInitialize): 'or eax, 0x20' — same final value",
+          "0x1c002a6fc (unpatched validator): 'add ecx, edx' inline sector-range arithmetic; patched uses RtlULongAdd (sub_1c0013808)"
+        ],
+        "trigger_setup": "1. Open a handle to an ATA device (e.g., \\\\.\\PhysicalDriveN) from a user-mode process with sufficient privileges. 2. Use DeviceIoControl with the ATA pass-through IOCTL (IOCTL_ATA_PASS_THROUGH-class code) so the requestor process differs from the current process when PortPassThroughBuildIrpEx runs the MDL probe. 3. The IRP reaches PortPassThroughSendAsync (sub_1c002a3dc), then PortPassThroughBuildIrpEx (sub_1c0015678), which on the unpatched build passes an uninitialized KAPC_STATE to KeStackAttachProcess.",
+        "expected_observation": "At the KeStackAttachProcess call (unpatched 0x1c0015782), the KAPC_STATE argument contains residual stack data; the patched build zero-fills it at 0x1c0005b7b-0x1c0005b88 first. KeStackAttachProcess populates the structure on entry and the detach/read is gated on a flag set only after that call, so both builds behave identically and there is no observable security-relevant difference. The IRB control-flag path in PortPassThroughSrbInitialize produces identical values in both builds.",
+        "notes": "The ataport.sys driver is a storage port driver. The pass-through path is reachable from user mode via DeviceIoControl on a physical drive handle (requires administrative privileges typically, but device ACLs vary). The IRB flags field at offset 0xC encodes transfer direction (0x80/0x40/0xc0) plus a no-data-buffer bit (0x20) and a completion bit (0x100); both builds compute the same field value. The KAPC_STATE zero-initialization is defense-in-depth with no reachable impact, and the WinPE gate removal on command 0x48 is a cross-version policy change that makes the patched build less restrictive; neither is a delivered security fix. ASLR: the binary is not PIE; base address is loadable but the relative offsets between functions are stable for symbol resolution."
+      }
+    }
+  ],
+  "summary": "The ataport.sys diff (overall similarity 0.6819, 328 changed functions) primarily reflects version churn between Windows release branches (17763 -> 20348). No reachable security-relevant change was found in the analyzed functions. (1) PortPassThroughBuildIrpEx (unpatched sub_1c0015678 -> patched sub_1c0005b48) adds a zero-initialization of the stack-local KAPC_STATE with xorps/movups at 0x1c0005b7b-0x1c0005b88 before KeStackAttachProcess (call at 0x1c0005c64), but in both builds the structure is only read after KeStackAttachProcess populates it (the detach is gated on a flag set only after the attach call), so this is defense-in-depth stack initialization with no reachable impact, not a used-uninitialized-value fix. (2) The ATA PassThrough IRB control-flag computation in PortPassThroughSrbInitialize (sub_1c002a7d0 -> sub_1c002f9d4) is functionally equivalent between builds: the unpatched no-data-buffer values 0xa0/0x60/0xe0 equal 0x80|0x20, 0x40|0x20, 0xc0|0x20, so both builds produce the identical final field value (transfer_type | 0x20 | 0x100) and there is no DMA direction mismatch. (3) PortPassThroughValidateNormalizedRequest (sub_1c002a63c -> sub_1c002fba4) removed a WinPE registry gate (ZwOpenKey on the MiniNT key) on task-file command 0x48 and refactored the inline sector-range overflow check to the RtlULongAdd (sub_1c0013808) helper (equivalent overflow handling); the gate removal makes the patched build less restrictive and is a cross-version policy change, not a security fix."
+}

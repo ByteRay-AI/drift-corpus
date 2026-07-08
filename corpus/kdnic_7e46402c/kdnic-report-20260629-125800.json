@@ -1,0 +1,248 @@
+{
+  "binaries": {
+    "title": "kdnic.sys (Kernel Debug Network Interface Card Driver) - No security-relevant change (NDIS timer/DPC -> NdisRegisterPoll + WDF refactor with ETW TraceLogging)",
+    "id_unpatched": "kdnic_unpatched.sys",
+    "id_patched": "kdnic_patched.sys",
+    "overall_similarity": 0.4943,
+    "matched": 58,
+    "changed": 43,
+    "identical": 15,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "RxReceiveIndicateDpc @ 0x1C0002460 (unpatched) -> HandleReceive @ 0x1400024F8 (patched)",
+      "similarity": 0.5842,
+      "change_type": "refactor",
+      "key_changes": [
+        "Receive handler moved from an NDIS timer callback (registered via NdisAllocateTimerObject, object at adapter+0x130) to an NdisPoll callback (HandleReceive), reached through NdisRegisterPoll",
+        "Unpatched has a 0x40-byte frame with no __security_cookie; patched has a 0xD0-byte frame with a cookie (loaded from cs:__security_cookie, stored at [rbp+0x17], checked at 0x1400027C2 via __security_check_cookie). The larger frame holds local ETW TraceLogging descriptor arrays, which is what the cookie protects",
+        "Both builds read the same fixed 6 bytes of the destination-MAC field from the driver-managed scatter/gather descriptor (unpatched [r8+0x14] dword + [r8+0x18] word into [rsp+0x68]; patched [r9+0x14] + [r9+0x18] into a stack slot) and pass a pointer to NICGetFrameTypeFromDestination. It is a fixed-size read into a fixed slot, not a variable-length copy",
+        "The doubly-linked-list back-pointer integrity fail-fast (cmp [rax+8],reg; jnz -> mov ecx,3; int 29h = RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY)) is present and identical in BOTH builds (unpatched target 0x1C0002658, patched target 0x14000271B). The patch does not add list integrity validation",
+        "Instead of indicating inline via NdisMIndicateReceiveNetBufferLists, the patched poll callback returns the built list to NDIS via its output parameter ([rsi+0x10] list, [rsi+0x18] count) and honours the per-poll budget (cmp r15d,[rsi]; jnb at 0x1400026CF)",
+        "Patched adds ETW TraceLogging via _tlgWriteTransfer_EtwWriteTransfer, gated by dword_140008000 > 5 (calls at 0x1400025A1 and 0x1400027BD)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix. The added __security_cookie is a compiler artifact of the larger poll-model frame that now holds local ETW descriptor arrays, not protection for a newly found overflowable buffer. The unpatched handler has no overflowable stack buffer: the only stack write of descriptor data is a fixed 6-byte destination-MAC read into a fixed slot. The list-corruption fail-fast (int 29h, code 3) exists identically in both builds, and the poll-budget count limit is the NdisPoll API contract, not a bounds fix (the unpatched loop already drains a finite flushed SList).",
+      "assembly_diff": "Unpatched prologue (RxReceiveIndicateDpc, NO stack cookie, 0x40 frame):\n0x1C0002460  mov     [rsp+8], rbx\n0x1C0002465  mov     [rsp+18h], rbp\n0x1C000246A  push    rsi\n0x1C000246B  push    rdi\n0x1C000246C  push    r14\n0x1C000246E  sub     rsp, 40h\n0x1C0002472  mov     rdi, [rdx+30h]\n0x1C0002476  mov     rbx, rdx\n\nPatched prologue (HandleReceive, WITH stack cookie, 0xD0 frame):\n0x1400024F8  mov     [rsp+8], rbx\n0x1400024FD  push    rbp\n0x1400024FE  push    rsi\n0x1400024FF  push    rdi\n0x140002500  push    r12\n0x140002502  push    r13\n0x140002504  push    r14\n0x140002506  push    r15\n0x140002508  lea     rbp, [rsp-27h]\n0x14000250D  sub     rsp, 0D0h\n0x140002514  mov     rax, cs:__security_cookie\n0x14000251B  xor     rax, rsp\n0x14000251E  mov     [rbp+17h], rax\n\nFixed 6-byte destination-MAC read (same in both; here unpatched):\n0x1C0002515  lea     rcx, [rsp+68h]\n0x1C000251A  mov     eax, [r8+14h]\n0x1C000251E  mov     [rsp+68h], eax\n0x1C0002522  movzx   eax, word ptr [r8+18h]\n0x1C0002527  mov     [rsp+6Ch], ax\n0x1C000252C  call    NICGetFrameTypeFromDestination\n\nList-integrity fail-fast (same in both; here unpatched):\n0x1C0002583  cmp     [rax+8], rdx\n0x1C0002587  jnz     0x1C0002658\n0x1C0002658  mov     ecx, 3\n0x1C000265D  int     29h\n\nUnpatched inline indicate (timer path):\n0x1C000261F  mov     rcx, [rbx+28h]\n0x1C0002623  xor     r8d, r8d\n0x1C0002626  mov     rdx, rbp\n0x1C0002629  mov     [rsp+20h], 401h\n0x1C0002631  call    cs:__imp_NdisMIndicateReceiveNetBufferLists\n\nPatched cookie check in epilogue:\n0x1400027C2  mov     rcx, [rbp+17h]\n0x1400027C6  xor     rcx, rsp\n0x1400027C9  call    __security_check_cookie"
+    },
+    {
+      "name": "TXSendCompleteDpc @ 0x1C00027D0 (unpatched) -> HandleSend @ 0x1400027F0 (patched)",
+      "similarity": 0.4224,
+      "change_type": "refactor",
+      "key_changes": [
+        "Transmit-completion handler moved from an NDIS timer callback (object at adapter+0xC0) to an NdisPoll callback (HandleSend)",
+        "Unpatched has a 0x30-byte frame (push rbx; sub rsp,0x30) with no __security_cookie; patched has a 0xA0-byte frame (sub rsp,0xA0) with a cookie at [rbp+0x17], checked before return. The cookie protects the new poll/ETW locals",
+        "Both flush the send-complete SList at adapter_ext+0x20 and, per completed transmit control block, either record a send failure (inc [rbx+0x2B0]; set NBL status 0xC000009A = STATUS_INSUFFICIENT_RESOURCES) or update send statistics (+0x248/+0x250/+0x258 counts, +0x278/+0x280/+0x288 byte totals). The status flag [rax+0x1C] and frame type [rdx+0x28] are fields the driver's own send path wrote, not attacker-supplied network data",
+        "Patched bounds the completion loop by the poll budget (cmp r12d,[r14]; jnb) and drains a new in-flight list at adapter+0x158",
+        "The list-corruption fail-fast (mov ecx,3; int 29h) is present in both builds (unpatched 0x1C0002902)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix. Same reasoning as the receive handler: no overflowable stack buffer exists in the unpatched function, the completion metadata is driver-written (not attacker network data), the list-corruption fail-fast is present in both builds, and the added cookie / poll-budget limit follow from the poll-model rewrite and ETW instrumentation.",
+      "assembly_diff": "Unpatched prologue (TXSendCompleteDpc, NO cookie, 0x30 frame):\n0x1C00027D0  push    rbx\n0x1C00027D2  sub     rsp, 30h\n0x1C00027D6  mov     rcx, [rdx+30h]\n0x1C00027E6  add     rcx, 20h\n0x1C00027EA  call    cs:__imp_ExpInterlockedFlushSList\n\nDriver-written completion fields and failure branch (unpatched):\n0x1C0002891  mov     eax, [rax+1Ch]\n0x1C0002894  test    eax, eax\n0x1C0002898  inc     dword ptr [rbx+2B0h]\n0x1C00028A9  mov     dword ptr [rcx+8Ch], 0C000009Ah\n\nList-corruption fail-fast (unpatched):\n0x1C0002902  mov     ecx, 3\n0x1C0002907  int     29h\n\nPatched prologue (HandleSend, WITH cookie, 0xA0 frame):\n0x1400027F0  mov     [rsp+18h], rbx\n0x1400027F5  push    rbp\n0x140002805  sub     rsp, 0A0h\n0x14000280C  mov     rax, cs:__security_cookie\n0x140002813  xor     rax, rsp\n0x140002816  mov     [rbp+17h], rax\n0x140002840  lea     rdi, [rbx+158h]"
+    },
+    {
+      "name": "TXTransmitQueuedSends @ 0x1C0002920 (unpatched) -> 0x1400010C0 (patched)",
+      "similarity": 0.6514,
+      "change_type": "refactor",
+      "key_changes": [
+        "Pairs entries removed from two interlocked lists (unpatched adapter+0x60/+0x70 and adapter+0x80/+0x90 via ExInterlockedRemoveHeadList; offsets shift in patched) and pushes the resulting scatter/gather descriptors to an SList",
+        "Unpatched has a 0x30-byte frame with no __security_cookie; patched adds a cookie. There is no overflowable stack buffer and no attacker-controlled size in either build; the cookie tracks the larger patched frame / ETW locals",
+        "Patched adds ETW telemetry and restructures the loop"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix. The function only unlinks and re-links driver-managed list entries and pushes descriptors; there is no stack buffer, no copy, and no attacker-controlled length. The added cookie is a compiler artifact of the refactor.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MPSendNetBufferLists @ 0x1C00021B0 (unpatched) -> 0x140002AD0 (patched)",
+      "similarity": 0.666,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Field offsets shifted (0xd0->0xc0 for outstanding count, 0xc8->0xb8 for send queue count) due to adapter structure reorganization",
+        "Unpatched version inlines packet processing; patched version calls extracted TXQueueNetBufferForSend (0x140001290) for each NET_BUFFER",
+        "Error status calculation changed from explicit if-else to a computed expression"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MPInitializeEx @ 0x1C00072C0 (unpatched) -> 0x14000B370 (patched)",
+      "similarity": 0.2251,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds NdisRegisterPoll with two poll handlers (NdisSetPollNotification 0x140001690 and NdisPoll 0x1400017E0) at adapter+0x120",
+        "Patched version reads adapter parameters from different structure offsets due to the larger adapter structure (0x308 vs 0x2d0 bytes)",
+        "Error handling restructured: unpatched uses goto-based cleanup; patched uses linear flow with status tracking"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICAllocAdapter @ 0x1C000755C (unpatched) -> 0x14000B66C (patched)",
+      "similarity": 0.7555,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation size changed from 0x2d0 to 0x308 bytes for the adapter context structure",
+        "Timer wiring reduced (timer-based polling partly replaced by NdisRegisterPoll)",
+        "List head and spinlock field offsets shifted throughout the structure"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MPQueryInformation @ 0x1C0001B98 (unpatched) -> 0x140001EE0 (patched)",
+      "similarity": 0.2646,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function rewritten to a table-driven OID dispatch approach; statistics field offsets shifted due to adapter structure reorganization",
+        "The unpatched build carries a __security_cookie; the patched build (0x140001EE0) drops it. Not a regression: the only stack buffer is the fixed vendor string \"Microsoft\" written with constant data and copied out to the caller, and every output copy is bounded by the same caller-length check in both builds (cmp ebx,[rsi+0x30]; ja -> error 0xC0010016, else memmove of size ebx). With no variable-length attacker write into the stack buffer, the stack-protection heuristic legitimately omits the cookie in the patched codegen"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "TCBFree @ 0x1C0002BB0 (unpatched) -> patched (TXNblReleaseAndComplete 0x140001A60 path)",
+      "similarity": 0.6869,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The DispatchLevel argument passed to the NBL-release/complete path changes from 1 (TRUE) to 0 (FALSE)",
+        "List head offset changed from 0x60/0x70 to 0x58/0x68"
+      ],
+      "security_relevant": false,
+      "security_notes": "The DispatchLevel flag change is an IRQL-claim correctness change on completion, not a memory-safety fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "TXFlushSendQueue @ 0x1C0002668 (unpatched) -> 0x140002CB8 (patched)",
+      "similarity": 0.3159,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched drains lists at +0x80/+0x90 and +0xa0/+0xb0; patched drains shifted offsets plus the new in-flight list at +0x158/+0x168",
+        "Patched adds a drain loop for the new in-flight packet list with the same back-pointer int 29h fail-fast used elsewhere",
+        "Patched decrements count at +0x168 for each removed entry"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MPSetInformation @ 0x1C0002010 (unpatched) -> 0x14000239C (patched)",
+      "similarity": 0.8594,
+      "change_type": "behavioral",
+      "key_changes": [
+        "OID field offsets shifted due to adapter structure reorganization",
+        "Error handling restructured from early-return to linear flow",
+        "OID 0x1010e validation (mask check with 0xffffffd0) preserved and identical in both versions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry @ 0x1C0009080 (unpatched) -> 0x14000D03C (patched)",
+      "similarity": 0.2233,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds WDF class binding (WdfVersionBind, WdfLdrQueryInterface) alongside NdisMRegisterMiniportDriver",
+        "Patched version adds a DriverUnload hook",
+        "Patched version adds DbgPrintEx for failure diagnostics"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "RxReceiveIndicateDpc @ 0x1C0002460 (unpatched) -> HandleReceive @ 0x1400024F8 (patched)",
+      "entry_point": "Datapath receive handler. Unpatched: NDIS timer callback (NdisTimerObject at adapter+0x130). Patched: NdisPoll callback reached through NdisRegisterPoll.",
+      "call_chain": ["Receive SList at adapter_ext+0x40 drained via ExpInterlockedFlushSList", "NICGetFrameTypeFromDestination (classify by destination MAC)", "unpatched: NdisMIndicateReceiveNetBufferLists (inline indicate); patched: list returned to NDIS via poll output parameter"],
+      "vulnerability_class": "No security-relevant change (poll-model refactor; stack cookie added as a compiler artifact of new ETW-descriptor locals)",
+      "description": "The unpatched receive handler runs without a __security_cookie because it contains no overflowable stack buffer. The only descriptor data written to the stack is a fixed 6 bytes of the destination-MAC field, read from the driver-managed scatter/gather descriptor (unpatched: [r8+0x14] dword and [r8+0x18] word into [rsp+0x68]; patched: [r9+0x14]/[r9+0x18]) and passed by pointer to NICGetFrameTypeFromDestination. This is a fixed-size read into a fixed slot, not a variable-length copy, and cannot overflow. The doubly-linked-list back-pointer integrity fail-fast (int 29h, code 3 = RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY)) is present and identical in both builds. The patched HandleReceive gains a __security_cookie because its larger 0xD0-byte frame now holds local ETW TraceLogging descriptor arrays; the cookie protects those locals, not a newly discovered corruption bug. The behavioural change is architectural: the timer callback becomes an NdisPoll callback that returns the built list to NDIS through its output parameter and honours the poll budget (cmp r15d,[rsi]; jnb at 0x1400026CF) instead of indicating inline, plus added ETW tracing gated by dword_140008000 > 5.",
+      "trigger_conditions": "Not applicable. No attacker-controllable length or pointer reaches an unguarded write in either build. The receive path drains a finite flushed SList and classifies each frame by a fixed 6-byte MAC read, guarded in both builds by the same list-integrity fail-fast.",
+      "primitive": "None. No memory-corruption primitive exists in either build: no variable-length stack copy, no attacker-controlled size or pointer feeding an unchecked write, and identical list-integrity fail-fasts. The absence of a __security_cookie in the unpatched handler reflects that the compiler found no overflowable stack buffer to protect.",
+      "evidence": "Unpatched RxReceiveIndicateDpc prologue (0x40 frame, NO cookie):\n0x1C0002460  mov     [rsp+8], rbx\n0x1C0002465  mov     [rsp+18h], rbp\n0x1C000246A  push    rsi\n0x1C000246B  push    rdi\n0x1C000246C  push    r14\n0x1C000246E  sub     rsp, 40h\n0x1C0002472  mov     rdi, [rdx+30h]\n0x1C0002476  mov     rbx, rdx\n\nFixed 6-byte destination-MAC read into a fixed stack slot:\n0x1C0002515  lea     rcx, [rsp+68h]\n0x1C000251A  mov     eax, [r8+14h]\n0x1C000251E  mov     [rsp+68h], eax\n0x1C0002522  movzx   eax, word ptr [r8+18h]\n0x1C0002527  mov     [rsp+6Ch], ax\n0x1C000252C  call    NICGetFrameTypeFromDestination\n\nList-integrity fail-fast present in BOTH builds (here unpatched):\n0x1C0002583  cmp     [rax+8], rdx\n0x1C0002587  jnz     0x1C0002658\n0x1C0002658  mov     ecx, 3\n0x1C000265D  int     29h\n\nPatched HandleReceive adds a cookie for its ETW-descriptor frame:\n0x14000250D  sub     rsp, 0D0h\n0x140002514  mov     rax, cs:__security_cookie\n0x14000251B  xor     rax, rsp\n0x14000251E  mov     [rbp+17h], rax\n0x1400026CF  cmp     r15d, [rsi]        ; poll budget\n0x1400026D2  jnb     0x140002722\n0x14000271B  mov     ecx, 3             ; same fail-fast\n0x140002720  int     29h\n0x1400027C2  mov     rcx, [rbp+17h]\n0x1400027C6  xor     rcx, rsp\n0x1400027C9  call    __security_check_cookie",
+      "assembly": "Unpatched RxReceiveIndicateDpc @ 0x1C0002460 (full):\n0x1C0002460  mov     [rsp+8], rbx\n0x1C0002465  mov     [rsp+18h], rbp\n0x1C000246A  push    rsi\n0x1C000246B  push    rdi\n0x1C000246C  push    r14\n0x1C000246E  sub     rsp, 40h              ; 0x40 frame, no cookie slot\n0x1C0002472  mov     rdi, [rdx+30h]        ; adapter extension\n0x1C0002476  mov     rbx, rdx              ; adapter context\n0x1C0002479  test    rdi, rdi\n0x1C000247C  jz      0x1C000263D\n0x1C0002489  mov     rcx, rbx\n0x1C000248C  call    RCBAllocate\n0x1C00024AB  call    cs:__imp_KdPollBreakIn\n0x1C00024CC  lea     rcx, [rdi+40h]        ; received-packet SList head\n0x1C00024D0  call    cs:__imp_ExpInterlockedFlushSList\n0x1C00024DC  mov     rdx, rax\n0x1C00024DF  test    rax, rax\n0x1C00024E2  jz      0x1C000263D\n0x1C00024E8  lea     rax, [rsp+30h]        ; stack-local list sentinel\n0x1C00024ED  mov     [rsp+38h], rax\n0x1C00024F7  mov     [rsp+30h], rax\n0x1C00024FC  mov     rax, [rdx+20h]        ; NET_BUFFER_LIST\n0x1C0002500  mov     r8, [rdx+28h]        ; scatter/gather descriptor\n0x1C0002504  mov     r9, [rdx]            ; next entry\n0x1C000250E  mov     eax, [r8+10h]        ; descriptor byte count\n0x1C0002512  mov     [rcx+18h], eax\n0x1C0002515  lea     rcx, [rsp+68h]\n0x1C000251A  mov     eax, [r8+14h]        ; fixed 4-byte dest-MAC read\n0x1C000251E  mov     [rsp+68h], eax\n0x1C0002522  movzx   eax, word ptr [r8+18h] ; fixed 2-byte dest-MAC read\n0x1C0002527  mov     [rsp+6Ch], ax\n0x1C000252C  call    NICGetFrameTypeFromDestination\n0x1C0002583  cmp     [rax+8], rdx         ; list back-pointer integrity check\n0x1C0002587  jnz     0x1C0002658          ; -> RtlFailFast(3)\n0x1C000261F  mov     rcx, [rbx+28h]       ; MiniportAdapterHandle\n0x1C0002626  mov     rdx, rbp             ; NetBufferList chain\n0x1C0002629  mov     [rsp+20h], 401h      ; ReceiveFlags (dispatch-level)\n0x1C0002631  call    cs:__imp_NdisMIndicateReceiveNetBufferLists\n0x1C000263D  mov     rcx, rbx\n0x1C0002640  call    RXScheduleTheReceiveIndication\n0x1C000264F  add     rsp, 40h\n0x1C0002657  retn                          ; no cookie check\n0x1C0002658  mov     ecx, 3\n0x1C000265D  int     29h                   ; RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "kdnic_unpatched!RxReceiveIndicateDpc",
+            "address": "0x1C0002460",
+            "why": "Entry of the receive datapath handler. rdx = adapter context; [rdx+0x30] = adapter extension. Confirms the 0x40 frame and absence of a stack cookie (a compiler artifact of having no overflowable buffer, not a removed mitigation)."
+          },
+          {
+            "symbol": "kdnic_unpatched!RxReceiveIndicateDpc+0xcc",
+            "address": "0x1C000252C",
+            "why": "Call to NICGetFrameTypeFromDestination with rcx = [rsp+0x68]. The 6 bytes at [rsp+0x68] are the fixed destination-MAC field just read from the scatter/gather descriptor; observe that this is a fixed-size read, not a variable-length copy."
+          }
+        ],
+        "watch": [
+          "rdx at entry = adapter context; [rdx+0x30] = adapter extension",
+          "[rdi+0x40] = received-packet SList head drained by ExpInterlockedFlushSList",
+          "[r8+0x14] (dword) and [r8+0x18] (word) = fixed destination-MAC field of the driver-managed scatter/gather descriptor, copied to the fixed slot [rsp+0x68]",
+          "[rsp+0x30] = stack-local list sentinel; back-pointer checked by the int 29h fail-fast present in both builds",
+          "rbx+0x230/0x238/0x240 and rbx+0x260/0x268/0x270 = per-frame-type packet and byte counters"
+        ],
+        "key_offsets": [
+          "0x1C000246e: sub rsp, 0x40 - no cookie slot (no overflowable buffer to protect)",
+          "0x1C00024e8-0x1C00024f7: stack-local list sentinel setup at [rsp+0x30]",
+          "0x1C000251a-0x1C0002527: fixed 6-byte destination-MAC read into [rsp+0x68]",
+          "0x1C0002583-0x1C0002587: list back-pointer integrity check (identical in both builds)",
+          "0x1C0002658-0x1C000265d: RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY) landing pad (identical in both builds)"
+        ],
+        "trigger_setup": "kdnic.sys is the Kernel Debug Network Interface Card driver used for network kernel debugging (KDNET). In the unpatched build the timer callback at adapter+0x130 fires to drain the hardware receive SList; in the patched build the same work runs as an NdisPoll callback. No attacker-controllable length or pointer reaches an unguarded write in either build, so there is no corruption to set up.",
+        "expected_observation": "None. The receive path processes a fixed 6-byte descriptor field and a finite flushed SList, guarded in both builds by the same list-integrity fail-fast (int 29h, code 3). The only build difference visible at the prologue/epilogue is the poll-model stack cookie, which tracks the new ETW local storage.",
+        "notes": "Adapter context grows 0x2d0 -> 0x308 between builds; statistics and list-head offsets shift accordingly. The patched receive handler returns packet lists to the poll handler via its output parameter rather than calling NdisMIndicateReceiveNetBufferLists inline."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "TXSendCompleteDpc @ 0x1C00027D0 (unpatched) -> HandleSend @ 0x1400027F0 (patched)",
+      "entry_point": "Transmit-completion handler. Unpatched: NDIS timer callback (NdisTimerObject at adapter+0xC0). Patched: NdisPoll callback.",
+      "call_chain": ["Send-complete SList at adapter_ext+0x20 drained via ExpInterlockedFlushSList", "per completed transmit control block: record failure or update send statistics", "TCBFree", "TXTransmitQueuedSends"],
+      "vulnerability_class": "No security-relevant change (send-completion timer callback -> NdisPoll callback; stack cookie added as compiler artifact)",
+      "description": "The unpatched transmit-completion handler runs without a __security_cookie (push rbx; sub rsp,0x30) and has no overflowable stack buffer. It flushes the send-complete SList at adapter_ext+0x20 and, per completed transmit control block, either records a send failure (inc [rbx+0x2B0]; sets NBL status 0xC000009A = STATUS_INSUFFICIENT_RESOURCES) or updates the send statistics (+0x248/+0x250/+0x258 counts, +0x278/+0x280/+0x288 byte totals). The completion flag it reads ([rax+0x1C]) and the frame type ([rdx+0x28]) are fields the driver's own send path wrote, not attacker-supplied network data. The list-corruption fail-fast (mov ecx,3; int 29h) is present in both builds. In the patched build HandleSend performs the same completion work as an NdisPoll callback, bounded by the poll budget (cmp r12d,[r14]; jnb) and using a new in-flight list at adapter+0x158; its 0xA0-byte frame carries a __security_cookie that tracks the new poll/ETW locals.",
+      "trigger_conditions": "Not applicable. The metadata driving statistics and completion status is written by the driver's own transmit path, not by network input, and there is no variable-length stack copy.",
+      "primitive": "None. No stack buffer, no attacker-controlled size, and the same list-corruption fail-fast in both builds.",
+      "evidence": "Unpatched TXSendCompleteDpc prologue (0x30 frame, NO cookie):\n0x1C00027D0  push    rbx\n0x1C00027D2  sub     rsp, 30h\n0x1C00027D6  mov     rcx, [rdx+30h]\n0x1C00027E6  add     rcx, 20h              ; send-complete SList head\n0x1C00027EA  call    cs:__imp_ExpInterlockedFlushSList\n\nDriver-written completion fields, failure branch:\n0x1C0002891  mov     eax, [rax+1Ch]        ; driver-set completion flag\n0x1C0002894  test    eax, eax\n0x1C0002898  inc     dword ptr [rbx+2B0h]  ; send-error count\n0x1C00028A9  mov     dword ptr [rcx+8Ch], 0C000009Ah ; STATUS_INSUFFICIENT_RESOURCES\n\nList-corruption fail-fast (present in both builds):\n0x1C0002902  mov     ecx, 3\n0x1C0002907  int     29h\n\nPatched HandleSend adds a cookie for its 0xA0 poll/ETW frame:\n0x140002805  sub     rsp, 0A0h\n0x14000280C  mov     rax, cs:__security_cookie\n0x140002813  xor     rax, rsp\n0x140002816  mov     [rbp+17h], rax\n0x140002840  lea     rdi, [rbx+158h]       ; new in-flight list",
+      "assembly": "Unpatched TXSendCompleteDpc @ 0x1C00027D0 (key path):\n0x1C00027D0  push    rbx\n0x1C00027D2  sub     rsp, 30h              ; 0x30 frame, no cookie, no stack buffer\n0x1C00027D6  mov     rcx, [rdx+30h]        ; adapter extension\n0x1C00027E6  add     rcx, 20h\n0x1C00027EA  call    cs:__imp_ExpInterlockedFlushSList ; send-complete SList\n0x1C0002816  mov     rdx, [rcx]\n0x1C000282E  cmp     [rcx+8], r8          ; list integrity check\n0x1C0002832  jnz     0x1C0002902          ; -> RtlFailFast(3)\n0x1C0002891  mov     eax, [rax+1Ch]       ; driver-set completion flag\n0x1C0002894  test    eax, eax\n0x1C0002896  jnz     0x1C00028B5\n0x1C0002898  inc     dword ptr [rbx+2B0h] ; send-error count\n0x1C00028A9  mov     dword ptr [rcx+8Ch], 0C000009Ah ; STATUS_INSUFFICIENT_RESOURCES\n0x1C00028B5  mov     ecx, [rdx+28h]       ; frame type (driver-written)\n0x1C00028C2  inc     qword ptr [rbx+248h] ; tx unicast count\n0x1C00028C9  add     [rbx+278h], rax      ; tx unicast bytes\n0x1C00028F3  call    TCBFree\n0x1C0002902  mov     ecx, 3\n0x1C0002907  int     29h                  ; RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY)\n0x1C000290C  call    TXTransmitQueuedSends\n0x1C0002916  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "kdnic_unpatched!TXSendCompleteDpc",
+            "address": "0x1C00027D0",
+            "why": "Entry of the transmit-completion handler. Confirms the 0x30 frame and no stack cookie; rdx = adapter context, [rdx+0x30] = adapter extension whose +0x20 holds the send-complete SList."
+          }
+        ],
+        "watch": [
+          "[rdx+0x30] = adapter extension; ext+0x20 = send-complete SList head",
+          "[rax+0x1C] = driver-set completion flag (0 => failure branch)",
+          "[rdx+0x28] = frame type (driver-written), selects the statistics bucket",
+          "rbx+0x248/0x250/0x258 and rbx+0x278/0x280/0x288 = tx count/byte statistics",
+          "rbx+0x2B0 = tx send-error count"
+        ],
+        "key_offsets": [
+          "0x1C00027d2: sub rsp, 0x30 - no cookie, no stack buffer",
+          "0x1C000282e-0x1C0002832: list back-pointer integrity check",
+          "0x1C0002898-0x1C00028a9: failure branch sets STATUS_INSUFFICIENT_RESOURCES",
+          "0x1C0002902-0x1C0002907: RtlFailFast landing pad (present in both builds)"
+        ],
+        "trigger_setup": "Fires when NDIS completes previously submitted transmits and the driver queues them to the send-complete SList at adapter_ext+0x20. In the patched build the same completion work runs as an NdisPoll callback. No attacker-controlled input reaches a memory-unsafe operation.",
+        "expected_observation": "None. Completion metadata is driver-written; the same list-corruption fail-fast guards both builds.",
+        "notes": "The patched HandleSend uses a 0xA0-byte frame with a cookie at [rbp+0x17] and a poll-budget limit (cmp r12d,[r14]; jnb), plus a new in-flight list at adapter+0x158 - all consequences of the poll-model rewrite, not a corruption fix."
+      }
+    }
+  ],
+  "summary": "The patch migrates kdnic.sys (Windows Kernel Debug Network Interface Card driver) from the legacy NDIS timer-callback/DPC datapath to the newer NdisRegisterPoll poll model, adds WDF class binding (WdfVersionBind, WdfLdrQueryInterface) and a DriverUnload hook, and adds ETW TraceLogging instrumentation. 43 of 58 matched functions changed and overall similarity is ~49%, consistent with a broad architectural rewrite rather than a targeted security fix. The receive and send-completion handlers were renamed and rebuilt as poll callbacks (RxReceiveIndicateDpc -> HandleReceive, TXSendCompleteDpc -> HandleSend). The __security_cookie that appears in the rewritten handlers is a compiler artifact of their new, larger stack frames, which now hold local ETW TraceLogging descriptor arrays; the unpatched handlers lacked a cookie because they contain no overflowable stack buffer (their only descriptor-data stack write is a fixed 6-byte destination-MAC read into a fixed slot). The doubly-linked-list integrity fail-fasts (RtlFailFast(FAST_FAIL_CORRUPT_LIST_ENTRY), int 29h with code 3) are present and identical in both builds, and the poll-budget count limits are the NdisPoll API contract rather than a bounds fix. The classic input-validation sites are unchanged: NICSetMulticastList keeps its multiple-of-6 check (error 0xC0010014) and 0xC0 cap (error 0xC0010009) with a bounded memset/memmove, MPSetInformation keeps its OID 0x1010E mask check, and NICReadRegParameters only reads admin-controlled NDIS configuration values. No security-relevant behavioral difference was found and no exploitable primitive exists in either build."
+}

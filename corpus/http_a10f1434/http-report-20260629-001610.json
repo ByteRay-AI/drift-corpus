@@ -1,0 +1,154 @@
+{
+  "binaries": {
+    "title": "http.sys - Integer overflow in per-request array capacity (CWE-190) causing kernel pool overflow in UlpParseNextRequest",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9896,
+    "matched": 3205,
+    "changed": 6,
+    "identical": 3199,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlpParseNextRequest (sub_1c000e4a0) / UlpParseNextRequest (sub_1c000e550)",
+      "similarity": 0.9142,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "INTEGER OVERFLOW FIX: The unpatched code increments a 16-bit capacity field (word [rdi+0x630]) by 5 with NO overflow check: `*(rdi_1 + 0x630) = rcx_20 + 5`. When capacity reaches values near 0xFFFF (e.g., 0xFFFC), adding 5 wraps to a tiny value (0x0001), causing the next allocation `(capacity << 3) + 0x28` to be far too small.",
+        "SAFE-ADD CALL: Patched code calls the standard RTL safe-integer library routine RtlUShortAdd (sub_1c001c6e4), which computes capacity+5 using 32-bit arithmetic and detects 16-bit unsigned overflow via `cmp ax, cx; jb`. If overflow is detected, it clamps to 0xFFFF and returns STATUS_INTEGER_OVERFLOW (0xC0000095). This routine is emitted only in the patched build.",
+        "CHECKED ALLOCATION PATH: Patched code adds a guarded path `if (RtlUShortAdd(rcx_18, 5, &var_98) >= 0)` that bails on overflow and otherwise allocates `new_cap*8` bytes using the validated capacity for both the allocation size and the stored capacity field.",
+        "KIR-GATED FIX: The checked path is selected by the KIR feature flag `UxKirRefBufferOverflowCheck (data_1c0078d80)` (`cmp cs:UxKirRefBufferOverflowCheck, r14b; jz old_path` at 0x1c000e900). When the flag is disabled the patched build runs the original unchecked path (`add cx, 5; mov [rdi+0x630], cx` at 0x1c000ea02), byte-for-byte the vulnerable code. The unpatched build has only that unchecked path.",
+        "UNCHANGED FUNCTION (relocation only): UlpCheckTrailerLength moved from sub_1c001b7b4 to sub_1c001c70c between builds. It is a separate trailer-length check and is not part of the grow logic in either build."
+      ],
+      "security_relevant": true,
+      "security_notes": "CRITICAL: Integer overflow (CWE-190) in the HTTP request tracking array capacity field leads to a kernel pool buffer overflow (CWE-122). The unpatched code at offset 0x1c000e82f reads a 16-bit count (word [rdi+0x632]) and 16-bit capacity (word [rdi+0x630]). When count >= capacity, it allocates a new buffer sized as `(capacity * 8) + 0x28`, copies the old data, frees the old buffer, and updates capacity as `capacity + 5`. Without overflow checking, when capacity approaches 0xFFFF, the addition wraps to a small value. The next write at `mov qword [rax+rcx*8], rsi` (0x1c000e8d7) uses the monotonically increasing count as an index into the now-undersized buffer, writing 8 bytes per entry past the end of the NonPagedPoolNx allocation. This is a remotely reachable kernel pool overflow exploitable by sending a large volume of HTTP requests to grow the array to the overflow threshold.",
+      "assembly_diff": "UNPATCHED vulnerable allocation:\n0x1c000e82f | movzx   eax, word [rdi+0x632]      ; count (16-bit)\n0x1c000e836 | movzx   ecx, word [rdi+0x630]      ; capacity (16-bit)\n0x1c000e83d | cmp     ax, cx\n0x1c000e840 | jb      0x1c000e8cd                 ; skip alloc if count < capacity\n0x1c000e846 | lea     rdx, [rcx*8+0x28]           ; new_size = capacity*8 + 0x28\n0x1c000e85c | call    qword [rel 0x1c0086c50]     ; ExAllocatePoolWithTagPriority\n0x1c000e86b | test    rax, rax\n0x1c000e86e | je      0x1c000e8e9                 ; alloc failed\n; ... copy old data via memmove, free old buffer ...\n; UNCHECKED capacity update (16-bit add, no overflow check):\n0x1c000e8ad | movzx   ecx, word [rdi+0x630]      ; reload capacity\n0x1c000e8bb | add     cx, 5                      ; OVERFLOW: wraps 16-bit if cx >= 0xFFFB\n0x1c000e8bf | mov     [rdi+0x630], cx            ; store wrapped capacity\n0x1c000e8cd | movzx   ecx, ax                     ; index = count\n0x1c000e8d0 | mov     rax, qword [rdi+0x638]      ; array buffer pointer\n0x1c000e8d7 | mov     qword [rax+rcx*8], rsi      ; WRITE: OOB if capacity wrapped!\n0x1c000e8db | inc     word [rdi+0x632]            ; count++\n\nPATCHED grow decision with KIR gate (UlpParseNextRequest):\n0x1c000e900 | cmp     cs:UxKirRefBufferOverflowCheck, r14b\n0x1c000e907 | jz      0x1c000e994                ; flag off -> original unchecked path (add cx,5 at 0x1c000ea02)\n0x1c000e911 | call    RtlUShortAdd               ; checked path\n0x1c000e916 | test    eax, eax\n0x1c000e918 | js      0x1c000ea36                ; overflow -> bail\n0x1c000e92e | shl     rdx, 3                     ; NumberOfBytes = validated_cap*8\n0x1c000e938 | call    ExAllocatePoolWithTagPriority\n0x1c000e98a | mov     [rdi+0x630], r15w          ; store validated capacity\n\nPATCHED RTL safe-add routine RtlUShortAdd (sub_1c001c6e4):\n0x1c001c6e4 | lea     eax, [rcx+0x5]              ; compute capacity + 5 (32-bit)\n0x1c001c6e7 | cmp     ax, cx                      ; detect 16-bit overflow\n0x1c001c6ea | jb      0x1c001c6f1                 ; if wrapped, clamp\n0x1c001c6ec | movzx   edx, ax                     ; use safe value\n0x1c001c6ef | jmp     0x1c001c6f6\n0x1c001c6f1 | mov     edx, 0xffff                 ; clamp to max\n0x1c001c6f6 | sbb     eax, eax                    ; CF->status\n0x1c001c6f8 | mov     word [r8], dx               ; store safe capacity\n0x1c001c6fc | and     eax, 0xc0000095             ; STATUS_INTEGER_OVERFLOW\n0x1c001c701 | retn"
+    },
+    {
+      "name": "UxDuoProcessCompleteCatalog (sub_1c00b77c0) / UxDuoProcessCompleteCatalog (sub_1c00b8950)",
+      "similarity": 0.9663,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register renaming and offset adjustments throughout (data references shifted from 0x1c0076xxx to 0x1c0077xxx due to data section relocation).",
+        "Minor logic restructuring in HTTP request body/chunk processing state machine."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxReadHttp11ParserSettings (sub_1c00d8940) / UxReadHttp11ParserSettings (sub_1c00d9b80)",
+      "similarity": 0.911,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Configuration initialization function: reads registry parameters (MaxRequestBytes, MaxFieldLength, MaxHeadersCount, etc.).",
+        "Added new MaxHeadersCount parameter initialization: `sub_1c00da728(arg2, u\"MaxHeadersCount\", r8_1, 0x32, 0xffff, 3, arg1 + 0x1054)` with a new conditional gate `UxKirMaxHeadersCountLimit (data_1c0078d81)`.",
+        "Register renaming and address adjustments throughout due to data section relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Configuration parameter initialization function. Changes are primarily adding a new MaxHeadersCount registry parameter and register/offset renames. Not directly security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule (sub_1c015e480) / wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1c001bce0)",
+      "similarity": 0.2783,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Heuristic mispairing: UxStartEnvironmentModule (sub_1c015e480) and wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1c001bce0) are unrelated functions paired by call-sequence matching, not a true diff pair."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpCheckTrailerLength (sub_1c001b7b4) / WPP_SF_qddd (sub_1c0097654)",
+      "similarity": 0.1667,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Heuristic mispairing: UlpCheckTrailerLength (sub_1c001b7b4) and the WPP/ETW tracing wrapper WPP_SF_qddd (sub_1c0097654) are unrelated functions paired by call-reference matching. UlpCheckTrailerLength itself is unchanged and merely relocated to sub_1c001c70c in the patched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_SF_qddd (sub_1c0096654) / RtlUShortAdd (sub_1c001c6e4)",
+      "similarity": 0.0082,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Heuristic mispairing: unpatched WPP_SF_qddd (sub_1c0096654) is a WPP/ETW tracing wrapper; patched RtlUShortAdd (sub_1c001c6e4) is the standard RTL safe-integer library routine the fixed loop calls. Different functions paired erroneously. RtlUShortAdd is emitted only in the patched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "The patched-side RtlUShortAdd (sub_1c001c6e4) is the RTL safe-add routine that performs the overflow-checked capacity growth; its role is covered under the UlpParseNextRequest (sub_1c000e4a0) finding. It is paired here with an unrelated tracing wrapper by call-reference heuristics.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "critical",
+      "function": "UlpParseNextRequest (sub_1c000e4a0) (HTTP request processing main loop)",
+      "entry_point": "Remote HTTP request to any http.sys-backed endpoint (IIS, HTTP API, WinRM, etc.)",
+      "call_chain": [
+        "Network HTTP request -> TDI/WSK receive -> http.sys IRP dispatch -> UlpAuthenticateRequestCompletion (sub_1c01176a0)/UlResumeParsing (sub_1c000a940)/UlpHandleRequest (sub_1c000e1a0)/UlBeginOpaqueMode (sub_1c002dc84) (callers) -> UlpParseNextRequest (sub_1c000e4a0) (vulnerable request processing loop) -> ExAllocatePoolWithTagPriority -> OOB write at mov qword [rax+rcx*8], rsi"
+      ],
+      "vulnerability_class": "Integer Overflow (CWE-190) leading to Heap Buffer Overflow / Pool Overflow (CWE-122)",
+      "description": "The unpatched UlpParseNextRequest (sub_1c000e4a0) function maintains a dynamic array of HTTP request/range objects tracked per connection. The array uses a 16-bit unsigned capacity field at struct offset 0x630 and a 16-bit count at offset 0x632, with the buffer pointer at offset 0x638. When the array is full (count >= capacity), the code allocates a new buffer of size `(capacity * 8) + 0x28` bytes, copies the old contents, frees the old buffer, and updates the capacity field by adding 5: `*(rdi_1 + 0x630) = rcx_20 + 5`. This 16-bit addition is performed WITHOUT overflow detection. When the capacity field reaches values like 0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE, or 0xFFFF, adding 5 causes the 16-bit value to wrap around to 0x0000, 0x0001, 0x0002, 0x0003, or 0x0004 respectively. After the wrap, the next time the array needs to grow, the allocation size is computed from the tiny wrapped capacity (e.g., `1*8+0x28 = 0x30` bytes), but the count continues from its pre-wrap value (~0xFFFC). The subsequent write `mov qword [rax+rcx*8], rsi` at 0x1c000e8d7 uses the high count value as an index into the severely undersized pool allocation, writing 8-byte pointers far past the end of the NonPagedPoolNx buffer. This produces a massive kernel pool overflow.\n\nThe patch calls the standard RTL safe-add routine RtlUShortAdd (sub_1c001c6e4) (emitted only in the patched build) that computes `capacity + 5` using 32-bit arithmetic and detects 16-bit overflow via `lea eax, [rcx+5]; cmp ax, cx; jb overflow`. If overflow is detected, it clamps to 0xFFFF and returns STATUS_INTEGER_OVERFLOW (0xC0000095). This checked path is selected at run time by the KIR feature flag UxKirRefBufferOverflowCheck (data_1c0078d80) at 0x1c000e900; when it is set, the allocation proceeds only on a successful (non-negative) return and uses the validated capacity for both the ExAllocatePoolWithTagPriority size and the stored capacity field. When the KIR flag is disabled, the patched build falls back to the original unchecked `add cx, 5` path (0x1c000ea02), so the fix depends on the flag being enabled. The unpatched build has only the unchecked path.",
+      "trigger_conditions": "An attacker must cause the per-connection HTTP request/range tracking array to grow its capacity to near 0xFFFF. The array starts small and grows by 5 entries each time it fills up. The attacker needs to trigger enough request/range entries (e.g., via HTTP Range headers, chunked transfer encoding, or pipelined requests) to expand the capacity approximately 13107 times (65535/5). Once capacity wraps past 0xFFFF, the next allocation is undersized. Any subsequent entry added to the array writes 8 bytes at an offset of `count * 8` from the buffer start, corrupting adjacent NonPagedPoolNx kernel memory. The specific trigger: send a large volume of HTTP requests with multiple ranges or content segments to a single connection handled by http.sys, causing the 16-bit capacity field to overflow.",
+      "primitive": "Kernel pool buffer overflow with controlled 8-byte writes at attacker-influenced offsets. The overflow writes pointer-sized values (8 bytes each) at regular 8-byte stride offsets past the undersized allocation. This can be leveraged for: (1) kernel pool metadata corruption leading to pool exploitation primitives, (2) overwriting adjacent kernel objects' function pointers for code execution, (3) SYSTEM privilege escalation from any network-accessible context. Since http.sys runs in kernel mode and processes unauthenticated network HTTP traffic, this is a remote-to-kernel escalation primitive.",
+      "evidence": "UNPATCHED pseudo_c (vulnerable allocation, no overflow check):\n```c\n// 0x1c000e82f\nint16_t rax_21 = *(rdi_1 + 0x632);  // count\nuint64_t rcx_18 = *(rdi_1 + 0x630);  // capacity\n\nif (rax_21 < rcx_18) {\n    // array has space, just write\n    *(*(rdi_1 + 0x638) + (rax_21 << 3)) = rsi_1;\n    *(rdi_1 + 0x632) += 1;\n} else {\n    // Array full, GROW it:\n    int64_t* rax_20 = ExAllocatePoolWithTagPriority(NonPagedPoolNx,\n        (rcx_18 << 3) + 0x28, 0x52526c55, LowPoolPriority);\n    if (rax_20) {\n        memmove (sub_1c001c100)(rax_20, *(rdi_1 + 0x638), *(rdi_1 + 0x632) << 3);\n        int16_t rcx_20 = *(rdi_1 + 0x630);\n        if (rcx_20 > 1)\n            ExFreePoolWithTag(*(rdi_1 + 0x638), 0);\n        rax_21 = *(rdi_1 + 0x632);\n        *(rdi_1 + 0x630) = rcx_20 + 5;  // *** OVERFLOW: no check! ***\n        *(rdi_1 + 0x638) = rax_20;\n        goto label_1c000e8d7;  // write at count index into undersized buffer\n    }\n}\n```\n\nPATCHED pseudo_c (with overflow check):\n```c\nelse if (RtlUShortAdd (sub_1c001c6e4)(rcx_18, rdx_6, &var_98) >= 0)  // *** NEW: overflow check ***\n{\n    uint32_t r15_1 = var_98;  // safe new capacity\n    int64_t* rax_21 = ExAllocatePoolWithTagPriority(NonPagedPoolNx,\n        r15_1 << 3, 0x52526c55, LowPoolPriority);  // correct size\n    if (rax_21) {\n        memmove (sub_1c001d040)(rax_21, *(rdi_1 + 0x638), *(rdi_1 + 0x632) << 3);\n        if (*(rdi_1 + 0x630) > 1)\n            ExFreePoolWithTag(*(rdi_1 + 0x638), 0);\n        *(rdi_1 + 0x630) = r15_1;  // safe capacity, no overflow possible\n        goto label_1c000ea0d;\n    }\n}\n```\n\nOVERFLOW CHECK FUNCTION (patched RtlUShortAdd (sub_1c001c6e4)):\n```c\nuint64_t RtlUShortAdd (sub_1c001c6e4)(int32_t arg1, int64_t arg2, int16_t* arg3)\n{\n    bool c = (arg1 + 5) < arg1;  // detect 16-bit wrap\n    int16_t rdx;\n    if (c)\n        rdx = -1;       // 0xFFFF: clamp\n    else\n        rdx = (arg1 + 5); // safe value\n    *arg3 = rdx;\n    return c ? 0xC0000095 : 0;  // STATUS_INTEGER_OVERFLOW or SUCCESS\n}\n```",
+      "assembly": "VULNERABLE FUNCTION (unpatched UlpParseNextRequest (sub_1c000e4a0)) — critical allocation section:\n\n0x1c000e82f | movzx   eax, word [rdi+0x632]       ; eax = count (16-bit)\n0x1c000e836 | movzx   ecx, word [rdi+0x630]       ; ecx = capacity (16-bit)\n0x1c000e83d | cmp     ax, cx                       ; count < capacity?\n0x1c000e840 | jb      0x1c000e8cd                  ; if yes, skip allocation\n; --- ALLOCATION PATH (array full, need to grow) ---\n0x1c000e846 | lea     rdx, [rcx*8+0x28]            ; new_size = capacity*8 + 0x28\n0x1c000e84e | xor     r9d, r9d                      ; LowPoolPriority\n0x1c000e851 | mov     ecx, 0x200                    ; NonPagedPoolNx\n0x1c000e856 | mov     r8d, 0x52526c55               ; tag 'URlR'\n0x1c000e85c | call    qword [rel 0x1c0086c50]      ; ExAllocatePoolWithTagPriority\n0x1c000e863 | nop     dword [rax+rax]\n0x1c000e868 | mov     r15, rax                      ; r15 = new buffer\n0x1c000e86b | test    rax, rax                      ; alloc success?\n0x1c000e86e | je      0x1c000e8e9                   ; if failed, skip\n; ... copy old data via memmove (sub_1c001c100) ...\n; ... free old buffer via ExFreePoolWithTag ...\n0x1c000e8b4 | movzx   eax, word [rdi+0x632]        ; reload count\n0x1c000e898 | mov     rcx, qword [rdi+0x638]       ; old buffer ptr (for copy)\n; *** VULNERABILITY: capacity updated as capacity+5 with NO overflow check ***\n;     In pseudo_c: *(rdi_1 + 0x630) = rcx_20 + 5;\n;     When capacity is near 0xFFFF, this wraps to a small value.\n; --- WRITE PATH (reached after allocation, or when count < capacity) ---\n0x1c000e8cd | movzx   ecx, ax                       ; ecx = count (index)\n0x1c000e8d0 | mov     rax, qword [rdi+0x638]        ; rax = buffer pointer\n0x1c000e8d7 | mov     qword [rax+rcx*8], rsi        ; *** OOB WRITE ***\n                                                            ; writes 8 bytes at buffer[count*8]\n                                                            ; after overflow, count is ~0xFFFC\n                                                            ; but buffer is only ~(wrapped_cap*8)+0x28 bytes\n0x1c000e8db | inc     word [rdi+0x632]              ; count++ (keeps growing)\n0x1c000e8e2 | lock inc dword [rsi+0x14]            ; refcount++\n0x1c000e8e6 | mov     r14b, 0x1                     ; success flag\n\nPATCHED OVERFLOW CHECK FUNCTION (RtlUShortAdd (sub_1c001c6e4)):\n0x1c001c6e4 | lea     eax, [rcx+0x5]               ; eax = capacity + 5 (32-bit safe)\n0x1c001c6e7 | cmp     ax, cx                       ; did low 16 bits wrap?\n0x1c001c6ea | jb      0x1c001c6f1                  ; yes: overflow detected\n0x1c001c6ec | movzx   edx, ax                      ; no: use capacity+5\n0x1c001c6ef | jmp     0x1c001c6f6\n0x1c001c6f1 | mov     edx, 0xffff                   ; overflow: clamp to 0xFFFF\n0x1c001c6f6 | sbb     eax, eax                     ; eax = CF ? -1 : 0\n0x1c001c6f8 | mov     word [r8], dx                ; store safe capacity\n0x1c001c6fc | and     eax, 0xc0000095              ; return overflow status\n0x1c001c701 | retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlpParseNextRequest (sub_1c000e4a0)+0x38d (or the equivalent at the capacity comparison)",
+            "address": "0x1c000e82f",
+            "why": "This is the entry to the array-grow decision: reads count (word [rdi+0x632]) and capacity (word [rdi+0x630]). Set conditional breakpoint here to break when capacity (ECX low 16 bits) is >= 0xFFF0 to catch the approach to overflow. At this point AX=count, CX=capacity."
+          },
+          {
+            "symbol": "http!UlpParseNextRequest (sub_1c000e4a0)+0x396 (capacity update / allocation size compute)",
+            "address": "0x1c000e846",
+            "why": "This computes the allocation size: lea rdx, [rcx*8+0x28]. When ECX (capacity) is a wrapped-around small value, RDX will be tiny (e.g., 0x30). Watch RDX to confirm undersized allocation. The subsequent call to ExAllocatePoolWithTagPriority will use this small size."
+          },
+          {
+            "symbol": "http!UlpParseNextRequest (sub_1c000e4a0)+0x397 (the OOB write instruction)",
+            "address": "0x1c000e8d7",
+            "why": "This is the out-of-bounds write: mov qword [rax+rcx*8], rsi. RAX=buffer pointer (undersized), ECX=count (large value ~0xFFFC), RSI=pointer value being stored. When this instruction writes past the allocated buffer, it corrupts the kernel pool. Break here when RAX+RCX*8 exceeds the allocation size."
+          },
+          {
+            "symbol": "http!ExAllocatePoolWithTagPriority (called via 0x1c0086c50)",
+            "address": "0x1c000e85c",
+            "why": "The ExAllocatePoolWithTagPriority indirect call. Watch RDX (size parameter) — if it's very small (e.g., 0x30) while the count field in the structure at [rdi+0x632] is large, the overflow has already occurred. R8D=0x52526c55 (pool tag 'URlR'), ECX=0x200 (NonPagedPoolNx)."
+          }
+        ],
+        "watch": [
+          "word [rdi+0x630] = capacity field (16-bit) — watch for values near 0xFFFA-0xFFFF, and wrapped values 0x0000-0x0009 after overflow",
+          "word [rdi+0x632] = count field (16-bit) — monotonically increasing, should exceed wrapped capacity after overflow",
+          "qword [rdi+0x638] = array buffer pointer — the undersized pool allocation",
+          "RDX at 0x1c000e846 = computed allocation size = capacity*8+0x28 — tiny after overflow (e.g., 0x30 bytes)",
+          "RCX at 0x1c000e8cd = write index (count value) — large value like 0xFFFC causing OOB offset of ~0x7FFE0 bytes past buffer start",
+          "RAX+RCX*8 at 0x1c000e8d7 = actual write address — compare against the allocation's end address to confirm OOB"
+        ],
+        "key_offsets": [
+          "0x1c000e82f: movzx eax, word [rdi+0x632] — count read (start of grow-check)",
+          "0x1c000e836: movzx ecx, word [rdi+0x630] — capacity read",
+          "0x1c000e840: jb 0x1c000e8cd — branch: skip alloc if count < capacity",
+          "0x1c000e846: lea rdx, [rcx*8+0x28] — allocation size computation (vulnerable to using wrapped capacity)",
+          "0x1c000e85c: call ExAllocatePoolWithTagPriority — allocation with potentially wrong size",
+          "0x1c000e8bb: add cx, 5 ; 0x1c000e8bf: mov [rdi+0x630], cx — the unchecked 16-bit capacity update (wraps if capacity >= 0xFFFB)",
+          "0x1c000e8d7: mov qword [rax+rcx*8], rsi — THE OOB WRITE (sink)",
+          "0x1c000e8db: inc word [rdi+0x632] — count increment (continues past wrapped capacity)"
+        ],
+        "trigger_setup": "1. Identify a target running http.sys (IIS, WinRM HTTP listener, or any HTTP.SYS API consumer).\n2. Open a persistent TCP connection to the HTTP endpoint (port 80/443/5985/etc.).\n3. Send a large volume of HTTP requests that populate the per-connection request/range tracking array. The most effective approach is sending requests with many Range headers (e.g., 'Range: bytes=0-1, 2-3, 4-5, ...') or pipelined chunked requests that cause the array at offset 0x638 to grow.\n4. The array capacity starts small and grows by 5 each time it fills. To reach ~0xFFFC capacity, approximately 13,000+ growth events are needed, each triggered by filling the current capacity with entries.\n5. Once capacity wraps (e.g., from 0xFFFC+5=0x0001), the next allocation at 0x1c000e846 computes size as 1*8+0x28=0x30 bytes.\n6. Subsequent writes at 0x1c000e8d7 use the pre-wrap count (~0xFFFD) as an index: offset = 0xFFFD*8 = 0x7FFE8 bytes past the 0x30-byte buffer — a massive kernel pool overflow.",
+        "expected_observation": "When the vulnerability fires, the kernel will either:\n(1) BSOD with PAGE_FAULT_IN_NONPAGED_AREA or BAD_POOL_CALLER when the OOB write at 0x1c000e8d7 hits an unmapped or protected page,\n(2) BSOD with POOL_CORRUPTION or similar pool header corruption stop code when the write corrupts adjacent pool block metadata,\n(3) Silent memory corruption of adjacent kernel objects, potentially exploitable for privilege escalation.\n\nIn the debugger, at breakpoint 0x1c000e8d7, observe: RAX points to a small (0x30-byte) pool allocation, ECX=0xFFFD or similar large value, so RAX+ECX*8 is ~0x80000 bytes past the buffer. The write of RSI (an 8-byte pointer) at this offset is the corruption.",
+        "notes": "Struct layout (from rdi pointer, the HTTP connection/request object):\n- Offset 0x1e0: request state/type (uint32, checked against 9 and 0xa in state machine)\n- Offset 0x630: array capacity (uint16) — THE OVERFLOW FIELD\n- Offset 0x632: array count (uint16) — monotonically increasing\n- Offset 0x638: array buffer pointer (void*) — points to NonPagedPoolNx allocation\n- Offset 0x1048: MaxRequestBytes (uint32) — per-server config limit\n- Pool tag: 0x52526c55 = 'URlR' (reversed: 'RlUR')\n- The unchecked capacity update is `add cx, 5` (0x1c000e8bb) followed by `mov [rdi+0x630], cx` (0x1c000e8bf). In the patched binary, when UxKirRefBufferOverflowCheck is set, this is replaced by a call to RtlUShortAdd (sub_1c001c6e4) which safely computes the new capacity; when the KIR flag is off the same unchecked `add cx, 5` runs at 0x1c000ea02.\n- ASLR: http.sys loads at a randomized base; use 'lm http' in WinDbg to find the actual base and add offsets.\n- To distinguish vulnerable vs safe path: check if word [rdi+0x630] (capacity) is less than word [rdi+0x632] (count) — this should NEVER happen in normal operation but is the direct consequence of the overflow."
+      }
+    }
+  ],
+  "summary": "The patch fixes a critical integer overflow vulnerability (CWE-190) in http.sys's main HTTP request processing function (UlpParseNextRequest (sub_1c000e4a0)). The unpatched code maintains a dynamic array of request/range objects with a 16-bit capacity field at struct offset 0x630. When the array is full, the capacity is incremented by 5 without overflow detection: `capacity += 5`. When capacity approaches 0xFFFF, this wraps to a small value, causing the next pool allocation to be far too small. Subsequent writes using the still-large count as an array index produce a massive kernel pool buffer overflow (OOB write of 8-byte pointers at attacker-influenced offsets into NonPagedPoolNx). The patched build adds a KIR-gated safe grow path: when the feature flag UxKirRefBufferOverflowCheck (data_1c0078d80) is enabled, the loop calls the standard RTL safe-add routine RtlUShortAdd (sub_1c001c6e4) that computes `capacity + 5` with 16-bit overflow detection, clamps to 0xFFFF on overflow, and returns STATUS_INTEGER_OVERFLOW so the undersized allocation is never made. When the KIR flag is disabled the patched build retains the original unchecked `add cx, 5` path, so the fix depends on the flag being enabled; the unpatched build has no overflow check at all. A PoC would need to send a large volume of HTTP requests (e.g., with Range headers or pipelined requests) to a persistent connection to grow the tracking array's capacity to the 16-bit overflow threshold (~65535 entries), then trigger one more growth event to cause the undersized allocation and subsequent pool overflow."
+}

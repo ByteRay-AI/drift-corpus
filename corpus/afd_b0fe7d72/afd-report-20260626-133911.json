@@ -1,0 +1,208 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9888,
+    "matched": 1073,
+    "changed": 10,
+    "identical": 1063,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdSanAcceptCore",
+      "similarity": 0.8109,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: Four memmove operations copy data using attacker-controlled transport address lengths (*(MasterIrp+0x14)+8, *(MasterIrp+0x14)+2, *(r12_2+0x18)+4, *(r12_2+0x18)+2) into a destination MDL-mapped buffer without verifying the copy size does not exceed the buffer capacity (*(rbx_4+0x10))",
+        "PATCHED: When feature flag EvaluateCurrentState(&g_Feature_232206649_59779869_FeatureDescriptorDetails) is enabled, adds bounds clamping before each memmove: (1) requires *(rbx_4+0x10) >= 0xc minimum, (2) clamps copy size to min(*(rbx_4+0x10), *(MasterIrp+0x14)+8), (3) clamps secondary address copy with if(4+r8_4 >= r14_4-8) r14_4-=8, (4) clamps TDI-style copy with if(rdx_10+2 >= r14_4-2) r14_4-=2",
+        "PATCHED: the same memmove (sub_1c000c900) copies are retained, but the r8 (count) parameter is clamped to the destination capacity before each call"
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds write (CWE-787) in AfdSanAcceptCore. The function processes SAN (System Area Network) accept operations, copying the incoming connection's transport address data into the accepting socket's address buffer, which is described by an MDL at endpoint+8 and reached through MmMapLockedPages. The copy sizes are derived from a peer-controlled 16-bit length field in the stored connection data (*(word)(ConnData+0x14) and a secondary length at +0x18), plus a small constant (8/2/4). In the unpatched version these sizes are used directly as memmove lengths with only a capacity!=0 gate (cmp [rbx+0x10], edi; jbe), never compared against the destination buffer capacity (*(dword)(AcceptInfo+0x10) = AddressBufferLength). A peer whose transport-address length exceeds the accepting socket's address-buffer capacity causes a write past the end of the mapped destination buffer. The patched build adds a minimum-capacity requirement (>= 0xc) and a clamp of each copy size to the destination capacity, but every new check is gated on EvaluateCurrentState(g_Feature_232206649_59779869); when the flag is disabled the copies run unclamped exactly as in the unpatched build, so this is a staged (feature-flagged) rollout. Reachable only through the SAN accept path (endpoint type 0x1AFD), which requires an active SAN provider; not the ordinary TCP/UDP accept path. No privilege-escalation chain is demonstrated from these binaries.",
+      "assembly_diff": "--- afd_unpatched.sys/AfdSanAcceptCore.assembly\n+++ afd_patched.sys/AfdSanAcceptCore.assembly\n@@ AfdSanAcceptCore @ 0x1c007508c @@\n ; --- KEY VULNERABLE REGION (unpatched) ---\n ; rbx_4 = accept info structure; rbx_4+0x8 = AddressBuffer ptr;\n ; rbx_4+0x10 = AddressBufferLength; rbx_4+0x18 = AddressOffset\n ; MasterIrp+0x14 = attacker-controlled remote transport address length\n-0x1c0075305  cmp     [rbx+0x10], edi         ; edi=0\n-0x1c0075308  jbe     0x1c0075485             ; only rejects capacity == 0, no upper bound\n-0x1c007530e  movzx   r12d, word [r9+0x14]    ; r12 = *(MasterIrp+0x14) attacker len\n-0x1c0075313  lea     eax, [r12+0x8]          ; size = len + 8 (NO bounds check!)\n...\n-0x1c00753d2  mov     r8d, [rsp+Size]         ; r8 = len+8 used as memmove count\n-0x1c00753f0  call    memmove                 ; memmove with unbounded size!\n...\n-0x1c0075330  add     r12w, 0x2               ; size = len + 2 (NO bounds check!)\n-0x1c007539c  call    memmove                 ; memmove with unbounded size!\n...\n-0x1c007546b  movzx   eax, word [r12+0x18]    ; another attacker-controlled length\n-0x1c0075471  add     eax, 0x4                ; size = len + 4 (NO bounds check!)\n-0x1c0075480  call    memmove                 ; memmove with unbounded size!\n\n; --- PATCHED REGION ---\n+0x1c0075320  lea     rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n+0x1c0075327  call    EvaluateCurrentState    ; check feature flag\n+0x1c007532c  test    eax, eax\n+0x1c007532e  je      0x1c007533a\n+0x1c0075330  cmp     dword [rbx+0x10], 0xc   ; NEW: require buffer >= 12 bytes\n+0x1c0075334  jb      0x1c0075610\n...\n+0x1c0075433  cmp     [rbx+0x10], r14d        ; NEW: clamp copy size to capacity\n+0x1c0075437  cmovb   r14d, [rbx+0x10]        ; r14 = min(size, capacity)\n...\n+0x1c0075531  movzx   r8d, word [r9]\n+0x1c0075535  mov     edx, 0x4\n+0x1c007553a  lea     ecx, [rdx+r8]\n+0x1c0075542  sub     eax, 0x8\n+0x1c0075545  cmp     ecx, eax                ; NEW: clamp secondary address copy\n+0x1c0075547  jge     0x1c007554f"
+    },
+    {
+      "name": "AfdSanConnectHandler",
+      "similarity": 0.9407,
+      "change_type": "behavioral",
+      "key_changes": [
+        "memmove (sub_1c000c900) retained for the connection data reallocation copy (unchanged between versions)",
+        "Register reallocation (r14→rsi, rsi_1→r14_1) throughout",
+        "The copy is already bounded by allocation size (ExAllocatePoolWithQuotaTag allocates rax_1+0xc, copy size is rax_1-8) so no overflow"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferBegin",
+      "similarity": 0.8896,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed EvaluateCurrentState feature-gate: unpatched only validates socket state when feature flag enabled; patched always validates",
+        "Restructured control flow to remove conditional branch on EvaluateCurrentState return value",
+        "Changed function references (AfdGetConnectionReferenceFromEndpoint→sub_1c0052d58, AfdPreventUnbind→sub_1c0003e1c, AfdReallowUnbind→sub_1c0003dec)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature gate stabilization. In the unpatched version, the socket state validation (checking endpoint type, connection state, etc.) is only performed when EvaluateCurrentState returns true. The patched version removes this conditional and always validates. This is a defense-in-depth hardening change, not a direct exploitable vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferEnd",
+      "similarity": 0.8896,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same pattern as AfdSocketTransferBegin: removed EvaluateCurrentState feature-gate around socket state validation",
+        "Restructured to always perform state checks unconditionally",
+        "Updated function references for renamed/shifted functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature gate stabilization, identical pattern to AfdSocketTransferBegin.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBind",
+      "similarity": 0.9682,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature-gate around AfdPreventUnbind/AfdReallowUnbind during bind operation",
+        "When EvaluateCurrentState is enabled, calls AfdPreventUnbind before TDI bind and AfdReallowUnbind after completion",
+        "Changes are feature flag stabilization (always-on in patched) not security fixes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature gate stabilization for unbind prevention during bind. Not a security vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetInformation",
+      "similarity": 0.9768,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation: r14→r15, r15→r14, added r13 to callee-saved set",
+        "Stack offset shifts (rsp+0x48→rsp+0x68, rsp+0x58→rsp+0x50, rsp+0x30→rsp+0x34, etc.)",
+        "All logic is identical; no behavioral changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvaluateCurrentState",
+      "similarity": 0.1602,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor instruction/offset changes due to surrounding code shifts",
+        "Logic unchanged: reads state value, queries registry if 0, returns based on state"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvaluateCurrentStateFromRegistry",
+      "similarity": 0.255,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Instruction/address shifts due to global data relocation",
+        "Core logic unchanged: calls QueryFeatureOverride, sets state to 1 or 2"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "QueryFeatureOverride",
+      "similarity": 0.1061,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address/offset shifts in the feature override query logic",
+        "No behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCopyMdlChainToBufferAvoidMapping$filt$0",
+      "similarity": 0.5905,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Stack frame size change (0x30→0x40) and offset adjustment (rbp+0x30→rbp+0x40) due to caller stack layout change",
+        "Exception filter function, no behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "AfdSanAcceptCore",
+      "entry_point": "AFD IOCTL accept/super-accept (IOCTL_AFD_ACCEPT / IOCTL_AFD_SUPER_ACCEPT via NtDeviceIoControlFile on \\Device\\Afd)",
+      "call_chain": [
+        "NtDeviceIoControlFile on AFD device handle → AfdDispatchDeviceControl → AfdIrpCallDispatch[IOCTL_AFD_ACCEPT] → AfdAccept/AfdSuperAccept → AfdServiceWaitForListen → AfdSanAcceptCore",
+        "Alternative: TDI connect event → AfdConnectEventHandler → AfdSanConnectHandler → AfdServiceWaitForListen → AfdSanAcceptCore"
+      ],
+      "vulnerability_class": "Out-of-bounds write (CWE-787)",
+      "description": "In AfdSanAcceptCore, when processing a SAN accept operation, the function copies the remote peer's stored transport address into the accepting socket's address buffer, which is described by an MDL at endpoint+8 and reached through MmMapLockedPages. Four memmove calls use sizes derived from peer-controlled 16-bit length fields: (1) *(word)(ConnData+0x14)+8 for the primary copy when !*(flag+0xac), (2) *(word)(ConnData+0x14)+2 for the TDI-format primary copy when *(flag+0xac), (3) *(word)(secondary+0x18)+4 for the secondary copy when !*(flag+0xac), and (4) *(word)(secondary+0x18)+2 for the TDI-format secondary copy. None of these copy sizes are validated against the destination buffer capacity *(dword)(AcceptInfo+0x10) (AddressBufferLength). The only check is `cmp [rbx+0x10], edi; jbe` which merely verifies the capacity is non-zero. A peer whose transport-address length exceeds the accepting socket's address-buffer capacity triggers an out-of-bounds write past the end of the mapped destination buffer.",
+      "trigger_conditions": "1. Create an AFD SAN socket (endpoint type 0x1afd). 2. Bind it to listen with a small address buffer. 3. Issue an accept/super-accept IOCTL. 4. A peer connects with a transport address whose length field (*(word)(ConnData+0x14) or the secondary length at +0x18) plus the fixed offset (8/2/4) exceeds the accepting socket's AddressBufferLength (at AcceptInfo+0x10). Overflow occurs when AddressBufferLength > 0 but < the peer address length + offset.",
+      "primitive": "Out-of-bounds write whose size is derived from a peer-controlled 16-bit transport-address length (up to 0xFFFF plus a small constant), against the SAN accept address buffer reached through MmMapLockedPages. The write extends past the intended destination within the mapped address region. No controlled kernel-object corruption, information disclosure, or code-execution primitive is demonstrated from these binaries.",
+      "evidence": "// UNPATCHED AfdSanAcceptCore - vulnerable memmove paths (0x1c007508c)\n\n// rbx_4 = *(arg1 + 0xb8) = accept info structure\n// rbx_4+0x8 = AddressBuffer pointer (MDL-mapped destination)\n// rbx_4+0x10 = AddressBufferLength (capacity - NEVER CHECKED against copy size)\n// rbx_4+0x18 = AddressOffset\n// MasterIrp+0x14 = remote transport address length (ATTACKER CONTROLLED)\n\n// PATH 1: !*(r13+0xac) (non-TDI address)\nif (*(rbx_4 + 0x10) > 0)  // ONLY checks > 0!\n{\n    uint32_t r12_1 = *(MasterIrp + 0x14);  // attacker-controlled length\n    Irql = r12_1 + 8;                       // size = len + 8 (NO BOUNDS CHECK!)\n    ...\n    memmove(*(rbx_4 + 8) + *(rbx_4 + 0x18) + MappedSystemVa_3,\n           MasterIrp_1 + 0x10, Irql);       // OVERFLOW: copies len+8 into buffer\n}\n\n// PATH 2: *(r13+0xac) (TDI address)\nelse\n{\n    r12_1 += 2;  // size = len + 2 (NO BOUNDS CHECK!)\n    ...\n    memmove(*(rbx_4 + 8) + *(rbx_4 + 0x18) + MappedSystemVa_2,\n           MasterIrp + 0x16, r12_1);        // OVERFLOW: copies len+2 into buffer\n}\n\n// PATH 3: secondary address copy, !*(r13+0xac)\nif (*(rbx_4 + 0x18) > 0)\n{\n    r12_2 = MasterIrp_1 + *(MasterIrp_1 + 0x14);\n    ...\n    memmove(r14_2 + 8, r12_2 + 0x18,\n           *(r12_2 + 0x18) + 4);            // OVERFLOW: copies len+4\n}\n\n// PATH 4: secondary address copy, *(r13+0xac)\nelse\n{\n    memmove(r14_2, r12_2 + 0x1a,\n           *(r12_2 + 0x18) + 2);            // OVERFLOW: copies len+2\n}",
+      "assembly": "; AfdSanAcceptCore @ 0x1c007508c (UNPATCHED) - vulnerable region\n; Buffer capacity check (only > 0, no upper bound):\n 0x1c0075305  cmp     [rbx+0x10], edi         ; edi=0; check AddressBufferLength > 0\n 0x1c0075308  jbe     0x1c0075485             ; skip all copies if capacity == 0, otherwise NO upper-bound check\n\n; Load attacker-controlled length and compute copy size WITHOUT bounds:\n 0x1c007530e  movzx   r12d, word [r9+0x14]    ; r12 = *(MasterIrp+0x14) = remote addr len\n 0x1c0075313  lea     eax, [r12+0x8]          ; eax = len + 8 (ATTACKER SIZE + 8)\n 0x1c0075318  mov     [rsp+Size], eax         ; store unbounded size\n\n; TDI-format flag select and MDL mapping:\n 0x1c007531f  mov     rcx, [r14+0x8]          ; MemoryDescriptorList\n 0x1c0075323  cmp     [r13+0xac], dil         ; TDI-format flag\n 0x1c007532a  jz      0x1c00753bb             ; -> non-TDI primary path\n 0x1c0075330  add     r12w, 0x2               ; TDI path: size = len + 2\n\n; First memmove (non-TDI path) with unchecked size (len+8):\n 0x1c00753d2  mov     r8d, [rsp+Size]         ; r8 = UNBOUNDED copy size\n 0x1c00753df  lea     rdx, [r12+0x10]         ; src = MasterIrp+0x10\n 0x1c00753e4  mov     eax, [rbx+0x18]         ; AddressOffset\n 0x1c00753e7  mov     ecx, [rbx+0x8]          ; AddressBuffer\n 0x1c00753ea  add     rax, r9\n 0x1c00753ed  add     rcx, rax                ; dest = buf + offset + mapped_va\n 0x1c00753f0  call    memmove                 ; memmove(DEST, SRC, UNBOUNDED_SIZE)\n\n; TDI primary path memmove with unchecked size (len+2):\n 0x1c007539c  call    memmove\n\n; Secondary address copies - also unbounded:\n 0x1c00753f5  cmp     [rbx+0x18], edi         ; AddressOffset > 0 ?\n 0x1c00753f8  jbe     0x1c0075485\n 0x1c0075432  movzx   r8d, word [r12+0x18]    ; r8 = *(r12_2+0x18) attacker len\n 0x1c007543e  add     r8, r13                 ; size = len + 2 (TDI secondary)\n 0x1c0075441  lea     rdx, [r12+0x1a]         ; Src\n 0x1c0075449  call    memmove                 ; memmove OVERFLOW\n\n 0x1c007546b  movzx   eax, word [r12+0x18]    ; *(r12_2+0x18) attacker len\n 0x1c0075471  add     eax, 0x4                ; size = len + 4 (non-TDI secondary)\n 0x1c0075474  movsxd  r8, eax\n 0x1c0075480  call    memmove                 ; memmove OVERFLOW\n\n; --- PATCHED VERSION adds these checks (gated on feature flag EvaluateCurrentState @ 0x1c00156f4) ---:\n; 0x1c0075320:  lea     rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n; 0x1c0075327:  call    EvaluateCurrentState    ; feature flag gate\n; 0x1c007532c:  test    eax, eax\n; 0x1c007532e:  jz      0x1c007533a             ; skip if feature disabled\n; 0x1c0075330:  cmp     dword [rbx+0x10], 0xc   ; NEW: require buffer >= 12\n; 0x1c0075334:  jb      0x1c0075610             ; reject if too small\n; ...\n; 0x1c0075433:  cmp     [rbx+0x10], r14d        ; NEW: clamp size to capacity\n; 0x1c0075437:  cmovb   r14d, [rbx+0x10]        ; r14 = min(size, capacity)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore",
+            "address": "0x1c007508c",
+            "why": "Entry to the vulnerable function. Inspect arg1 (rcx) for the accept IRP info structure, arg2 (rdx) for the connection object. At this point rbx_4 (loaded at ~0x1c0075255 from *(arg1+0xb8)) will hold the accept info with AddressBuffer at +0x8, AddressBufferLength at +0x10, and AddressOffset at +0x18. Also r9/rsi point to the MasterIrp whose +0x14 offset holds the attacker-controlled remote transport address length."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore+0x282 (attacker length load)",
+            "address": "0x1c007530e",
+            "why": "This is where the attacker-controlled length is loaded: movzx r12d, word [r9+0x14]. At this breakpoint, r9 = MasterIrp, and [r9+0x14] contains the remote transport address length that will be used unchecked. Compare this value against rbx_4+0x10 (AddressBufferLength) to confirm overflow condition: if *(r9+0x14) + 8 > *(rbx+0x10), the subsequent memmove will overflow."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore+0x364 (first vulnerable memmove)",
+            "address": "0x1c00753f0",
+            "why": "The actual memmove call with unbounded size. At this point: rcx = destination buffer (MDL-mapped), rdx = source (MasterIrp+0x10), r8d = copy size ( = *(MasterIrp+0x14)+8 ). If r8d > *(rbx+0x10) (buffer capacity), this write overflows the mapped destination buffer."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore+0x3f4 (secondary vulnerable memmove)",
+            "address": "0x1c0075480",
+            "why": "Secondary address copy memmove. r8 = *(r12_2+0x18)+4 (or +2 for the TDI secondary path at 0x1c0075449). If this exceeds remaining buffer space, overflow occurs."
+          }
+        ],
+        "watch": [
+          "rbx+0x10 (dword) = AddressBufferLength / capacity of destination buffer - the value that SHOULD be checked against copy size but isn't",
+          "r9+0x14 (word) = *(MasterIrp+0x14) = remote transport address length (attacker-controlled) - primary overflow trigger",
+          "r12+0x18 (word) = *(r12_2+0x18) = secondary address length (attacker-controlled) - secondary overflow trigger",
+          "[rsp+Size] (dword) = computed copy size (len+8) - compare against rbx+0x10 to detect overflow",
+          "r8d at 0x1c00753f0 = final memmove count - if > rbx+0x10, overflow is imminent",
+          "rcx at 0x1c00753f0 = destination MDL-mapped buffer pointer - overflow writes past this + capacity"
+        ],
+        "key_offsets": [
+          "0x1c0075308: jbe 0x1c0075485 - the ONLY capacity check (verifies > 0, no upper bound). This is the missing bounds check.",
+          "0x1c007530e: movzx r12d, word [r9+0x14] - loads attacker-controlled remote address length",
+          "0x1c0075313: lea eax, [r12+0x8] - computes unbounded copy size (len+8)",
+          "0x1c00753f0: call memmove - first vulnerable memmove (non-TDI primary, len+8)",
+          "0x1c007539c: call memmove - TDI primary address copy (len+2)",
+          "0x1c0075449: call memmove - secondary address copy, TDI (len+2)",
+          "0x1c0075480: call memmove - secondary address copy, non-TDI (len+4)",
+          "PATCHED equivalent: 0x1c0075330: cmp dword [rbx+0x10], 0xc - new minimum capacity check",
+          "PATCHED equivalent: 0x1c0075433: cmp dword [rbx+0x10], r14d / 0x1c0075437: cmovb - new clamp-to-capacity"
+        ],
+        "trigger_setup": "1. Create an AFD SAN socket: open \\\\Device\\\\Afd or use WSASocket with a SAN address family (socket type that results in endpoint type 0x1afd). 2. Bind the socket to listen (AfdBind IOCTL with a SAN transport address). The address buffer allocated during bind will have a specific capacity (CommonAddressBufferLength at endpoint+0x10). 3. Post an accept on the listening SAN socket via IOCTL_AFD_ACCEPT or IOCTL_AFD_SUPER_ACCEPT (through NtDeviceIoControlFile). 4. From a peer (local or remote depending on SAN transport), initiate a connection to the listening socket with a transport address whose length field exceeds the listening socket's address buffer capacity. The TDI connect event handler (AfdConnectEventHandler/AfdSanConnectHandler) will queue the connection, and when the accept IOCTL is serviced, AfdSanAcceptCore will copy the oversized address into the undersized buffer.",
+        "expected_observation": "At the memmove breakpoint (0x1c00753f0), observe r8d (copy size) > *(rbx+0x10) (buffer capacity). The write extends past the intended destination within the mapped address region. Depending on layout this results in corruption of adjacent memory or a fault (e.g. PAGE_FAULT_IN_NONPAGED_AREA) when the write reaches unmapped pages. With Driver Verifier Special Pool enabled for afd.sys, the boundary violation is caught directly at the copy instruction.",
+        "notes": "AfdSanAcceptCore handles System Area Network (SAN) socket operations, a specialized direct-access networking path reachable only for SAN endpoints (type 0x1afd) with an active SAN provider, which constrains reachability. The patched clamps are gated on EvaluateCurrentState(g_Feature_232206649_59779869); when the flag is disabled the copies run unclamped as in the unpatched build, so the fix is a staged rollout rather than unconditionally active. Key struct offsets: accept info (rbx) at +0x8=AddressBuffer offset, +0x10=AddressBufferLength, +0x18=AddressOffset; stored connection data at +0x14=remote address length (word), +0x10=remote address data; the byte at flag+0xac selects TDI vs non-TDI address format (2-byte vs 4-byte length prefix)."
+      }
+    }
+  ],
+  "summary": "The patch addresses an out-of-bounds write (CWE-787) in AfdSanAcceptCore (afd.sys @ 0x1c007508c), the handler for SAN (System Area Network) socket accept operations. The unpatched version copies the remote peer's stored transport address into the accepting socket's address buffer (described by an MDL, reached through MmMapLockedPages) using sizes derived from peer-controlled 16-bit length fields (*(word)(ConnData+0x14) and a secondary length at +0x18) with only a capacity!=0 gate, never comparing them against the destination buffer capacity (*(dword)(AcceptInfo+0x10)). The patched build adds a minimum-capacity requirement (>= 0xc) and clamps each copy size to the destination capacity, but every clamp is gated on EvaluateCurrentState(g_Feature_232206649_59779869); with the flag disabled the copies run unclamped as in the unpatched build, so this is a staged (feature-flagged) rollout. The path is reachable only through SAN sockets (endpoint type 0x1afd), a specialized direct-access networking path requiring a SAN provider, so severity is Medium. No privilege-escalation chain is demonstrated from these binaries. The remaining 9 changed functions are either feature-flag stabilization (EvaluateCurrentState removal in AfdSocketTransferBegin/End, AfdBind) or pure register reallocation (AfdGetInformation) — not independently exploitable."
+}

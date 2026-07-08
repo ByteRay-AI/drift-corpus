@@ -1,0 +1,191 @@
+{
+  "binaries": {
+    "title": "http.sys - UlpCopyNetworkAddress adds missing destination size cap on SOCKADDR copy",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9843,
+    "matched": 4399,
+    "changed": 83,
+    "identical": 4316,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlpCopyNetworkAddress",
+      "address_unpatched": "0x14009BE80",
+      "address_patched": "0x14009B990",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version adds a 'length <= 0x20' cap before two SOCKADDR copies into a caller output buffer laid out as two adjacent 0x20-byte slots at a6 and a6+0x20",
+        "Unpatched checks only that the destination window fits the output buffer (a6+0x20 <= a2+a4 and a6+0x40 <= a2+a4); it never caps the copy length taken from the sockaddr_size table",
+        "If the length exceeds 0x20, the copy to a6+0x20 writes past the second slot and the copy to a6 writes past a6+0x40 into the rest of the request buffer",
+        "Patched folds 'size > 0x20' into the reject condition returning STATUS_INVALID_PARAMETER (0xC000000D) and keeps the length as a 16-bit value",
+        "Copies use RtlCopyToUser (copy-to-user flag set) or RtlCopyVolatileMemory (kernel copy), not a general memcpy shim",
+        "The sockaddr_size table was relocated between builds (0x14018a040 -> 0x140187000) with identical byte contents; the relocation is build churn"
+      ],
+      "security_relevant": true,
+      "security_notes": "UlpCopyNetworkAddress copies two SOCKADDR structures from the connection object (block offsets +0x180 and +0x19c, where block = *(a1+0x18)) into the marshalled HTTP_REQUEST output buffer. The copy length is sockaddr_size[af], indexed by the stored address family af = *(uint16*)(block+0x180) (indices >= 0x23 fold to entry 0). The unpatched code never caps that length to the 0x20-byte slot width; the patch adds 'length <= 0x20'. sockaddr_size is identical in both builds; only two entries exceed 0x20: index 1 (AF_UNIX, 0x6e) and index 0x22 (Hyper-V socket, 0x24). AF_INET (0x10) and AF_INET6 (0x1c) fit a slot. The address family is set by the transport at accept time and is not selectable from HTTP request content, so an oversized copy is not demonstrably reachable on a standard TCP/IP listener. CWE-787 Out-of-bounds Write / CWE-120. Severity Low on demonstrable reachability; genuine bounds-check hardening.",
+      "assembly_diff": "UNPATCHED UlpCopyNetworkAddress @ 0x14009BE80 (real instructions):\n000000014009BEBD  movzx   ecx, word ptr [rax+180h]   ; sa_family\n000000014009BED2  movzx   esi, byte ptr [rax+rcx]    ; esi = sockaddr_size[af] (no cap)\n000000014009BEF0  cmp     rdi, rcx                   ; rdi=r14+0x20 vs end=arg2+arg4\n000000014009BF0B  cmp     rax, rcx                   ; rax=r14+0x40 vs end\n; no 'cmp esi,0x20' between lookup and copies\n000000014009BFD8  call    RtlCopyToUser              ; dst r14+0x20, Size rsi (uncapped)\n000000014009BFFA  call    RtlCopyToUser              ; dst r14,      Size rsi (uncapped)\n\nPATCHED UlpCopyNetworkAddress @ 0x14009B990 (real instructions):\n000000014009B9E2  movzx   esi, byte ptr [rax+rcx]    ; sockaddr_size[af]\n000000014009BA24  cmp     si, 20h                    ; NEW: cap length to 0x20\n000000014009BA28  ja      short loc_14009BA06        ; NEW: reject -> STATUS_INVALID_PARAMETER\n000000014009BAFA  call    RtlCopyToUser              ; length now <= 0x20\n000000014009BB1C  call    RtlCopyToUser              ; length now <= 0x20"
+    },
+    {
+      "name": "internal label 0x14009BF77",
+      "change_type": "not_a_function",
+      "key_changes": [
+        "0x14009BF77 is an internal error-handling label inside UlpCopyNetworkAddress, not a distinct function"
+      ],
+      "security_relevant": false,
+      "security_notes": "Listed here only to record that this address belongs to UlpCopyNetworkAddress (Finding 1), not a separate changed function.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpSetRequestFlags",
+      "address_unpatched": "0x14009E8E0",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Request-flag computation; feature-gated dual path consolidated to a single path"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging consolidation; no attacker-reachable security boundary change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UcCaptureCredentialParameters",
+      "address_unpatched": "0x140164274",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Client-credential capture; SSL-config flag handling consolidation (feature flag gate removed)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag consolidation for client credential/SSL config handling; not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UcpCreateClientConfiguration",
+      "address_unpatched": "0x14016491C",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Client configuration; same flag-consolidation pattern as UcCaptureCredentialParameters"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag consolidation; not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCopyChannelBindConfigFromPropertyInfo",
+      "address_unpatched": "0x1400DACE4",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Channel-binding config copy; array element-width churn (<<3 vs <<2) and extraction of a helper (UlCopyChannelBindInfoAndProbeServices) in the patched build",
+        "Addresses 0x1400DAFD6 and 0x1400DAED2 are internal labels of this function, not separate functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "The existing 'count <= 0x40' bounds check is present in both builds (inline in unpatched, hoisted into UlCopyChannelBindInfoAndProbeServices in patched). Function extraction plus element-width and tracing churn; no new or removed bounds check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlHttpReceiveHeadersEvent",
+      "address_unpatched": "0x1400C71F0",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Receive-headers dispatch; feature-gated dual path consolidated"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging consolidation; not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxSslValidateErrorHeaders",
+      "address_unpatched": "0x1400876CC",
+      "change_type": "behavioral",
+      "key_changes": [
+        "SSL error-header validation; feature-gate consolidation with validation logic preserved"
+      ],
+      "security_relevant": false,
+      "security_notes": "Validation logic preserved; only feature-gated dispatch removed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlFastForwardReceiveEvent",
+      "address_unpatched": "0x1401190D8",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Fast-forward receive dispatch; feature-gate consolidation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging consolidation; not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpPcwEnumerateInstance",
+      "address_unpatched": "0x14014BC50",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Performance-counter enumeration; error-handling tidy-up, functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "Cleaner STATUS_INVALID_PARAMETER handling replacing a feature-gated else-if; functionally equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCheckProtocolCompliance",
+      "address_unpatched": "0x140070E10",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Larger refactor; feature-gate consolidation pattern"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging consolidation; no attacker-reachable security boundary change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "UlpCopyNetworkAddress",
+      "address_unpatched": "0x14009BE80",
+      "address_patched": "0x14009B990",
+      "entry_point": "HTTP_REQUEST marshalling during request delivery (UlpDeepCopyRequest / UlpDeepCopyRequest32), reached from the HttpReceiveHttpRequest path",
+      "call_chain": [
+        "Connection accepted by the transport; the connection's stored SOCKADDR and its sa_family are set at accept time",
+        "Request delivery marshals the HTTP_REQUEST into the receive buffer",
+        "UlpDeepCopyRequest (0x140116354) / UlpDeepCopyRequest32 (0x1401166D8)",
+        "UlpCopyNetworkAddress copies the stored SOCKADDR fields into the request buffer"
+      ],
+      "vulnerability_class": "Out-of-bounds write / Buffer copy without checking size of input (CWE-787, CWE-120)",
+      "description": "UlpCopyNetworkAddress copies two SOCKADDR structures from the connection object (block offsets +0x180 and +0x19c, block = *(a1+0x18)) into a caller output buffer (a6) laid out as two adjacent 0x20-byte slots at a6 and a6+0x20. The copy length is sockaddr_size[af], where af = *(uint16*)(block+0x180) is the stored address family (indices >= 0x23 fold to entry 0). The UNPATCHED code checks only that the destination window fits the output buffer (a6+0x20 <= a2+a4 and a6+0x40 <= a2+a4); it never caps the length to 0x20. Both copies use that length, so a length > 0x20 writes past a6+0x40 into the rest of the request buffer. The PATCHED code folds 'length > 0x20' into the reject condition, returning STATUS_INVALID_PARAMETER (0xC000000D). Copies use RtlCopyToUser (copy-to-user flag set) or RtlCopyVolatileMemory (kernel copy).",
+      "trigger_conditions": "The copy length exceeds 0x20 only for two sockaddr_size entries: index 1 (AF_UNIX, 0x6e = 110 bytes) and index 0x22 (Hyper-V socket, 0x24 = 36 bytes). The index is the address family of the connection's stored transport address, fixed at accept time and NOT derived from HTTP method, URL, headers, content-type, charset, or transfer encoding. Standard TCP/IP HTTP listeners use AF_INET (0x10) or AF_INET6 (0x1c), both within a slot, so the guarded path is not exercised. Selecting an oversized length would require http.sys to service a connection over an AF_UNIX or Hyper-V-socket transport, which is not demonstrable from these binaries. There is no request-content-controlled path to an oversized length in either build.",
+      "primitive": "If an oversized address family were reachable: an out-of-bounds write of the connection's own stored SOCKADDR bytes (not attacker-chosen content) past the fixed 0x20-byte slots into the request-marshalling buffer, bounded by the table entry (at most 0x6e - 0x20 beyond a slot). Destination is the user-mode receive buffer (RtlCopyToUser) or its kernel copy (RtlCopyVolatileMemory) depending on the copy-to-user flag propagated by the caller. No exploit chain is demonstrated; the oversized-length precondition is not shown to be reachable and the overflow bytes are not attacker-controlled.",
+      "evidence": "UNPATCHED UlpCopyNetworkAddress @ 0x14009BE80:\n```c\nv13 = *(unsigned __int16 *)(*(_QWORD *)(a1 + 0x18) + 0x180);\nif (v13 >= 0x23) v14 = sockaddr_size[0];\nelse             v14 = sockaddr_size[v13];   // copy length, NO upper bound\nv15 = a2 + a4;                                // end of output buffer\nif ((unsigned __int64)(a6 + 0x20) > v15 || (unsigned __int64)(a6 + 0x40) > v15)\n    return 0xC000000D;\n// ... slot 1 (a6+0x20) and slot 0 (a6) copied with length v14, uncapped ...\nif (a5) RtlCopyToUser(a6 + 0x20, *v12 + 0x19c, v14); else RtlCopyVolatileMemory(a6 + 0x20, *v12 + 0x19c, v14);\nif (a5) RtlCopyToUser(a6,        *v12 + 0x180, v14); else RtlCopyVolatileMemory(a6,        *v12 + 0x180, v14);\n```\n\nPATCHED UlpCopyNetworkAddress @ 0x14009B990:\n```c\nv12 = (v11 >= 0x23) ? sockaddr_size[0] : sockaddr_size[v11];   // 16-bit length\nv13 = a2 + a4;\nif ((unsigned __int64)(a6 + 0x20) > v13 || v12 > 0x20u || (unsigned __int64)(a6 + 0x40) > v13)\n    return 0xC000000D;   // NEW: v12 > 0x20 clause caps the length\n// same two copies, v12 guaranteed <= 0x20\n```",
+      "assembly": "UNPATCHED UlpCopyNetworkAddress @ 0x14009BE80 (real instructions):\n000000014009BEBD  movzx   ecx, word ptr [rax+180h]   ; sa_family of first stored address\n000000014009BEC4  cmp     ecx, 23h\n000000014009BED2  movzx   esi, byte ptr [rax+rcx]    ; esi = sockaddr_size[af] (NO cap)\n000000014009BEF0  cmp     rdi, rcx                   ; rdi = r14+0x20 vs end = arg2+arg4\n000000014009BF0B  cmp     rax, rcx                   ; rax = r14+0x40 vs end\n; no 'cmp esi,0x20' between the lookup and the copies\n000000014009BFBD  add     rdx, 19Ch                  ; Src = block+0x19c\n000000014009BFCD  mov     r8, rsi                    ; Size = sockaddr_size[af] (uncapped)\n000000014009BFD8  call    RtlCopyToUser              ; dst r14+0x20 (else RtlCopyVolatileMemory)\n000000014009BFE8  add     rdx, 180h                  ; Src = block+0x180\n000000014009BFEF  mov     r8, rsi                    ; Size (uncapped)\n000000014009BFFA  call    RtlCopyToUser              ; dst r14 (else RtlCopyVolatileMemory)\n\nPATCHED UlpCopyNetworkAddress @ 0x14009B990 (real instructions):\n000000014009B9CD  movzx   ecx, word ptr [rax+180h]   ; sa_family\n000000014009B9E2  movzx   esi, byte ptr [rax+rcx]    ; esi = sockaddr_size[af]\n000000014009B9EF  mov     [rsp+arg_18], si           ; length kept 16-bit\n000000014009BA24  cmp     si, 20h                    ; NEW: cap length to 0x20\n000000014009BA28  ja      short loc_14009BA06        ; NEW: reject -> STATUS_INVALID_PARAMETER\n000000014009BAFA  call    RtlCopyToUser              ; slot 1 copy (length <= 0x20)\n000000014009BB1C  call    RtlCopyToUser              ; slot 0 copy (length <= 0x20)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http_unpatched!UlpCopyNetworkAddress",
+            "address": "0x14009BE80",
+            "why": "Function entry. Inspect the stored address family at *(*(rcx+0x18)+0x180) and the sockaddr_size[af] value (esi after 0x14009BED2). The guarded path is exercised only when that length exceeds 0x20."
+          }
+        ],
+        "watch": [
+          "esi/si after 0x14009BED2: copy length = sockaddr_size[af]; exceeds 0x20 only for AF_UNIX (0x6e) and Hyper-V (0x24)",
+          "af = *(uint16*)(*(rcx+0x18)+0x180): stored address family; set by the transport at accept time, not by request content",
+          "r14 (arg6): destination, two adjacent 0x20-byte slots at r14+0 and r14+0x20 inside the request buffer",
+          "sockaddr_size table: unpatched 0x14018a040, patched 0x140187000; identical bytes; non-zero entries index1=0x6e, index2=0x10, index0x17=0x1c, index0x22=0x24"
+        ],
+        "key_offsets": [
+          "0x14009BED2: rsi = sockaddr_size[af] load (unbounded in unpatched)",
+          "0x14009BFD8 / 0x14009BFFA: the two copies using the uncapped length",
+          "patched 0x14009BA24: 'cmp si,0x20; ja' - the added cap"
+        ],
+        "trigger_setup": "Not demonstrably reachable via HTTP request content. The copy length is driven by the connection's stored address family, which is fixed at connection accept time. On a standard TCP/IP listener the family is AF_INET/AF_INET6 (length <= 0x1c) and the guarded path is not taken.",
+        "expected_observation": "On a standard listener, sockaddr_size[af] is <= 0x1c and neither build overflows. The patched cap becomes observable only if an address family with a table entry > 0x20 (AF_UNIX / Hyper-V) reaches this routine, in which case the patched build returns STATUS_INVALID_PARAMETER (0xC000000D) while the unpatched build copies past a6+0x40.",
+        "notes": "The two sockaddr_size entries exceeding 0x20 correspond to AF_UNIX (110 bytes) and the Hyper-V socket family (36 bytes). The overflow bytes are the connection's own stored SOCKADDR bytes, not attacker-chosen data. This is a defensive size cap; no exploit primitive is demonstrated."
+      }
+    }
+  ],
+  "summary": "The diff of http_unpatched.sys vs http_patched.sys shows 83 changed functions. The single security-relevant change is in UlpCopyNetworkAddress (0x14009BE80 -> 0x14009B990): the patched build adds a 'copy length <= 0x20' cap before two SOCKADDR copies into a caller output buffer of two adjacent 0x20-byte slots. The length is sockaddr_size[af], indexed by the connection's stored address family; the sockaddr_size table is identical in both builds and only its AF_UNIX (0x6e) and Hyper-V (0x24) entries exceed 0x20. The address family is fixed by the transport at accept time and is not selectable from HTTP request content, so an oversized copy is not demonstrably reachable on a standard TCP/IP listener; the change is a genuine out-of-bounds-write hardening rated Low. All other changed functions are servicing/feature-staging churn (WIL Feature_HttpBugFix25Q1 / Feature_HttpBugFix2605 / Feature_Servicing_* gates, removal of duplicated *Old paths, WPP/ETW tracing, HTTP-3/QUIC rebuild, function extraction and inlining differences); an independent per-function review of the channel-binding, safe-string, pseudo-header, header-name/value, URL-sanitization, and Content-Length/Transfer-Encoding paths found no omitted security fix."
+}

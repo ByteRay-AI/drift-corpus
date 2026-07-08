@@ -1,0 +1,360 @@
+{
+  "binaries": {
+    "title": "modemcsa.sys (Modem CSA Kernel Streaming Driver) - Uninitialized Stack Memory in IOCTL Request",
+    "id_unpatched": "modemcsa_unpatched.sys",
+    "id_patched": "modemcsa_patched.sys",
+    "overall_similarity": 0.8972,
+    "matched": 72,
+    "changed": 24,
+    "identical": 48,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 4,
+    "unmatched_patched_note": "4 compiler/runtime helper stubs present only in the patched build (__cpu_features_init, _guard_xfg_dispatch_icall_nop, __memset_query, __memset_repmovs) — toolchain artifacts, not driver logic"
+  },
+  "changed_functions": [
+    {
+      "name": "WaveAction",
+      "address_unpatched": "0x1C00010D0",
+      "address_patched": "0x1C00011D8",
+      "similarity": 0.9754,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: Sends a 0x24-byte stack buffer to KsSynchronousIoControlDevice (IOCTL 0x2B0024) as both input and output while only buffer[0x18]=1 and buffer[0x1C]=arg2 are written; bytes 0x00-0x17 and 0x20-0x23 (28 of 36 bytes) are left as uninitialized stack residue",
+        "PATCHED: Zero-initializes the full buffer before the call: 'and qword ptr [r11-40h], 0' (buffer[0x00..0x07]), 'movdqu [rsp+88h+var_38], xmm0' after 'xorps xmm0, xmm0' (buffer[0x08..0x17]), and 'and [rsp+88h+var_20], 0' (buffer[0x20..0x23]); the BytesReturned out-variable is also zeroed via 'and [rsp+88h+var_48], 0'",
+        "The __security_cookie / __security_check_cookie guard is present and unchanged in both builds; its numeric target shifts only due to relocation, no behavioral change"
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-908 (Use of Uninitialized Resource). The unpatched WaveAction passes a stack-allocated 0x24-byte buffer to KsSynchronousIoControlDevice where bytes 0x00-0x17 and 0x20-0x23 contain uninitialized kernel stack residue. IOCTL 0x2B0024 decodes to FILE_DEVICE_KS, function 9, METHOD_BUFFERED, FILE_ANY_ACCESS — a custom driver IOCTL, not IOCTL_KS_PROPERTY; the internal layout of the buffer is driver-defined and is not a KSPROPERTY header. The buffer is forwarded to the lower device in the modem device stack (the file object at pin+0x58). Because the recipient is a trusted lower kernel-mode driver and no path returning the bytes to a lower-privileged caller is present in this binary, disclosure to an attacker is not demonstrated; the provable defect is the transmission of uninitialized kernel stack memory across a device boundary. The patched version zero-initializes the entire buffer before the call.",
+      "assembly_diff": "UNPATCHED WaveAction @ 0x1C00010D0 (verbatim):\n00000001C00010D0  mov     r11, rsp\n00000001C00010D3  sub     rsp, 88h\n00000001C00010DA  mov     rax, cs:__security_cookie\n00000001C00010E1  xor     rax, rsp\n00000001C00010E4  mov     [rsp+88h+var_18], rax\n00000001C00010E9  lea     rax, [r11-48h]\n00000001C00010ED  mov     [rsp+88h+var_24], edx        ; buffer[0x1C] = arg2\n00000001C00010F1  mov     [r11-50h], rax\n00000001C00010F5  lea     r9, [r11-40h]                ; InBuffer = buffer start\n00000001C00010F9  mov     edx, 24h\n00000001C00010FE  mov     [rsp+88h+var_28], 1          ; buffer[0x18] = 1 (only other init)\n00000001C0001106  mov     [rsp+88h+OutSize], edx       ; OutSize = 0x24\n00000001C000110A  lea     rax, [r11-40h]\n00000001C000110E  mov     [r11-60h], rax\n00000001C0001112  mov     r8d, 2B0024h                 ; IoControl\n00000001C0001118  mov     [rsp+88h+InSize], edx        ; InSize = 0x24\n00000001C000111C  xor     edx, edx                     ; RequestorMode = KernelMode\n00000001C000111E  call    cs:__imp_KsSynchronousIoControlDevice\n;                 buffer[0x00..0x17] and [0x20..0x23] still uninitialized here\n00000001C0001125  nop     dword ptr [rax+rax+00h]\n00000001C000112A  test    eax, eax\n00000001C000112C  js      short loc_1C000113B\n00000001C000112E  cmp     [rsp+88h+var_24], 0\n00000001C0001133  mov     ecx, 0C0000001h\n00000001C0001138  cmovz   eax, ecx\n00000001C000113B  mov     rcx, [rsp+88h+var_18]\n00000001C0001140  xor     rcx, rsp\n00000001C0001143  call    __security_check_cookie\n00000001C0001148  add     rsp, 88h\n00000001C000114F  retn\n\n--- Zero-init instructions ADDED in PATCHED WaveAction @ 0x1C00011D8 (verbatim) ---\n00000001C00011F1  and     qword ptr [r11-40h], 0       ; zero buffer[0x00..0x07]\n00000001C00011FA  and     [rsp+88h+var_20], 0          ; zero buffer[0x20..0x23]\n00000001C0001203  and     [rsp+88h+var_48], 0          ; zero BytesReturned\n00000001C0001208  xorps   xmm0, xmm0\n00000001C0001238  movdqu  [rsp+88h+var_38], xmm0       ; zero buffer[0x08..0x17]\n\nBuffer layout (0x24 bytes at [r11-0x40]):\n  Offset 0x00-0x17: UNINITIALIZED in unpatched, ZEROED in patched (and qword + movdqu)\n  Offset 0x18-0x1B: = 0x00000001 — SAME in both\n  Offset 0x1C-0x1F: = arg2 (edx) — SAME in both\n  Offset 0x20-0x23: UNINITIALIZED in unpatched, ZEROED in patched (and dword)"
+    },
+    {
+      "name": "memmove",
+      "similarity": 0.2828,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "memcpy/memmove SIMD loop restructured with AVX-optimized vectorized copy path",
+        "Added fast-path for sizes < 0x10 using scalar copies",
+        "Functionally identical memcpy implementation, different code generation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0003180"
+    },
+    {
+      "name": "memset",
+      "similarity": 0.599,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "memset SIMD loop restructured with SSE2/SSE optimized zeroing path",
+        "Added feature-detection check (data_1c0005440 & 2) for enhanced memset (rep stosb fallback for large sizes)",
+        "Functionally identical memset implementation, different code generation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00034C0"
+    },
+    {
+      "name": "ProcessReadStreamIrp",
+      "similarity": 0.8699,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Streaming data processing loop: counter-based loop condition (cmp r10,r8) replaced with pointer-based (cmp rdx,r8) — functionally equivalent",
+        "Spinlock acquire moved from before-loop to top-of-loop-body — functionally equivalent lock semantics",
+        "Register allocation changes (r14→r12, r15→r14, r11→r8, NewIrql_1→NewIrql) — no logic change",
+        "Data conversion loop (byte→word with 0x80 offset and 0x100 multiply) restructured but identical computation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Both versions acquire the spinlock before accessing shared state and release it before doing unlocked work (buffer processing, IRP completion). The loop counter vs pointer comparison change and spinlock hoisting are compiler codegen differences, not behavioral. Verified via full assembly comparison of both versions.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0002104"
+    },
+    {
+      "name": "AcquireDevice",
+      "similarity": 0.9358,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming (rbp→rsi for NTSTATUS return variable)",
+        "Control flow restructured: 'goto label' pattern replaced with 'else if' chain — identical logic",
+        "Called subroutines renamed due to address shifts (sub_1c0001ed4→sub_1c0001f34, sub_1c0002cd8→sub_1c0002e6c)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001574"
+    },
+    {
+      "name": "PnpAddDevice",
+      "similarity": 0.9448,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Device interface state logic restructured: added explicit rax_7 variable for IoSetDeviceInterfaceState result tracking",
+        "Condition changed from 'if (rbx_1 >= 0)' to 'if (!(flag&1) || rax_7 >= 0)' — logically equivalent short-circuit evaluation",
+        "UNICODE_STRING var_28 moved to function scope with explicit zero-initialization"
+      ],
+      "security_relevant": false,
+      "security_notes": "The device interface state check logic is functionally equivalent between versions. Both proceed when either the interface flag is not set OR IoSetDeviceInterfaceState succeeded. The change is defensive code style, not a security fix.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00094A0"
+    },
+    {
+      "name": "WriteStream",
+      "similarity": 0.9774,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "16-bit to 8-bit audio sample conversion loop: counter-based (inc r8; cmp r8,r9) replaced with pointer-based (cmp rcx,r8) — equivalent",
+        "Wrap check: 'cmp rcx,rax; cmova r9,r12' replaced with 'add r8,rcx; cmp rcx,r8; jae' — equivalent overflow detection",
+        "Register allocation changes (r12 removed, stack layout adjusted)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00029E8"
+    },
+    {
+      "name": "ProcessWriteIrps",
+      "similarity": 0.9802,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Calling convention adjusted to match DPC callback signature (4 params, using arg4 as context)",
+        "KsRemoveIrpFromCancelableQueue call gets extra parameter arg1 (likely API version difference)",
+        "Custom memset replaced with __builtin_memset for IRP overlay zeroing"
+      ],
+      "security_relevant": false,
+      "security_notes": "The extra parameter to KsRemoveIrpFromCancelableQueue is consistent with a KS API version difference in the newer WDK. The DPC callback signature adjustment is a calling convention fix, not a security change.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0002680"
+    },
+    {
+      "name": "AllocateStreamIrp",
+      "similarity": 0.9894,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNxCacheAligned, 0x38, ...) → ExAllocatePool2(0x48, 0x38, ...)",
+        "POOL_FLAG update: 0x48 = POOL_FLAG_NON_PAGED | POOL_FLAG_ZERO (zeroed NX non-paged pool)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Standard pool API modernization. ExAllocatePool2 with NON_PAGED flag returns zeroed NX pool by default, equivalent to the old NonPagedPoolNxCacheAligned + explicit zeroing pattern.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001F7C"
+    },
+    {
+      "name": "AllocateIrpForModem",
+      "similarity": 0.9863,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNxCacheAligned, 0x190, ...) → ExAllocatePool2(0x48, 0x190, ...)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001ED4"
+    },
+    {
+      "name": "QueryPdoInformation",
+      "similarity": 0.9859,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added explicit KEVENT stack zeroing (__builtin_memset(&var_28, 0, 0x18)) before KeInitializeEvent",
+        "Completion routine address changed due to code layout (sub_1c0001e70 → sub_1c0001ed0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The KEVENT zeroing is defensive but the event is immediately initialized by KeInitializeEvent which overwrites all fields anyway.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0009780"
+    },
+    {
+      "name": "GetModemDeviceName",
+      "similarity": 0.9907,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(PagedPool, ...) → ExAllocatePool2(0x100, ...) (pool API modernization)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00098B8"
+    },
+    {
+      "name": "OpenDuplexControl",
+      "similarity": 0.987,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation change: arg2&1 pre-computed into r15d via 'and r15d,0x1' instead of 'test dl,0x1'",
+        "Return value computation reordered: '(arg2&1)|(arg1+0x38)' → '(arg1+0x38)|r15_1' — identical result",
+        "ObReferenceObjectByHandle IAT entry address changed (0x71d0 → 0x71c8)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Verified at assembly level: both versions perform identical ObReferenceObjectByHandle calls with proper ExGetPreviousMode() for access mode. No security check was added or removed.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001390"
+    },
+    {
+      "name": "PinDeviceState",
+      "similarity": 0.9571,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "KS state transition dispatch logic restructured (goto chains → if/else) — identical dispatch semantics",
+        "Called subroutine addresses shifted (sub_1c0001818→sub_1c0001b04, sub_1c0001574→sub_1c0001278, etc.)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001010"
+    },
+    {
+      "name": "InitializeBufferControl",
+      "similarity": 0.6941,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Initialization order changed: '*(arg1+0x30)=0' moved before list head pointer initialization",
+        "This ensures the count field is zeroed BEFORE the list pointers are set up — defensive but functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0002DC8"
+    },
+    {
+      "name": "FilterDispatchCreate",
+      "similarity": 0.9822,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNx, 0x58, ...) → ExAllocatePool2(0x40, 0x58, ...)",
+        "Explicit memset removed (ExAllocatePool2 zeroes by default)",
+        "Pointer type change in decompiler output (uint128_t* → void*) causing different indexing notation but same offsets"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0009990"
+    },
+    {
+      "name": "__GSHandlerCheckCommon",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable type changed from 64-bit to 32-bit for intermediate result — no overflow risk since value is ANDed with 0xF",
+        "__security_check_cookie function address changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00030DC"
+    },
+    {
+      "name": "PinDispatchCreate",
+      "similarity": 0.9896,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Called subroutine addresses shifted due to code layout",
+        "arg_10 initialization moved to declaration (nullptr) — defensive but no behavior change"
+      ],
+      "security_relevant": false,
+      "security_notes": "The KsValidateConnectRequest validation logic is identical. The pin index access (*(r14 + (rax_2 << 3) + 0x48)) where rax_2 comes from connect request is present in both versions unchanged.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C00090D0"
+    },
+    {
+      "name": "InitializeDuplexControl",
+      "similarity": 0.9904,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Initialization order adjusted (field zeroing moved before pointer setup) — defensive reordering",
+        "Called subroutines renamed (sub_1c0002dc8 → sub_1c0002d80)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0001228"
+    },
+    {
+      "name": "InitializeDevIoPin",
+      "similarity": 0.9804,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPool, 0x28, ...) → ExAllocatePool2(0x40, 0x28, ...)",
+        "Explicit memset removed (ExAllocatePool2 zeroes by default with POOL_FLAG_NON_PAGED)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Pool API modernization. The old NonPagedPool (potentially executable) is replaced with ExAllocatePool2 POOL_FLAG_NON_PAGED (NX by default), but this is hardening, not a vulnerability fix.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C0009008"
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.9791,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(PagedPool, rdx+2, ...) → ExAllocatePool2(0x100, rdx+2, ...)",
+        "Custom memset (sub_1c00034c0) replaced with optimized variant (sub_1c0003500) for stack QueryTable zeroing",
+        "Heap buffer explicit zero (sub_1c00034c0) replaced by ExAllocatePool2 default zeroing",
+        "Custom memcpy (sub_1c0003180) replaced with optimized variant (sub_1c0003240)",
+        "Registry query function pointers and data references shifted"
+      ],
+      "security_relevant": false,
+      "security_notes": "Driver initialization function. Pool API modernization and memset/memcpy optimization. No security logic changed.",
+      "assembly_diff": "",
+      "address_unpatched": "0x1C000B008"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "WaveAction",
+      "address_unpatched": "0x1C00010D0",
+      "address_patched": "0x1C00011D8",
+      "entry_point": "KS Property Set: KSPROPERTY_CONNECTION_STATE (IOCTL_KS_PROPERTY via DeviceIoControl to the modem KS device)",
+      "call_chain": [
+        "User-mode DeviceIoControl to KS device with KSPROPERTY_CONNECTION_STATE",
+        "PinDeviceState @ 0x1C0001010 — reads requested KSSTATE and dispatches (0=STOP->ReleaseDevice, 1=ACQUIRE->AcquireDevice, 2=PAUSE->StopStream, 3=RUN->StartStream)",
+        "StartStream @ 0x1C00019E4 (RUN path) or StopStream @ 0x1C0001C0C (PAUSE path)",
+        "WaveAction @ 0x1C00010D0 — sends IOCTL 0x2B0024 to lower device via KsSynchronousIoControlDevice",
+        "Lower device IOCTL handler receives buffer containing uninitialized kernel stack data"
+      ],
+      "vulnerability_class": "use of uninitialized memory (CWE-908); potential kernel information disclosure (CWE-200) if the lower device reflects the data",
+      "description": "WaveAction (unpatched @ 0x1C00010D0) sends a 0x24-byte stack-allocated buffer to KsSynchronousIoControlDevice as both the input and output buffer for IOCTL 0x2B0024 (FILE_DEVICE_KS, function 9, METHOD_BUFFERED, FILE_ANY_ACCESS — a custom driver IOCTL, not IOCTL_KS_PROPERTY). Only 8 bytes of the buffer are explicitly initialized: buffer[0x18-0x1B] = 0x00000001 and buffer[0x1C-0x1F] = arg2. The remaining 28 bytes (offsets 0x00-0x17 and 0x20-0x23) contain uninitialized kernel stack residue. The internal layout of the buffer is driver-defined and is not a KSPROPERTY header. This uninitialized data is forwarded to the lower device in the modem device stack (the file object at pin+0x58) via a synchronous METHOD_BUFFERED IOCTL. The patched WaveAction (@ 0x1C00011D8) zero-initializes the full buffer before the call: 'and qword ptr [r11-40h], 0' (buffer[0x00..0x07]), 'xorps xmm0,xmm0' + 'movdqu [rsp+88h+var_38], xmm0' (buffer[0x08..0x17]), and 'and [rsp+88h+var_20], 0' (buffer[0x20..0x23]).",
+      "trigger_conditions": "1. Open the modem KS device interface. 2. Create a pin on the KS filter (KsCreatePin or KSPROPERTY_CONNECTION). 3. Set the pin state to KSSTATE_RUN (value 3) or KSSTATE_PAUSE (value 2). PinDeviceState routes RUN to StartStream and PAUSE to StopStream, both of which call WaveAction with the lower device's file object (pin+0x58). KSSTATE_STOP (value 0) routes to ReleaseDevice and does not reach WaveAction. WaveAction builds a 0x24-byte stack buffer, writes only buffer[0x18]=1 and buffer[0x1C]=arg2 (2 on the RUN path, 4 on the PAUSE path), and passes it to KsSynchronousIoControlDevice. Bytes 0x00-0x17 and 0x20-0x23 contain whatever was previously on the kernel stack.",
+      "primitive": "Transmission of uninitialized kernel stack memory across a device boundary. 28 of the 36 buffer bytes are uninitialized when the METHOD_BUFFERED IOCTL is dispatched to the lower device. Whether this becomes an attacker-observable information leak (e.g. kernel-pointer/KASLR disclosure) depends on whether the lower device reflects, logs, or returns the input buffer toward user mode; no such path is present in this binary, so disclosure to a lower-privileged caller is not demonstrated.",
+      "evidence": "Unpatched WaveAction decompilation (real):\n  NTSTATUS __fastcall WaveAction(struct _FILE_OBJECT *a1, int a2)\n  {\n      NTSTATUS result;\n      ULONG v3;        // BytesReturned\n      _DWORD v4[7];    // 0x24-byte IO buffer, mostly UNINITIALIZED\n      int v5;          // buffer offset 0x1C\n      v5 = a2;         // buffer[0x1C] = a2\n      v4[6] = 1;       // buffer[0x18] = 1 (only other init)\n      result = KsSynchronousIoControlDevice(a1, 0, 0x2B0024u, v4, 0x24u, v4, 0x24u, &v3);\n      if ( result >= 0 && v5 == 0 )\n          return -1073741823;   // 0xC0000001\n      return result;\n  }\n\nCaller StartStream @ 0x1C00019E4 (RUN path):\n  v3 = WaveAction(*(struct _FILE_OBJECT **)(v1 + 88), 2);\n\nCaller StopStream @ 0x1C0001C0C (PAUSE path):\n  WaveAction(*(struct _FILE_OBJECT **)(v2 + 88), 4);\n\nPatched WaveAction @ 0x1C00011D8 fully zeroes the buffer (v4=0; v5=0; v6=1; v7=a2; v8=0; v3=0) before the identical KsSynchronousIoControlDevice call.",
+      "assembly": "UNPATCHED WaveAction @ 0x1C00010D0 (verbatim):\n00000001C00010D0  mov     r11, rsp\n00000001C00010D3  sub     rsp, 88h\n00000001C00010DA  mov     rax, cs:__security_cookie\n00000001C00010E1  xor     rax, rsp\n00000001C00010E4  mov     [rsp+88h+var_18], rax\n00000001C00010E9  lea     rax, [r11-48h]\n00000001C00010ED  mov     [rsp+88h+var_24], edx        ; buffer[0x1C] = arg2\n00000001C00010F1  mov     [r11-50h], rax\n00000001C00010F5  lea     r9, [r11-40h]                ; InBuffer = buffer start\n00000001C00010F9  mov     edx, 24h\n00000001C00010FE  mov     [rsp+88h+var_28], 1          ; buffer[0x18] = 1 (only other init)\n00000001C0001106  mov     [rsp+88h+OutSize], edx       ; OutSize = 0x24\n00000001C000110A  lea     rax, [r11-40h]\n00000001C000110E  mov     [r11-60h], rax\n00000001C0001112  mov     r8d, 2B0024h                 ; IoControl\n00000001C0001118  mov     [rsp+88h+InSize], edx        ; InSize = 0x24\n00000001C000111C  xor     edx, edx                     ; RequestorMode = KernelMode\n00000001C000111E  call    cs:__imp_KsSynchronousIoControlDevice\n;                 buffer[0x00..0x17] and [0x20..0x23] still uninitialized here\n00000001C0001125  nop     dword ptr [rax+rax+00h]\n00000001C000112A  test    eax, eax\n00000001C000112C  js      short loc_1C000113B\n00000001C000112E  cmp     [rsp+88h+var_24], 0\n00000001C0001133  mov     ecx, 0C0000001h\n00000001C0001138  cmovz   eax, ecx\n00000001C000113B  mov     rcx, [rsp+88h+var_18]\n00000001C0001140  xor     rcx, rsp\n00000001C0001143  call    __security_check_cookie\n00000001C0001148  add     rsp, 88h\n00000001C000114F  retn\n\n--- Zero-init instructions ADDED in PATCHED WaveAction @ 0x1C00011D8 (verbatim) ---\n00000001C00011F1  and     qword ptr [r11-40h], 0       ; zero buffer[0x00..0x07]\n00000001C00011FA  and     [rsp+88h+var_20], 0          ; zero buffer[0x20..0x23]\n00000001C0001203  and     [rsp+88h+var_48], 0          ; zero BytesReturned\n00000001C0001208  xorps   xmm0, xmm0\n00000001C0001238  movdqu  [rsp+88h+var_38], xmm0       ; zero buffer[0x08..0x17]",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "modemcsa_unpatched!WaveAction",
+            "address": "0x1C00010D0",
+            "why": "Function entry — catches every IOCTL 0x2B0024 dispatch with the uninitialized buffer. rcx = lower-device file object (arg1), edx = arg2 (2 on RUN path, 4 on PAUSE path)."
+          },
+          {
+            "symbol": "modemcsa_unpatched!WaveAction+0x4E",
+            "address": "0x1C000111E",
+            "why": "The KsSynchronousIoControlDevice call site — r9 points to the 0x24-byte buffer. Bytes [r9+0x00]..[r9+0x17] and [r9+0x20]..[r9+0x23] are uninitialized in the unpatched build; zeroed in the patched build."
+          }
+        ],
+        "watch": [
+          "r9 at 0x1C000111E = pointer to IO buffer (stack address r11-0x40)",
+          "[r9+0x00] through [r9+0x17] = uninitialized bytes (24) — non-zero stack residue in unpatched, zeroed in patched",
+          "[r9+0x18] = 0x00000001 (initialized in both versions)",
+          "[r9+0x1C] = arg2 value (2 or 4, initialized in both versions)",
+          "[r9+0x20] through [r9+0x23] = uninitialized trailing bytes — zeroed in patched",
+          "r8d at 0x1C000111E = 0x2B0024 (IOCTL code confirming correct call site)"
+        ],
+        "key_offsets": [
+          "0x1C00010FE: 'mov [rsp+88h+var_28], 1' — buffer[0x18]=1, one of only two pre-call buffer writes in the unpatched version",
+          "0x1C00010ED: 'mov [rsp+88h+var_24], edx' — buffer[0x1C]=arg2, the other pre-call buffer write",
+          "0x1C000111E: 'call cs:__imp_KsSynchronousIoControlDevice' — dispatches the IOCTL with the uninitialized buffer",
+          "In PATCHED: 0x1C00011F1 'and qword ptr [r11-40h], 0' begins the added zero-initialization"
+        ],
+        "trigger_setup": "1. Locate and open the modem KS device interface via SetupDiGetClassDevs + CreateFile. 2. Create a pin on the KS filter (KsCreatePin or KSPROPERTY_CONNECTION). 3. Send IOCTL_KS_PROPERTY with KSPROPERTY_CONNECTION_STATE set to KSSTATE_RUN (3) or KSSTATE_PAUSE (2) via DeviceIoControl. 4. PinDeviceState routes to StartStream (RUN) or StopStream (PAUSE), which call WaveAction, which sends IOCTL 0x2B0024 to the lower device with the uninitialized buffer.",
+        "expected_observation": "At WaveAction entry (0x1C00010D0), single-step to the call at 0x1C000111E and dump 36 bytes at r9. In the unpatched build bytes 0x00-0x17 and 0x20-0x23 contain non-zero stack residue while buffer[0x18] reads 01 00 00 00 and buffer[0x1C] holds the action code; in the patched build those regions are zero.",
+        "notes": "IOCTL 0x2B0024 decodes as DeviceType=0x2B (FILE_DEVICE_KS), Function=9, Method=METHOD_BUFFERED (0), Access=FILE_ANY_ACCESS (0) — a custom driver IOCTL, not IOCTL_KS_PROPERTY (function 0). The buffer layout is driver-defined. Callers pass arg2=2 (RUN path via StartStream) and arg2=4 (PAUSE path via StopStream). The file object at pin+0x58 is the lower device in the modem device stack, opened by name via IoGetDeviceObjectPointer in AcquireDevice."
+      }
+    }
+  ],
+  "summary": "The patched modemcsa.sys fixes a use of uninitialized kernel stack memory issue (CWE-908) in WaveAction (unpatched @ 0x1C00010D0, patched @ 0x1C00011D8). This function sends a 0x24-byte stack buffer to KsSynchronousIoControlDevice (IOCTL 0x2B0024, a custom METHOD_BUFFERED IOCTL) as both input and output, but only initializes 8 bytes (buffer[0x18]=1 and buffer[0x1C]=arg2) — leaving bytes 0x00-0x17 and 0x20-0x23 (28 of 36 bytes) as uninitialized kernel stack residue. The internal buffer layout is driver-defined, not a KSPROPERTY header. The path is user-triggerable via KS streaming state transitions: PinDeviceState routes KSSTATE_RUN (3) to StartStream and KSSTATE_PAUSE (2) to StopStream, both of which call WaveAction (KSSTATE_STOP=0 routes to ReleaseDevice and does not reach WaveAction). The patch adds explicit zero-initialization (and/xorps/movdqu instructions) clearing the entire buffer before the IOCTL. The uninitialized bytes are forwarded to a trusted lower device in the modem stack; no path returning them to a lower-privileged caller is present in this binary, so the finding is rated Low (would rise to Medium/CWE-200 only if the lower device is shown to reflect the data to user mode). The remaining changed functions are compiler/WDK modernization (ExAllocatePool2 API migration, memset/memcpy SIMD recompile, register reallocation, loop restructuring, and 4 added compiler/CFG helper stubs) with no security-relevant behavioral differences."
+}

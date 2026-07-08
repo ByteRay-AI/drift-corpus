@@ -1,0 +1,127 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - No security-relevant change (connection-info parser refactor and AlternativePort feature staging)",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9498,
+    "matched": 1231,
+    "changed": 42,
+    "identical": 1189,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmbCeInitializeConnectionInfo",
+      "unpatched_address": "0x140018FC0",
+      "patched_address": "0x140037410",
+      "similarity": 0.6305,
+      "change_type": "refactor_and_feature_staging",
+      "key_changes": [
+        "Parse loop restructured: the wrap-to-zero test on the buffer-walking pointer moved from the loop top ('test r9,r9; jnz' at 0x140018FE6 after 'add r9,rdx' at 0x1400191D5, unpatched) to a post-advance branch ('add r10,rcx; jnz 0x140037440' at 0x14003748B, patched). Same semantics, different location.",
+        "Null-buffer guard present in both builds: unpatched tests the walk pointer (initialized to the buffer arg) at 0x140018FE6; patched hoists the equivalent test to function entry ('test rdx,rdx; je 0x14003749C' at 0x140037433).",
+        "Offset/walk registers renamed between builds (unpatched r10d offset + r9 walk pointer; patched r9d offset + r10 walk pointer); the three 32-bit bounds comparisons against arg3 (r8d) are otherwise identical (0x14001905F/68/78 vs 0x140037462/67/72).",
+        "AlternativePort_Dcr feature staging added in the copy pass: when Feature_Servicing_AlternativePort_Dcr__private_IsEnabledDeviceUsageNoInline (0x1400375A2, 0x1400375E5) returns nonzero, the port field is read from offset 0x354 with a byte swap ('ror ax,8'); when disabled, the original offset 0x2EA path (matching the unpatched build) is taken.",
+        "IPv6 link-local test inlined: unpatched calls IN6_IS_ADDR_LINKLOCAL at 0x1400191FF; patched inlines it as 'cmp byte [..+18h],0FEh; and 0C0h; cmp 80h' at 0x14003760D-0x14003761D."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security boundary change. The unpatched build already rejects a null buffer and already terminates the parse loop if the buffer-walking pointer becomes zero; the patch relocates that wrap-to-zero test and renames registers but does not add or strengthen it. The cumulative 32-bit offset is capped at the total buffer size (arg3) on every iteration in both builds ('cmp <offset>,r8d; ja error'), which bounds the walk pointer to [buffer, buffer+arg3] and makes a 64-bit pointer wrap unreachable in either build. The only behavioral delta is the AlternativePort_Dcr feature gate (alternate port offset plus byte swap, original path retained) and the inlining of the IPv6 link-local test. Neither reads an attacker-controlled length or alters the bounds of the fixed 0x98-byte-per-entry copy.",
+      "assembly_diff": "UNPATCHED wrap-to-zero termination (SmbCeInitializeConnectionInfo @ 0x140018FC0):\n  0x1400191D5: add     r9, rdx          ; advance walk pointer by entry size\n  0x1400191D8: jmp     0x140018FE6      ; back to loop top\n  0x140018FE6: test    r9, r9           ; wrap-to-zero / null test\n  0x140018FE9: jnz     0x14001903D      ; if zero, stop parsing\n\nPATCHED wrap-to-zero termination (SmbCeInitializeConnectionInfo @ 0x140037410):\n  0x14003748B: add     r10, rcx         ; advance walk pointer by entry size\n  0x14003748E: jnz     0x140037440      ; if pointer became zero, exit loop\n\nPATCHED null-buffer guard at entry (equivalent to unpatched 0x140018FE6 with r9=rdx):\n  0x140037433: test    rdx, rdx\n  0x140037436: je      0x14003749C      ; skip parse loop if buffer null\n\nAlternativePort_Dcr feature gate (patched only, copy pass):\n  0x1400375A2: call    Feature_Servicing_AlternativePort_Dcr__private_IsEnabledDeviceUsageNoInline\n  0x1400375A7: test    eax, eax\n  0x1400375A9: jz      0x1400375C7      ; feature OFF -> original offset 0x2EA path\n  0x1400375AB: movzx   eax, word ptr [rdi+354h]  ; alternate port offset\n  0x1400375B2: ror     ax, 8            ; network byte order"
+    },
+    {
+      "name": "SmbCeFindSessionEntry",
+      "unpatched_address": "0x140008700",
+      "patched_address": "0x1400334F0",
+      "similarity": 0.5252,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured VNetRoot/session matching control flow",
+        "Added ExBlockOnAddressPushLock waiting on session-entry lifecycle flags (init-in-progress / invalidation-in-progress)",
+        "Patched build retains an SmbCeFindSessionEntry_Old copy (feature-staging leftover) that also contains SeAccessCheck"
+      ],
+      "security_relevant": false,
+      "security_notes": "The SeAccessCheck call is NOT added by the patch. It is present in the unpatched SmbCeFindSessionEntry at 0x140059BBB and is unchanged in the patched build (0x1400339E9). The raw SeAccessCheck call count difference (4 unpatched vs 5 patched) is entirely explained by the retained SmbCeFindSessionEntry_Old clone at 0x1400476D4 (SeAccessCheck at 0x140047947). The push-lock wait is a synchronization refactor, not a new security boundary."
+    },
+    {
+      "name": "MRxSmbProcessClientMoveNotification",
+      "similarity": 0.9256,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added SMB2 dialect-aware byte-swap (ror) for port/endpoint fields",
+        "Remaining differences are data-reference address shifts from binary layout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Endian handling for SMB2 dialect multichannel interface registration. Not a security boundary change."
+    },
+    {
+      "name": "MRxSmbValidateAndGetTransportParameters",
+      "similarity": 0.8558,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added a mode parameter separating validation from storage of transport parameters",
+        "Patched build retains an MRxSmbValidateAndGetTransportParameters_Old copy (feature staging)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring to decouple validation and storage. Not a security fix."
+    },
+    {
+      "name": "sub_14001A320 / sub_140033EE0",
+      "similarity": 0.6594,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Expanded for multichannel/dialect handling",
+        "Added push-lock synchronization for global connection state",
+        "Added pool allocations for multichannel interface arrays",
+        "Added byte-swap (ror) handling for SMB2 dialect network-order fields"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for multichannel support. The allocation sizes use count-based multipliers, but the entry count is capped at 0x40 by SmbCeInitializeConnectionInfo before reaching this function, so no unbounded attacker-controlled multiplier is introduced."
+    },
+    {
+      "name": "sub_140009D00 / sub_14002C160",
+      "similarity": 0.3495,
+      "change_type": "refactor",
+      "key_changes": [
+        "Restructured session reconnection/credential-refresh logic",
+        "Separated session lookup into distinct passes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Code simplification of session reconnection. No security check added or removed."
+    },
+    {
+      "name": "RxCeEstablishConnection",
+      "similarity": 0.1481,
+      "change_type": "refactor",
+      "key_changes": [
+        "Split into helper subroutines; patched build retains an RxCeEstablishConnection_Old copy",
+        "SiloContext parameter handling",
+        "Added output parameter for connection result"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring to delegate to helpers. The array-bounds check that guarded the transport lookup in the unpatched build is preserved verbatim in the patched helper. No security check added or removed."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "AlternativePort_Dcr feature support (port-scope and effective-port helpers), WIL feature-flag accessors (Feature_Servicing_AlternativePort_Dcr__private_IsEnabled*, wil_* helpers), and retained _Old copies of several functions (SmbCeFindSessionEntry_Old, MRxSmbValidateAndGetTransportParameters_Old, RxCeEstablishConnection_Old, and others). The similarity tool reported 0 unmatched because it folded these into its matched set; they are the footprint of staged feature rollout, not new security routines."
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SmbCeInitializeConnectionInfo",
+      "entry_point": "Connection-info entries processed during SMB connection setup",
+      "call_chain": [
+        "SmbCeInitializeConnectionInfo (unpatched 0x140018FC0 / patched 0x140037410) parses fixed-stride connection-info entries",
+        "sub_14001A320 / sub_140033EE0 processes parsed entries (entry count capped at 0x40 before this call)"
+      ],
+      "vulnerability_class": "None (refactor and feature staging)",
+      "description": "The earlier claim of an out-of-bounds read from a missing 64-bit pointer wraparound check does not hold. In BOTH builds the parser rejects a null buffer before parsing, validates each entry size against the total buffer size with 32-bit comparisons, caps the cumulative offset at the total on every iteration (bounding the walk pointer to [buffer, buffer+arg3]), and terminates the loop if the walk pointer becomes zero. The unpatched build performs the wrap-to-zero test at the loop top ('test r9,r9' at 0x140018FE6, reached after 'add r9,rdx' at 0x1400191D5); the patched build performs the equivalent test immediately after advancing the pointer ('add r10,rcx; jnz' at 0x14003748B). These are the same guard in different positions. The only behavioral difference is the AlternativePort_Dcr feature gate in the copy pass (alternate port offset 0x354 with byte swap when enabled, original offset 0x2EA path retained when disabled) and the inlining of the IPv6 link-local test. No bounds check, null check, integer-overflow guard, or access check was added or removed on any reachable path.",
+      "trigger_conditions": "No security-relevant trigger. The parse-loop validation is byte-for-byte equivalent across both builds, so no crafted input behaves differently before and after the patch.",
+      "primitive": "None. No memory-safety primitive is introduced or removed by this patch.",
+      "evidence": "UNPATCHED (SmbCeInitializeConnectionInfo @ 0x140018FC0): walk pointer r9 advanced at 0x1400191D5 ('add r9, rdx'), then 'jmp 0x140018FE6' back to 'test r9, r9; jnz 0x14001903D' -> wrap-to-zero and null both handled here (r9 is initialized from the buffer argument rdx). Per-iteration offset cap: 'lea ecx,[rax+r10]; mov r10d,ecx; cmp ecx,r8d; ja 0x1400191CB' at 0x140019071-0x14001907B.\n\nPATCHED (SmbCeInitializeConnectionInfo @ 0x140037410): null guard at entry 'test rdx,rdx; je 0x14003749C' (0x140037433); walk pointer r10 advanced at 0x14003748B ('add r10, rcx') followed by 'jnz 0x140037440' -> wrap-to-zero handled in place. Per-iteration offset cap: 'add eax,r9d; mov r9d,eax; cmp eax,r8d; ja 0x1400374E2' at 0x14003746C-0x140037475.\n\nBehavioral delta (patched only): 'call Feature_Servicing_AlternativePort_Dcr__private_IsEnabledDeviceUsageNoInline' at 0x1400375A2 / 0x1400375E5 selecting alternate port offset 0x354 (with 'ror ax,8') vs original offset 0x2EA."
+    }
+  ],
+  "summary": "No security-relevant change. The patch does not add or remove any bounds check, null check, integer-overflow guard, or access check on a reachable path in mrxsmb.sys. The reported out-of-bounds read in SmbCeInitializeConnectionInfo is a false positive: the null-buffer guard and the wrap-to-zero loop termination are present in BOTH builds (unpatched 'test r9,r9' at loop top 0x140018FE6 after 'add r9,rdx' at 0x1400191D5; patched 'add r10,rcx; jnz' at 0x14003748B), and the three 32-bit bounds comparisons against the total buffer size are identical apart from register renaming. The cumulative offset is capped at the total buffer size every iteration in both builds, so a 64-bit pointer wrap is unreachable either way. The claim that SeAccessCheck was added in SmbCeFindSessionEntry is also refuted: it is present unchanged in the unpatched build, and the extra call in the patched build belongs to a retained SmbCeFindSessionEntry_Old clone. The patch is dominated by AlternativePort_Dcr WIL feature staging (byte-swapped alternate-port handling gated behind a feature flag with the original code path retained), refactoring, and multichannel support additions."
+}

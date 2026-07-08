@@ -1,0 +1,153 @@
+{
+  "binaries": {
+    "title": "msrpc.sys - No security-relevant change (MES type-pickling refactor and toolchain rebuild)",
+    "id_unpatched": "msrpc_unpatched.sys",
+    "id_patched": "msrpc_patched.sys",
+    "overall_similarity": 0.6907,
+    "matched": 1000,
+    "changed": 628,
+    "identical": 372,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NdrMesTypeDecode",
+      "similarity": 0.47,
+      "change_type": "refactor",
+      "key_changes": [
+        "Validation helper NdrpCommonTypeHeaderUnmarshall (unpatched 0x1C0025F68) is inlined into the patched NdrMesTypeDecode (0x18003A430-0x18003A65D); the same checks remain, now in-line",
+        "Handle-state check (cmp dword [rcx+190h],1 -> 0x723), non-fixed buffer-size check (cmp [rcx+1C8h],8 -> 0xC000000D), and format-string version check (test [rcx+1A0h],40000h; byte version != 1 -> 0x724) are present in BOTH builds with identical offsets and exception codes",
+        "Size cap on +0x4C changed from 0xA0000 (unpatched) to 0xA000C (patched); because the compare raises on strictly-greater, the patched constant permits a slightly LARGER value -> marginal relaxation, not a tightening",
+        "Format-string dispatch devirtualized: patched adds direct calls for NdrNonEncapsulatedUnionUnmarshall / NdrSimpleStructUnmarshall / NdrComplexStructUnmarshall instead of a single guarded indirect call; same dispatch table (off_1C0004E90 / off_180006730), same reachable handlers"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched NdrMesTypeDecode at 0x1C0025E30 validates the MES handle and format-string header by calling NdrpValidateMesHandle (0x1C0025FB8) and NdrpCommonTypeHeaderUnmarshall (0x1C0025F68) BEFORE any format-string dispatch. That helper already enforces: (1) handle state at +0x190 must be 1 (else RpcRaiseException 0x723); (2) for non-fixed-buffer handles (flag at +0x1A1) the buffer size at +0x1C8 must be >= 8 (else RpcRaiseException 0xC000000D); (3) unless flag +0x1A0 has bit 0x40000, the format-string version byte must be 1 (else RpcRaiseException 0x724). The patched build (0x18003A3E0) inlines these exact checks with the same offsets and exception codes; the helper still exists at 0x18003A834. No validation was added. The only literal difference is the +0x4C size cap (0xA0000 -> 0xA000C, a marginal relaxation) and Control-Flow-Guard call-site devirtualization of the dispatch. No security-relevant change is delivered."
+    },
+    {
+      "name": "NdrMesTypeDecode2",
+      "similarity": 0.6815,
+      "change_type": "refactor",
+      "key_changes": [
+        "Patched version inlines the NdrMesTypeDecode body (validate handle, +0x4C cap, call NdrpCommonTypeHeaderUnmarshall, dispatch) instead of delegating via a subroutine call to NdrMesTypeDecode",
+        "Unpatched version (0x1C0026000) performs full setup (SEH, memsets, correlation initialization) and calls NdrMesTypeDecode (0x1C00261D3), which itself performs the handle/header validation via NdrpCommonTypeHeaderUnmarshall",
+        "No new pre-validation added; the unpatched build already validated through the callee"
+      ],
+      "security_relevant": false,
+      "security_notes": "NdrMesTypeDecode2 was refactored to inline the NdrMesTypeDecode path rather than call it. Both builds validate the handle (NdrpValidateMesHandle), apply the +0x4C size cap, and enforce the NdrpCommonTypeHeaderUnmarshall checks (0x723 / 0xC000000D / 0x724). The characterization of the unpatched wrapper as 'delegating without validation' is incorrect: validation is performed inside the callee. No security-relevant change."
+    },
+    {
+      "name": "NdrMesTypeDecode3",
+      "similarity": 0.85,
+      "change_type": "refactor",
+      "key_changes": [
+        "Reaches the same decode path; no new validation introduced"
+      ],
+      "security_relevant": false,
+      "security_notes": "NdrMesTypeDecode3 (unpatched 0x1C002EEB0, patched 0x180052710) reaches the same decode logic. Because the decode-path validation is identical in both builds, this wrapper carries no security-relevant change."
+    },
+    {
+      "name": "NdrMesTypeAlignSize",
+      "similarity": 0.45,
+      "change_type": "refactor",
+      "key_changes": [
+        "Handle-state check (cmp dword [rcx+190h],0 -> RpcRaiseException 0x723) and the +0x1A0 & 0x80000 size-accounting logic are present in the unpatched helper NdrpCommonTypeHeaderSize (0x1C00347AC); the patched build (0x180039670) inlines them",
+        "Size cap on +0x4C changed 0xA0000 -> 0xA000C (marginal relaxation, same as Decode)",
+        "Dispatch devirtualized to direct calls for NdrComplexStructBufferSize / NdrNonEncapsulatedUnionBufferSize"
+      ],
+      "security_relevant": false,
+      "security_notes": "The +0x190 state check and 0x80000 size logic the diff appears to add are already present in the unpatched build inside NdrpCommonTypeHeaderSize (0x1C00347AC): cmp dword [rcx+190h],0 / jnz -> RpcRaiseException(0x723), and test dword [rcx+1A0h],80000h controlling the +8 size increment and the +0x1A2 bit. The patched build inlines this same logic. No integer-overflow guard or new validation is demonstrable. Not security-relevant."
+    },
+    {
+      "name": "NdrMesTypeEncode2",
+      "similarity": 0.55,
+      "change_type": "refactor",
+      "key_changes": [
+        "Setup-then-delegate to NdrMesTypeEncode in both builds; register/stack-layout differences and rebuild churn",
+        "Size arithmetic lives in shared downstream helpers (NdrpAllocPicklingBuffer / NdrpWritePicklingBuffer) in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "NdrMesTypeEncode2 (unpatched 0x1C0045B10) performs setup and delegates to NdrMesTypeEncode. No added, function-local integer-overflow guard is demonstrable in this function; the size arithmetic resides in the same downstream helpers in both builds. Not a delivered security fix."
+    },
+    {
+      "name": "NdrMesTypeAlignSize2",
+      "similarity": 0.82,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register reallocation and minor flow restructuring; validation substantively identical between versions"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "NdrMesTypeAlignSize3",
+      "similarity": 0.80,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register reallocation in the format-string iteration loop; no logic change"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "NdrMesTypeFree2",
+      "similarity": 0.85,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register-allocation differences, no substantive logic change"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "MesBufferHandleReset",
+      "similarity": 0.5308,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured argument validation with different register allocation; same checks on handle type, operation code, and buffer parameters",
+        "No new security checks added"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "Ndr64AsyncClientCall",
+      "similarity": 0.65,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register reallocation, stack-layout adjustments, relocated call targets due to base-address change",
+        "No new security-relevant validation"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Superseded helpers consistent with a toolchain/library rebuild (e.g. UIntAdd, ULongMult, ULongLongMult, several wil_details_* and Feature_* staging helpers)"
+    ],
+    "added": [
+      "Rebuild-introduced helpers/thunks (e.g. _guard_dispatch_icall, __memset_spec_* variants, MultiplyWithOverflowCheck, various LRPC/EEInfo helpers)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "NdrMesTypeDecode / NdrMesTypeDecode2 / NdrMesTypeAlignSize",
+      "entry_point": "Exported NdrMesTypeDecode (unpatched 0x1C0025E30 / patched 0x18003A3E0), NdrMesTypeDecode2 (unpatched 0x1C0026000 / patched 0x180039ED0)",
+      "call_chain": [
+        "NdrMesTypeDecode2 / NdrMesTypeDecode3 -> NdrMesTypeDecode",
+        "NdrMesTypeDecode -> NdrpValidateMesHandle + NdrpCommonTypeHeaderUnmarshall (validation)",
+        "Format-string dispatch table lookup -> type-specific unmarshalling handler"
+      ],
+      "vulnerability_class": "None (no security-relevant change; refactor/inlining plus toolchain rebuild)",
+      "description": "Assessment of the NDR MES type-pickling functions. The apparent addition of handle-state, buffer-size, and format-string-version validation in the patched NdrMesTypeDecode is NOT a new check. In the unpatched build the same three checks are enforced before any format-string dispatch by the helper NdrpCommonTypeHeaderUnmarshall (0x1C0025F68): cmp dword [rcx+190h],1 / jnz -> RpcRaiseException(0x723); for non-fixed-buffer handles (byte [rcx+1A1h]!=0) cmp [rcx+1C8h],8 / jb -> RpcRaiseException(0xC000000D); test dword [rcx+1A0h],40000h / jz -> read pickling buffer then cmp byte version,1 / jnz -> RpcRaiseException(0x724). The patched build (0x18003A3E0) inlines these identical checks with identical offsets and exception codes; the helper still exists at 0x18003A834. NdrMesTypeAlignSize behaves identically: its +0x190 state check (0x723) and +0x1A0 & 0x80000 size logic are already present in the unpatched helper NdrpCommonTypeHeaderSize (0x1C00347AC) and merely inlined in the patched NdrMesTypeAlignSize (0x180039670). The only literal constant change is the +0x4C size cap: unpatched cmp against 0xA0000, patched against 0xA000C; since the compare raises on strictly-greater, the patched cap permits 12 additional bytes, a marginal relaxation rather than a hardening. The format-string dispatch was devirtualized (direct calls for a few common handlers instead of one guarded indirect call), a Control Flow Guard / call-site refactor that does not change which handlers are reachable or how bounds are enforced. No out-of-bounds read or write is introduced or removed by this diff.",
+      "trigger_conditions": "None. Both builds reject the same malformed handle states (wrong operation state at +0x190, non-fixed buffer smaller than 8 at +0x1C8, format-string version byte != 1) with the same exceptions before any type-specific unmarshalling routine executes.",
+      "primitive": "None demonstrable. The claimed type-confusion / OOB read-write would require the validation to be absent in the unpatched build; it is present in both builds.",
+      "evidence": "// UNPATCHED helper NdrpCommonTypeHeaderUnmarshall (0x1C0025F68), called by NdrMesTypeDecode (0x1C0025E30):\n//   0x1C0025F6E  cmp dword ptr [rcx+190h], 1   ; jnz -> RpcRaiseException(0x723)\n//   0x1C0025F8C  cmp [rcx+1C8h], edx (=8)       ; jb  -> RpcRaiseException(0xC000000D)  (when [rcx+1A1h]!=0)\n//   0x1C0025F98  test dword ptr [rcx+1A0h], 40000h ; jz -> version-byte check -> RpcRaiseException(0x724)\n//\n// PATCHED NdrMesTypeDecode (0x18003A3E0) inlines the same checks:\n//   0x18003A430  cmp dword ptr [rbx+190h], 1   ; jnz -> ExRaiseStatus(0x723)\n//   0x18003A446  cmp dword ptr [rbx+1C8h], 8   ; jb  -> ExRaiseStatus(0xC000000D)\n//   0x18003A453  test dword ptr [rbx+1A0h], 40000h ; jz -> version-byte check -> ExRaiseStatus(0x724)\n//\n// Size cap (only literal difference):\n//   unpatched 0x1C0025E56  cmp dword ptr [rdi+4Ch], 0A0000h ; ja -> ExRaiseStatus(0x725)\n//   patched   0x18003A409  cmp dword ptr [rdi+4Ch], 0A000Ch ; ja -> ExRaiseStatus(0x725)  (permits 12 more bytes)",
+      "assembly": "; === UNPATCHED NdrMesTypeDecode (0x1C0025E30) — validation path ===\n0x1C0025E45  call    NdrpValidateMesHandle\n0x1C0025E4A  cmp     [rsp+38h+ppMemory], 0\n0x1C0025E50  jz      loc_1C003773E              ; -> ExRaiseStatus(0xC0030009)\n0x1C0025E56  cmp     dword ptr [rdi+4Ch], 0A0000h\n0x1C0025E5D  ja      loc_1C0037750              ; -> ExRaiseStatus(0x725)\n0x1C0025E85  call    NdrpCommonTypeHeaderUnmarshall  ; state/bufsize/version checks\n0x1C0025EEF  movzx   ecx, byte ptr [rsi]        ; read format-string byte\n0x1C0025F10  mov     rax, ds:rva off_1C0004E90[r8+rcx*8]  ; dispatch table\n;\n; === UNPATCHED NdrpCommonTypeHeaderUnmarshall (0x1C0025F68) — checks already present ===\n0x1C0025F6E  cmp     dword ptr [rcx+190h], 1\n0x1C0025F78  jnz     loc_1C0037866             ; -> RpcRaiseException(0x723)\n0x1C0025F7E  cmp     byte ptr [rcx+1A1h], 0\n0x1C0025F8A  jz      short loc_1C0025F98\n0x1C0025F8C  cmp     [rcx+1C8h], edx           ; edx = 8\n0x1C0025F92  jb      loc_1C0037871            ; -> RpcRaiseException(0xC000000D)\n0x1C0025F98  test    dword ptr [rcx+1A0h], 40000h\n0x1C0025FA2  jz      loc_1C003787C            ; -> version check -> 0x724\n;\n; === PATCHED NdrMesTypeDecode (0x18003A3E0) — same checks, inlined ===\n0x18003A409  cmp     dword ptr [rdi+4Ch], 0A000Ch\n0x18003A410  ja      loc_18003A608           ; -> ExRaiseStatus(0x725)\n0x18003A430  cmp     dword ptr [rbx+190h], 1\n0x18003A437  jnz     loc_18003A61A           ; -> ExRaiseStatus(0x723)\n0x18003A43D  cmp     byte ptr [rbx+1A1h], 0\n0x18003A446  cmp     dword ptr [rbx+1C8h], 8\n0x18003A44D  jb      loc_18003A62C           ; -> ExRaiseStatus(0xC000000D)\n0x18003A453  test    dword ptr [rbx+1A0h], 40000h\n0x18003A45D  jz      loc_18003A63E           ; -> version check -> 0x724",
+      "notes": "MES handle offsets referenced by both builds: +0x190 handle state (must be 1 for decode / 0 for align-size path), +0x1A0 flags (bit 0x40000 gates the format-string version check; bit 0x80000 gates size accounting in the align-size path), +0x1A1 non-fixed-buffer flag, +0x1C8 non-fixed buffer size (must be >= 8), +0x4C size field (capped: unpatched 0xA0000, patched 0xA000C). NdrpCommonTypeHeaderUnmarshall exists in both builds (unpatched 0x1C0025F68, patched 0x18003A834); NdrpCommonTypeHeaderSize exists in both builds (unpatched 0x1C00347AC, patched 0x18003A950)."
+    }
+  ],
+  "summary": "No security-relevant change is delivered in the NDR MES type-pickling functions of msrpc.sys. The handle-state (0x723), non-fixed buffer-size (0xC000000D), and format-string-version (0x724) checks that the diff appears to add to NdrMesTypeDecode / NdrMesTypeAlignSize are already present in the unpatched build inside the helpers NdrpCommonTypeHeaderUnmarshall (0x1C0025F68) and NdrpCommonTypeHeaderSize (0x1C00347AC), at the same offsets and with the same exception codes; the patched build merely inlines them into the callers. NdrMesTypeDecode2 was refactored to inline the NdrMesTypeDecode body rather than call it, but validates identically. The only literal constant change is the +0x4C size cap (0xA0000 -> 0xA000C), which permits a slightly larger value and is therefore a marginal relaxation, not a hardening. The format-string dispatch was devirtualized (direct calls for common handlers) as a Control Flow Guard / call-site refactor. The remainder of the 628 changed functions reflects a general toolchain/library rebuild (WIL feature staging, integer-overflow helper renames, memset intrinsic variants, CFG dispatch thunks). No reachable out-of-bounds read or write is introduced or removed by this patch."
+}

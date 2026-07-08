@@ -1,0 +1,129 @@
+{
+  "binaries": {
+    "title": "hypervideo.sys - Uninitialized 7th argument to VMBus channel send on the bugcheck-display path (CWE-908)",
+    "id_unpatched": "hypervideo_unpatched.sys",
+    "id_patched": "hypervideo_patched.sys",
+    "overall_similarity": 0.9918,
+    "matched": 71,
+    "changed": 2,
+    "identical": 69,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CrashHvdSendMessage",
+      "address": "0x1C00018B0",
+      "similarity": 0.9859,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added initialization of the 7th outgoing stack argument (mov [rsp+0x30], ebx with ebx=0) at 0x1C0001906 before the indirect dispatch through cs:__guard_dispatch_icall_fptr, which forwards to the VMBus channel-send function pointer rax=[rsi+0x10]. The unpatched build never wrote [rsp+0x30].",
+        "The ebp (arg5) store was rescheduled to after 'lea edx,[r8+1]' to accommodate the new instruction.",
+        "Loop-epilogue branch labels shifted by 4 bytes (jle 0x1C000191F -> 0x1C0001923, jmp 0x1C0001924 -> 0x1C0001928)."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched build sets up six outgoing arguments before the indirect call (rcx=*channel, edx=1, r8d=0, r9=packet data, [rsp+0x20]=packet size, [rsp+0x28]=0) and leaves the 7th-argument slot [rsp+0x30] unwritten. The patch adds 'mov [rsp+0x30], ebx' (ebx=0). This matches the use-of-uninitialized-memory pattern (CWE-908). Impact is Low and unconfirmed: the slot is a 32-bit dword (at most 4 bytes); the callee is an external function reached only through the channel object's function-pointer table (channel+0x10), so its true parameter count is not visible in these binaries and it cannot be shown that the slot is consumed. The function's only in-module callers are HvdDdiSystemDisplayWrite (0x1C0001490) and CrashHvdInitialize (0x1C0001764), i.e. the guest bugcheck/crash-display path (DxgkDdiSystemDisplayWrite), not routine rendering. The decompiled C is identical in both builds because the decompiler models the callee as a two-argument function pointer and cannot represent the extra stack arguments; the change is visible only in disassembly.",
+      "assembly_diff": "VMBus channel send call site (addresses copied from the disassembly):\n\nUNPATCHED:\n00000001C00018FC  mov     rcx, [rsi]                 ; arg1 = *channel\n00000001C00018FF  xor     r8d, r8d                   ; arg3 = 0\n00000001C0001902  mov     rax, [rsi+10h]             ; callee fptr = channel[+10h]\n00000001C0001906  mov     [rsp+48h+var_20], rbx      ; [rsp+28h] arg6 = 0\n00000001C000190B  mov     [rsp+48h+var_28], ebp      ; [rsp+20h] arg5 = packet size\n00000001C000190F  lea     edx, [r8+1]                ; arg2 = 1\n00000001C0001913  call    cs:__guard_dispatch_icall_fptr   ; [rsp+30h] (arg7) never written\n\nPATCHED:\n00000001C00018FC  mov     rcx, [rsi]\n00000001C00018FF  xor     r8d, r8d\n00000001C0001902  mov     rax, [rsi+10h]\n00000001C0001906  mov     [rsp+48h+var_18], ebx      ; [rsp+30h] arg7 = 0   <-- NEW\n00000001C000190A  mov     [rsp+48h+var_20], rbx      ; [rsp+28h] arg6 = 0\n00000001C000190F  lea     edx, [r8+1]                ; arg2 = 1\n00000001C0001913  mov     [rsp+48h+var_28], ebp      ; [rsp+20h] arg5 = packet size\n00000001C0001917  call    cs:__guard_dispatch_icall_fptr\n\ndisassembly frame ref is rsp+0x48, so var_18=[rsp+0x30], var_20=[rsp+0x28], var_28=[rsp+0x20]."
+    },
+    {
+      "name": "HvdDdiStartDevice",
+      "address": "0x1C00074B0",
+      "similarity": 0.9919,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "SynthVid IOCTL 0x3EC080 input grown from an 8-byte buffer {6,6} (InputBufferLength=8) to a 16-byte buffer {6,6,0,0} (InputBufferLength=0x10).",
+        "Stack frame grew 0x310 -> 0x320 (lea rbp,[rsp-0x210] -> [rsp-0x220]); the input buffer moved to [rbp+0x1b0].",
+        "The 16-byte buffer is zero-initialized near the function top at 0x1C00074EC ([rbp+0x1b0]) and 0x1C0007500 ([rbp+0x1b8]); the low qword is then set to 0x600000006 ({6,6}).",
+        "Neighboring call targets shift only because the frame grew (relocations, not behavioral changes)."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a protocol/functional change, not an information-disclosure fix. In BOTH builds every byte declared as IOCTL input is fully initialized: the unpatched build writes both dwords of its 8-byte buffer and declares InputBufferLength=8; the patched build zero-initializes all 16 bytes, sets the first qword to {6,6}, and declares InputBufferLength=0x10. Under METHOD_BUFFERED the receiver reads exactly InputBufferLength bytes; the remaining SystemBuffer space (up to OutputBufferLength=0x20) is the receiver's output scratch, not attacker-visible guest input. Therefore no uninitialized kernel memory is transmitted in either direction. The change simply extends the SynthVid message format from 8 to 16 bytes with the new fields set to 0.",
+      "assembly_diff": "IOCTL construction (addresses copied from the disassembly):\n\nUNPATCHED:\n00000001C0007CF4  mov     eax, 6\n00000001C0007D01  mov     [rsp+340h+InputBuffer], eax   ; bytes [0:3] = 6\n00000001C0007D07  mov     [rsp+340h+var_2E4], eax       ; bytes [4:7] = 6\n00000001C0007D25  lea     r8, [rsp+340h+InputBuffer]    ; 8-byte input, all written\n00000001C0007D2F  mov     r9d, 8                        ; InputBufferLength = 8\n00000001C0007D3A  mov     ecx, 3EC080h\n00000001C0007D54  call    cs:__imp_IoBuildDeviceIoControlRequest\n\nPATCHED:\n00000001C00074EA  xor     eax, eax\n00000001C00074EC  mov     [rbp+250h+InputBuffer], rax   ; bytes [0:7]  = 0\n00000001C0007500  mov     [rbp+250h+var_98], rax        ; bytes [8:15] = 0\n00000001C0007D02  mov     eax, 6\n00000001C0007D0F  mov     dword ptr [rbp+250h+InputBuffer], eax     ; bytes [0:3] = 6\n00000001C0007D17  mov     dword ptr [rbp+250h+InputBuffer+4], eax   ; bytes [4:7] = 6\n00000001C0007D37  lea     r8, [rbp+250h+InputBuffer]    ; 16-byte input, all written\n00000001C0007D43  mov     r9d, 10h                      ; InputBufferLength = 16\n00000001C0007D4E  mov     ecx, 3EC080h\n00000001C0007D68  call    cs:__imp_IoBuildDeviceIoControlRequest\n\ndisassembly frame ref is rbp+0x250, so InputBuffer=[rbp+0x1b0], var_98=[rbp+0x1b8]."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "CrashHvdSendMessage",
+      "address": "0x1C00018B0",
+      "entry_point": "Bugcheck/crash-display synthetic-video path. CrashHvdSendMessage is called only by HvdDdiSystemDisplayWrite (0x1C0001490, the DxgkDdiSystemDisplayWrite callback) and CrashHvdInitialize (0x1C0001764). The miniport callback table is published by DriverEntry (0x1C000C008).",
+      "call_chain": ["DriverEntry (0x1C000C008) - publishes the miniport callback table", "HvdDdiSystemDisplayWrite (0x1C0001490) or CrashHvdInitialize (0x1C0001764)", "CrashHvdSendMessage (0x1C00018B0) - VMBus channel send with the 7th argument uninitialized (unpatched)"],
+      "vulnerability_class": "Use of uninitialized memory (CWE-908)",
+      "description": "CrashHvdSendMessage dispatches an indirect call to the VMBus channel-send function pointer (rax=[rsi+0x10], rsi=[rcx+0x270]) through cs:__guard_dispatch_icall_fptr. Under the x64 calling convention the 7th argument is at [rsp+0x30]. The unpatched build sets up six outgoing arguments (rcx=*channel, edx=1, r8d=0, r9=packet data, [rsp+0x20]=packet size, [rsp+0x28]=0) and never writes [rsp+0x30]. The patch inserts 'mov [rsp+0x30], ebx' (ebx=0) at 0x1C0001906. This is a genuine CWE-908 initialization change with correct direction (patched is stricter). Impact is Low and unconfirmed: the slot is a 32-bit dword and the callee is external (VMBus channel library), reached only via the channel object's function-pointer table, so it cannot be shown from these binaries that the 7th slot is consumed.",
+      "trigger_conditions": "Reached on the guest bugcheck/crash-display flow (DxgkDdiSystemDisplayWrite paints the screen during a bugcheck) and via CrashHvdInitialize, not by ordinary window/mouse/rendering activity. When reached, the [rsp+0x30] slot is passed on each of up to 0x4E20 (20000) retry iterations (50 us KeStallExecutionProcessor between attempts).",
+      "primitive": "Initialization of a previously-unwritten 32-bit outgoing argument slot. If the external callee reads a 7th parameter, the unpatched build passed up to 4 bytes of uninitialized kernel-stack data (guest -> host); whether it does so cannot be confirmed from this module. Read-only condition at most (no write, no UAF, no type confusion).",
+      "evidence": "The change is visible only in disassembly; the decompiled C is byte-identical in both builds because the decompiler models the callee as a two-argument function pointer. See assembly below.",
+      "assembly": "UNPATCHED (call site):\n00000001C00018FC  mov     rcx, [rsi]                 ; arg1 = *channel\n00000001C00018FF  xor     r8d, r8d                   ; arg3 = 0\n00000001C0001902  mov     rax, [rsi+10h]             ; callee fptr = channel[+10h]\n00000001C0001906  mov     [rsp+48h+var_20], rbx      ; [rsp+28h] arg6 = 0\n00000001C000190B  mov     [rsp+48h+var_28], ebp      ; [rsp+20h] arg5 = packet size\n00000001C000190F  lea     edx, [r8+1]                ; arg2 = 1\n00000001C0001913  call    cs:__guard_dispatch_icall_fptr   ; [rsp+30h] (arg7) never written\n\nPATCHED (call site):\n00000001C0001906  mov     [rsp+48h+var_18], ebx      ; [rsp+30h] arg7 = 0   <-- NEW\n00000001C000190A  mov     [rsp+48h+var_20], rbx      ; [rsp+28h] arg6 = 0\n00000001C000190F  lea     edx, [r8+1]                ; arg2 = 1\n00000001C0001913  mov     [rsp+48h+var_28], ebp      ; [rsp+20h] arg5 = packet size\n00000001C0001917  call    cs:__guard_dispatch_icall_fptr",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hypervideo_unpatched!CrashHvdSendMessage",
+            "address": "0x1c00018b0",
+            "why": "Function entry."
+          },
+          {
+            "symbol": "hypervideo_unpatched+0x1913",
+            "address": "0x1c0001913",
+            "why": "Indirect dispatch (unpatched). Inspect the 7th-argument slot [rsp+0x30] here. In the patched build the corresponding call is at +0x1917 and [rsp+0x30] has been set to 0 at +0x1906."
+          }
+        ],
+        "watch": [
+          "[rsp+0x30] at the dispatch site - unwritten in the unpatched build, 0 in the patched build",
+          "rsi = [rcx+0x270] - the VMBus channel object",
+          "rax = [rsi+0x10] - the channel-send function pointer forwarded through __guard_dispatch_icall_fptr"
+        ],
+        "key_offsets": [
+          "0x1c0001906 (patched): mov [rsp+0x30], ebx - the added 7th-argument initialization",
+          "0x1c0001913 (unpatched) / 0x1c0001917 (patched): call cs:__guard_dispatch_icall_fptr"
+        ],
+        "trigger_setup": "Exercised on the guest bugcheck/crash-display path via HvdDdiSystemDisplayWrite (DxgkDdiSystemDisplayWrite) or CrashHvdInitialize.",
+        "expected_observation": "At the dispatch site, 'dd @rsp+0x30 l1' shows residual stack contents in the unpatched build and 0x00000000 in the patched build. Whether the callee reads this slot is external to this module.",
+        "notes": "The callee is dispatched via __guard_dispatch_icall_fptr to rax=[rsi+0x10]; its true parameter count is defined in the VMBus channel library and is not determinable from this driver. The retry loop counts down from 0x4E20 with 50 us stalls."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "HvdDdiStartDevice",
+      "address": "0x1C00074B0",
+      "entry_point": "Display adapter start callback (registered by DriverEntry at 0x1C000C008 as miniport callback-table slot [2]).",
+      "call_chain": ["DriverEntry (0x1C000C008)", "HvdDdiStartDevice (0x1C00074B0) - issues SynthVid IOCTL 0x3EC080 to the VMBus device object"],
+      "vulnerability_class": "No security-relevant change (protocol/functional message-size extension)",
+      "description": "The prior draft claimed an uninitialized-pool disclosure via an undersized METHOD_BUFFERED InputBuffer. That is not supported by the binaries. In BOTH builds every byte declared as IOCTL input is fully initialized. The unpatched build writes both dwords of an 8-byte buffer {6,6} and declares InputBufferLength=8; the patched build zero-initializes a 16-byte buffer (0x1C00074EC and 0x1C0007500), sets the first qword to 0x600000006 ({6,6}), and declares InputBufferLength=0x10. Under METHOD_BUFFERED the receiver reads exactly InputBufferLength bytes; the remaining SystemBuffer space (up to OutputBufferLength=0x20) is the receiver's own output scratch, not attacker-visible guest input. The change is a SynthVid message-format extension from 8 to 16 bytes with the new fields set to 0.",
+      "trigger_conditions": "The IOCTL path is reached during adapter start after the version gate (cmp edx, 0x30004), channel creation (SynthVidCreate 0x1C000984C), version query (SynthVidRequestResolutions 0x1C0009CD0), mode negotiation, and a successful 0x20-byte ExAllocatePoolWithTag. No uninitialized data is transmitted in either build, so there is no security-relevant trigger.",
+      "primitive": "None. Both builds send fully-initialized input up to the declared InputBufferLength.",
+      "evidence": "Unpatched: _DWORD InputBuffer[2]; InputBuffer[0]=6; InputBuffer[1]=6; IoBuildDeviceIoControlRequest(0x3EC080, *(a1+8), InputBuffer, 8u, *(a1+624), 0x20u, 0, &Event, &IoStatusBlock). Patched: _QWORD InputBuffer[2]; InputBuffer[0]=0; InputBuffer[1]=0; ...; InputBuffer[0]=0x600000006LL; IoBuildDeviceIoControlRequest(0x3EC080, *(a1+8), InputBuffer, 0x10u, *(a1+624), 0x20u, 0, &Event, &IoStatusBlock).",
+      "assembly": "UNPATCHED:\n00000001C0007CF4  mov     eax, 6\n00000001C0007D01  mov     [rsp+340h+InputBuffer], eax   ; bytes [0:3] = 6\n00000001C0007D07  mov     [rsp+340h+var_2E4], eax       ; bytes [4:7] = 6\n00000001C0007D25  lea     r8, [rsp+340h+InputBuffer]    ; 8-byte input, all written\n00000001C0007D2F  mov     r9d, 8                        ; InputBufferLength = 8\n00000001C0007D54  call    cs:__imp_IoBuildDeviceIoControlRequest\n\nPATCHED:\n00000001C00074EA  xor     eax, eax\n00000001C00074EC  mov     [rbp+250h+InputBuffer], rax   ; bytes [0:7]  = 0\n00000001C0007500  mov     [rbp+250h+var_98], rax        ; bytes [8:15] = 0\n00000001C0007D0F  mov     dword ptr [rbp+250h+InputBuffer], eax     ; bytes [0:3] = 6\n00000001C0007D17  mov     dword ptr [rbp+250h+InputBuffer+4], eax   ; bytes [4:7] = 6\n00000001C0007D43  mov     r9d, 10h                      ; InputBufferLength = 16\n00000001C0007D68  call    cs:__imp_IoBuildDeviceIoControlRequest",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hypervideo_unpatched!HvdDdiStartDevice",
+            "address": "0x1c00074b0",
+            "why": "Adapter-start entry."
+          },
+          {
+            "symbol": "hypervideo_unpatched+0x7d54",
+            "address": "0x1c0007d54",
+            "why": "IoBuildDeviceIoControlRequest call site (unpatched; patched call is at +0x7d68). Inspect r9d (InputBufferLength) and the InputBuffer contents."
+          }
+        ],
+        "watch": [
+          "r9d at the IoBuildDeviceIoControlRequest call - InputBufferLength = 8 (unpatched) vs 0x10 (patched)",
+          "[r8] input buffer - 06 00 00 00 06 00 00 00 (unpatched, 8 valid bytes) vs the same followed by eight zero bytes (patched, 16 valid bytes)"
+        ],
+        "key_offsets": [
+          "0x1c00074c6: sub rsp, 0x310 (unpatched) / 0x320 (patched) - frame grew to hold the wider buffer",
+          "0x1c00074ec / 0x1c0007500 (patched): zero-init of the 16-byte buffer",
+          "0x1c0007d2f (unpatched): mov r9d, 8 / 0x1c0007d43 (patched): mov r9d, 0x10"
+        ],
+        "trigger_setup": "Reached during adapter start after the version and negotiation preconditions are met.",
+        "expected_observation": "Both builds present fully-initialized input up to the declared InputBufferLength; there is nothing uninitialized to observe.",
+        "notes": "IOCTL 0x3EC080: device type 0x3E, function 0x20, method METHOD_BUFFERED (0), access FILE_READ_DATA|FILE_WRITE_DATA (3). The output buffer is a 0x20-byte pool allocation at *(context+0x270)."
+      }
+    }
+  ],
+  "summary": "Two functions changed. Finding A (CrashHvdSendMessage, 0x1C00018B0): the patch adds initialization (=0) of the 7th outgoing stack argument at [rsp+0x30] before the indirect dispatch to the VMBus channel-send function pointer, which the unpatched build left unwritten. This matches CWE-908 with the correct direction, but its security impact is Low and unconfirmed - the slot is a 32-bit dword, the reachable path is the guest bugcheck/crash-display flow (HvdDdiSystemDisplayWrite / CrashHvdInitialize), and the callee is an external VMBus-library function reached via a function-pointer table, so it cannot be shown that the slot is consumed. Finding B (HvdDdiStartDevice, 0x1C00074B0): downgraded to No security-relevant change. Both builds fully initialize the SynthVid IOCTL 0x3EC080 input up to the declared InputBufferLength (8 bytes in the unpatched build, 16 in the patched build); the change is a message-format extension from 8 to 16 bytes with the new fields set to 0, not an information-disclosure fix."
+}

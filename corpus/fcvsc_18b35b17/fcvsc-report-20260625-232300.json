@@ -1,0 +1,394 @@
+{
+  "binaries": {
+    "id_unpatched": "fcvsc_unpatched.sys",
+    "id_patched": "fcvsc_patched.sys",
+    "overall_similarity": 0.9622,
+    "matched": 73,
+    "changed": 12,
+    "identical": 61,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CrashVscSendSrbRequest",
+      "similarity": 0.4724,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added an SRB indirection table (0x3e8-entry array at adapter+0x18) that maps indices to SRB pointers, replacing direct raw-pointer passing to the host",
+        "Instead of passing the raw SRB pointer (arg2) as the transaction ID to VMBus, now finds a free slot in the table, stores the SRB pointer there, and passes the slot index (rdi = index+2) as the transaction ID",
+        "On send failure, clears the table slot (sets adapter[index*8+8] = NULL) to prevent stale pointer reuse",
+        "Added transfer length computation based on SRB flags (rbx = 0, 8, or cl>>3&0x10) passed as new 7th argument to the channel send function"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version passes raw kernel SRB pointers directly to the Hyper-V host as VMBus transaction IDs. A malicious host can echo back an arbitrary value as a transaction ID, which is then dereferenced as a pointer in CrashVscHwInterrupt. The patch replaces this with an index-based indirection table with bounds checking, preventing the host from supplying arbitrary pointers for kernel dereference.",
+      "assembly_diff": "UNPATCHED CrashVscSendSrbRequest (0x1c0001254) — passes raw SRB pointer to the channel send:\n  0x1c00012e4  mov  rcx, [rsi+8]                   ; channel object\n  0x1c00012ed  mov  [rsp+var_60], r14              ; extra data\n  0x1c00012f2  mov  r8, rbp                        ; RAW SRB POINTER as transaction ID\n  0x1c00012f5  mov  edx, 2                         ; packet type\n  0x1c00012fa  mov  [rsp+var_68], 40h              ; packet size\n  0x1c0001309  call cs:__guard_dispatch_icall_fptr ; channel send\n\nPATCHED CrashVscSendSrbRequest (0x1c00012ac) — index-based indirection table:\n  ; scan table at adapter+0x18 for a free slot\n  0x1c0001354  lea  rcx, [rbp+18h]                 ; table base at adapter+0x18\n  0x1c000135a  cmp  qword ptr [rcx], 0\n  0x1c0001367  cmp  rax, 3E8h                      ; up to 0x3e8 slots\n  0x1c0001371  lea  rdi, [rax+2]                   ; index = slot + 2\n  0x1c0001375  mov  [rbp+rax*8+18h], r15           ; store SRB pointer in table[slot]\n  ; send the index, not the pointer\n  0x1c00013b5  mov  r8, rdi                        ; INDEX (not a pointer)\n  0x1c00013bd  mov  edx, r15d                      ; packet type\n  0x1c00013cf  call cs:__guard_dispatch_icall_fptr ; channel send\n  ; on send failure: clear slot\n  0x1c00013db  lea  rcx, [rdi-2]\n  0x1c00013e4  cmp  rcx, 3E7h                      ; bounds check\n  0x1c00013ed  and  qword ptr [rbp+rdi*8+8], 0     ; clear table slot"
+    },
+    {
+      "name": "CrashVscHwInterrupt",
+      "similarity": 0.5755,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added packet size validation: checks arg_8 >= 0x40 before processing (trap(0xd) / KeBugCheckEx if violated)",
+        "Added bounds check on host-returned transaction ID (arg_18): validates (arg_18 - 2) <= 0x3e7 before using it as an index into the SRB table",
+        "On valid index: reads SRB pointer from table at adapter[index*8+8], clears the table slot (sets to NULL), and validates the SRB pointer and its size field before calling CrashVscSrbCompletion",
+        "Changed from passing raw host-returned value directly as SRB pointer to using it as a table index with full validation"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version takes the value returned by the host (arg_18 from the VMBus packet completion callback) and passes it directly as a pointer to CrashVscSrbCompletion without any validation. This means a malicious host can supply any value that will be dereferenced as a kernel pointer. The patch validates the value is a valid table index (2 to 0x3e9), looks up the actual SRB pointer from the indirection table, clears the slot, and verifies the pointer and its data length before proceeding.",
+      "assembly_diff": "UNPATCHED CrashVscHwInterrupt (0x1c00011c6) — passes host value directly as SRB pointer:\n  0x1c00011c6  mov  rdx, [rbp+arg_10]           ; host-returned transaction ID used as SRB pointer\n  0x1c00011ca  lea  r8, [rbp+var_40]            ; received packet\n  0x1c00011ce  mov  rcx, rbx                    ; adapter\n  0x1c00011d1  call CrashVscSrbCompletion       ; rdx used as SRB pointer\n\nPATCHED CrashVscHwInterrupt (0x1c00011b0) — validates index and uses lookup table:\n  0x1c0001205  cmp  [rbp+arg_0], esi            ; packet size >= 0x40\n  0x1c0001208  jb   0x1c0001292                 ; else fail-fast (int 0x29)\n  0x1c000120e  mov  ecx, [rbp+arg_8]            ; packet type\n  0x1c0001211  sub  ecx, 1\n  0x1c0001214  jz   0x1c0001258                 ; type 1 handler\n  0x1c0001216  cmp  ecx, 2\n  0x1c0001219  jnz  0x1c0001262                 ; not type 3\n  0x1c000121b  mov  rcx, [rbp+arg_10]           ; host-returned index\n  0x1c000121f  lea  rax, [rcx-2]\n  0x1c0001223  cmp  rax, 3E7h                   ; (index-2) <= 0x3e7\n  0x1c0001229  ja   0x1c0001238                 ; out of range -> NULL\n  0x1c000122b  mov  rdx, [rbx+rcx*8+8]          ; look up SRB pointer from table\n  0x1c0001230  and  qword ptr [rbx+rcx*8+8], 0  ; clear slot\n  0x1c000123d  jz   0x1c0001292                 ; NULL pointer -> fail-fast\n  0x1c0001242  cmp  [rdx+10h], eax              ; validate SRB field, then call completion"
+    },
+    {
+      "name": "CrashVscSrbCompletion",
+      "similarity": 0.9708,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added an upfront hard cap on the host sense-data length: fail-fasts (int 0x29) at 0x1c0001546 if *(packet+0x15) > 0x14, before any sense processing",
+        "This cap is layered over an existing bound present in BOTH builds: the sense copy runs only when the SRB's own SenseInfoBufferLength (SRB+0x0b) >= host length (cmp cl,al; jb skip at 0x1c00015a7)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense in depth. In both builds the sense-data copy is gated by the SRB's own SenseInfoBufferLength field: at 0x1c00015a7 'cmp cl,al; jb' skips the copy unless SRB+0x0b (guest-owned) is >= the host length at packet+0x15, and the copied size is that host value (<= cl). The destination SRB+0x20 is therefore bounded by the guest's own length field (a matched buffer/length pair). The patch adds an additional hard cap 'if (packet[0x15] > 0x14) fail-fast'. This does not, by itself, close an otherwise-reachable overflow. In the unpatched crash path the SRB pointer is itself host-controlled via the CrashVscHwInterrupt transaction-ID flaw (CWE-822), which is the actual critical issue; in the StorChannel path the SRB is a legitimate guest object.",
+      "assembly_diff": "UNPATCHED (0x1c00015a3): copy already gated by the SRB's own sense length:\n  0x1c00015a3  mov     al, [r8+15h]     ; host sense length (packet+0x15)\n  0x1c00015a7  cmp     cl, al           ; cl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n  0x1c00015a9  jb      0x1c00015c1      ; skip copy when SRB length < host length\n  0x1c00015ab  mov     rcx, [rsi+20h]   ; dest = SRB+0x20 sense buffer\n  0x1c00015af  mov     rdx, rbx         ; src = packet+0x1c\n  0x1c00015b2  movzx   r8d, al          ; size = host length (<= cl)\n  0x1c00015b6  call    memmove\n\nPATCHED (0x1c0001500): adds a hard cap over the same gate:\n  0x1c0001542  mov     bpl, [r8+15h]    ; host sense length\n  0x1c0001546  cmp     bpl, 14h\n  0x1c000154a  jbe     0x1c0001553      ; ok if <= 0x14\n  0x1c000154c  mov     ecx, 3Ah\n  0x1c0001551  int     29h              ; RtlFailFast otherwise"
+    },
+    {
+      "name": "StorChannelCopyPacketDataToSrb",
+      "similarity": 0.9093,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bounds check: validates *(arg2+0x10) >= result before writing to SRB, and validates *(arg2+0x15) <= 0x14 before using it as sense data length",
+        "Adds trap(0xd) (KeBugCheckEx) if the SRB data length check fails or if the sense data length exceeds 0x14 bytes"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense in depth (StorChannel equivalent of CrashVscSrbCompletion). In both builds the sense copy is gated by the SRB's own SenseInfoBufferLength: at 0x1c000304c 'cmp dl,al; jb' skips the copy unless SRB+0x0b >= the host length at packet+0x15. Here the SRB (arg3) is a legitimate guest object obtained from the KMCL transaction, not a host-echoed value, so the destination is bounded by the guest's own length field. The patch adds an upfront 'if (packet[0x15] > 0x14) fail-fast' hard cap plus an SRB data-length capacity check (SRB+0x10 >= value). This is hardening, not the fix for a reachable overflow.",
+      "assembly_diff": "UNPATCHED (0x1c0002ea8): sense copy already gated by SRB sense length:\n  0x1c0003049  mov     al, [rdi+15h]    ; host sense length (packet+0x15)\n  0x1c000304c  cmp     dl, al           ; dl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n  0x1c000304e  jb      0x1c0003066      ; skip copy when SRB length < host length\n  0x1c0003050  mov     rcx, [rbp+20h]   ; dest = SRB+0x20 sense buffer\n  0x1c0003057  movzx   r8d, al          ; size = host length (<= dl)\n  0x1c000305b  call    memmove\n\nPATCHED (0x1c0002fc8): adds an SRB data-length check and a sense-length hard cap:\n  0x1c0002fee  cmp     [r8+10h], eax    ; SRB data-length capacity check\n  0x1c0002ff2  jb      0x1c00031b6      ; fail-fast otherwise\n  0x1c0003025  cmp     bpl, 14h         ; host sense length hard cap\n  0x1c0003029  ja      0x1c00031b6      ; fail-fast (int 0x29) otherwise"
+    },
+    {
+      "name": "StorChannelKmclPacketCompletionRoutine",
+      "similarity": 0.7393,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added validation of completion status and packet buffer: checks if status >= 0 and (packet pointer is NULL or packet size < 0x30), triggers trap(0xd)",
+        "The signature changed to accept arg3 (packet data pointer) and arg4 (packet length) as new parameters"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version processes VMBus packet completions without validating the completion packet structure. The patched version ensures the packet data buffer exists and is at least 0x30 bytes before dereferencing it, preventing potential null/undersized buffer dereferences from a malicious host.",
+      "assembly_diff": "UNPATCHED (0x1c0003dd0): no validation before dereference:\n  ; arg1=packet, arg2=status - no size/buffer checks\n  call    VmbPacketGetPointer\n  ; ... get and call completion routine directly\n\nPATCHED (0x1c0003fd0): adds validation:\n  if (arg2 >= 0 && (!arg3 || arg4 < 0x30))\n    trap(0xd)                      ; crash if success status but no/short buffer\n  ; ... then proceed with safe dereference"
+    },
+    {
+      "name": "StorChannelEstablishCommunications",
+      "similarity": 0.898,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bounds check on host-provided ring buffer size: validates (var_70 - 1) <= 0x7fffff before storing it (trap(0xd) if violated)",
+        "Added bounce buffer allocation via VmbChannelAllocateBounceBuffer with hypervisor feature check (HviGetHypervisorFeatures)",
+        "Added security cookie validation (__security_check_cookie)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense in depth. The unpatched build stores the host-negotiated ring buffer size at context+0x54 without validation; the patch bounds it to 1..0x7fffff before storing and adds a bounce-buffer allocation and __security_check_cookie. Provable impact of an out-of-range host value is a guest bugcheck.",
+      "assembly_diff": "UNPATCHED (stores host ring buffer size without check):\n  0x1c000332b  mov eax, [rbp+var_28]   ; host ring buffer size\n  0x1c000332e  mov [rdi+54h], eax       ; store, no validation\n\nPATCHED (validates before storing):\n  0x1c0003446  mov r8d, [rbp+var_68]    ; host ring buffer size\n  0x1c000344a  lea eax, [r8-1]\n  0x1c000344e  cmp eax, 7FFFFFh\n  0x1c0003453  ja  0x1c0003647          ; fail-fast (int 0x29) if out of range\n  0x1c000349b  mov [rdi+54h], r8d        ; store validated value"
+    },
+    {
+      "name": "StorChannelSendSrbRequest",
+      "similarity": 0.9029,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Changed completion context structure layout: moved SRB pointer from offset 0x18 to offset 0x18 (arg5[3]), completion routine from offset 0x8 to offset 0x8 (arg5[1]), extra data from arg5[1] to arg5[2]",
+        "Added transfer length flags computation: now computes flags based on SRB byte at offset 0xc (direction bits) and passes as the last argument to VmbPacketSendWithExternalMdl (3 for read, 0xb for write, 0x13 for bidirectional)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CrashVscEstablishCommunications",
+      "similarity": 0.8382,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bounds check on host-provided ring buffer size: validates (size - 1) <= 0x7fffff before storing it, fail-fast (int 0x29) if violated (patched: 0x1c0001920 cmp eax,7FFFFFh; ja fail-fast; store at 0x1c0001927)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense in depth, the crash-dump equivalent of StorChannelEstablishCommunications. The unpatched build stores the host-negotiated ring buffer size without validation (0x1c00017fd mov eax,[rbp+var_28]; 0x1c0001807 mov [r14],eax); the patched build bounds it to 1..0x7fffff before storing (0x1c0001927 mov [r15],ecx). Provable impact of an out-of-range value is a guest bugcheck.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CrashVscSendPacketSync",
+      "similarity": 0.9606,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added 7th parameter (0) to the VMBus send call to match new API signature",
+        "Changed break to trap(0xd) for unexpected packet type in completion handler",
+        "Added var_28 initialization to 0"
+      ],
+      "security_relevant": false,
+      "security_notes": "The trap(0xd) change converts a silent return of 0xc0000001 (on unexpected packet type) into a bugcheck, which is a hardening change. The signature change is to match the updated send function that now accepts transfer flags.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VscStartIO",
+      "similarity": 0.9776,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed max transfer size constant from 0x8000 to 0x8003 in inquiry response",
+        "Added bounds check: caps rsi_2[0x14] (max transfer) at 0x8000 if it exceeds that value",
+        "Updated WPP trace GUIDs (cosmetic)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The max transfer size capping at 0x8000 (32KB) is a hardening change to prevent oversized transfers. The 0x8003 value in the inquiry response reflects updated SCSI inquiry formatting.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VscGetCrashInterfaceWorker",
+      "similarity": 0.9798,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Increased IOCTL input buffer size from 8 to 0x10 in IoBuildDeviceIoControlRequest call",
+        "Added local variable initialization (var_20_1 = 1, var_24_1 = 2, var_1c_1 = 8)",
+        "Added security cookie validation (__security_check_cookie)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The IOCTL 0x3ec080 input buffer size was changed from 8 to 0x10. The unpatched version sends an 8-byte input buffer but the structure appears to be 0x10 bytes, potentially causing the target driver to read uninitialized/adjacent stack memory as part of the input. This is an information disclosure or logic bug in IOCTL communication.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CrashVscHwFindAdapter",
+      "similarity": 0.9883,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added memset to zero-initialize the SRB lookup table at arg1+0x18 (0x1f40 bytes = 1000 entries * 8 bytes)",
+        "Changed SrbExtensionSize from 0x100 to 0x103 to accommodate the new table"
+      ],
+      "security_relevant": false,
+      "security_notes": "The zero-initialization of the SRB lookup table at adapter+0x18 (0x1f40 bytes) is infrastructure for the index-based indirection added in CrashVscSendSrbRequest. The SrbExtension size increase from 0x100 to 0x103 provides space for the table.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "CrashVscSrbCompletion",
+      "entry_point": "VMBus packet from Hyper-V host (CrashVscHwInterrupt ISR → packet type 3 completion)",
+      "call_chain": ["CrashVscHwInterrupt (ISR, registered via DriverEntry)", "VMBus channel receive callback", "CrashVscSrbCompletion (adapter, srb_ptr, packet)"],
+      "vulnerability_class": "defense-in-depth hard cap added over an existing bounded sense-data copy",
+      "description": "In both builds, CrashVscSrbCompletion copies host sense data into the SRB sense buffer only under an existing bound: at 0x1c00015a7 'cmp cl,al; jb' skips the copy unless the SRB's own SenseInfoBufferLength (cl = SRB+0x0b, a guest-owned field) is >= the host-provided length (al = packet+0x15), and the copied size is that host value (<= cl). The destination SRB+0x20 is therefore bounded by the guest's own length field — a matched buffer/length pair, not an unbounded copy. The patch adds an additional upfront hard cap: if (packet[0x15] > 0x14) fail-fast (int 0x29) at 0x1c0001546. This is defense in depth. It does not by itself close an otherwise-reachable overflow, because the copy was already length-bounded. In the unpatched crash-dump path the SRB pointer (arg2) is itself host-controlled through the transaction-ID flaw in CrashVscHwInterrupt (CWE-822), which is the genuine critical issue tracked separately.",
+      "trigger_conditions": "In the unpatched build, the destination and length of this copy only become attacker-influenced via the CrashVscHwInterrupt untrusted-pointer flaw (the SRB pointer is host-controlled). On its own, the sense copy respects the SRB's SenseInfoBufferLength gate.",
+      "primitive": "None independently. This change is a defense-in-depth cap. Any attacker influence over the copy in the unpatched build derives from the separate CWE-822 pointer flaw.",
+      "evidence": "UNPATCHED CrashVscSrbCompletion (0x1c0001420) — the copy is already gated:\n0x1c00015a3  mov     al, [r8+15h]     ; host sense length (packet+0x15)\n0x1c00015a7  cmp     cl, al           ; cl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n0x1c00015a9  jb      loc_1c00015c1    ; skip copy when SRB length < host length\n0x1c00015ab  mov     rcx, [rsi+20h]   ; dest = SRB+0x20 sense buffer\n0x1c00015af  mov     rdx, rbx         ; src = packet+0x1c\n0x1c00015b2  movzx   r8d, al          ; size = host length (<= cl)\n0x1c00015b6  call    memmove\n\nPATCHED CrashVscSrbCompletion (0x1c0001500) — added hard cap over the same gate:\n0x1c0001542  mov     bpl, [r8+15h]    ; host sense length\n0x1c0001546  cmp     bpl, 14h\n0x1c000154a  jbe     loc_1c0001553    ; ok if <= 0x14\n0x1c000154c  mov     ecx, 3Ah\n0x1c0001551  int     29h              ; RtlFailFast otherwise",
+      "assembly": "CrashVscSrbCompletion unpatched (0x1c0001420) — the sense copy is length-bounded:\n0x1c00015a3: mov     al, [r8+15h]     ; host sense length (packet+0x15)\n0x1c00015a7: cmp     cl, al           ; cl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n0x1c00015a9: jb      0x1c00015c1      ; skip copy when SRB length < host length\n0x1c00015ab: mov     rcx, [rsi+20h]   ; dest = SRB+0x20 sense buffer\n0x1c00015af: mov     rdx, rbx         ; src = packet+0x1c\n0x1c00015b2: movzx   r8d, al          ; size = host length (<= cl)\n0x1c00015b6: call    memmove\n0x1c00015bb: mov     al, [rdi+15h]\n0x1c00015be: mov     [rsi+0bh], al",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!CrashVscSrbCompletion",
+            "address": "0x1c0001420",
+            "why": "Entry of the completion handler. rcx=adapter, rdx=SRB pointer (host-controlled in the unpatched build via the CrashVscHwInterrupt transaction-ID flaw), r8=VMBus packet. r8+0x15 is the host sense length; the copy that follows is bounded by rdx+0x0b (SenseInfoBufferLength)."
+          },
+          {
+            "symbol": "fcvsc_unpatched!CrashVscSrbCompletion+0x196",
+            "address": "0x1c00015b6",
+            "why": "The memmove call site. r8d holds the host length, already gated to <= SRB+0x0b by the preceding cmp/jb; rsi+0x20 is the destination sense buffer read from the SRB pointer (host-controlled in the unpatched build via the pointer flaw)."
+          }
+        ],
+        "watch": [
+          "cl at 0x1c00015a7 = SRB+0x0b SenseInfoBufferLength (guest-owned); it bounds the copy",
+          "al/r8d at 0x1c00015b6 = memmove size = host sense length, gated to <= cl",
+          "rsi+0x20 = destination sense buffer pointer read from the SRB"
+        ],
+        "key_offsets": [
+          "0x1c00015a7: cmp cl, al; jb — existing bound (copy only when SRB length >= host length)",
+          "0x1c0001546: cmp bpl, 14h (patched only) — added hard cap over that bound",
+          "0x1c00011c6: mov rdx, [rbp+arg_10] in CrashVscHwInterrupt — the actual critical flaw (CWE-822): host value used as SRB pointer",
+          "0x1c00012f2 in CrashVscSendSrbRequest: mov r8, rbp — passes raw SRB pointer as VMBus transaction ID"
+        ],
+        "trigger_setup": "On its own this copy respects the SRB SenseInfoBufferLength gate. Any attacker influence over the destination in the unpatched crash path comes from the separate CWE-822 pointer flaw in CrashVscHwInterrupt.",
+        "expected_observation": "No independent effect from the sense length alone. The added <= 0x14 cap in the patched build fail-fasts (int 0x29) if the host sense length exceeds 0x14.",
+        "notes": "The same gated pattern and the same added cap exist in StorChannelCopyPacketDataToSrb (0x1c0002ea8). In the StorChannel path the SRB is a legitimate guest object, so the copy is safely bounded there in both builds."
+      }
+    },
+    {
+      "severity": "critical",
+      "cwe": "CWE-822",
+      "function": "CrashVscHwInterrupt",
+      "entry_point": "VMBus packet from Hyper-V host (hardware interrupt DPC → packet receive loop)",
+      "call_chain": ["CrashVscHwInterrupt (registered as HW_INTERRUPT in DriverEntry via StorPortInitialize)", "VMBus channel packet receive callback (rcx[3])", "CrashVscSrbCompletion (if packet type == 3)"],
+      "vulnerability_class": "untrusted pointer dereference (CWE-822): host-returned transaction ID used directly as a kernel SRB pointer",
+      "description": "In the unpatched CrashVscHwInterrupt, when a VMBus packet of type 3 (SRB completion) is received, the value at [rbp+0x20] (arg_18) — which is the transaction ID echoed back by the Hyper-V host — is passed directly as the second argument (rdx) to CrashVscSrbCompletion. In the unpatched design, this value is supposed to be the raw SRB pointer that was originally sent to the host. However, since the host controls what it echoes back, a malicious host can supply any 64-bit value, causing the kernel to dereference an arbitrary pointer in CrashVscSrbCompletion. The patch replaces the raw-pointer scheme with an index-based lookup table: CrashVscSendSrbRequest now stores the SRB pointer in a table slot and sends the slot index (2..0x3e9) as the transaction ID. CrashVscHwInterrupt validates the received index ((value-2) <= 0x3e7), looks up the SRB pointer from the table, clears the slot, and validates the pointer before use.",
+      "trigger_conditions": "The vulnerability requires a malicious Hyper-V host. The host sends a VMBus completion packet of type 3 where the transaction ID field ([rbp+0x20]) contains an arbitrary kernel address. When CrashVscHwInterrupt processes this packet, it passes the arbitrary value directly to CrashVscSrbCompletion as the SRB pointer (rdx), which then dereferences it at offsets 0x10, 0x20, 0xb, 0x3, 0x4, etc.",
+      "primitive": "Arbitrary kernel pointer dereference. The host controls the pointer value, and CrashVscSrbCompletion reads and writes to multiple offsets within the pointed-to structure (reads +0x0b, writes +0x03, +0x04, +0x10, dereferences +0x20 as a pointer for memcpy). This gives the host both arbitrary read and arbitrary write primitives within the guest kernel.",
+      "evidence": "UNPATCHED CrashVscHwInterrupt (0x1c00011a0):\n```c\n// For packet type 3:\nCrashVscSrbCompletion(arg1, arg_18, &var_48);\n// arg_18 comes directly from [rbp+0x20] = host-controlled transaction ID\n// NO validation — treated as a kernel pointer\n```\n\nPATCHED CrashVscHwInterrupt (0x1c00011b0):\n```c\nint64_t rcx_5 = arg_18;                    // host-returned index\nif (rcx_5 - 2 > 0x3e7)                     // BOUNDS CHECK\n    rdx_2 = nullptr;                       // reject out-of-range\nelse {\n    rdx_2 = *(arg1 + (rcx_5 << 3) + 8);    // look up from table\n    *(arg1 + (rcx_5 << 3) + 8) = 0;        // clear slot\n}\nif (rdx_2 && *(rdx_2 + 0x10) >= var_40)   // validate pointer + size\n    CrashVscSrbCompletion(arg1, rdx_2, &var_58);\n```",
+      "assembly": "CrashVscHwInterrupt unpatched (0x1c00011a0) — vulnerable path for type 3 packets:\n0x1c00011b0: mov     rbx, rcx                       ; save adapter\n0x1c00011b3: mov     rcx, [rcx+8]                   ; channel object\n0x1c00011b7: jmp     0x1c000120b                    ; enter receive loop\n; receive loop:\n0x1c000120b: mov     [rbp+arg_0], 40h               ; request size 0x40\n0x1c000122e: call    cs:__guard_dispatch_icall_fptr ; VMBus receive (indirect)\n0x1c0001234: test    al, al\n0x1c0001236: jnz     0x1c00011b9                     ; packet received\n; dispatch:\n0x1c00011b9: mov     ecx, [rbp+arg_8]               ; packet type\n0x1c00011bc: sub     ecx, 1\n0x1c00011bf: jz      0x1c00011d8                     ; type 1\n0x1c00011c1: cmp     ecx, 2\n0x1c00011c4: jnz     0x1c00011de                     ; not type 3\n; type 3 path — DIRECT POINTER USE:\n0x1c00011c6: mov     rdx, [rbp+arg_10]              ; HOST-CONTROLLED transaction ID as SRB ptr\n0x1c00011ca: lea     r8, [rbp+var_40]               ; received packet\n0x1c00011ce: mov     rcx, rbx                       ; adapter\n0x1c00011d1: call    CrashVscSrbCompletion          ; rdx used as SRB pointer\n0x1c00011d6: jmp     0x1c0001207                    ; continue loop",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!CrashVscHwInterrupt",
+            "address": "0x1c00011a0",
+            "why": "ISR entry. After the VMBus receive call returns, check [rbp+0x18] for packet type (3=SRB completion) and [rbp+0x20] for the host-returned transaction ID (raw pointer in unpatched)."
+          },
+          {
+            "symbol": "fcvsc_unpatched!CrashVscHwInterrupt+0x31",
+            "address": "0x1c00011d1",
+            "why": "The call to CrashVscSrbCompletion. rdx at this point holds the host-controlled value being passed as SRB pointer. If rdx is not a valid SRB pointer, arbitrary dereference occurs in the callee."
+          }
+        ],
+        "watch": [
+          "[rbp+0x20] after VMBus receive at 0x1c0001234 = host-returned transaction ID; in unpatched this is the raw SRB pointer echoed by host",
+          "rdx at 0x1c00011d1 = value passed as SRB pointer to CrashVscSrbCompletion; attacker controls this fully",
+          "[rbp+0x18] = packet type; must be 3 to reach the vulnerable path",
+          "[rbp-0x40] = start of 64-byte packet buffer received from host"
+        ],
+        "key_offsets": [
+          "0x1c00011c6: mov rdx, [rbp+0x20] — loads host value as SRB pointer (MISSING BOUNDS CHECK)",
+          "0x1c00011d1: call CrashVscSrbCompletion — passes unchecked pointer",
+          "0x1c000120b: packet receive loop start (size=0x40)",
+          "0x1c000122e: VMBus receive call (indirect through cs:__guard_dispatch_icall_fptr)"
+        ],
+        "trigger_setup": "Requires a malicious Hyper-V host. The host must: (1) establish the crash dump VMBus channel with the guest, (2) wait for the guest to send an SRB request via CrashVscSendSrbRequest (which passes the raw SRB pointer as transaction ID), (3) respond with a type 3 completion packet where the transaction ID field contains an arbitrary kernel address instead of the original SRB pointer. The guest kernel will then dereference this arbitrary address. In the patched version, the host must instead echo back the correct index value (2-0x3e9), and the kernel validates and looks up from the table.",
+        "expected_observation": "If the host sends an invalid pointer value, the guest kernel crashes with a bugcheck (typically 0x50 PAGE_FAULT_IN_NONPAGED_AREA or 0x8E KERNEL_MODE_EXCEPTION_NOT_HANDLED) when CrashVscSrbCompletion dereferences the supplied address. With a valid but attacker-chosen address, silent kernel memory read/write occurs without a crash.",
+        "notes": "The CrashVscSendSrbRequest function at 0x1c0001254 is the origin of the transaction ID. In unpatched code at 0x1c00012f2: 'mov r8, rbp' passes the raw SRB pointer (rbp=arg2=rdx from caller) as the third parameter to the VMBus send function, which becomes the transaction ID echoed in completions. The patch at the same location passes an index (rdi) from the lookup table instead."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "StorChannelCopyPacketDataToSrb",
+      "entry_point": "VMBus packet from Hyper-V host (StorChannel packet processing path)",
+      "call_chain": ["VmbChannel packet receive (KMCL event)", "StorChannelKmclEvtProcessPacket (0x1c00038b0)", "VscSrbCompletion (0x1c00024b0)", "StorChannelCopyPacketDataToSrb"],
+      "vulnerability_class": "defense-in-depth hard cap added over an existing bounded sense-data copy",
+      "description": "StorChannel equivalent of CrashVscSrbCompletion. In both builds the sense copy is gated by the SRB's own SenseInfoBufferLength: at 0x1c000304c 'cmp dl,al; jb' skips the copy unless SRB+0x0b (dl) is >= the host length at packet+0x15 (al). Here the SRB (arg3) is a legitimate guest object taken from the KMCL transaction context (not a host-echoed value), so the destination is bounded by the guest's own length field. The patch adds an upfront hard cap (if packet[0x15] > 0x14 fail-fast at 0x1c0003025) and an SRB data-length capacity check (*(arg3+0x10) >= value at 0x1c0002fee, else fail-fast). Both are defense in depth; neither closes an otherwise-reachable overflow in this path.",
+      "trigger_conditions": "The copy respects the SRB SenseInfoBufferLength gate in both builds; the SRB pointer in this path is a legitimate guest object, so the copy is bounded. No independent host-reachable overflow.",
+      "primitive": "None. Defense-in-depth hardening.",
+      "evidence": "UNPATCHED StorChannelCopyPacketDataToSrb (0x1c0002ea8) — copy is already gated:\n0x1c0003049: mov     al, [rdi+15h]    ; host sense length (packet+0x15)\n0x1c000304c: cmp     dl, al           ; dl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n0x1c000304e: jb      0x1c0003066      ; skip copy when SRB length < host length\n0x1c0003050: mov     rcx, [rbp+20h]   ; dest = SRB+0x20 sense buffer\n0x1c0003054: mov     rdx, rbx         ; src = packet+0x1c\n0x1c0003057: movzx   r8d, al          ; size = host length (<= dl)\n0x1c000305b: call    memmove\n\nPATCHED (0x1c0002fc8) — added caps over the same gate:\n0x1c0002fee: cmp     [r8+10h], eax    ; SRB data-length capacity check\n0x1c0002ff2: jb      0x1c00031b6      ; fail-fast (int 0x29) otherwise\n0x1c0003025: cmp     bpl, 14h         ; host sense length hard cap\n0x1c0003029: ja      0x1c00031b6      ; fail-fast otherwise",
+      "assembly": "StorChannelCopyPacketDataToSrb unpatched (0x1c0002ea8) — copy gated by SRB sense length:\n0x1c0003049: mov     al, [rdi+15h]    ; host sense length (packet+0x15)\n0x1c000304c: cmp     dl, al           ; dl = SRB+0x0b SenseInfoBufferLength (guest-owned)\n0x1c000304e: jb      0x1c0003066      ; skip copy when SRB length < host length\n0x1c0003050: mov     rcx, [rbp+20h]   ; dest = SRB+0x20 sense buffer\n0x1c0003054: mov     rdx, rbx         ; src = packet+0x1c\n0x1c0003057: movzx   r8d, al          ; size = host length (<= dl)\n0x1c000305b: call    memmove\n0x1c0003060: mov     al, [rdi+15h]\n0x1c0003063: mov     [rbp+0bh], al",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!StorChannelCopyPacketDataToSrb",
+            "address": "0x1c0002ea8",
+            "why": "Entry to the StorChannel sense-data copy. rdx=packet (arg2), r8=SRB (arg3, a legitimate guest object). The copy that follows is bounded by the SRB's SenseInfoBufferLength at SRB+0x0b."
+          },
+          {
+            "symbol": "fcvsc_unpatched!StorChannelCopyPacketDataToSrb+0x1b3",
+            "address": "0x1c000305b",
+            "why": "The memmove call site. r8d holds the host length already gated to <= SRB+0x0b (dl) by the preceding cmp/jb; rbp+0x20 is the destination sense buffer."
+          }
+        ],
+        "watch": [
+          "dl at 0x1c000304c = SRB+0x0b SenseInfoBufferLength (guest-owned); it bounds the copy",
+          "r8d at 0x1c000305b = memmove size = host sense length, gated to <= dl",
+          "rbp+0x20 (qword) = SRB sense buffer destination pointer"
+        ],
+        "key_offsets": [
+          "0x1c000304c: cmp dl, al; jb — existing bound (copy only when SRB length >= host length)",
+          "0x1c0003025: cmp bpl, 14h (patched only) — added hard cap over that bound",
+          "0x1c0002fee: cmp [r8+10h], eax (patched only) — added SRB data-length capacity check"
+        ],
+        "trigger_setup": "In this path the SRB is a legitimate guest object, so the sense copy is bounded by the SRB's own SenseInfoBufferLength in both builds. The added checks are defense in depth.",
+        "expected_observation": "No independent overflow. The added caps in the patched build fail-fast (int 0x29) on an out-of-range host sense length or an oversized data-transfer length.",
+        "notes": "This mirrors the sense-length change in CrashVscSrbCompletion. In both functions the copy was already length-bounded; the added <= 0x14 cap is hardening. The genuine critical issue is the CWE-822 transaction-ID pointer flaw in CrashVscHwInterrupt / CrashVscSendSrbRequest."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "StorChannelEstablishCommunications",
+      "entry_point": "VMBus channel establishment negotiation with Hyper-V host",
+      "call_chain": ["VscHwInitialize / CrashVscHwFindAdapter", "StorChannelEstablishCommunications", "StorChannelSendSyntheticVstorPacket (protocol version negotiation)", "Host responds with ring buffer parameters"],
+      "vulnerability_class": "added bounds check on host-controlled ring buffer size (defense in depth)",
+      "description": "The unpatched StorChannelEstablishCommunications stores a size value from the host's negotiation response at context+0x54 without validation. The patch adds a check: if ((size - 1) > 0x7fffff) fail-fast (int 0x29), bounding the value to 1..0x7fffff before it is stored. The patch also adds a bounce-buffer allocation (VmbChannelAllocateBounceBuffer) and __security_check_cookie. The demonstrable impact of an out-of-range host value is bounded to a guest bugcheck, so this is a hardening change.",
+      "trigger_conditions": "Reached during channel establishment when the host responds to protocol negotiation with a size field outside 1..0x7fffff. This occurs early in driver initialization.",
+      "primitive": "Host-influenced size stored/used by the guest; provable impact is a guest bugcheck (denial of service).",
+      "evidence": "UNPATCHED (0x1c000308c) — stores host value without a check:\n0x1c000332b: mov     eax, [rbp+var_28]  ; host ring buffer size\n0x1c000332e: mov     [rdi+54h], eax     ; store WITHOUT VALIDATION\n\nPATCHED (0x1c00031c4) — validates before storing:\n0x1c0003446: mov     r8d, [rbp+var_68]  ; host ring buffer size\n0x1c000344a: lea     eax, [r8-1]\n0x1c000344e: cmp     eax, 7FFFFFh\n0x1c0003453: ja      0x1c0003647        ; fail-fast (int 0x29) if out of range\n0x1c000349b: mov     [rdi+54h], r8d     ; store validated value",
+      "assembly": "UNPATCHED store (no check): 0x1c000332b mov eax,[rbp+var_28]; 0x1c000332e mov [rdi+54h],eax. PATCHED check: 0x1c000344e cmp eax,7FFFFFh; 0x1c0003453 ja 0x1c0003647; fail-fast at 0x1c0003647 int 29h.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!StorChannelEstablishCommunications",
+            "address": "0x1c000308c",
+            "why": "Channel negotiation entry. After the type 0x0a exchange completes, check [rbp-0x28] (var_50) for the host-provided ring buffer size."
+          },
+          {
+            "symbol": "fcvsc_unpatched!StorChannelEstablishCommunications+0x29f",
+            "address": "0x1c000332e",
+            "why": "The store of unvalidated ring buffer size to rdi+0x54. eax at this point contains the host value."
+          }
+        ],
+        "watch": [
+          "[rbp-0x28] (dword) after type 0x0a response = host ring buffer size; should be 1-0x7fffff but unpatched accepts anything",
+          "eax at 0x1c000332e = value being stored to channel context+0x54"
+        ],
+        "key_offsets": [
+          "0x1c000332b: mov eax, [rbp-0x28] — reads host ring buffer size",
+          "0x1c000332e: mov [rdi+0x54], eax — stores without validation (MISSING CHECK)"
+        ],
+        "trigger_setup": "Requires a malicious Hyper-V host. During VM boot, when fcvsc.sys negotiates channel parameters, the host responds to the negotiate packet with a ring buffer size field of 0 or a value > 0x7fffff.",
+        "expected_observation": "In the patched build, an out-of-range host value causes a fail-fast (int 0x29) at 0x1c0003647 before the value is used.",
+        "notes": "The same check pattern is added to CrashVscEstablishCommunications (patched @ 0x1c00017e0) which is the crash-dump path equivalent (check at 0x1c0001920: cmp eax,7FFFFFh; ja fail-fast)."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "StorChannelKmclPacketCompletionRoutine",
+      "entry_point": "VMBus packet completion callback",
+      "call_chain": ["VmbPacket completion", "StorChannelKmclPacketCompletionRoutine (0x1c0003dd0)", "VscSrbCompletion (via function pointer)"],
+      "vulnerability_class": "missing validation on completion packet structure (potential null/undersized buffer dereference)",
+      "description": "The unpatched StorChannelKmclPacketCompletionRoutine processes VMBus packet completions without validating the completion status or the packet data buffer. The patched version adds: if (status >= 0 && (!packet_data || packet_len < 0x30)) trap(0xd). This prevents dereferencing a NULL or undersized completion buffer that a malicious host could provide.",
+      "trigger_conditions": "Triggered when the Hyper-V host completes a VMBus packet with success status (>= 0) but either no completion data buffer or a buffer smaller than 0x30 bytes.",
+      "primitive": "Null pointer dereference or out-of-bounds read from undersized buffer, causing kernel crash (DoS).",
+      "evidence": "UNPATCHED (0x1c0003dd0) — no validation before use; goes straight into the body:\n0x1c0003de4: mov     rsi, r8\n0x1c0003de7: mov     ebp, edx                 ; status\n0x1c0003de9: mov     rbx, rcx\n0x1c0003dec: call    cs:__imp_VmbPacketGetPointer\n\nPATCHED (0x1c0003fd0) — added prologue check:\n0x1c0003fec: test    edx, edx                 ; status\n0x1c0003fee: js      0x1c0004002              ; skip trap when status < 0\n0x1c0003ff0: test    rbx, rbx                 ; buffer\n0x1c0003ff3: jz      0x1c0003ffb\n0x1c0003ff5: cmp     r9d, 30h                 ; length >= 0x30\n0x1c0003ff9: jnb     0x1c0004002\n0x1c0003ffb: mov     ecx, 3Ah\n0x1c0004000: int     29h                      ; RtlFailFast on success + NULL/short buffer",
+      "assembly": "UNPATCHED (0x1c0003dd0): 0x1c0003dec call cs:__imp_VmbPacketGetPointer with no prior status/buffer/length check. PATCHED (0x1c0003fd0): 0x1c0003fec test edx,edx; js 0x1c0004002; 0x1c0003ff0 test rbx,rbx; jz 0x1c0003ffb; 0x1c0003ff5 cmp r9d,30h; jnb 0x1c0004002; 0x1c0004000 int 29h. The patched build now consumes a length argument (r9d) the unpatched build ignored.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!StorChannelKmclPacketCompletionRoutine",
+            "address": "0x1c0003dd0",
+            "why": "Completion callback entry. Check edx (status) and r8 (packet data pointer). In unpatched, these are not validated before dereferencing."
+          }
+        ],
+        "watch": [
+          "edx (arg2) = completion status; >= 0 means success",
+          "r8 (arg3) = packet data pointer; should be non-NULL",
+          "r8d (arg4) = packet data length; should be >= 0x30"
+        ],
+        "key_offsets": [
+          "0x1c0003e1c: mov rax, [rdi+0x8] — dereferences context without buffer validation",
+          "0x1c0003e3d: indirect call — invokes function pointer from unvalidated context"
+        ],
+        "trigger_setup": "Requires malicious Hyper-V host completing a VMBus storage packet with success status but NULL or undersized (< 0x30 byte) completion buffer.",
+        "expected_observation": "Without the patched check, a success completion with a NULL or undersized (< 0x30) buffer would be dereferenced; the patched build fail-fasts (int 0x29) at 0x1c0004000 in that case.",
+        "notes": "Called from StorChannelSendSrbRequest (0x1c00036bc) as the VmbPacketSetCompletionRoutine callback."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "VscGetCrashInterfaceWorker",
+      "entry_point": "IoBuildDeviceIoControlRequest IOCTL 0x3ec080",
+      "call_chain": ["VscStartIO (SRB function 0x2a/0x2b)", "IoQueueWorkItem → VscGetCrashInterfaceWorker", "IoBuildDeviceIoControlRequest(0x3ec080, ...)"],
+      "vulnerability_class": "internal IOCTL input-buffer size correction (not attacker-controllable)",
+      "description": "The unpatched VscGetCrashInterfaceWorker calls IoBuildDeviceIoControlRequest with InputBufferLength=8 (mov r9d,8 at 0x1c0009714). The patched build passes 0x10 (mov r9d,10h at 0x1c0009739) and initializes the added input fields (a 1 and an 8) before the call, and adds __security_check_cookie. This corrects the input-buffer sizing and ensures the full structure is initialized. It is an internal kernel-to-kernel IOCTL, not attacker-controllable.",
+      "trigger_conditions": "Reached when the crash-dump driver processes the SRB path that queries the crash-dump interface, causing VscGetCrashInterfaceWorker to issue IOCTL 0x3ec080. Internal driver operation.",
+      "primitive": "None reachable by an external attacker; correctness/hardening fix for an internal IOCTL.",
+      "evidence": "UNPATCHED: 0x1c0009714 mov r9d, 8 (InputBufferLength).\nPATCHED:   0x1c0009739 mov r9d, 10h (InputBufferLength), with added field inits (0x1c00096fb =1, 0x1c0009711 =8) and __security_check_cookie at 0x1c000984d.",
+      "assembly": "UNPATCHED: 0x1c0009714 mov r9d, 8. PATCHED: 0x1c0009739 mov r9d, 10h.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fcvsc_unpatched!VscGetCrashInterfaceWorker",
+            "address": "0x1c0009690",
+            "why": "Work item routine that issues the IOCTL. Check the IoBuildDeviceIoControlRequest call parameters — the 4th parameter (r9d) is InputBufferLength."
+          }
+        ],
+        "watch": [
+          "r9d at IoBuildDeviceIoControlRequest call = InputBufferLength (8 in unpatched, should be 0x10)"
+        ],
+        "key_offsets": [
+          "0x1c0009714: mov r9d, 8 (unpatched InputBufferLength)",
+          "0x1c0009739: mov r9d, 10h (patched InputBufferLength)"
+        ],
+        "trigger_setup": "Internal driver operation during crash-dump interface query; not externally triggerable.",
+        "expected_observation": "The patched build passes a 0x10-byte, fully-initialized input buffer to the target IOCTL handler.",
+        "notes": "Low severity: internal IOCTL between kernel components, not directly attacker-controllable. The fix corrects buffer sizing and initialization."
+      }
+    }
+  ],
+  "summary": "The genuine critical fix in this patch is an untrusted pointer dereference (CWE-822) in the crash-dump storage path. The unpatched CrashVscSendSrbRequest passes the raw kernel SRB pointer to the Hyper-V host as the VMBus transaction ID (mov r8, rbp at 0x1c00012f2), and the unpatched CrashVscHwInterrupt takes whatever value the host echoes back and passes it directly as the SRB pointer to CrashVscSrbCompletion (mov rdx, [rbp+arg_10] at 0x1c00011c6), which then writes through and dereferences that pointer. A malicious host thereby obtains a controlled kernel-pointer write/read inside the guest. The patch replaces the raw-pointer scheme with a bounded index-into-table lookup (0x3e8-slot table at adapter+0x18, index validated as (id-2) <= 0x3e7). The remaining changes are defense in depth: an added <= 0x14 hard cap on the SCSI sense length in CrashVscSrbCompletion and StorChannelCopyPacketDataToSrb (where the copy is already bounded in both builds by the SRB's own SenseInfoBufferLength at SRB+0x0b, a matched buffer/length pair), validation of the host-negotiated ring-buffer size in StorChannelEstablishCommunications/CrashVscEstablishCommunications ((size-1) <= 0x7fffff), completion-packet structure validation in StorChannelKmclPacketCompletionRoutine, and an internal IOCTL input-buffer size correction in VscGetCrashInterfaceWorker. All host-facing issues require a malicious or compromised Hyper-V host; the attack direction is host-to-guest."
+}

@@ -1,0 +1,57 @@
+{
+  "binaries": {
+    "title": "ndis.sys - No security-relevant change: WIL feature-staged relocation of per-file-object FsContext free in ndisDispatchRequest (0x140042480)",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.992,
+    "matched": 3585,
+    "changed": 1,
+    "identical": 3584,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "changed_functions": [
+    {
+      "name": "ndisDispatchRequest",
+      "address": "0x140042480",
+      "similarity": 0.9577,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Inserted the WIL feature gate Feature_2869107002__private_IsEnabledDeviceUsageNoInline (0x1400A790C) at the IRP_MJ_CLEANUP (case 0x12) teardown tail (0x1400429C1): when the feature is enabled the 0x40-byte 'NDoc' FsContext free is skipped here and the IRP just completes; when disabled the original null-then-free runs (identical to the unpatched build).",
+        "Split IRP_MJ_CLOSE (case 2) out of the shared completion tail into a dedicated handler (0x140042D27) guarded by the same feature gate: when the feature is disabled it behaves exactly like the unpatched build (no cleanup of P); when enabled it captures P = FileObject->FsContext, nulls the slot, and frees P if non-null.",
+        "Net effect: when the feature is ON, the 'NDoc' free moves from IRP_MJ_CLEANUP to IRP_MJ_CLOSE; when the feature is OFF (the shipped default) the two builds behave identically. This is a staged rollout with the old path retained, not a delivered fix.",
+        "The switch jump-table index array moved (byte_140103E31 -> byte_140103E2D) and case 2 became its own jumptable target instead of aliasing the default completion path; these are consequences of the inserted instructions.",
+        "The feature helper 0x1400A790C reads Feature_2869107002__private_featureState, tests bit 0x10, and otherwise calls Feature_2869107002__private_IsEnabledFallback; it is a feature-enablement check, not an object-state or bounds validation.",
+        "No other logic changed: the IRP_MJ_CREATE allocation, the miniport/adapter list teardown, the pointer-nulling-before-free ordering, and all inline call targets are identical between builds. The [rdi+3D7h]/gs:188h/gs:1A4h SmFx state-machine tail was relocated but is instruction-for-instruction identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "The per-file-object context block P is a 0x40-byte NonPagedPool allocation tagged 'NDoc' (0x636F444E). It is the file object's FsContext: allocated in IRP_MJ_CREATE (case 0) and stored at FileObject->FsContext (FILE_OBJECT+0x18), where FileObject = IrpSp->FileObject (IO_STACK_LOCATION+0x30) and IrpSp = IRP+0xB8. In the unpatched build it is freed in the IRP_MJ_CLEANUP path (case 0x12): P is captured into r13 at CLEANUP entry (0x140042587) and the tail (0x1400429C1-0x1400429D3) nulls FileObject->FsContext and calls ExFreePoolWithTag(P, 0). IRP_MJ_CLEANUP is issued once per file object, IRP_MJ_DEVICE_CONTROL (case 0x0E) routes to ndisHandlePnPRequest and does not free P, and IRP_MJ_SYSTEM_CONTROL (case 0x17) routes to ndisDriverSystemDispatch; no dispatch path frees P twice, so there is no reachable double-free or use-after-free of P. The patch only adds a default-off WIL feature gate that, when enabled, relocates the free from IRP_MJ_CLEANUP to IRP_MJ_CLOSE with the prior path retained in the disabled branch. The shipped default is byte-for-byte equivalent to the unpatched build along this path. This is feature-staging/servicing churn, not a security fix; no CWE applies."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_2869107002__private_IsEnabledDeviceUsageNoInline (0x1400A790C)",
+      "Feature_2869107002__private_IsEnabledFallback"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "ndisDispatchRequest (0x140042480)",
+      "entry_point": "NDIS control-device IRP dispatch handler; reachable from user mode subject to the device security descriptor (ndisSecurityDescriptor, applied via ndisCheckAccess in the IRP_MJ_CREATE path). Exercising the changed path is ordinary open/teardown of the device file object.",
+      "call_chain": [
+        "IRP delivered to ndisDispatchRequest (0x140042480), the driver's IRP major-function dispatcher",
+        "switch on IrpSp->MajorFunction: case 0 = IRP_MJ_CREATE (allocates 'NDoc' FsContext), case 0x12 = IRP_MJ_CLEANUP (per-handle teardown; frees FsContext in unpatched), case 2 = IRP_MJ_CLOSE (no cleanup in unpatched)"
+      ],
+      "vulnerability_class": "No security-relevant change (WIL feature-staging / servicing churn)",
+      "cwe": "none",
+      "description": "The only behavioral difference between the two builds is inside ndisDispatchRequest. The patch inserts the WIL feature gate Feature_2869107002__private_IsEnabledDeviceUsageNoInline (0x1400A790C) that, only when the feature is enabled, relocates the free of the file object's FsContext ('NDoc', 0x40-byte NonPagedPool) from IRP_MJ_CLEANUP (case 0x12) to IRP_MJ_CLOSE (case 2). When the feature is disabled (the delivered default, identical to the unpatched build), the block is still freed in IRP_MJ_CLEANUP and behavior is unchanged. In both builds the stored FsContext pointer is nulled before the free, the block is allocated once per open and freed on a single once-per-file-object path, and no other dispatch case frees it, so there is no reachable double-free or use-after-free. The feature helper is a feature-enablement check (reads Feature_2869107002__private_featureState, else calls the fallback), not an object-state validation. This is a staged rollout with the old path retained and does not deliver a security fix.",
+      "trigger_conditions": "None. The changed path is the ordinary per-handle teardown/close of the NDIS control device file object. The 'NDoc' block is allocated once (IRP_MJ_CREATE) and freed once (IRP_MJ_CLEANUP with the feature off, or IRP_MJ_CLOSE with the feature on). No dispatch path frees it twice; no attacker-controlled concurrent free exists.",
+      "primitive": "None. No double-free, use-after-free, information leak, or read/write primitive is introduced or fixed. With the shipped default (feature off) the patched and unpatched code are equivalent along this path.",
+      "evidence": "UNPATCHED ndisDispatchRequest, IRP_MJ_CLEANUP (case 0x12) teardown tail:\n  0x1400429C1 mov  rax, [rsp+arg_8]     ; IrpSp\n  0x1400429C6 xor  edx, edx             ; Tag=0\n  0x1400429C8 mov  rcx, r13             ; P (captured at CLEANUP entry 0x140042587)\n  0x1400429CB mov  rax, [rax+30h]       ; FileObject\n  0x1400429CF mov  [rax+18h], r15       ; FileObject->FsContext = 0 (nulled before free)\n  0x1400429D3 call cs:__imp_ExFreePoolWithTag ; free(P)\n  0x1400429DF lock dec cs:dword_140120FC0\n  0x1400429E6 jmp  loc_140042D42        ; complete\n  ; case 2 (IRP_MJ_CLOSE): no dedicated handler; shares completion tail, no cleanup of P.\n\nPATCHED ndisDispatchRequest, same region:\n  ; case 0x12 tail - feature gate inserted\n  0x1400429C1 call Feature_2869107002__private_IsEnabledDeviceUsageNoInline ; 0x1400A790C\n  0x1400429C6 test eax, eax\n  0x1400429C8 jnz  loc_140042D71        ; feature ON -> skip free, complete\n  0x1400429CE mov  rax, [rsp+arg_8]     ; feature OFF -> original null+free path\n  0x1400429D3 mov  rcx, r13\n  0x1400429D6 mov  rax, [rax+30h]\n  0x1400429DA mov  [rax+18h], r15\n  0x1400429DE xor  edx, edx\n  0x1400429E0 call cs:__imp_ExFreePoolWithTag\n  0x1400429EC lock dec cs:dword_140120FC0\n  0x1400429F3 jmp  loc_140042D71\n  ; case 2 (IRP_MJ_CLOSE) - NEW dedicated handler\n  0x140042D27 call Feature_2869107002__private_IsEnabledDeviceUsageNoInline\n  0x140042D2C test eax, eax\n  0x140042D2E jz   loc_140042D71        ; feature OFF -> complete (unpatched behavior)\n  0x140042D30 mov  rax, [rdi+30h]       ; FileObject\n  0x140042D34 mov  rcx, [rax+18h]       ; P = FileObject->FsContext\n  0x140042D38 mov  [rax+18h], r15       ; FsContext = 0\n  0x140042D3C test rcx, rcx\n  0x140042D3F jz   loc_1400429EC        ; P == 0 -> skip free\n  0x140042D45 jmp  loc_1400429DE        ; else -> shared free path",
+      "notes": "The report field names in earlier drafts that referenced object-state validation (+0x90), a NIC state-transition/drain, and a UAF/double-free race are not present in the binaries. sub_1400a790c is Feature_2869107002__private_IsEnabledDeviceUsageNoInline (a WIL feature-state check); there is no sub_140060fc0/sub_140060f90 call in this function; case 0x12 is IRP_MJ_CLEANUP, not IRP_MJ_DEVICE_CONTROL. The remaining ~86 functions reported as changed differ only in relocated absolute addresses (constant shift) caused by the two inserted feature helpers, with no logic change."
+    }
+  ],
+  "summary": "The only behavioral change between ndis_unpatched.sys and ndis_patched.sys is inside ndisDispatchRequest (0x140042480). The patch inserts a default-off WIL feature gate (Feature_2869107002__private_IsEnabledDeviceUsageNoInline, 0x1400A790C) that, only when enabled, relocates the free of the file object's FsContext ('NDoc', 0x40-byte NonPagedPool) from IRP_MJ_CLEANUP (case 0x12) to IRP_MJ_CLOSE (case 2), with the prior path retained in the disabled branch. With the shipped default the two builds are equivalent along this path. In both builds the stored pointer is nulled before the free, the block is freed on a single once-per-file-object path, and no other dispatch case frees it, so there is no reachable double-free or use-after-free. This is feature-staging/servicing churn, not a security fix; no CWE applies. All other functions that differ do so only in relocated absolute addresses caused by the two inserted feature helpers."
+}

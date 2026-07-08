@@ -1,0 +1,165 @@
+{
+  "binaries": {
+    "id_unpatched": "kbldfltr_unpatched.sys",
+    "id_patched": "kbldfltr_patched.sys",
+    "overall_similarity": 0.8977,
+    "matched": 28,
+    "changed": 8,
+    "identical": 20,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "verdict": "No security-relevant change. The patch adds a modifier-key state-tracking feature (new gFilter+0x42 word, plus new helpers IsBlockedKey and FilterBlockedModifierKeys), relocates an already-existing WDF wait lock from SwapBlockList into its caller Set so the lock also covers the new recompute, and adds pervasive DbgPrintEx tracing. No memory-safety issue is fixed, no bounds check is added or tightened, and no race is closed. The unpatched build is already memory-safe.",
+  "changed_functions": [
+    {
+      "name": "KeyboardFilter::Apply",
+      "similarity": 0.7004,
+      "change_type": "feature",
+      "key_changes": [
+        "Adds m_blockedModifierKeyState (gFilter+0x42) tracking: at the top of each iteration the patched build reads gFilter+0x42, and when the current key is a blocked modifier whose bit is set it clears that bit and forces the break-flag bit on the emitted key event.",
+        "Adds a call to the new helper KeyboardFilter::IsBlockedKey to test whether a key code is a blocked modifier key.",
+        "Adds DbgPrintEx tracing. Loop bounds and the gFilter+0x8 wait-lock scope (acquire at 0x1c0001053, release at 0x1c00012c0) are unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral feature addition (keyboard-lockdown policy: correctly release a held blocked modifier). Operates only on the fixed 10-entry modifier table (gFilter+0x10) and the already-bounded block list (count at gFilter+0x38). No attacker-controlled index or length is introduced. Not a memory-corruption or bypass primitive.",
+      "assembly_diff": "UNPATCHED KeyboardFilter::Apply @ 0x1c0001008: WdfWaitLockAcquire at 0x1c0001053 (entry), block-list pointer loaded from gFilter+0x48 at 0x1c000110f and 0x1c00011a0 and iterated entirely under the lock, WdfWaitLockRelease at 0x1c00012c0 (exit). PATCHED @ 0x1c0001008 adds, inside the same lock scope, a read of gFilter+0x42 and an IsBlockedKey-gated clear of the corresponding bit plus a break-flag store on the emitted event."
+    },
+    {
+      "name": "KeyboardFilter::Set",
+      "similarity": 0.8708,
+      "change_type": "feature_plus_lock_refactor",
+      "key_changes": [
+        "Wait lock (WdfWaitLockAcquire/Release, WdfFunctions+0x9e0/0x9e8) relocated into Set from SwapBlockList; a single lock hold now spans SwapBlockList plus the new FilterBlockedModifierKeys recompute.",
+        "Adds FilterBlockedModifierKeys() and stores the result into m_blockedModifierKeyState (gFilter+0x42).",
+        "Adds DbgPrintEx tracing. The allocation size check (0x2c + KeyDataCount*6 > InputBufferLength) is identical to the unpatched build.",
+        "The old block list is freed by ExFreePoolWithTag AFTER the lock is released (patched 0x1c0007747, after release at 0x1c0007734) -- i.e. outside the lock, exactly as in the unpatched build (0x1c0007608)."
+      ],
+      "security_relevant": false,
+      "security_notes": "No use-after-free is fixed. In both builds the block-list swap is serialized against the only reader (KeyboardFilter::Apply) by the gFilter+0x8 wait lock, and the old pointer is freed after the swap when no other thread can hold it. The lock scope was widened only to keep the newly-added FilterBlockedModifierKeys recompute atomic with the swap; the synchronization of the swap and the free relative to Apply is unchanged.",
+      "assembly_diff": "UNPATCHED Set @ 0x1c0007574: call SwapBlockList at 0x1c00075f6 (which itself takes+releases the wait lock: acquire 0x1c00013fd, swap store [rdi+0x48] at 0x1c000145a, release 0x1c0001473), then ExFreePoolWithTag at 0x1c0007608 with no lock held. PATCHED Set @ 0x1c0007628: WdfWaitLockAcquire at 0x1c00076c0, call SwapBlockList at 0x1c00076cf (no internal lock now), call FilterBlockedModifierKeys at 0x1c00076e6 and store gFilter+0x42 at 0x1c00076eb, WdfWaitLockRelease at 0x1c0007734, then ExFreePoolWithTag at 0x1c0007747 (after the release)."
+    },
+    {
+      "name": "KeyboardFilter::SwapBlockList",
+      "similarity": 0.9242,
+      "change_type": "lock_refactor",
+      "key_changes": [
+        "Removes the internal WdfWaitLockAcquire/Release (WdfFunctions+0x9e0/0x9e8); the caller (Set) now holds the lock across the swap.",
+        "On the 'layout cleared' path, zeroes a DWORD at gFilter+0x40, clearing both m_ModifierKeyState and the new m_blockedModifierKeyState word.",
+        "Adds DbgPrintEx tracing ('State: NotBlocking')."
+      ],
+      "security_relevant": false,
+      "security_notes": "Pure lock relocation. Net synchronization is preserved: the swap is under the wait lock in both builds (inside SwapBlockList in the unpatched build, inside the caller Set in the patched build). No race is added or closed.",
+      "assembly_diff": "UNPATCHED SwapBlockList @ 0x1c00013b8 acquires the wait lock at 0x1c00013fd and releases at 0x1c0001473 around the swap store at 0x1c000145a. PATCHED SwapBlockList @ 0x1c0001518 contains no WdfWaitLock calls; it performs the swap store (gFilter+0x48) at 0x1c00015a9 with the lock held by the caller."
+    },
+    {
+      "name": "KbfEvtIoDeviceControl",
+      "similarity": 0.9678,
+      "change_type": "tracing",
+      "key_changes": [
+        "Adds DbgPrintEx tracing at IOCTL entry, at each IOCTL branch, and at exit.",
+        "In the IOCTL 0xba404 path adds 'mov rdx, rdi' (0x1c00072d1) before WdfRequestRetrieveInputMemory. This only restores the Request handle after the newly-inserted DbgPrintEx (0x1c0007290) clobbered rdx; it does not fix a missing-parameter bug.",
+        "Adds error logging for the WdfRequestRetrieveInputMemory failure path."
+      ],
+      "security_relevant": false,
+      "security_notes": "Input validation is byte-for-byte identical between builds (0x2c <= InputBufferLength <= 0x179C, and the length-multiple/output-size checks on the other IOCTLs). The WDF function at WdfFunctions+0x858 is WdfRequestRetrieveInputMemory (confirmed by the patched build's error string 'WdfRequestRetrieveInputMemory failed %x'), whose WDFMEMORY result is passed to WdfMemoryGetBuffer (WdfFunctions+0x610).",
+      "assembly_diff": "UNPATCHED @ 0x1c00071d0: mov rdi, rdx at 0x1c00071f1 (rdi = Request); rdx is never overwritten along the 0xba404 path, so at the WdfRequestRetrieveInputMemory call (0x1c000725e) rdx still holds Request. PATCHED @ 0x1c0007210: DbgPrintEx at 0x1c0007290 clobbers rdx, so mov rdx, rdi is inserted at 0x1c00072d1 before the call at 0x1c00072db."
+    },
+    {
+      "name": "KbfEvtDeviceAdd",
+      "similarity": 0.8148,
+      "change_type": "tracing",
+      "key_changes": [
+        "Adds DbgPrintEx error logging on WdfDeviceCreate and WdfIoQueueCreate failure paths; control flow reshaped to accommodate the logging. Logic identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KbfEvtIoRead",
+      "similarity": 0.9807,
+      "change_type": "tracing",
+      "key_changes": [
+        "Adds DbgPrintEx logging for the WdfRequestSend failure path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KbfEvtDriverCleanup",
+      "similarity": 0.9804,
+      "change_type": "tracing",
+      "key_changes": [
+        "Adds DbgPrintEx tracing."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.9506,
+      "change_type": "tracing_plus_feature_init",
+      "key_changes": [
+        "Adds DbgPrintEx tracing throughout initialization.",
+        "Zero-initializes the filter modifier state with a DWORD write at gFilter+0x40 (instead of a WORD write), so it also clears the new m_blockedModifierKeyState word at gFilter+0x42."
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization-only routine; the only non-tracing change is feature-state zeroing for the new gFilter+0x42 word.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "KeyboardFilter::IsBlockedKey @ 0x1c00013b0 (patched only): scans the block list, bounded by the count at gFilter+0x38, for a key that matches and passes CheckModifiers.",
+      "KeyboardFilter::FilterBlockedModifierKeys @ 0x1c00015d4 (patched only): iterates the fixed 10-entry modifier table (loop cap 0x0A) and builds the m_blockedModifierKeyState bitmask via IsBlockedKey."
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "disposition": "not_a_vulnerability",
+      "function": "KeyboardFilter::Set",
+      "entry_point": "IOCTL 0xba404 (SET_KEYBOARD_LAYOUT) via DeviceIoControl to the KbldFltr control device",
+      "original_hypothesis": "Race Condition leading to Use-After-Free (CWE-362 / CWE-416)",
+      "vulnerability_class": "None -- unpatched code is memory-safe",
+      "description": "The hypothesis was that KeyboardFilter::Set swaps the block-list pointer (gFilter+0x48) via SwapBlockList and then frees the old pointer without holding the wait lock, allowing KeyboardFilter::Apply to dereference freed memory. Verification against both binaries shows this is not exploitable and is not what the patch changes. In the unpatched build, Apply (@ 0x1c0001008) holds the gFilter+0x8 wait lock across its ENTIRE block-list iteration: WdfWaitLockAcquire at 0x1c0001053 (entry) and WdfWaitLockRelease at 0x1c00012c0 (exit), with every read of gFilter+0x48 (0x1c000110f, 0x1c00011a0) and every dereference in between. SwapBlockList (@ 0x1c00013b8) acquires the same lock (0x1c00013fd) before performing the swap store at 0x1c000145a and releasing at 0x1c0001473. Because Apply holds the lock for its whole iteration, the swap cannot run concurrently with Apply, and after the swap gFilter+0x48 holds the new pointer, so any later Apply reads the new list. The old pointer freed at 0x1c0007608 is therefore unreachable by any other thread. Crucially, the patched build ALSO frees the old pointer outside the lock: it releases the lock at 0x1c0007734 and only then calls ExFreePoolWithTag at 0x1c0007747. The patch did not move the free under the lock. What actually changed is that the wait lock was relocated out of SwapBlockList into the caller Set so that a single lock hold spans the swap plus the newly-added FilterBlockedModifierKeys recompute. No use-after-free exists in either build and no race was closed.",
+      "trigger_conditions": "None. The block-list swap and free are serialized against the only reader by the gFilter+0x8 wait lock in both builds. Input length is validated (0x2c..0x179C) and the allocation arithmetic (0x2c + KeyDataCount*6) cannot overflow because KeyDataCount is a 32-bit field.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED Set @ 0x1c0007574: call SwapBlockList (0x1c00075f6) which takes the wait lock internally (acquire 0x1c00013fd, swap store [rdi+0x48] 0x1c000145a, release 0x1c0001473); then ExFreePoolWithTag (0x1c0007608) with no lock held. UNPATCHED Apply @ 0x1c0001008: WdfWaitLockAcquire 0x1c0001053, block-list loads 0x1c000110f/0x1c00011a0 under lock, WdfWaitLockRelease 0x1c00012c0. PATCHED Set @ 0x1c0007628: WdfWaitLockAcquire 0x1c00076c0, call SwapBlockList 0x1c00076cf (no internal lock), FilterBlockedModifierKeys 0x1c00076e6 -> store gFilter+0x42 at 0x1c00076eb, WdfWaitLockRelease 0x1c0007734, then ExFreePoolWithTag 0x1c0007747 (after release).",
+      "assembly": "UNPATCHED KeyboardFilter::Set @ 0x1c0007574:\n0x1c0007588: movsxd  rax, dword [rdx+0x28]        ; KeyDataCount\n0x1c00075a2: add     rdi, rdi                      ; NumberOfBytes = KeyDataCount*6\n0x1c00075a5: lea     rax, [rdi+0x2c]               ; 0x2c + KeyDataCount*6\n0x1c00075a9: cmp     rax, r8                       ; vs InputBufferLength\n0x1c00075ac: jbe     0x1c00075b5\n0x1c00075ae: mov     eax, 0xc0000023               ; STATUS_BUFFER_TOO_SMALL\n0x1c00075c3: call    ExAllocatePoolWithTag         ; NonPagedPoolNx, 'Kblf'\n0x1c00075e8: call    memmove                       ; copy layout+0x2c\n0x1c00075f6: call    SwapBlockList                 ; takes+releases wait lock internally\n0x1c00075fb: test    rax, rax                      ; old block list ptr\n0x1c00075fe: jz      0x1c0007614\n0x1c0007608: call    ExFreePoolWithTag             ; free outside the lock (safe: old ptr unreachable)\n0x1c000762a: retn",
+      "notes": "gFilter layout evidenced by the code: +0x08 WDFWAITLOCK, +0x10 0x2c-byte modifier table (10 entries), +0x38 key-data count (dword), +0x40 m_ModifierKeyState (word), +0x42 m_blockedModifierKeyState (word, written only in the patched build), +0x48 block-list pointer. WDF indirection: WdfWaitLockAcquire = WdfFunctions[0x9e0/8], WdfWaitLockRelease = WdfFunctions[0x9e8/8], dispatched via __guard_dispatch_icall_fptr."
+    },
+    {
+      "severity": "none",
+      "disposition": "not_a_bug",
+      "function": "KbfEvtIoDeviceControl",
+      "entry_point": "IOCTL 0xba404 (SET_KEYBOARD_LAYOUT) via DeviceIoControl to the KbldFltr control device",
+      "original_hypothesis": "Missing/Incorrect WDF Request parameter (CWE-628)",
+      "vulnerability_class": "None -- unpatched call passes the correct Request handle",
+      "description": "The hypothesis was that the unpatched 0xba404 path calls WdfRequestRetrieveInputMemory (WdfFunctions+0x858) with a stale rdx instead of the WDF Request handle, and that the patched 'mov rdx, rdi' fixes it. Verification shows rdx is correct in the unpatched build. At function entry the Request handle is in rdx (WDF arg2); the unpatched build copies it into rdi (mov rdi, rdx at 0x1c00071f1) and never overwrites rdx along the 0xba404 path, so at the retrieval call (0x1c000725e) rdx still holds Request. The patched build inserts a DbgPrintEx at 0x1c0007290 ('Enter IOCTL_KBFILTR_SET_KEYBOARD...') which clobbers rdx, so it reloads it with mov rdx, rdi at 0x1c00072d1 before the call at 0x1c00072db. The added instruction compensates for the newly-inserted tracing call; there was no missing-argument bug in the unpatched build.",
+      "trigger_conditions": "None. The unpatched retrieval call receives the correct Request handle.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED @ 0x1c00071d0: mov rdi, rdx (0x1c00071f1); nothing on the 0xba404 path (0x1c0007222 onward) modifies rdx before the call at 0x1c000725e. PATCHED @ 0x1c0007210: DbgPrintEx (0x1c0007290) clobbers rdx; mov rdx, rdi (0x1c00072d1) restores it before the call at 0x1c00072db. The WDF function at +0x858 is WdfRequestRetrieveInputMemory (patched error string 'WdfRequestRetrieveInputMemory failed %x'); its WDFMEMORY result is passed to WdfMemoryGetBuffer (WdfFunctions+0x610).",
+      "assembly": "UNPATCHED KbfEvtIoDeviceControl 0xba404 path:\n0x1c00071f1: mov  rdi, rdx                 ; rdi = Request (arg2)\n0x1c0007245: mov  rax, WdfFunctions\n0x1c000724c: lea  r8, [rbp-0x20]           ; &WDFMEMORY out\n0x1c0007250: mov  rcx, WdfDriverGlobals\n0x1c0007257: mov  rax, [rax+0x858]         ; WdfRequestRetrieveInputMemory\n0x1c000725e: call __guard_dispatch_icall   ; rdx still = Request (correct)\nPATCHED 0xba404 path:\n0x1c0007290: call DbgPrintEx               ; clobbers rdx\n0x1c00072ca: mov  rcx, WdfDriverGlobals\n0x1c00072d1: mov  rdx, rdi                 ; reload Request\n0x1c00072d4: mov  rax, [rax+0x858]\n0x1c00072db: call __guard_dispatch_icall",
+      "notes": "IOCTL codes: 0xb2408 SEND_INPUT, 0xb240c GET_KEYBOARD_LAYOUT, 0xb2410 GET_KEYBOARD_ID, 0xba404 SET_KEYBOARD_LAYOUT. Input validation on the 0xba404 path (0x2c <= InputBufferLength <= 0x179C) is identical in both builds."
+    },
+    {
+      "severity": "none",
+      "disposition": "feature_addition",
+      "function": "KeyboardFilter::Apply",
+      "entry_point": "Keyboard read-completion (KbfEvtReadCompletionRoutine) and IOCTL 0xb2408 (SEND_INPUT)",
+      "original_hypothesis": "Logic Error / Missing State Synchronization (CWE-362 / CWE-367)",
+      "vulnerability_class": "None -- behavioral feature addition",
+      "description": "The patch introduces a new per-filter word m_blockedModifierKeyState at gFilter+0x42 and the machinery to maintain it: Set (patched) recomputes it via the new FilterBlockedModifierKeys after installing a block list and stores it at 0x1c00076eb under the wait lock; Apply (patched) reads gFilter+0x42 each iteration and, when the current key is a blocked modifier whose bit is set (checked via the new IsBlockedKey helper), clears that bit and forces the break-flag bit on the emitted key event. This is a keyboard-lockdown policy refinement so a held blocked modifier is correctly released. It is a functional feature, not a security fix: it operates only on the fixed 10-entry modifier table (gFilter+0x10) and the already-bounded block list, adds no attacker-controlled index or length, and adds/removes no security boundary.",
+      "trigger_conditions": "N/A -- feature, not a vulnerability.",
+      "primitive": "None.",
+      "evidence": "PATCHED Set @ 0x1c0007628 calls FilterBlockedModifierKeys (0x1c00076e6) and stores the result at gFilter+0x42 (0x1c00076eb). New helpers: FilterBlockedModifierKeys @ 0x1c00015d4 (modifier-table loop cap 0x0A at 0x1c000160e; calls IsBlockedKey; builds bitmask), IsBlockedKey @ 0x1c00013b0 (block-list loop bounded by count at gFilter+0x38). Neither helper exists in the unpatched build.",
+      "assembly": "PATCHED FilterBlockedModifierKeys @ 0x1c00015d4:\n0x1c00015d4: ...\n0x1c000160e: cmp  esi, 0xa                 ; modifier index cap (10 entries)\n0x1c0001611: jge  0x1c0001643\n0x1c0001624: call IsBlockedKey\n0x1c0001630: bts  edi, esi                  ; set bit in result mask\n0x1c0001648: movzx eax, di                  ; return bitmask\nPATCHED IsBlockedKey @ 0x1c00013b0:\n0x1c00013c9: movsxd rax, dword [rcx+0x38]    ; block-list count\n0x1c00013db: mov  r11, [rcx+0x48]           ; block-list ptr\n0x1c0001417: cmp  rbx, rbp                  ; index vs count\n0x1c000141a: jl   0x1c00013e4               ; bounded loop",
+      "notes": "The new field name is evidenced by the patched build's DbgPrintEx format string ('m_ModifierKeyState == 0x%hx, m_blockedM...')."
+    }
+  ],
+  "summary": "No security-relevant change. The three items originally hypothesized as vulnerabilities in kbldfltr.sys were each verified against both builds and found not to be security fixes. (1) The block-list swap/free in KeyboardFilter::Set is not a use-after-free: KeyboardFilter::Apply holds the gFilter+0x8 wait lock across its entire block-list iteration (acquire 0x1c0001053, release 0x1c00012c0), the swap is serialized against it in both builds, and the old pointer is freed after the lock is released in BOTH builds (unpatched 0x1c0007608; patched 0x1c0007747, after release at 0x1c0007734). The patch only relocates the wait lock from SwapBlockList into Set so it also covers the new modifier-state recompute. (2) The 'missing Request parameter' in the 0xba404 path of KbfEvtIoDeviceControl is not a bug: rdx already holds the Request handle in the unpatched build (never clobbered after mov rdi, rdx at 0x1c00071f1); the patched 'mov rdx, rdi' merely restores rdx after a newly-added DbgPrintEx clobbers it. (3) The m_blockedModifierKeyState (gFilter+0x42) tracking, with the two new bounded helpers IsBlockedKey and FilterBlockedModifierKeys, is a keyboard-filter policy feature, not a memory-safety or bypass fix. All input validation is identical between builds and the remaining changes are DbgPrintEx tracing."
+}

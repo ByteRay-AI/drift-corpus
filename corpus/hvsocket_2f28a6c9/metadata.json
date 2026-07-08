@@ -1,0 +1,225 @@
+{
+  "binary": "hvsocket.sys",
+  "kb": "KB5078885",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24288",
+      "title": "Windows Mobile Broadband Driver Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 6.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26132",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24293",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.19041.7052",
+    "sha256": "2f28a6c9a1b7e13ddc11e24edcd932f9d11d33626cd7d3addd844a9ac77623cf",
+    "file": "hvsocket_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "9291fe7c85f09f6ae7eaad264b470bd2edd4962adefa8c990512cea739b768e1",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Microsoft Hyper-V Socket Provider",
+      "FileVersion": "10.0.19041.7052 (WinBuild.160101.0800)",
+      "InternalName": "hvsocket.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "hvsocket.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.19041.7052"
+    }
+  },
+  "prev": {
+    "version": "10.0.19041.6811",
+    "sha256": "5463f21c929259bf923b6972d631b00ac127bb74d6d3c18f2ecdc52d137ab967",
+    "kb_numbers": [
+      "KB5073724",
+      "KB5077796",
+      "KB5078129",
+      "KB5075912"
+    ],
+    "win_versions": [],
+    "file": "hvsocket_unpatched.sys",
+    "hash_match": false,
+    "expected_sha256": "9b69f53ce1db9a9311104e9089ce68a2f37202a5f3a0e80839e3b68dd7ddf9d6",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Microsoft Hyper-V Socket Provider",
+      "FileVersion": "10.0.19041.6811 (WinBuild.160101.0800)",
+      "InternalName": "hvsocket.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "hvsocket.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.19041.6811"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "binaries": {
+    "title": "csc.sys (Windows Client-Side Caching / Offline Files Driver) - NULL Pointer Dereference in CscDclMRxTransition Logical-View Path",
+    "id_unpatched": "csc_unpatched.sys",
+    "id_patched": "csc_patched.sys",
+    "overall_similarity": 0.9877,
+    "matched": 1415,
+    "changed": 1,
+    "identical": 1414,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CscDclMRxTransition (sub_1C005FF5C)",
+      "similarity": 0.9703,
+      "key_changes": [
+        "REPLACED (entry gate, 0x1C005FFE2): `call Feature_4082332987__private_IsEnabledDeviceUsage` + `test eax, eax` + `jz 0x1C005FFF0` was replaced by a direct `test rdi, rdi` + `jz` NULL check (patched at 0x1C005DE52). In the unpatched code, when the feature check returns 0 the `jz` skips PAST the `test rdi, rdi` at 0x1C005FFEB and enters the block, so rdi is dereferenced even when NULL.",
+        "REPLACED (exit gate, 0x1C0060538): the same `call Feature_4082332987__private_IsEnabledDeviceUsage` + `test eax` + `jz` sequence was replaced by a direct `test rdi, rdi` + `jz` before calling CscFlushLViewWasPreviouslyOffline(rdi) (patched at 0x1C005E39F).",
+        "The two WIL staged-feature (Feature_4082332987) gate calls are removed from both guard points and replaced by unconditional NULL validation of rdi.",
+        "All other differences are module-base relocation (patched base shifted, e.g. CscDclMRxTransition moves from 0x1C005FF5C to 0x1C005DDCC) and the resulting call-target address shifts. Same callee functions, just relocated."
+      ],
+      "change_type": "security_relevant",
+      "security_relevant": true,
+      "security_notes": "The unpatched CscDclMRxTransition (sub_1C005FF5C) loads rdi from *(*(arg1+0x38)+0x70). Given the callees (CscAcquireLViewLock, CscLViewIsRootGhosted, CscReleaseLViewLock, CscFlushLViewWasPreviouslyOffline), rdi is a CSC LVIEW (logical view) pointer, which can be NULL. Both guard points gate on Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70), a WIL staged-feature check that reads the global Feature_4082332987__private_featureState, tests bit 0x10, and falls back to Feature_4082332987__private_IsEnabledFallback when the bit is clear. In the unpatched code the flow is: `call feature; test eax,eax; jz block_entry`. When the feature check returns 0 the branch jumps past the `test rdi, rdi` NULL check (at 0x1C005FFEB entry / 0x1C0060541 exit) straight into the block, so CscAcquireLViewLock(rdi) at 0x1C005FFF3 (entry) and CscFlushLViewWasPreviouslyOffline(rdi) at 0x1C0060549 (exit) dereference a possibly-NULL rdi, causing a kernel NULL pointer dereference / bug check. The patched code removes the feature gate at both points and performs an unconditional `test rdi, rdi` before dereferencing, so the block is skipped when rdi is NULL.",
+      "assembly_diff": "--- UNPATCHED CscDclMRxTransition (sub_1C005FF5C) entry gate:\n 0x1C005FFD3 cmp  ecx, 2\n 0x1C005FFD6 jbe  0x1C005FFE2\n 0x1C005FFD8 mov  esi, 0C000000Dh\n 0x1C005FFDD jmp  0x1C006052B\n 0x1C005FFE2 call Feature_4082332987__private_IsEnabledDeviceUsage\n 0x1C005FFE7 test eax, eax\n 0x1C005FFE9 jz   0x1C005FFF0        ; feature==0 -> skip NULL check, enter block\n 0x1C005FFEB test rdi, rdi           ; only reached when feature!=0\n 0x1C005FFEE jz   0x1C005FFD8\n 0x1C005FFF0 mov  rcx, rdi\n 0x1C005FFF3 call CscAcquireLViewLock ; deref rdi -> NULL DEREF if rdi==0\n 0x1C005FFF8 mov  rcx, rdi\n 0x1C005FFFB call CscLViewIsRootGhosted\n\n--- UNPATCHED exit gate at 0x1C0060538:\n 0x1C0060538 call Feature_4082332987__private_IsEnabledDeviceUsage\n 0x1C006053D test eax, eax\n 0x1C006053F jz   0x1C0060546        ; feature==0 -> skip NULL check\n 0x1C0060541 test rdi, rdi\n 0x1C0060544 jz   0x1C006054E\n 0x1C0060546 mov  rcx, rdi\n 0x1C0060549 call CscFlushLViewWasPreviouslyOffline ; deref rdi\n\n+++ PATCHED CscDclMRxTransition (sub_1c005ddcc) entry gate:\n 0x1C005DE43 cmp  ecx, 2\n 0x1C005DE46 jbe  0x1C005DE52\n 0x1C005DE48 mov  esi, 0C000000Dh\n 0x1C005DE4D jmp  0x1C005E392\n 0x1C005DE52 test rdi, rdi           ; DIRECT NULL CHECK (feature call removed)\n 0x1C005DE55 jz   0x1C005DE48        ; rdi==0 -> error path, block skipped\n 0x1C005DE57 mov  rcx, rdi\n 0x1C005DE5A call CscAcquireLViewLock\n\n+++ PATCHED exit gate:\n 0x1C005E39F test rdi, rdi           ; DIRECT NULL CHECK (no feature call)\n 0x1C005E3A2 jz   0x1C005E3AC\n 0x1C005E3A4 mov  rcx, rdi\n 0x1C005E3A7 call CscFlushLViewWasPreviouslyOffline"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "CscDclMRxTransition (sub_1C005FF5C)",
+      "entry_point": "Reached via the CSC FSCTL dispatch path: CscFsCtl (sub_1c004c760) -> CscDclInternalFsControl (sub_1c004c938, calls CscDclMRxTransition at 0x1C004CDA7) -> CscDclMRxTransition (sub_1c005ff5c). The MINIRDR dispatch table itself is populated by CscInitializeDispatchTable (sub_1c008f338); DriverEntry is a separate function at 0x1C008F950.",
+      "call_chain": [
+        "CscFsCtl (sub_1c004c760) - CSC FSCTL handler receiving the RX_CONTEXT",
+        "CscDclInternalFsControl (sub_1c004c938) - internal FSCTL routing (calls CscDclMRxTransition at 0x1C004CDA7)",
+        "CscDclMRxTransition (sub_1c005ff5c) - VULNERABLE - dereferences rdi (LVIEW pointer) when NULL"
+      ],
+      "vulnerability_class": "NULL pointer dereference (CWE-476) / potential local kernel denial of service; a velocity/servicing-feature-gated NULL check made unconditional",
+      "description": "The vulnerable function CscDclMRxTransition (sub_1C005FF5C) processes logical-view transition operations for the CSC (Offline Files) driver. It reads rdi from *(*(arg1+0x38)+0x70) at 0x1C005FFA1 - a CSC LVIEW (logical view) pointer that can be NULL. Both guard points gate on Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70), a WIL staged-feature check. In the unpatched code (`call feature; test eax,eax; jz block`), when the feature check returns 0 the branch jumps past the `test rdi, rdi` NULL check and enters the block, so rdi is dereferenced through CscAcquireLViewLock(rdi) at 0x1C005FFF3, CscLViewIsRootGhosted(rdi) at 0x1C005FFFB, and CscReleaseLViewLock(rdi) - and CscFlushLViewWasPreviouslyOffline(rdi) at 0x1C0060549 on the exit path - all touching fields off a NULL base. The patch removes both feature gates and performs an unconditional `test rdi, rdi` before the dereferences.",
+      "trigger_conditions": "1. Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70) must return 0, i.e. the WIL staged feature Feature_4082332987 is disabled (Feature_4082332987__private_featureState bit 0x10 clear and the fallback returns 0). 2. An FSCTL that routes through CscFsCtl -> CscDclInternalFsControl -> CscDclMRxTransition must arrive with the LVIEW pointer rdi = *(*(arg1+0x38)+0x70) equal to NULL. 3. arg2 (the operation code, edx at entry, then r13d) must satisfy (arg2-1) <= 2 (values 1, 2 or 3), which passes the `cmp ecx,2 / jbe` check at 0x1C005FFD6.",
+      "primitive": "Kernel NULL pointer dereference resulting in a bug check (local denial of service) if reachable. The dereference is of a NULL base pointer, not attacker-controlled memory: there is no write, memory-corruption, or information-leak primitive, and no code-execution path is claimed. On modern Windows the NULL page is not user-mappable, so impact is bounded to a crash. Reachability is not established here: rdi (the LVIEW pointer) is internal redirector state rather than a user-supplied value, and the function dereferences it unguarded elsewhere, consistent with it normally being non-NULL.",
+      "evidence": "// UNPATCHED CscDclMRxTransition (sub_1c005ff5c):\n// rdi = LVIEW pointer, can be NULL\n//   0x1C005FF85  mov rax, [rcx+38h]\n//   0x1C005FFA1  mov rdi, [rax+70h]\n// entry gate:\n//   0x1C005FFE2  call Feature_4082332987__private_IsEnabledDeviceUsage\n//   0x1C005FFE7  test eax, eax\n//   0x1C005FFE9  jz   0x1C005FFF0   ; feature==0 -> jumps PAST the rdi NULL check\n//   0x1C005FFEB  test rdi, rdi      ; skipped when feature disabled\n//   0x1C005FFEE  jz   0x1C005FFD8\n//   0x1C005FFF0  mov  rcx, rdi\n//   0x1C005FFF3  call CscAcquireLViewLock   ; NULL DEREF if rdi==0\n// exit gate:\n//   0x1C0060538  call Feature_4082332987__private_IsEnabledDeviceUsage\n//   0x1C006053F  jz   0x1C0060546   ; feature==0 -> skip rdi NULL check\n//   0x1C0060549  call CscFlushLViewWasPreviouslyOffline  ; NULL DEREF if rdi==0\n\n// PATCHED CscDclMRxTransition (sub_1c005ddcc):\n//   0x1C005DE52  test rdi, rdi      ; unconditional NULL check (feature call removed)\n//   0x1C005DE55  jz   0x1C005DE48\n//   0x1C005DE5A  call CscAcquireLViewLock   ; safe\n//   0x1C005E39F  test rdi, rdi      ; unconditional NULL check at exit\n//   0x1C005E3A2  jz   0x1C005E3AC\n//   0x1C005E3A7  call CscFlushLViewWasPreviouslyOffline   ; safe",
+      "assembly": "--- UNPATCHED csc_unpatched.sys CscDclMRxTransition @ 0x1C005FF5C ---\n0x1C005FF5C: mov     rax, rsp\n0x1C005FF67: mov     [rax+18h], r8d          ; arg2 (operation code)\n0x1C005FF6B: mov     [rax+8], rcx            ; arg1 (RX_CONTEXT)\n0x1C005FF85: mov     rax, [rcx+38h]          ; rax = *(arg1+0x38)\n0x1C005FFA1: mov     rdi, [rax+70h]          ; rdi = LVIEW pointer (CAN BE NULL)\n0x1C005FFD3: cmp     ecx, 2                  ; (arg2-1) <= 2 ?\n0x1C005FFD6: jbe     0x1C005FFE2\n0x1C005FFE2: call    Feature_4082332987__private_IsEnabledDeviceUsage\n0x1C005FFE7: test    eax, eax\n0x1C005FFE9: jz      0x1C005FFF0             ; feature==0 -> enter block, skipping NULL check\n0x1C005FFEB: test    rdi, rdi                ; reached only when feature!=0\n0x1C005FFEE: jz      0x1C005FFD8\n0x1C005FFF0: mov     rcx, rdi\n0x1C005FFF3: call    CscAcquireLViewLock     ; deref rdi -> NULL DEREF if rdi==0\n0x1C005FFF8: mov     rcx, rdi\n0x1C005FFFB: call    CscLViewIsRootGhosted\n; exit path:\n0x1C0060538: call    Feature_4082332987__private_IsEnabledDeviceUsage\n0x1C006053D: test    eax, eax\n0x1C006053F: jz      0x1C0060546             ; feature==0 -> skip NULL check\n0x1C0060541: test    rdi, rdi\n0x1C0060544: jz      0x1C006054E\n0x1C0060546: mov     rcx, rdi\n0x1C0060549: call    CscFlushLViewWasPreviouslyOffline  ; deref rdi -> NULL DEREF if rdi==0\n\n--- Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70) @ 0x1C0007A70 ---\n0x1C0007A70: sub     rsp, 28h\n0x1C0007A74: and     qword [rsp+..], 0\n0x1C0007A7A: mov     eax, cs:Feature_4082332987__private_featureState\n0x1C0007A84: test    al, 10h                 ; test bit 0x10\n0x1C0007A86: jz      0x1C0007A8D             ; if clear, take fallback\n0x1C0007A88: and     eax, 1                  ; if set, return bit 0\n0x1C0007A8B: jmp     0x1C0007A9C\n0x1C0007A8D: mov     rcx, [rsp+..]\n0x1C0007A92: mov     edx, 3\n0x1C0007A97: call    Feature_4082332987__private_IsEnabledFallback  ; -> wil_details_IsEnabledFallback, may return 0\n0x1C0007A9C: add     rsp, 28h\n0x1C0007AA0: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition (sub_1c005ff5c)",
+            "address": "0x1C005FF5C",
+            "why": "Function entry. Inspect arg1 (rcx = RX_CONTEXT) and arg2 (r8d = operation code). rdi is loaded from *(rcx+0x38)+0x70 at 0x1C005FFA1; watch whether it is NULL."
+          },
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition entry gate",
+            "address": "0x1C005FFE2",
+            "why": "The unpatched entry gate calls Feature_4082332987__private_IsEnabledDeviceUsage here. If eax returns 0, the jz at 0x1C005FFE9 jumps to 0x1C005FFF0, skipping the `test rdi, rdi` at 0x1C005FFEB and entering the block that dereferences rdi. In the patched binary this is replaced by `test rdi, rdi`."
+          },
+          {
+            "symbol": "csc_unpatched!Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70)",
+            "address": "0x1C0007A70",
+            "why": "The WIL staged-feature check. Break here to observe the return value in eax. When it returns 0, the entry/exit gates skip the rdi NULL check. Reads global Feature_4082332987__private_featureState (bit 0x10)."
+          },
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition exit gate",
+            "address": "0x1C0060538",
+            "why": "The second gate at the exit path. Same pattern: calls the feature check; if it returns 0, the jz at 0x1C006053F jumps to 0x1C0060546 which calls CscFlushLViewWasPreviouslyOffline(rdi) at 0x1C0060549 with a possibly-NULL rdi."
+          }
+        ],
+        "watch": [
+          "rdi = LVIEW pointer from *(*(arg1+0x38)+0x70); this is the pointer that gets NULL-dereferenced",
+          "eax after the call at 0x1C005FFE2 / 0x1C0060538: if 0, the NULL check is skipped and the vulnerable path is taken",
+          "Feature_4082332987__private_featureState (bit 0x10): controls the feature-check return value together with the fallback",
+          "r8d/r13d (arg2): operation code, must give (arg2-1) <= 2 (values 1, 2, 3) for the vulnerable path (cmp ecx,2 / jbe at 0x1C005FFD6)",
+          "rcx at 0x1C005FFF0 (entry) and 0x1C0060546 (exit): rdi being moved into the first-argument register before the dereferencing calls"
+        ],
+        "key_offsets": [
+          "0x1C005FFE2: call Feature_4082332987__private_IsEnabledDeviceUsage - unpatched entry gate (replaced with `test rdi, rdi` in patch)",
+          "0x1C005FFE9: jz 0x1C005FFF0 - branch that skips the rdi NULL check when the feature check returns 0",
+          "0x1C005FFEB: test rdi, rdi - the NULL check that is bypassed on the feature==0 path",
+          "0x1C005FFF3: call CscAcquireLViewLock - first NULL dereference site (rcx=rdi)",
+          "0x1C0060538: call Feature_4082332987__private_IsEnabledDeviceUsage - unpatched exit gate",
+          "0x1C0060549: call CscFlushLViewWasPreviouslyOffline - second NULL dereference site",
+          "0x1C0007A7A: mov eax, cs:Feature_4082332987__private_featureState - reads the WIL feature state",
+          "0x1C0007A84: test al, 10h - tests bit 0x10 of the feature state",
+          "0x1C005FFA1: mov rdi, [rax+70h] - loads the LVIEW pointer that can be NULL"
+        ],
+        "trigger_setup": "The dereference is in csc.sys (Offline Files / Client-Side Caching), reachable through the CSC FSCTL path CscFsCtl -> CscDclInternalFsControl -> CscDclMRxTransition. To reach it: 1) Ensure the WIL staged feature Feature_4082332987 is disabled so Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70) returns 0 (Feature_4082332987__private_featureState bit 0x10 clear and the fallback returning 0). 2) Issue an FSCTL/DeviceIoControl against the CSC device that routes through CscDclInternalFsControl with an operation code arg2 in {1,2,3} and an LVIEW pointer *(*(arg1+0x38)+0x70) that is NULL. Confirm the raw operation codes against the CscDclInternalFsControl / CscFsCtl dispatch before building a PoC.",
+        "expected_observation": "A kernel access violation (ExceptionCode 0xC0000005, STATUS_ACCESS_VIOLATION) surfacing as a kernel bug check. The faulting address will be a small offset from NULL corresponding to the field access on the NULL LVIEW pointer. The faulting instruction is inside CscAcquireLViewLock (called at 0x1C005FFF3) on the entry path, or inside CscFlushLViewWasPreviouslyOffline (called at 0x1C0060549) on the exit path. kv will show the chain CscFsCtl -> CscDclInternalFsControl -> CscDclMRxTransition.",
+        "notes": "This is a feature-gated missing NULL check, not memory corruption. Unpatched: `call feature; test eax,eax; jz block` means the `test rdi, rdi` NULL check (at 0x1C005FFEB entry / 0x1C0060541 exit) is only executed when the feature check returns non-zero; when it returns 0 the branch enters the block and dereferences rdi unconditionally. sub_1c0007a70 is a WIL staged-feature helper (Feature_4082332987), not an Offline-Files-specific flag; it reads Feature_4082332987__private_featureState (bit 0x10) and falls back to Feature_4082332987__private_IsEnabledFallback -> wil_details_IsEnabledFallback. To distinguish builds at 0x1C005FFE2: if the instruction is `call Feature_4082332987__private_IsEnabledDeviceUsage` you are on the unpatched/vulnerable binary; the patched binary has `test rdi, rdi` at the corresponding site (0x1C005DE52)."
+      }
+    }
+  ],
+  "summary": "The patch fixes a NULL pointer dereference (CWE-476) in csc.sys (Windows Offline Files / Client-Side Caching driver) in CscDclMRxTransition (sub_1C005FF5C). The function loads rdi (a CSC LVIEW / logical-view pointer) from *(*(arg1+0x38)+0x70); rdi can be NULL. In the unpatched code both the entry gate (0x1C005FFE2) and exit gate (0x1C0060538) call the WIL staged-feature check Feature_4082332987__private_IsEnabledDeviceUsage (sub_1c0007a70) and, on the `feature==0` branch, jump PAST the `test rdi, rdi` NULL check straight into the block that dereferences rdi via CscAcquireLViewLock (0x1C005FFF3) and CscFlushLViewWasPreviouslyOffline (0x1C0060549), causing a kernel access violation. In the unpatched build this NULL check is gated behind a WIL velocity/servicing feature (Feature_4082332987, the mechanism Windows uses to stage a change so it can be rolled back server-side); the patch removes the gate and performs an unconditional `test rdi, rdi` NULL check before the dereferences (patched at 0x1C005DE52 and 0x1C005E39F). This is a genuine, direction-correct change: the feature-disabled (unchecked) path is present in the unpatched binary and the check is unconditional in the patched binary. Routed through the CSC FSCTL path CscFsCtl -> CscDclInternalFsControl -> CscDclMRxTransition; impact is bounded to a potential local kernel denial of service. Severity is Low: reachability of a NULL LVIEW pointer on this path is not established (the LVIEW pointer is internal driver state, not user-supplied), and there is no memory-corruption or code-execution primitive."
+}

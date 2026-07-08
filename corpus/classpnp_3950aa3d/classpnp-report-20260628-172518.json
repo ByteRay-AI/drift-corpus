@@ -1,0 +1,168 @@
+{
+  "binaries": {
+    "title": "classpnp.sys (Windows Storage Class Driver) - ClasspProcessCloseZone SCSI Zone-Command CDB Builder, cross-build review (no confirmed OOB)",
+    "id_unpatched": "classpnp_unpatched.sys",
+    "id_patched": "classpnp_patched.sys",
+    "overall_similarity": 0.7332,
+    "matched": 592,
+    "changed": 472,
+    "identical": 120,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ClasspProcessCloseZone (sub_1C0037854 -> sub_14002F770)",
+      "similarity": 0.9657,
+      "change_type": "recompilation",
+      "key_changes": [
+        "Added a check on the ProcessZoneCommandAsynchronously global (cmp cs:ProcessZoneCommandAsynchronously, 0; jz at 0x14002F7C4) gating the asynchronous zone-command call, ahead of the existing test r9b,r9b gate. The global is a registry-set feature flag (setnz cs:ProcessZoneCommandAsynchronously at 0x140029CD3, from the ProcessZoneCommandAsync registry value)",
+        "Register reallocation in the second descriptor scan loop: the status flag moved from r11b to dil, and the descriptor count moved to r11d",
+        "Minor instruction reordering (e.g. the [rbx+26h]/[rbx+20h] field writes; 'and qword [rsi+38h],0' became 'mov qword [rsi+38h],0')",
+        "The [rbx+10h], [rbx+78h], [rbp+23Ch], [rbp+248h], [rbp+250h] offsets are identical in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "sub_1C0037854 and sub_14002F770 both resolve to ClasspProcessCloseZone (exact-address .asm headers in both files). The function builds a SCSI Close Zone (ZONE MANAGEMENT OUT, opcode 0x94) CDB. It scans the offset array at arg3+0x78 (4-byte elements), validates each offset >= 0x80 and < bufferSize (arg3+0x10), and for type bytes 0x40/0x41/0x42 validates offset+0x28 <= size (0x40/0x42) or offset+0x38 <= size (0x41). The working pointer r8_1 is set ONLY inside the second loop from a fully-validated offset (arg3+0x18+offset, arg3+0x20+offset), else it defaults to arg3+0x48 or NULL; the first loop never sets it. After normalizing addresses and register allocation the two builds are functionally identical, including the post-loop working-pointer dereference/CDB fill. There is no stale-pointer carry between the loops. The only behavioral change is the ProcessZoneCommandAsynchronously feature-flag gate on the async call.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClassReadDriveCapacity",
+      "similarity": 0.921,
+      "change_type": "behavioral",
+      "key_changes": [
+        "MDL cleanup refactored from inline MmUnlockPages+IoFreeMdl into helper ClasspFreeDeviceMdl (sub_14001920C)",
+        "The condition 'sub_1C00162C8() && ClasspIsManagedZonedDevice (sub_1C002B5C4, arg1)' was simplified to just 'ClasspIsManagedZonedDevice (sub_140016D60, arg1)' in the patched build (the sub_1C00162C8 feature-flag gate dropped)",
+        "Struct field offset differences between builds (e.g., rsi+0x5d8/0x5e8, rsi+0x5e4/0x5f4, rsi+0x4b4/0x4c4)",
+        "Error recovery path for STATUS_DEVICE_BUSY (0xc000009a) restructured to check *(rsi+0x5f4) first, then conditionally check DeviceExtension+0x230==0xc"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClassDeviceControl",
+      "similarity": 0.6308,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major recompilation due to struct layout change (+0x10 byte field insertion)",
+        "Pool API migration from ExAllocatePoolWithTag to ExAllocatePool2",
+        "New locking using ExAcquireResourceExclusiveLite and ExAcquireRundownProtectionCacheAware"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClassInterpretSenseInfo",
+      "similarity": 0.7055,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Heavy recompilation from struct offset shifts",
+        "Logic restructuring in SCSI sense code interpretation paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClassGetDescriptor",
+      "similarity": 0.9013,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pool API modernization: ExAllocatePoolWithTag \u2192 ExAllocatePool2 (POOL_FLAG_NON_PAGED)",
+        "Minor code reordering of the error/log paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClassInitialize",
+      "similarity": 0.8184,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct layout differences between builds",
+        "Initialization differences",
+        "Global-state initialization differences between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MISMATCHED PAIR: ClasspServiceIdleRequest (sub_1C00014B0) vs ClassReadWrite (sub_140001640)",
+      "similarity": 0.0052,
+      "change_type": "false_match",
+      "key_changes": [
+        "The 0.0052 score reflects a bad cross-build match between two unrelated functions: unpatched ClasspServiceIdleRequest (sub_1C00014B0, a small helper) and patched ClassReadWrite (sub_140001640)",
+        "Patched ClassReadWrite (sub_140001640) contains ExAcquireRundownProtectionCacheAware (0x140001695), IoGetIoPriorityHint (0x140001785), and the transfer-length check at 0x140001814 ([r14+0x18] >> [rdi+0x282] > 0xFFFFFFFF -> STATUS_INVALID_PARAMETER 0xC000000D at 0x140001830)",
+        "The true unpatched counterpart is ClassReadWrite (sub_1C0002990), which ALREADY contains ExAcquireRundownProtectionCacheAware (0x1C0002A32), IoGetIoPriorityHint (0x1C0002C33), and the same transfer-length check (0x1C0002C16, STATUS_INVALID_PARAMETER at 0x1C0002C25)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is not a real patched pair. The rundown protection and transfer-length check are present in BOTH builds of ClassReadWrite (unpatched sub_1C0002990, patched sub_140001640); they were not added by this patch. The report's unpatched anchor sub_1C00014B0 is ClasspServiceIdleRequest, an unrelated function that the diff tool mismatched to ClassReadWrite across the two build branches.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "ClasspProcessCloseZone (sub_1C0037854 -> sub_14002F770)",
+      "entry_point": "SCSI zone-management (ZBC) command build path: ClasspProcessCloseZone builds a CLOSE ZONE CDB (opcode 0x94) and calls ClassSendSrbSynchronous",
+      "call_chain": [
+        "zone-management (ZBC) command handling",
+        "ClasspProcessCloseZone (sub_1C0037854)",
+        "CDB build over arg3 offset array",
+        "ClassSendSrbSynchronous"
+      ],
+      "vulnerability_class": "None confirmed; descriptor-offset scan is bounded identically in both builds",
+      "description": "sub_1C0037854 and sub_14002F770 both resolve to ClasspProcessCloseZone. The function reads an array of offsets from arg3+0x78 (4-byte elements), validates each offset >= 0x80 and < bufferSize (arg3+0x10), then based on type bytes 0x40/0x41/0x42 validates a type-specific extent (offset+0x28 <= size for 0x40/0x42, offset+0x38 <= size for 0x41) and sets the working pointer r8_1 to an in-buffer location (arg3+0x18+offset, arg3+0x20+offset), else r8_1 defaults to arg3+0x48 or NULL. The first loop only sets a status flag and writes the +0xa field; it never sets the working pointer. There is no stale-pointer carry between the two loops. After normalizing addresses and register allocation the unpatched and patched functions are functionally identical, including the post-loop working-pointer dereference (a CDB fill). The only behavioral change is a new check on the ProcessZoneCommandAsynchronously global (a registry-set feature flag) that gates the async zone-command call. No out-of-bounds access is introduced or removed by this patch.",
+      "trigger_conditions": "Not applicable: no patch-introduced out-of-bounds condition was confirmed. The descriptor-offset scan is bounded identically in both builds and r8_1 is set only from validated offsets. The r8_1 = NULL fall-through path (second loop matches nothing under the [arg3+2] == 0x28 branch) reaches the same dereference in both builds and is not specific to this patch.",
+      "primitive": "None confirmed. The r8_1 writes (opcode 0x94 plus masked flag bytes) fill an in-buffer CDB built from validated offsets; this is identical in both builds.",
+      "evidence": "The only behavioral delta is the async-dispatch gate.\n\nUnpatched (0x1C00378A8):\n0x1c00378a8: test    r9b, r9b\n0x1c00378ab: jnz     loc_1C00378CC\n0x1c00378ad: mov     r9d, 0x80000016\n0x1c00378b9: call    ClasspProcessZoneCommandAsynchronously\n\nPatched (0x14002F7C4) adds the leading global check:\n0x14002f7c4: cmp     cs:ProcessZoneCommandAsynchronously, 0\n0x14002f7cb: jz      loc_14002F7F1   ; skip async unless the registry flag is set\n0x14002f7cd: test    r9b, r9b\n0x14002f7d0: jnz     loc_14002F7F1\n0x14002f7d2: mov     r9d, 0x80000016\n0x14002f7de: call    ClasspProcessZoneCommandAsynchronously\n\nThe global is set from the ProcessZoneCommandAsync registry value: 0x140029cd3: setnz cs:ProcessZoneCommandAsynchronously.\n\nThe descriptor scan and post-loop CDB fill are identical in both builds (first loop never sets the working pointer; it is set only from a validated offset in the second loop):\n0x1c0037978: mov ecx, [rbx+r9*4+0x78]   ; load 4-byte offset\n0x1c003797d: cmp ecx, 0x80              ; offset >= 0x80\n0x1c0037985: mov r8d, [rbx+0x10]        ; bufferSize\n0x1c0037989: cmp ecx, r8d               ; offset < bufferSize\n0x1c0037a89: lea r8, [rbx+0x18]; add r8, rdx   ; working ptr set only after extent check\n0x1c0037a9d: mov al, [r8+1]\n0x1c0037aa6: mov byte [r8], 0x94        ; ZONE MANAGEMENT OUT / Close Zone opcode\n0x1c0037ab1: mov [r8+1], al",
+      "assembly": "Key assembly from ClasspProcessCloseZone (unpatched sub_1C0037854; identical in patched sub_14002F770 after address/register normalization):\n\n; First scan loop (sets only the r10 flag and the +0xa field; does NOT set r8_1)\n0x1c0037978: mov     ecx, [rbx+r9*4+0x78]              ; load 4-byte offset from array\n0x1c003797d: cmp     ecx, 0x80                         ; offset >= 0x80\n0x1c0037985: mov     r8d, [rbx+0x10]                   ; r8 = bufferSize\n0x1c0037989: cmp     ecx, r8d                          ; offset < bufferSize\n0x1c003798e: mov     edx, ecx\n0x1c0037990: mov     ecx, [rcx+rbx]                    ; read type byte at offset\n0x1c00379c0: lea     rcx, [rdx+0x28]                   ; type 0x40/0x42: offset+0x28\n0x1c00379c4: cmp     rcx, r8                           ; offset+0x28 <= bufferSize?\n0x1c00379d9: mov     byte [rdx+rbx+0xa], 0x10          ; write field\n\n; Second loop sets r8_1 only from validated offsets (e.g. 0x1c0037a89: lea r8,[rbx+0x18]; add r8,rdx)\n\n; r8_1 dereference / CDB fill (identical in both builds):\n0x1c0037a9d: mov     al, [r8+1]\n0x1c0037aa4: and     al, 0xe1\n0x1c0037aa6: mov     byte [r8], 0x94                   ; ZONE MANAGEMENT OUT / Close Zone opcode\n0x1c0037ab1: mov     [r8+1], al",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "classpnp_unpatched!ClasspProcessCloseZone",
+            "address": "0x1C0037854",
+            "why": "Entry to ClasspProcessCloseZone. At entry: rcx=DeviceObject (arg1), rdx=IRP (arg2), r8=arg3 (SRB/CDB buffer), r9b=arg4. Inspect arg3: +0x10=bufferSize, +0x38=descriptor count, +0x78=array of 4-byte descriptor offsets."
+          },
+          {
+            "symbol": "classpnp_unpatched!ClasspProcessCloseZone+0x249",
+            "address": "0x1C0037A9D",
+            "why": "The r8_1 dereference / CDB-fill point after both scan loops. r8_1 is held in r8 and is arg3+0x18+offset, arg3+0x20+offset, arg3+0x48, or NULL. This sequence is identical in the patched build (sub_14002F770), so it is a general observation point, not a confirmed fault site."
+          },
+          {
+            "symbol": "classpnp_unpatched!ClasspProcessCloseZone+0x131",
+            "address": "0x1C0037985",
+            "why": "First scan loop: r8d is loaded with bufferSize ([rbx+0x10]) and compared against the offset already checked >= 0x80. Confirms the per-entry bounds check."
+          }
+        ],
+        "watch": [
+          "arg3+0x10 (dword at [r8+0x10] at entry) = buffer size, the max valid offset",
+          "arg3+0x38 (dword at [r8+0x38]) = number of descriptor offsets in the +0x78 array",
+          "arg3+0x78 (array at [r8+0x78]) = 4-byte descriptor offsets, each checked >= 0x80 and < bufferSize",
+          "r8 at 0x1C0037A9D = the working CDB pointer; NULL, arg3+0x48, or a validated arg3+0x18/0x20+offset",
+          "type byte = *(descriptor_offset + arg3) (0x40/0x41/0x42) selecting the validation path"
+        ],
+        "key_offsets": [
+          "0x1C0037854 = function entry (ClasspProcessCloseZone)",
+          "0x1C0037985 = first loop: load bufferSize [rbx+0x10], compare offset",
+          "0x1C00379D9 = type 0x40/0x42: writes 0x10 at rdx+arg3+0xa (inside bounds if offset+0x28<=bufferSize)",
+          "0x1C0037A06 = second scan loop start (sets r8_1 only from validated offsets)",
+          "0x1C0037A9D = r8_1 dereference / CDB fill (mov al, [r8+1]); identical in both builds",
+          "0x1C0037AB1 = write masked flags to r8_1+1 (CDB fill)",
+          "0x1C0037B11 = error/exit path with STATUS_INVALID_DEVICE_REQUEST (0xC000000D)"
+        ],
+        "trigger_setup": "No patch-introduced trigger was confirmed. The scan is bounded identically in both builds; r8_1 is set only from validated offsets. For general observation, break at ClasspProcessCloseZone entry during zone-management command processing and inspect arg3's offset array; the CDB fill at 0x1C0037A9D behaves the same in both builds.",
+        "expected_observation": "Under valid inputs, r8_1 points within the SRB/CDB buffer and the sequence at 0x1C0037A9D fills a Close Zone CDB (opcode 0x94). The behavior is identical in unpatched (sub_1C0037854) and patched (sub_14002F770); no out-of-bounds access was observed to be introduced or removed by this patch.",
+        "notes": "In ClasspProcessCloseZone the arg3/rbp offsets are identical in both builds. Sibling functions: sub_1C0037B58 = ClasspProcessFinishZone, sub_1C0037E5C = ClasspProcessOpenZone (same scan structure, same cross-build deltas). The two binaries are different build branches (unpatched 10.0.20348.5256, patched 10.0.28000.2336); base for the unpatched image is 0x1C0000000."
+      }
+    }
+  ],
+  "summary": "The two classpnp.sys files are different build branches (unpatched 10.0.20348.5256, patched 10.0.28000.2336), so most of the 472 changed functions differ by recompilation only, and no CVE is attributed to this change. ClasspProcessCloseZone (unpatched sub_1C0037854, patched sub_14002F770) builds a SCSI Close Zone CDB; it scans a 4-byte offset array at arg3+0x78, validates each offset (>= 0x80, < bufferSize, plus a type-specific extent), and sets the working pointer only from validated offsets. After normalizing addresses and register allocation the two builds are functionally identical, including the post-loop working-pointer dereference (a CDB fill); the first loop never sets the working pointer and there is no stale-pointer carry. The only behavioral change is a check on the ProcessZoneCommandAsynchronously global (a registry-set feature flag) gating the async zone-command call. The second reported finding is a false cross-build match (0.0052) between unpatched ClasspServiceIdleRequest (sub_1C00014B0) and patched ClassReadWrite (sub_140001640); the true counterpart is unpatched ClassReadWrite (sub_1C0002990), which already contains the rundown protection and transfer-length check, so those guards were not added by this patch."
+}

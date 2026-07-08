@@ -1,0 +1,178 @@
+{
+  "binaries": {
+    "title": "exfat.sys - Feature-flag-gated missing validation of negative (bit-63-set) file size/offset values in IRP_MJ_SET_INFORMATION handlers (CWE-20); patch makes the rejection unconditional",
+    "id_unpatched": "exfat_unpatched.sys",
+    "id_patched": "exfat_patched.sys",
+    "overall_similarity": 0.9909,
+    "matched": 827,
+    "changed": 8,
+    "identical": 819,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FppCommonSetInformation (sub_1C003E3A4)",
+      "similarity": 0.9848,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "IRP_MJ_SET_INFORMATION dispatcher (arg2=IRP*, switches on FILE_INFORMATION_CLASS). Case 0xe (FilePositionInformation, inline): unpatched gates the negative-offset check with Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)(): 'if ((!Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() || MasterIrp-> >= 0) && ...)' then sets FileObject->CurrentByteOffset; patched makes the check unconditional: 'if (rdx_9 < 0 || ...) STATUS_INVALID_PARAMETER'.",
+        "Dispatches case 0x13 (FileAllocationInformation) to the now-fixed FppSetAllocationInfo (sub_1C0040F74) and case 0x14 (FileEndOfFileInformation) to the now-fixed FppSetEndOfFileInfo (sub_1C00412C4) (all three share the same feature-gated flaw).",
+        "Other diffs are call-target address shifts (handlers/sub-helpers moved by ~0x20 bytes) and oplock-callback reference adjustments only."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the attacker-reachable entry point. NtSetInformationFile -> IRP_MJ_SET_INFORMATION -> this dispatcher. The inline FilePositionInformation handler (case 0xe) sets FileObject->CurrentByteOffset to an attacker-supplied 64-bit value whose negative (bit-63-set) form is only rejected when the feature flag Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() returns true. When the feature resolves to not-enabled, a negative CurrentByteOffset is accepted and stored into FileObject->CurrentByteOffset (offset +0x68). The same gating affects the EOF/Allocation handlers it dispatches. The onward effect of a negative offset on subsequent cached I/O is not traced in this diff.",
+      "assembly_diff": "Case 0xe (FilePositionInformation) - UNPATCHED:\n  mov rbx, qword [rsi+0x18]      ; rbx = &SystemBuffer->CurrentByteOffset path\n  call Feature_1337404728__private_IsEnabledDeviceUsage                ; feature gate (Feature_1337404728__private_featureState)\n  test eax, eax\n  jz 0x1c003e7bb                  ; not-enabled -> take 'accept' branch regardless of sign\n  ...\n  cmp qword [rbx], 0x0\n  jl 0x1c003e742                  ; sign check ONLY reached when flag ON\nPATCHED:\n  mov r8, qword [rsi+0x18]\n  mov rdx, qword [r8]\n  test rdx, rdx\n  js 0x1c003e742                  ; unconditional negative rejection"
+    },
+    {
+      "name": "FppSetEndOfFileInfo (sub_1C00412C4)",
+      "similarity": 0.9789,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "FileEndOfFileInformation handler (case 0x14). Loads attacker EndOfFile into rdi at 0x1c0041333 (mov rdi, qword [rcx], rcx=Irp->AssociatedIrp.SystemBuffer).",
+        "UNPATCHED 0x1c004136f: 'call Feature_1337404728__private_IsEnabledDeviceUsage; test eax,eax; je 0x1c0041387' (proceed-to-processing) then 'test rdi,rdi; jns 0x1c0041387' (sign check only reached if flag ON); flag OFF bypasses sign check.",
+        "PATCHED: removed the call; 'test rdi,rdi; jns proceed; mov edi,0xc000000d' - negative size always rejected with STATUS_INVALID_PARAMETER.",
+        "At 0x1c004154f/0x1c0041558/0x1c0041561 the (corrupted) size is written into FCB+0x20 (FileSize), FCB+0x28, FCB+0x110, followed by CcSetFileSizes."
+      ],
+      "security_relevant": true,
+      "security_notes": "Primary injection site. A FileEndOfFileInformation value with bit 63 set (e.g. 0xFFFFFFFFFFFFFFFF) bypasses the upstream overflow guard (validDataLen+1+(-1) does not wrap below newSize) and, when the feature resolves to not-enabled, is accepted. The FCB FileSize field (and conditionally AllocationSize/ValidDataLength) is then set to the value and passed to CcSetFileSizes, placing an unchecked negative/oversized file size into kernel file-cache metadata. The patched build rejects the same input with STATUS_INVALID_PARAMETER. Onward memory-corruption from the poisoned size is not demonstrated by this diff.",
+      "assembly_diff": "UNPATCHED (key block):\n  0x1c0041333: mov rdi, qword [rcx]        ; rdi = attacker EndOfFile (rcx=SystemBuffer)\n  0x1c004136f: call Feature_1337404728__private_IsEnabledDeviceUsage            ; feature gate\n  0x1c0041374: test eax, eax\n  0x1c0041376: je 0x1c0041387               ; flag OFF -> SKIP sign check -> process\n  0x1c0041378: test rdi, rdi\n  0x1c004137b: jns 0x1c0041387             ; (only reached when flag ON) proceed if >=0\n  0x1c004137d: mov edi, 0xc000000d         ; STATUS_INVALID_PARAMETER\n  ...\n  0x1c004154f: mov qword [rbx+0x20], rdi   ; FCB->FileSize = huge negative value\n  0x1c0041558: mov qword [rbx+0x28], rdi\n  0x1c0041561: mov qword [rbx+0x110], rdi\nPATCHED: call removed; 'test rdi,rdi; jns proceed; mov edi,0xc000000d' is unconditional."
+    },
+    {
+      "name": "FppSetAllocationInfo (sub_1C0040F74)",
+      "similarity": 0.9714,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "FileAllocationInformation handler (case 0x13). Same flaw as the EOF handler.",
+        "UNPATCHED: 'if (Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() && r14 < 0) return 0xc000000d;' - negative-allocation-size check only active when the feature flag is true.",
+        "PATCHED: 'if (rbx < 0) return 0xc000000d;' - unconditional."
+      ],
+      "security_relevant": true,
+      "security_notes": "Same vulnerability class as the EOF handler. A bit-63-set FileAllocationInformation AllocationSize bypasses validation when the feature flag is off, corrupting the FCB allocation-related size fields and cascading into allocation-arithmetic overflows on subsequent extend operations.",
+      "assembly_diff": "UNPATCHED:\n  call Feature_1337404728__private_IsEnabledDeviceUsage\n  test eax, eax\n  je 0x1c0040fe4          ; flag OFF -> skip the negative check, proceed\n  test r14, r14\n  jns 0x1c0040fe4\n  mov eax, 0xc000000d     ; (only if flag ON and size<0)\nPATCHED:\n  test rbx, rbx\n  jns 0x1c0040fce\n  mov eax, 0xc000000d     ; unconditional negative rejection"
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (sub_1C00018D8)",
+      "similarity": 0.939,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state helper. Refactored to drop a pointer argument in favor of a global context. Not security-relevant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C000196C)",
+      "similarity": 0.8176,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Atomic flag-set helper (lock or / lock cmpxchg). Refactored to operate on a global instead of a pointer passed via arg. Atomic semantics (interlocked OR / cmpxchg loop) are preserved."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_427089208__private_IsEnabledFallback (sub_1C0001EA0)",
+      "similarity": 0.6483,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Tiny thunk: calls the helper with one fewer argument. Pure signature/register-allocation change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C000137C)",
+      "similarity": 0.972,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage/telemetry reporting helper. Refactored to use a global context instead of an arg pointer. Not security-relevant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService (sub_1C0001464)",
+      "similarity": 0.9886,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-usage reporting wrapper that maps an id to a sub-id then calls the telemetry routine wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C000137C). Refactored to pass a global context instead of an arg pointer. Control-flow (id switch) unchanged. Not security-relevant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "FppSetEndOfFileInfo (sub_1C00412C4) (FileEndOfFileInformation handler), FppSetAllocationInfo (sub_1C0040F74) (FileAllocationInformation handler), and inline FilePositionInformation in FppCommonSetInformation (sub_1C003E3A4)",
+      "entry_point": "NtSetInformationFile / ZwSetInformationFile -> IRP_MJ_SET_INFORMATION (FileEndOfFileInformation=0x14, FileAllocationInformation=0x13, FilePositionInformation=0x0e) on a handle to a file on an exFAT volume",
+      "call_chain": [
+        "NtSetInformationFile (user mode, FileHandle to exFAT file opened with WRITE access)",
+        "I/O Manager builds IRP_MJ_SET_INFORMATION",
+        "exfat!FsdSetInformation dispatch wrappers (FppFsdSetInformation (sub_1C003DF50) / FppFspDispatch (sub_1C0048270))",
+        "exfat!FppCommonSetInformation (sub_1C003E3A4) (SET_INFORMATION dispatcher, switches on FILE_INFORMATION_CLASS)",
+        "case 0x14 -> exfat!FppSetEndOfFileInfo (sub_1C00412C4) (EOF) / case 0x13 -> exfat!FppSetAllocationInfo (sub_1C0040F74) (Allocation) / case 0x0e inline (Position)",
+        "exfat!Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) (feature-flag gate on global Feature_1337404728__private_featureState) - resolves to not-enabled on the affected systems",
+        "FCB metadata corrupted: FCB+0x20 FileSize / FCB+0x28 / FCB+0x110 = attacker bit-63-set value (FppSetEndOfFileInfo (sub_1C00412C4) @0x1c004154f)"
+      ],
+      "vulnerability_class": "Improper input validation (CWE-20) - the sign/range check on a 64-bit file size/offset is conditioned on a velocity/feature-staging flag in the unpatched build and does not run when the feature is not enabled",
+      "description": "In the unpatched exfat.sys, the validation that rejects a negative (bit-63-set) 64-bit value for FileEndOfFileInformation, FileAllocationInformation, and FilePositionInformation is wrapped in a condition that first calls Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)(). Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) reads the global feature dword Feature_1337404728__private_featureState and tests a feature bit (bit4 -> bit0, else queries feature index 3 via Feature_1337404728__private_IsEnabledFallback (sub_1C000A684)). This is a Windows velocity/feature-staging gate; that the patched build retires the whole Feature_1337404728 feature and makes the check permanent indicates it resolved to not-enabled on the affected systems. The checks are written as 'Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() && value < 0' (EOF/Allocation) and '!Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() || value >= 0' (Position). Due to short-circuit evaluation, when the flag is FALSE the value<0 test is never performed, so a value with bit 63 set passes validation. The upstream 'wraps below newSize' overflow guard does NOT catch a value of 0xFFFFFFFFFFFFFFFF because validDataLen+1+(-1) == validDataLen which is not less than -1 (signed). The value is then stored into the FCB (FCB+0x20 FileSize, and conditionally FCB+0x28, FCB+0x110) and fed to CcSetFileSizes. The patch removes the Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() call and makes 'if (value < 0) return STATUS_INVALID_PARAMETER' unconditional in all three handlers. Onward memory-corruption from the accepted value is not traced in this diff.",
+      "trigger_conditions": "(1) Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() resolves to not-enabled (the bypass condition; indicated by the patch retiring the feature). (2) A user with a handle to a file on an exFAT volume (opened with FILE_WRITE_DATA / FILE_WRITE_ATTRIBUTES / GENERIC_WRITE) calls NtSetInformationFile with FileInformationClass = FileEndOfFileInformation (0x14) [or FileAllocationInformation 0x13, or FilePositionInformation 0x0e] and a FILE_END_OF_FILE_INFORMATION whose EndOfFile.QuadPart has bit 63 set, e.g. 0xFFFFFFFFFFFFFFFF or 0x8000000000000000. (3) For the EOF/Allocation paths the file must not be mapped by another process at the time (MmCanFileBeTruncated must permit it) so the truncation/extend proceeds. The simplest reliable trigger value is EndOfFile = 0xFFFFFFFFFFFFFFFF via FileEndOfFileInformation.",
+      "primitive": "Injection of an attacker-controlled, unchecked negative (bit-63-set) 64-bit value into kernel file-cache metadata: FCB FileSize (and conditionally AllocationSize/ValidDataLength) passed to CcSetFileSizes for the EOF/Allocation classes, or FileObject->CurrentByteOffset for the position class. This is the demonstrable, reachable primitive. Progression to memory corruption or privilege escalation would depend on downstream consumers of these fields and is not demonstrated by this diff.",
+      "evidence": "UNPATCHED FppSetEndOfFileInfo (sub_1C00412C4) (FileEndOfFileInformation) - pseudo-C:\n    int64_t rdi_1 = *(Irp->AssociatedIrp.SystemBuffer);   // attacker EndOfFile\n    ...\n    if (r8_2 < rdi_1 || r8_2 > maxFileSize)               // overflow guard (bypassed for -1)\n        rdi = STATUS_DISK_FULL;\n    else if (!Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() || rdi_1 >= 0)              // <-- FLAW: flag OFF short-circuits the sign check\n    {\n        ...\n        *(arg5 + 0x20) = rdi_1;                           // FCB->FileSize = 0xFFFFFFFFFFFFFFFF\n        if (*(arg5 + 0x28) > rdi_1) *(arg5 + 0x28) = rdi_1;\n        if (*(arg5 + 0x110) > rdi_1) *(arg5 + 0x110) = rdi_1;\n        CcSetFileSizes(arg3, &arg5[0xc]);\n        ...\n    }\n    else\n        rdi = STATUS_INVALID_PARAMETER;                   // only reached when flag is ON\n\nPATCHED: 'else if (rdi_1 >= 0)' - Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0)() removed entirely.",
+      "assembly": "FppSetEndOfFileInfo (sub_1C00412C4) (unpatched, FileEndOfFileInformation handler) - full relevant section:\n  0x1c0041307: mov rcx, qword [rdx+0x18]        ; rcx = Irp->AssociatedIrp.SystemBuffer\n  0x1c0041333: mov rdi, qword [rcx]             ; rdi = EndOfFile.QuadPart (ATTACKER CONTROLLED)\n  0x1c004133d: inc r8 ; add r8, rdi ; cmp r8, rdi ; jl 0x1c0041602   ; overflow guard (bypassed by -1)\n  0x1c0041366: cmp r8, rdx ; jg 0x1c0041602                          ; max-size guard (bypassed)\n  0x1c004136f: call Feature_1337404728__private_IsEnabledDeviceUsage                 ; <<<< FEATURE-FLAG GATE (Feature_1337404728__private_featureState)\n  0x1c0041374: test eax, eax\n  0x1c0041376: jz 0x1c0041387                   ; flag==0 (not-enabled) -> SKIP sign check, go process\n  0x1c0041378: test rdi, rdi                    ; (only reached when flag!=0)\n  0x1c004137b: jns 0x1c0041387                  ; proceed only if size>=0\n  0x1c004137d: mov edi, 0xc000000d              ; STATUS_INVALID_PARAMETER\n  ...\n  0x1c004154f: mov qword [rbx+0x20], rdi        ; <<<< FCB->FileSize = attacker value (unconditional)\n  0x1c0041553: cmp rcx, rdi ; jle ...           ; AllocationSize only lowered if old value > rdi\n  0x1c0041558: mov qword [rbx+0x28], rdi        ; FCB+0x28 AllocationSize\n  0x1c004155c: cmp r8, rdi ; jle ...            ; ValidDataLength only lowered if old value > rdi\n  0x1c0041561: mov qword [rbx+0x110], rdi       ; FCB+0x110 ValidDataLength\n  0x1c0041568: call CcSetFileSizes\n\nFeature-gate Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) (unpatched):\n  0x1c000a6aa: mov eax, cs:Feature_1337404728__private_featureState  ; global feature dword\n  0x1c000a6b4: test al, 0x10                     ; bit4 set (cached value present)?\n  0x1c000a6b6: jz 0x1c000a6bd                    ; not cached -> query feature index 3 (Feature_1337404728__private_IsEnabledFallback (sub_1C000A684))\n  0x1c000a6b8: and eax, 0x1                       ; cached -> return bit0\n  (resolves to not-enabled on the affected systems; the entire Feature_1337404728 feature is absent from the patched binary)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "exfat!FppSetEndOfFileInfo (sub_1C00412C4) (FileEndOfFileInformation handler)",
+            "address": "0x1c00412c4",
+            "why": "Entry to the EOF handler. rcx=Context, rdx=IRP. Step to 0x1c0041333 where rdi is loaded from Irp->AssociatedIrp.SystemBuffer (the attacker EndOfFile). Confirm rdi holds your injected value (e.g. 0xFFFFFFFFFFFFFFFF)."
+          },
+          {
+            "symbol": "exfat!Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) (feature gate)",
+            "address": "0x1c000a6a0",
+            "why": "Confirms the bypass condition. Inspect return value in eax at 0x1c000a6cc; when the feature is not-enabled eax==0, so the caller takes the jz at 0x1c0041376 and skips the sign check. Toggling the Feature_1337404728__private_featureState bits changes whether the check engages (in the unpatched build)."
+          },
+          {
+            "symbol": "exfat!FppSetEndOfFileInfo (sub_1C00412C4) corrupt-write site",
+            "address": "0x1c004154f",
+            "why": "mov qword [rbx+0x20], rdi - writes the corrupted size into FCB->FileSize. rbx = FCB. If you reach here with rdi having bit63 set, the bug has fired. Also watch 0x1c0041558 ([rbx+0x28]) and 0x1c0041561 ([rbx+0x110])."
+          },
+          {
+            "symbol": "exfat!FppCommonSetInformation (sub_1C003E3A4) (dispatcher, FilePositionInformation case 0xe)",
+            "address": "0x1c003e7a8",
+            "why": "Inline FilePositionInformation handler. The unpatched path calls Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) then conditionally sets FileObject->CurrentByteOffset to a negative value; inspect rdx (the supplied position) and the FileObject."
+          }
+        ],
+        "watch": [
+          "rdi at 0x1c0041333 = attacker EndOfFile value (target: 0xFFFFFFFFFFFFFFFF)",
+          "eax return of Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) (0 = bypass active, the vulnerable default)",
+          "Feature_1337404728__private_featureState the feature dword (its bit4/bit0 state controls the gate)",
+          "[rbx+0x20] FCB->FileSize after 0x1c004154f (should read back the huge value)",
+          "rbx = FCB pointer (the metadata being corrupted)"
+        ],
+        "key_offsets": [
+          "0x1c0041333 'mov rdi, qword [rcx]' - load attacker size",
+          "0x1c004136f 'call Feature_1337404728__private_IsEnabledDeviceUsage' - the feature gate that the patch removes",
+          "0x1c0041376 'je 0x1c0041387' - bypass jump taken when flag OFF",
+          "0x1c0041378 'test rdi, rdi' / 0x1c004137b 'jns' - sign check (UNPATCHED only effective when flag ON; PATCHED makes it unconditional)",
+          "0x1c004154f 'mov [rbx+0x20], rdi' - FCB FileSize corruption"
+        ],
+        "trigger_setup": "From a user-mode process: (1) Create/open a file on an exFAT-formatted volume with GENERIC_WRITE (e.g. CreateFileW on \\\\.\\X:\\poc.txt with GENERIC_WRITE or FILE_WRITE_DATA|FILE_WRITE_ATTRIBUTES). (2) Build a FILE_END_OF_FILE_INFORMATION with EndOfFile.QuadPart = 0xFFFFFFFFFFFFFFFF (any value with bit 63 set). (3) Call NtSetInformationFile(hFile, &iosb, &eoi, sizeof(eoi), FileEndOfFileInformation) // class 20=0x14. On an unpatched system with the feature not-enabled, the call succeeds (no STATUS_INVALID_PARAMETER) and the FCB size fields are set to the value; on the patched binary the same call returns STATUS_INVALID_PARAMETER. (4) Subsequent WriteFile/ReadFile or close exercises the cache with the poisoned size; whether this yields corruption is not established by this diff. Equivalent triggers: FileAllocationInformation (0x13) with AllocationSize bit63 set, or FilePositionInformation (0x0e) with CurrentByteOffset bit63 set followed by a read/write.",
+        "expected_observation": "At 0x1c004136f->0x1c0041376 the jz is taken (feature not-enabled). Control reaches 0x1c004154f and the FCB->FileSize ([rbx+0x20]) becomes 0xFFFFFFFFFFFFFFFF; CcSetFileSizes is then called with this value. On the PATCHED binary (relocated handler at 0x1C00412AC) the same input is rejected with STATUS_INVALID_PARAMETER (0xC000000D) and the FCB size fields are not written. The directly observable difference is the return status and whether the FCB is modified; any subsequent crash/corruption depends on downstream consumption of the poisoned size and is not established here.",
+        "notes": "The bypass requires the velocity feature gate to resolve to not-enabled; the patch retires the whole Feature_1337404728 feature (absent from the patched binary) and makes the negative-value rejection unconditional, indicating that was the effective state pre-fix. The two telemetry functions (wil_details_FeatureReporting_ReportUsageToService (sub_1C0001464)/wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C000137C)) and the small helpers (Feature_427089208__private_IsEnabledFallback (sub_1C0001EA0)/wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C000196C)/wil_details_IsEnabledFallback (sub_1C00018D8)) were refactored to use global context pointers but are not security-relevant. FCB offsets written by the corruption site (verified in the disassembly): +0x20 FileSize (0x1c004154f), +0x28 AllocationSize (0x1c0041558), +0x110 ValidDataLength (0x1c0041561). SystemBuffer at IRP+0x18 (AssociatedIrp.SystemBuffer)."
+      }
+    }
+  ],
+  "summary": "The patch fixes a missing-input-validation flaw (CWE-20) in Windows' exFAT driver (exfat.sys) IRP_MJ_SET_INFORMATION path. In the unpatched build, the rejection of negative (bit-63-set) values for FileEndOfFileInformation, FileAllocationInformation, and FilePositionInformation is gated behind a velocity/feature-staging flag check (Feature_1337404728__private_IsEnabledDeviceUsage (sub_1C000A6A0) reading global Feature_1337404728__private_featureState). When the feature resolves to not-enabled, short-circuit evaluation skips the sign test, so a value such as EndOfFile=0xFFFFFFFFFFFFFFFF passes validation and is written into the FCB FileSize field (and conditionally AllocationSize/ValidDataLength at FCB+0x20/+0x28/+0x110, verified at 0x1c004154f/0x1c0041558/0x1c0041561) and passed to CcSetFileSizes; the position class stores it into FileObject->CurrentByteOffset. This places an attacker-controlled, unchecked negative/oversized value into kernel file-cache metadata. The patched build removes the feature-gate call (the whole Feature_1337404728 feature is absent from the patched binary) so the negative check is always applied and the same input returns STATUS_INVALID_PARAMETER. Reachable from user mode with only a writable handle to a file on an exFAT volume and a single NtSetInformationFile call. The onward memory-corruption / privilege-escalation impact is plausible but is not demonstrated by this diff; severity is rated Medium on the demonstrable, reachable primitive."
+}

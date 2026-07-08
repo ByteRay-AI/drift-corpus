@@ -1,0 +1,168 @@
+{
+  "binaries": {
+    "title": "mountmgr.sys - ZwClose called on a file handle while the per-device-extension mutex is held (CWE-667 improper locking), fixed",
+    "id_unpatched": "mountmgr_unpatched.sys",
+    "id_patched": "mountmgr_patched.sys",
+    "overall_similarity": 0.9797,
+    "matched": 155,
+    "changed": 9,
+    "identical": 146,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "OpenRemoteDatabase (unpatched 0x1C000D48C, patched 0x1C000B734)",
+      "similarity": 0.8505,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched ZwClose(FileHandle) at 0x1C001151F is replaced in the patched build by a call to CloseFileHandleOutsideExtensionMutexLock (patched 0x1C000B9B4, context passed in r13)",
+        "At that site the device-extension mutex (context+0x38) is still held; the wrapper releases it before ZwClose and re-acquires it after"
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched build ZwClose(FileHandle) at 0x1C001151F executes while the device-extension mutex at context+0x38 is held (the same mutex is released later on other paths via KeReleaseMutex at 0x1C0011547). The patched build routes the close through CloseFileHandleOutsideExtensionMutexLock(context, handle), which releases context+0x38 before ZwClose and re-acquires it afterward.",
+      "assembly_diff": "UNPATCHED 0x1C001151F: call cs:__imp_ZwClose            ; mutex context+0x38 held\nPATCHED  0x1C000B9B1: mov rcx, r13                        ; r13 = device extension\nPATCHED  0x1C000B9B4: call CloseFileHandleOutsideExtensionMutexLock"
+    },
+    {
+      "name": "QueryVolumeName (unpatched 0x1C000D6F4, patched 0x1C000BB10)",
+      "similarity": 0.9186,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched ZwClose at 0x1C000D8C7 is replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "Single ZwClose call site (unpatched 0x1C000D8C7) routed through the mutex-aware close wrapper in the patched build. Remaining differences are register/variable renaming and WPP trace-id renumbering (build noise).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrVolumeMountPointChanged (unpatched 0x1C0017620, patched 0x1C0017534)",
+      "similarity": 0.9056,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched ZwClose at 0x1C0017CBD is replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "One ZwClose call site (unpatched 0x1C0017CBD) routed through the mutex-aware close wrapper in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ReconcileThisDatabaseWithMasterWorker (unpatched 0x1C000D960, patched 0x1C000C1A0)",
+      "similarity": 0.9579,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Five ZwClose call sites (unpatched 0x1C000DE1A, 0x1C000E096, 0x1C000E0AB, 0x1C0011C41, 0x1C0012700) are each replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the largest of the changed functions. It closes several file handles on cleanup and error paths; each ZwClose is routed through the mutex-aware wrapper in the patched build. Neighbouring helper calls differ only by address because those helpers were relocated between builds (identical bodies).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrVolumeMountPointCreated (unpatched 0x1C0017CE8, patched 0x1C0017BE4)",
+      "similarity": 0.9818,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Six ZwClose call sites (unpatched 0x1C001819C, 0x1C0018243, 0x1C00182D6, 0x1C00183BC, 0x1C0018433, 0x1C001849E) are each replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "Mount-point-created notification handler. Six ZwClose call sites on cleanup and error paths are routed through the mutex-aware wrapper in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrValidateBackPointer (unpatched 0x1C0016E94, patched 0x1C0016DB4)",
+      "similarity": 0.9913,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Three ZwClose call sites (unpatched 0x1C00170C9, 0x1C001713C, 0x1C00171D0) are each replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build",
+        "At 0x1C00170C9 and 0x1C001713C the device-extension context is passed (mutex held); at 0x1C00171D0 the wrapper is called with a null context because the mutex was already released at 0x1C001717F for the preceding ZwFsControlFile"
+      ],
+      "security_relevant": true,
+      "security_notes": "The close at 0x1C00171D0 runs after KeReleaseMutex (0x1C001717F) and before the re-acquire at 0x1C00171ED, so the mutex is not held there; the patched build still routes it through the wrapper but passes a null context, which makes it a plain ZwClose with no mutex operation. The security-relevant closes here are the two at 0x1C00170C9 and 0x1C001713C, where the mutex is held.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrVolumeMountPointDeleted (unpatched 0x1C0018804, patched 0x1C00186F0)",
+      "similarity": 0.9502,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Six ZwClose call sites (unpatched 0x1C0018C39, 0x1C0018CE6, 0x1C0018DAB, 0x1C0018E13, 0x1C0018E8B, 0x1C0019038) are each replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "Mount-point-deleted notification handler. Six ZwClose call sites are routed through the mutex-aware wrapper in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnlineMountedVolumes (unpatched 0x1C00191C0, patched 0x1C0019140)",
+      "similarity": 0.9916,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Three ZwClose call sites (unpatched 0x1C00194B9, 0x1C0019525, 0x1C0019782) are each replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "Three ZwClose call sites routed through the mutex-aware wrapper in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ChangeRemoteDatabaseUniqueId (unpatched 0x1C0012990, patched 0x1C00128B0)",
+      "similarity": 0.9923,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched ZwClose at 0x1C0012BCA is replaced by a call to CloseFileHandleOutsideExtensionMutexLock in the patched build, with the device-extension context taken from *(context+0x98)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Single ZwClose call site (unpatched 0x1C0012BCA) routed through the mutex-aware wrapper. The context argument is *(context+0x98), the device-extension structure that carries the mutex at offset 0x38.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "OpenRemoteDatabase, QueryVolumeName, MountMgrVolumeMountPointChanged, ReconcileThisDatabaseWithMasterWorker, MountMgrVolumeMountPointCreated, MountMgrValidateBackPointer, MountMgrVolumeMountPointDeleted, OnlineMountedVolumes, ChangeRemoteDatabaseUniqueId",
+      "entry_point": "Mount-manager device-extension processing reachable through volume mount-point notification/IOCTL handling and volume database reconciliation; these functions acquire the per-device-extension mutex (KMUTANT at device_extension+0x38) and close file handles while holding it.",
+      "call_chain": [
+        "Mount-manager volume/mount-point processing acquires the device-extension mutex at device_extension+0x38 via KeWaitForSingleObject",
+        "The processing function opens a file handle (mount-point database or reparse target) and later closes it with ZwClose while the mutex is still held",
+        "ZwClose performs synchronous file-object teardown (IRP_MJ_CLEANUP / IRP_MJ_CLOSE dispatch) with the mutex held"
+      ],
+      "vulnerability_class": "Improper locking: file-handle close performed while a driver-owned mutex is held (CWE-667)",
+      "description": "In the unpatched mountmgr.sys, several volume/mount-point processing functions call ZwClose() to close a file handle while still holding the per-device-extension mutex (a KMUTANT at device_extension+0x38, acquired via KeWaitForSingleObject and released via KeReleaseMutex). ZwClose performs synchronous file-object teardown that dispatches IRP_MJ_CLEANUP/IRP_MJ_CLOSE through the I/O manager. Holding a lock across that dispatch is a locking-correctness defect: any file-system or filter callback invoked during teardown that tries to acquire the same mutex would block, and the code path is not written to tolerate re-entrancy on the held lock. The patched build introduces a dedicated helper, CloseFileHandleOutsideExtensionMutexLock (patched 0x1C000A008), and routes every affected ZwClose through it. When a non-null device-extension context is supplied the helper releases device_extension+0x38 before ZwClose and re-acquires it afterward; when a null context is supplied it degrades to a plain ZwClose (used at sites where the mutex was already released). Across the two builds ZwClose call sites drop from 30 to 4, with 27 sites now routed through the wrapper (roughly 19 of them pass a non-null context, i.e. the mutex was actually held at those closes).",
+      "trigger_conditions": "The affected functions run during normal mount-manager activity (volume mount-point create/delete notifications, volume database reconciliation, volume onlining). Reaching a problematic close requires the mount manager to open and then close a file handle while the device-extension mutex is held, which happens during that routine processing. A concrete adverse outcome additionally requires a file-system or filter callback on the close path that attempts to acquire the same mount-manager mutex; that condition is not demonstrable from these binaries.",
+      "primitive": "At most a local denial of service (potential lock contention / hang) if a close-path callback attempts to acquire the same device-extension mutex. No memory-corruption, information-disclosure, or privilege-escalation primitive is demonstrable from the binaries. The direction of the change is confirmed: the patched build is the stricter one (it moves the close out from under the held mutex).",
+      "evidence": "New wrapper CloseFileHandleOutsideExtensionMutexLock (patched 0x1C000A008), real disassembly:\n00000001C000A008  mov     [rsp+arg_0], rbx\n00000001C000A00D  mov     [rsp+arg_8], rsi\n00000001C000A012  push    rdi\n00000001C000A013  sub     rsp, 30h\n00000001C000A017  mov     rsi, rdx\n00000001C000A01A  mov     rbx, rcx\n00000001C000A01D  test    rcx, rcx\n00000001C000A020  jz      short loc_1C000A039\n00000001C000A022  lea     rdi, [rcx+38h]\n00000001C000A026  xor     edx, edx\n00000001C000A028  mov     rcx, rdi\n00000001C000A02B  call    cs:__imp_KeReleaseMutex\n00000001C000A037  jmp     short loc_1C000A03E\n00000001C000A039  mov     edi, 38h\n00000001C000A03E  mov     rcx, rsi\n00000001C000A041  call    cs:__imp_ZwClose\n00000001C000A04D  test    rbx, rbx\n00000001C000A050  jz      short loc_1C000A06F\n00000001C000A052  and     [rsp+38h+var_18], 0\n00000001C000A058  xor     r9d, r9d\n00000001C000A05B  xor     r8d, r8d\n00000001C000A05E  xor     edx, edx\n00000001C000A060  mov     rcx, rdi\n00000001C000A063  call    cs:__imp_KeWaitForSingleObject\n00000001C000A06F  mov     rbx, [rsp+38h+arg_0]\n00000001C000A074  mov     rsi, [rsp+38h+arg_8]\n00000001C000A079  add     rsp, 30h\n00000001C000A07D  pop     rdi\n00000001C000A07E  retn\n\nUnpatched vulnerable close in OpenRemoteDatabase, real disassembly:\n00000001C001150F  mov     rcx, [rbp+57h+FileHandle]\n00000001C0011513  mov     [r15], dil\n00000001C0011516  test    rcx, rcx\n00000001C0011519  jz      loc_1C000D69D\n00000001C001151F  call    cs:__imp_ZwClose            ; mutex context+0x38 still held\n00000001C0011526  nop     dword ptr [rax+rax+00h]\n00000001C001152B  mov     [rbp+57h+FileHandle], r12\n\nPatched replacement in OpenRemoteDatabase, real disassembly:\n00000001C000B9A5  mov     rdx, [rbp+57h+FileHandle]\n00000001C000B9A9  mov     [r15], dil\n00000001C000B9AC  test    rdx, rdx\n00000001C000B9AF  jz      short loc_1C000B9BE\n00000001C000B9B1  mov     rcx, r13                     ; r13 = device extension\n00000001C000B9B4  call    CloseFileHandleOutsideExtensionMutexLock\n00000001C000B9B9  and     [rbp+57h+FileHandle], 0",
+      "assembly": "See the 'evidence' field for the real disassembly of the wrapper (patched 0x1C000A008) and of the unpatched close site at 0x1C001151F together with its patched replacement.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mountmgr_unpatched!OpenRemoteDatabase",
+            "address": "0x1C001151F",
+            "why": "ZwClose in OpenRemoteDatabase executed while the device-extension mutex at context+0x38 is held. rcx holds the file handle being closed."
+          },
+          {
+            "symbol": "mountmgr_patched!CloseFileHandleOutsideExtensionMutexLock",
+            "address": "0x1C000A008",
+            "why": "The added helper. rcx is the device-extension context (or null); rdx is the handle. It releases context+0x38 (0x1C000A02B), closes (0x1C000A041), then re-acquires (0x1C000A063)."
+          }
+        ],
+        "watch": [
+          "rcx / rdx at CloseFileHandleOutsideExtensionMutexLock entry - context pointer and handle",
+          "device_extension+0x38 - the KMUTANT whose ownership is released before ZwClose and re-acquired after"
+        ],
+        "key_offsets": [
+          "0x1C001151F: ZwClose in OpenRemoteDatabase (unpatched) while mutex held",
+          "0x1C000A008: CloseFileHandleOutsideExtensionMutexLock (patched) - the mutex-aware close wrapper",
+          "0x1C000A02B: KeReleaseMutex(context+0x38) inside the wrapper (patched)",
+          "0x1C000A041: ZwClose inside the wrapper (patched)",
+          "0x1C000A063: KeWaitForSingleObject(context+0x38) inside the wrapper (patched)",
+          "device_extension+0x38: the KMUTANT mutex released/re-acquired around the close",
+          "device_extension+0x98: pointer to the device extension used as the wrapper context in ChangeRemoteDatabaseUniqueId"
+        ],
+        "notes": "The mutex at device_extension+0x38 is a KMUTANT (released with KeReleaseMutex, waited on with KeWaitForSingleObject; typed struct _KMUTANT in the decompilation). The patched build closes handles outside the held mutex. The only functional change between the two builds is this ZwClose-to-wrapper routing across nine functions (27 call sites); remaining differences are register/variable renaming and a uniform +2 shift of WPP trace-message ids caused by new trace messages, which are build artifacts, not security changes."
+      }
+    }
+  ],
+  "summary": "The patch fixes an improper-locking defect (CWE-667) in the Windows Mount Manager driver (mountmgr.sys). In the unpatched build, several volume/mount-point processing functions call ZwClose() to close a file handle while still holding the per-device-extension mutex (a KMUTANT at device_extension+0x38). ZwClose performs synchronous file-object teardown (IRP_MJ_CLEANUP/IRP_MJ_CLOSE dispatch), so holding a driver lock across it is a locking-correctness defect. The patch adds a helper, CloseFileHandleOutsideExtensionMutexLock (patched 0x1C000A008), that releases device_extension+0x38 before ZwClose and re-acquires it afterward (and degrades to a plain ZwClose when passed a null context), and routes the affected closes through it. Total ZwClose call sites drop from 30 to 4, with 27 now going through the wrapper across nine functions: OpenRemoteDatabase, QueryVolumeName, MountMgrVolumeMountPointChanged, ReconcileThisDatabaseWithMasterWorker, MountMgrVolumeMountPointCreated, MountMgrValidateBackPointer, MountMgrVolumeMountPointDeleted, OnlineMountedVolumes, ChangeRemoteDatabaseUniqueId. The demonstrable impact from the binaries is at most a local denial of service (lock contention/hang) and depends on a close-path callback attempting to acquire the same mutex, which is not shown by these binaries; no memory-corruption or privilege-escalation primitive is demonstrable. Severity is assessed as low. An independent diff of the two builds found no other functional change (remaining differences are register/variable renaming and a uniform WPP trace-id renumbering).",
+  "audit_verdict": "CORRECTED and DOWNGRADED. CONFIRMED: the unpatched build calls ZwClose while the device-extension mutex (KMUTANT at device_extension+0x38) is held, and the patched build moves the close outside the lock via the new helper CloseFileHandleOutsideExtensionMutexLock at 0x1C000A008; direction is correct (patched is stricter); 27 call sites across nine functions; verified against both builds. CORRECTED: the nine functions were given placeholder sub_ names; their real names and both-build addresses are now listed. The six close sites the earlier text attributed to MountMgrVolumeMountPointChanged actually belong to MountMgrVolumeMountPointCreated (MountMgrVolumeMountPointChanged has a single close at 0x1C0017CBD). The reconstructed lowercase assembly was replaced with real disassembly copied from the binaries. The claimed 'race window' at 0x1C00171D0 is not a vulnerable site: that close runs after KeReleaseMutex (0x1C001717F) with the mutex not held, and the patch routes it through the wrapper with a null context. DOWNGRADED from high to low: the fabricated exploit chain (attacker-installed minifilter hooking IRP_MJ_CLEANUP, use-after-free/double-free, kernel code execution, pool spray, specific bugcheck codes, token theft) is removed as unprovable from the binaries; KMUTANT is recursive, so a same-thread re-entry would not self-deadlock, and no callback path re-entering the mutex is demonstrable. Final classification: CWE-667 improper locking, severity low, impact bounded at a potential local denial of service."
+}

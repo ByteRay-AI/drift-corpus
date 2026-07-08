@@ -1,0 +1,140 @@
+{
+  "binaries": {
+    "id_unpatched": "agrsm64_unpatched.sys",
+    "id_patched": "agrsm64_patched.sys",
+    "overall_similarity": 0.0026,
+    "matched": 7,
+    "changed": 5,
+    "identical": 2,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "GsDriverEntry (sub_12e334)",
+      "similarity": 0.2452,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched: GsDriverEntry initializes the security cookie, then calls DriverEntry (sub_12e008) which fully initializes the driver (creates the serial-class device, sets up the MajorFunction dispatch table with IRP handlers including IRP_MJ_DEVICE_CONTROL = SerialIoControl at 0x1297f8)",
+        "Patched: GsDriverEntry calls __security_init_cookie() and calls DriverEntry (0x1c0006008), which returns STATUS_NOT_SUPPORTED (0xc0000424) — the driver refuses to load entirely. This is a complete driver kill-switch.",
+        "The entire driver functionality is removed in the patched version: no device creation, no IOCTL handlers, no symlink creation, no hardware interaction"
+      ],
+      "security_relevant": true,
+      "security_notes": "The patch disables the entire driver. The unpatched DriverEntry (sub_12e008) registers the standard serial-framework IOCTL dispatch handler SerialIoControl (sub_1297f8) as MajorFunction[IRP_MJ_DEVICE_CONTROL] (0x12e1f3), creates the control device \\Device\\LSISM_xface (IoCreateDevice at 0x12e2c3: DeviceType=0x1b, DeviceExtensionSize=0, Exclusive=0), and creates its symlink \\DosDevices\\LSISM_xface with IoCreateUnprotectedSymbolicLink (0x12e301). Per-modem devices \\Device\\LSIModem<N> (DeviceExtensionSize=0x12be0, Exclusive=1) are created later in AddNewModem (IoCreateDevice at 0x58a16) with protected symlinks via IoCreateSymbolicLink (0x591cb/0x5925b). No IoCreateDeviceSecure/SDDL is used, so device DACLs are the I/O-manager defaults and are not determinable from the binary; an unprotected symlink governs deletion of the symlink object, not device access.",
+      "assembly_diff": "; --- UNPATCHED GsDriverEntry (0x12e334) ---\nmov     rax, qword [rel 0x10a100]\nmov     r9, 0x2b992ddfa232\ntest    rax, rax\nje      0x12e34f\nlea     r8, [rel 0x10a100]\nmov     rax, 0xfffff78000000320\nmov     rax, qword [rax]\nxor     rax, r8\nmov     r8, 0xffffffffffff\nand     rax, r8\ncmove   rax, r9\nmov     qword [rel 0x10a100], rax\ncmp     rax, r9\njne     0x12e37e\nnot     rax\nmov     qword [rel 0x10a108], rax\njmp     0x12e008              ; call into full DriverEntry (sub_12e008)\n\n; --- PATCHED GsDriverEntry (0x1c0006020) ---\nmov     qword [rsp+0x8], rbx\npush    rdi\nsub     rsp, 0x20\nmov     rbx, rdx\nmov     rdi, rcx\ncall    0x1c0006054           ; __security_init_cookie\nmov     rdx, rbx\nmov     rcx, rdi\ncall    0x1c0006008           ; DriverEntry: mov eax, 0xc0000424 (STATUS_NOT_SUPPORTED); retn\nmov     rbx, qword [rsp+0x30]\nadd     rsp, 0x20\npop     rdi\nretn"
+    },
+    {
+      "name": "CSV92EXIntEnter (sub_843EC)",
+      "similarity": 0.8756,
+      "change_type": "spurious_match",
+      "key_changes": [
+        "Unpatched: interrupt-enter routine that reads device extension fields at +0xa708 and sets values at offsets +0x68 and +0x60 to 0xffff (modem line control registers)",
+        "The diff paired this against a patched stub; there is no corresponding function in the ~7 KB patched image, so this is a fuzzy-match artifact rather than a real code change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__security_check_cookie (sub_E6FB0)",
+      "similarity": 0.9654,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Unpatched: Security cookie validation routine (checks __security_cookie, ROL/ROR check)",
+        "Patched: Same logic but with updated addresses/references due to different binary layout"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_EC8CC",
+      "similarity": 0.4046,
+      "change_type": "spurious_match",
+      "key_changes": [
+        "Unpatched: small stub at 0xEC8CC (no exact symbol at this address)",
+        "The diff paired it with the patched DriverEntry stub that returns STATUS_NOT_SUPPORTED (0xc0000424); a fuzzy-match artifact"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_EF3B0",
+      "similarity": 0.4046,
+      "change_type": "spurious_match",
+      "key_changes": [
+        "Unpatched: small stub at 0xEF3B0 (no exact symbol at this address)",
+        "The diff paired it with the patched __report_gsfailure (__fastfail(2)); a fuzzy-match artifact"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SerialIoControl (sub_1297f8) (IRP_MJ_DEVICE_CONTROL handler)",
+      "entry_point": "DeviceIoControl to \\\\.\\LSIModem<N> device with IOCTL codes in range 0x1b0004-0x1b0090 (FILE_DEVICE_SERIAL_PORT based: IOCTL code = CTL_CODE(FILE_DEVICE_SERIAL_PORT, Function, Method, Access))",
+      "call_chain": [
+        "DeviceIoControl(\\\\.\\LSIModem0, CTL_CODE(0x1b, ...), inputBuffer, inputSize, outputBuffer, outputSize)",
+        "IopXxxControlFile → IoManager dispatches IRP_MJ_DEVICE_CONTROL",
+        "SerialIoControl (sub_1297f8) (IRP_MJ_DEVICE_CONTROL MajorFunction[14] handler)",
+        "Various sub-handlers per IOCTL code (SerialStartOrQueue (sub_12c4b4), ModemLibSynchronizeExecution (sub_68994), SerialStartMask (sub_12c6c0), SerialStartWrite (sub_12cbc0), etc.)"
+      ],
+      "vulnerability_class": "Memory allocation with excessive size value (CWE-789) via IOCTL_SERIAL_SET_QUEUE_SIZE; memory-exhaustion DoS ceiling. The wait-mask (0x1b0044) and handflow (0x1b0064) paths have their standard serial-framework validation present and correct. No permissive-device-ACL (CWE-732) escalation is established: the driver uses no IoCreateDeviceSecure/SDDL, so device DACLs are the I/O-manager defaults and are not determinable from the binary.",
+      "description": "The agrsm64.sys (Agere/LSI Soft Modem) driver registers the standard Microsoft serial-framework routine SerialIoControl (sub_1297f8) as MajorFunction[IRP_MJ_DEVICE_CONTROL] on the driver object, dispatching the standard IOCTL_SERIAL_* codes 0x1b0004 through 0x1b0090. It creates a per-modem device \\Device\\LSIModem<N> (IoCreateDevice at 0x58a16: DeviceType=0x1b /*FILE_DEVICE_SERIAL_PORT*/, DeviceExtensionSize=0x12be0, Exclusive=1; protected symlink via IoCreateSymbolicLink at 0x591cb/0x5925b) and a control device \\Device\\LSISM_xface (IoCreateDevice at 0x12e2c3: DeviceExtensionSize=0, Exclusive=0; symlink \\DosDevices\\LSISM_xface via IoCreateUnprotectedSymbolicLink at 0x12e301). Notable IOCTL paths:\n\n1. IOCTL 0x1b0008 (IOCTL_SERIAL_SET_QUEUE_SIZE): allocates a NonPagedPool buffer whose size is the first DWORD of the user input. The only gate is a grow-only comparison against the current receive-buffer size at device-extension offset 0x140 (allocate only if requested > current). There is no upper bound, so a large request drives a large or failing allocation. The buffer becomes the receive FIFO; the IRP is queued via SerialStartOrQueue (sub_12c4b4) with the read start routine SerialStartRead (sub_12b5b8). The IOCTL input does not control the buffer contents.\n\n2. IOCTL 0x1b0044 (IOCTL_SERIAL_SET_WAIT_MASK): reads 4 bytes and validates (*input & 0xffffe000) == 0, rejecting any bit outside the low 13 SERIAL_EV_* event bits. The accepted mask is stored (via SerialStartMask, sub_12c6c0) and only affects which events satisfy a later IOCTL_SERIAL_WAIT_ON_MASK; it is not an address or register write.\n\n3. IOCTL 0x1b0064 (IOCTL_SERIAL_SET_HANDFLOW): reads the 16-byte SERIAL_HANDFLOW structure and validates each field: ControlHandShake & 0x7FFFFF84 == 0, FlowReplace & 0x7FFFFF20 == 0, rejects the illegal SERIAL_DTR|SERIAL_DTR_HANDSHAKE combination, and range-checks XonLimit and XoffLimit to be non-negative and <= the receive-buffer size at extension +0x140. Passing values are applied under the device spinlock via SerialSetHandFlow. This matches the stock serial.sys validation.\n\nWhether an unprivileged user can open either device is not established by the binary: the driver sets no explicit security descriptor (no IoCreateDeviceSecure/SDDL), so the device DACLs are the I/O-manager defaults. IoCreateUnprotectedSymbolicLink governs deletion/replacement of the \\DosDevices\\LSISM_xface symlink object, not device access, and \\Device\\LSIModem<N> uses a protected symlink (IoCreateSymbolicLink) and is Exclusive=1. The vendor's fix was to completely disable the driver (DriverEntry returns STATUS_NOT_SUPPORTED).",
+      "trigger_conditions": "1. Load the unpatched agrsm64.sys driver (or it loads automatically if modem hardware/driver is present)\n2. Open a handle to \\\\.\\LSIModem0 or \\\\.\\LSISM_xface via CreateFileW (whether an unprivileged caller succeeds depends on the device DACL, which is the I/O-manager default and is not established by the binary; \\Device\\LSIModem<N> is Exclusive=1)\n3. Send crafted IOCTLs via DeviceIoControl:\n   - IOCTL 0x1b0008: Input buffer = 4-byte DWORD specifying allocation size; followed by data to fill the allocated buffer\n   - IOCTL 0x1b0044: Input buffer = 4-byte DWORD with bits 0-12 set to desired value (0-0x1FFF)\n   - IOCTL 0x1b0064: Input buffer = 16-byte structure with carefully crafted field values\n4. The device uses DO_BUFFERED_IO (METHOD_BUFFERED), so input/output are copied to/from SystemBuffer by the IO manager",
+      "primitive": "Memory-exhaustion / allocation-failure DoS via IOCTL 0x1b0008: the caller controls only the NonPagedPool allocation size (not its contents, which are filled by received serial data), and the allocation is sized exactly to the request, so there is no out-of-bounds write on this path. This is the stock serial-framework IOCTL_SERIAL_SET_QUEUE_SIZE behaviour. IOCTL 0x1b0044 and 0x1b0064 apply validated, in-range values and are not corruption primitives. No memory-corruption or privilege-escalation primitive is established by the binary.",
+      "evidence": "; IOCTL 0x1b0008 — attacker-controlled allocation size:\n0x129b1c : uint64_t NumberOfBytes = zx.q(*arg2->AssociatedIrp.MasterIrp)\n0x129b24 : if (NumberOfBytes.d u> rsi->__offset(0x140).d)  ; grow-only vs current receive-buffer size; no upper bound\n0x129b35 : int64_t rax_18 = ExAllocatePoolWithTag(NonPagedPool, NumberOfBytes, 0x4d534741)  ; tag 'AGSM'\n0x129b3b : *(Overlay + 0x20) = rax_18  ; stored in IO stack location scratch\n0x129b44 : STATUS_INSUFFICIENT_RESOURCES (0xc000009a) on allocation failure\n0x12a28a : return SerialStartOrQueue (sub_12c4b4)(rsi, arg2, ...)  ; buffer sized to request; contents filled by received serial data, not the IOCTL\n\n; IOCTL 0x1b0044 — minimal validation of input value:\n0x129bcd : if (*(Overlay + 0x10) u< 4)  ; need 4 bytes input\n0x129bd7 : if ((*arg2->AssociatedIrp.MasterIrp & 0xffffe000) != 0)  ; reject any bit outside low 13\n0x129bf1 : rax = SerialStartMask (sub_12c6c0)  ; queued as the set-wait-mask start routine\n\n; Device creation — no security descriptor:\n0x58a16 : NTSTATUS result_2 = IoCreateDevice(arg1, 0x12be0, &var_2a8, 0x1b, 0, 1, arg3)\n0x58dd0 : rbp_1->Flags |= DO_BUFFERED_IO\n\n; IoCreateUnprotectedSymbolicLink is imported (address 0x131410)",
+      "assembly": "; IOCTL dispatch handler SerialIoControl (sub_1297f8) (IRP_MJ_DEVICE_CONTROL) — key vulnerable paths\n; Address 0x1297f8 in agrsm64_unpatched.sys\n;\n; IOCTL 0x1b0008 path (attacker-controlled allocation):\n0x129b11: cmp     dword [rbx+0x10], 8          ; InputBufferLength u< 8\n0x129b6d: mov     edi, 0xC0000023              ; STATUS_BUFFER_TOO_SMALL\n0x129b1c: mov     eax, [rax]                   ; NumberOfBytes = *inputBuffer (user controlled!)\n0x129b1e: cmp     eax, [rsi+0x140]             ; grow-only vs current receive-buffer size\n0x129b35: call    ExAllocatePoolWithTag        ; alloc with attacker size\n0x129b3b: mov     [rbx+0x20], rax              ; store pointer in IO stack location scratch\n0x129b3f: cmp     rax, rdi                     ; alloc-failure check\n0x129b5c: lea     rax, SerialStartRead         ; start routine (sub_12b5b8)\n0x12a28a: call    SerialStartOrQueue (sub_12c4b4)                   ; async processing\n;\n; IOCTL 0x1b0044 path (minimal input validation):\n0x129bcd: cmp     dword [rbx+0x10], 4\n0x129bd7: test    dword ptr [rax], 0xFFFFE000   ; only low 13 bits allowed\n0x129bf1: lea     rax, SerialStartMask         ; set-wait-mask start routine (sub_12c6c0)\n;\n; IOCTL 0x1b0064 path (complex validation):\n0x129d94: mov     eax, [r14]                   ; read ControlHandShake (r14 = SystemBuffer)\n0x129d97: test    eax, 0x7FFFFF84              ; reserved ControlHandShake bits\n0x129dd2: cmp     [r14+8], eax                ; XonLimit <= receive-buffer size\n0x129e01: ; acquires spinlock and proceeds to modify device state",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "agrsm64_unpatched!SerialIoControl",
+            "address": "0x1297f8",
+            "why": "This is the IRP_MJ_DEVICE_CONTROL handler. Break here to inspect the IOCTL code (rcx+0xb8 → DeviceObject, then IRP stack location Parameters.DeviceIoControl.IoControlCode at offset +0x18) and input buffer (SystemBuffer at IRP->AssociatedIrp.SystemBuffer). arg1=DeviceObject (rcx), arg2=IRP (rdx)."
+          },
+          {
+            "symbol": "agrsm64_unpatched!SerialIoControl+0x33d",
+            "address": "0x129b35",
+            "why": "IOCTL 0x1b0008 path — the ExAllocatePoolWithTag call site. At this point rdx (NumberOfBytes) contains the attacker-controlled allocation size read from *inputBuffer at 0x129b1c. Watch this value to confirm it comes from user input."
+          },
+          {
+            "symbol": "agrsm64_unpatched!AddNewModem",
+            "address": "0x588f0",
+            "why": "Device creation function. Break at 0x58a16 (IoCreateDevice call) to confirm r9d=0x1b (DeviceType), edx=0x12be0 (DeviceExtensionSize) and Exclusive=1. IoCreateDevice has no SecurityDescriptor parameter, and the driver uses no IoCreateDeviceSecure/SDDL, so the device DACL is the I/O-manager default and is not determinable statically."
+          },
+          {
+            "symbol": "agrsm64_unpatched!SerialStartOrQueue",
+            "address": "0x12c4b4",
+            "why": "Async IOCTL completion routine called from multiple IOCTL handlers. This function processes the buffered data and interacts with the modem hardware. Break here to inspect how the attacker-controlled buffer from IOCTL 0x1b0008 is used."
+          }
+        ],
+        "watch": [
+          "At SerialIoControl (sub_1297f8) entry: rdx = IRP pointer; rdx->Tail.Overlay.CurrentStackLocation+0x18 = IOCTL code (should be in range 0x1b0004-0x1b0090)",
+          "At IOCTL 0x1b0008 path: eax at 0x129b1c = attacker-controlled allocation size (first DWORD of SystemBuffer)",
+          "At IoCreateDevice call (0x58a16): r9d = DeviceType (0x1b=FILE_DEVICE_SERIAL_PORT), edx = DeviceExtensionSize (0x12be0), stack Exclusive = 1; IoCreateDevice has no SecurityDescriptor parameter",
+          "Device extension size: 0x12be0 bytes — large structure with many modifiable fields via IOCTLs"
+        ],
+        "key_offsets": [
+          "0x129864: IOCTL code comparison dispatch — cmp rax_2 with IOCTL codes (0x1b0048, 0x1b0004, etc.)",
+          "0x129b35: ExAllocatePoolWithTag with attacker-controlled size for IOCTL 0x1b0008",
+          "0x129bd7: Input validation for IOCTL 0x1b0044 (test dword, 0xFFFFE000)",
+          "0x58a16: IoCreateDevice with no security descriptor",
+          "0x58dd0: DeviceObject->Flags |= DO_BUFFERED_IO",
+          "0x131410: IoCreateUnprotectedSymbolicLink import (IAT entry)"
+        ],
+        "trigger_setup": "1. Ensure the unpatched agrsm64.sys driver is loaded (check with 'driverquery' or look for \\Device\\LSIModem0 in WinObj)\n2. Open device handle: CreateFileW(L\"\\\\\\\\.\\\\LSIModem0\", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL)\n3. Send IOCTL 0x1b0008: DeviceIoControl(h, CTL_CODE(0x1b, 2, METHOD_BUFFERED, FILE_ANY_ACCESS), &sizeDWORD, 4, NULL, 0, &bytesReturned, NULL) where sizeDWORD is a value <= device max FIFO size but large enough to trigger interesting behavior\n4. Follow up with IOCTLs that use the allocated buffer (e.g., 0x1b0044 to write data)\n5. For IOCTL 0x1b0064: DeviceIoControl with a 16-byte input structure where fields are crafted to pass the validation checks at 0x129dc6-0x129dea",
+        "expected_observation": "IOCTL 0x1b0008: a NonPagedPool allocation of the requested size (the receive FIFO). A very large requested size drives memory pressure or an allocation failure returning STATUS_INSUFFICIENT_RESOURCES (0xc000009a); the buffer is sized exactly to the request, so no out-of-bounds write follows from this IOCTL alone. Watch the size argument at agrsm64!SerialIoControl+0x33d. IOCTL 0x1b0064: only validated, in-range SERIAL_HANDFLOW settings are applied; out-of-range limits return STATUS_INVALID_PARAMETER.",
+        "notes": "The IOCTL codes use FILE_DEVICE_SERIAL_PORT (0x1b) as the device type. IOCTL 0x1b0008 = CTL_CODE(0x1b, 2, 0, 0). The device uses METHOD_BUFFERED (DO_BUFFERED_IO), so SystemBuffer is kernel-allocated and contains a copy of the user input — direct user pointer dereference is not the issue here. The only unbounded value on the reviewed paths is the queue-size allocation for IOCTL 0x1b0008; the wait-mask (0x1b0044) and handflow (0x1b0064) inputs are validated. The driver's secondary IOCTL handler InterfaceIoControl (sub_59558) contains an IoIs32bitProcess call (0x5a38e), consistent with WOW64 thunking. The patched build disables the driver wholesale via the DriverEntry kill-switch."
+      }
+    }
+  ],
+  "summary": "The patch completely disables the Agere/LSI Soft Modem driver (agrsm64.sys) by making its DriverEntry return STATUS_NOT_SUPPORTED (0xc0000424), preventing the driver from loading at all. The unpatched driver creates a per-modem device \\Device\\LSIModem<N> (Exclusive=1, protected symlink) and a control device \\Device\\LSISM_xface (Exclusive=0, unprotected symlink), and registers the standard Microsoft serial-framework IOCTL dispatcher SerialIoControl (sub_1297f8) for codes 0x1b0004-0x1b0090. The one notable code-level item is IOCTL 0x1b0008 (IOCTL_SERIAL_SET_QUEUE_SIZE), which allocates a NonPagedPool buffer sized to a user-supplied DWORD with a grow-only gate but no upper bound (CWE-789, memory-exhaustion DoS ceiling); the allocation is sized exactly to the request and its contents are filled by received serial data, not the IOCTL, so no out-of-bounds write follows. IOCTL 0x1b0044 and 0x1b0064 have their standard serial validation present and correct. The device DACLs are the I/O-manager defaults (no IoCreateDeviceSecure/SDDL), so no world-accessible-device or privilege-escalation primitive is established by the binary; the security-relevant change is the wholesale disabling of the driver."
+}

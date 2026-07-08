@@ -1,0 +1,91 @@
+{
+  "binaries": {
+    "title": "mqac.sys (MSMQ Access Control driver) - No security-relevant change (cross-branch rebuild; validation checks inlined from callees)",
+    "id_unpatched": "mqac_unpatched.sys",
+    "id_patched": "mqac_patched.sys",
+    "unpatched_file_version": "10.0.28000.2336",
+    "patched_file_version": "10.0.19041.7052",
+    "overall_similarity": 0.6197,
+    "matched": 517,
+    "changed": 413,
+    "identical": 104,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CMMFAllocator::RestorePackets (0x140011814 unpatched / 0x1C00116D8 patched, free-space bitmap restore)",
+      "similarity": 0.4171,
+      "change_type": "no_security_relevant_change",
+      "key_changes": [
+        "Body differs only because the out-of-line helper CBitmap::FillBits (0x14000428C) was inlined into RestorePackets in the patched build; the capacity comparisons and the 0xA/0xB/0xC trace codes that appear inline in the patched build are the exact contents of CBitmap::FillBits, which the unpatched build calls out-of-line",
+        "CMMFAllocator::FindValidPacket (0x140010D68) and its CRC integrity check (CPacket::CheckPacket 0x1400159D0 -> CPacket::ComputeCRC) were likewise inlined in the patched build",
+        "No bounds check is added: CBitmap::FillBits already rejects start>capacity, count>capacity, and start+count>capacity before any write in the unpatched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched CMMFAllocator::RestorePackets updates the free-space bitmap through the out-of-line helper CBitmap::FillBits (0x14000428C). FillBits reads the bitmap capacity from the first dword of the CBitmap object and refuses the write when the start index, the count, or start+count exceed capacity (logging trace codes 0xA/0xB/0xC and returning without writing). The patched build inlined FillBits, so the same comparisons appear inline in RestorePackets. The check exists in both builds; the patch does not add it. Reachability: RestorePackets is a persistence-recovery path (ACDeviceControl 0x14000B100 -> ACRestorePackets 0x140009250 -> CPoolAllocator::RestorePackets 0x14001199C -> CMMFAllocator::RestorePackets); its indices derive from on-disk allocator geometry and bitmap contents, not a live message body.",
+      "assembly_diff": "Unpatched CBitmap::FillBits (0x14000428C) capacity check that already exists:\n  000000014000428C  test    r8d, r8d          ; count == 0 -> return\n  00000001400042A9  mov     edi, [rcx]        ; edi = bitmap capacity\n  00000001400042B4  cmp     r9d, edi          ; start > capacity ?\n  00000001400042B7  ja      loc_140004421     ;   reject, no write\n  00000001400042BD  cmp     r8d, edi          ; count > capacity ?\n  00000001400042C0  ja      loc_140004421     ;   reject, no write\n  00000001400042DC  cmp     eax, edi          ; start+count > capacity ?\n  00000001400042DE  jbe     short loc_14000430C ; only here does the fill proceed\nPatched RestorePackets (0x1C00116D8) contains the same comparisons and 0xA/0xB/0xC trace codes inline because FillBits was inlined."
+    },
+    {
+      "name": "CPacket::Create (0x14001620C unpatched / 0x1C001768C patched, packet create/dispatch)",
+      "similarity": 0.6242,
+      "change_type": "no_security_relevant_change",
+      "key_changes": [
+        "The transaction/queue-state validation returning 0xC00E0020 (MQ_ERROR_INVALID_PARAMETER) and 0xC00E0006 exists in both builds; in the unpatched build it lives in the out-of-line helper ValidateProperties (0x14001A9F8), which CPacket::Create calls; the patched build inlined ValidateProperties",
+        "The 0xFFFFFFFF packet-buffer sentinel test exists in both builds; in the unpatched build it lives in CQEntry::Buffer (0x14000263C); the patched build inlined it",
+        "No new validation is added; the struct offsets checked (queue+0x58, sendparams+0xC0/0xE0/0x128/0x130/0x140/0x168, msgprops+0x38/0x58/0x11) are identical in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched CPacket::Create validates message/queue state by calling the out-of-line ValidateProperties (0x14001A9F8), which returns 0xC00E0020 and 0xC00E0006 for the same invalid state combinations that appear inline in the patched CPacket::Create. It obtains the packet buffer via CQEntry::Buffer (0x14000263C), whose 0xFFFFFFFF sentinel test and CMMFAllocator::GetAccessibleBuffer call the patched build inlines. Both the validation and the sentinel test are present in both builds; the patch adds neither.",
+      "assembly_diff": "Unpatched ValidateProperties (0x14001A9F8) already returns 0xC00E0020 / 0xC00E0006 for the invalid state combinations. Unpatched CQEntry::Buffer (0x14000263C): if (*(entry+0x10)==0xFFFFFFFF) return null; else return CMMFAllocator::GetAccessibleBuffer(*(entry+0x18)). The patched CPacket::Create (0x1C001768C) contains both, inlined."
+    },
+    {
+      "name": "ACpBuildPacket (0x140013E24 unpatched / 0x1C001663C patched, packet body build/marshalling)",
+      "similarity": 0.3022,
+      "change_type": "no_security_relevant_change",
+      "key_changes": [
+        "The patched-side address 0x1C00181B8 cited earlier is a different function (CPacket::GetProperties), not the patched ACpBuildPacket; the correct patched ACpBuildPacket is 0x1C001663C",
+        "All body differences are inlined helpers with equivalent behavior: ProbeForRead expanded inline as the standard MmUserProbeAddress probe, section-size overflow checks pulled in from CalcSectionSize, SetProvInfoEx, and WOW64 pointer translators",
+        "No new bounds check, length validation, null guard, integer-overflow guard, or error-return path guarding a memory operation is present in the patched build that is absent from the unpatched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "The 0xFFFFFFFF handle-sentinel check earlier attributed to ACpBuildPacket is not in ACpBuildPacket; it is in CQEntry::Buffer (0x14000263C), inlined into the patched CPacket::Create. ACpBuildPacket itself differs only by inlined helpers with equivalent behavior. The status 0xC000009A is STATUS_INSUFFICIENT_RESOURCES, not STATUS_INVALID_DEVICE_REQUEST.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CPacket::CompleteWriter (0x140015D94, IRP completion handler)",
+      "similarity": 0.1472,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-branch restructure of IRP completion and lock release paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "No memory-safety change; structural/branch difference between servicing branches.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CStorage::GetWriteRequest (0x140022B8C)",
+      "similarity": 0.0803,
+      "change_type": "cosmetic",
+      "key_changes": ["Restructured control flow, cross-branch compiler differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CPacket::GetProperties (0x140017000)",
+      "similarity": 0.0791,
+      "change_type": "behavioral",
+      "key_changes": ["Restructured property enumeration; cross-branch difference"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change is demonstrable. The two files are different Windows servicing branches (mqac_unpatched.sys = 10.0.28000.2336, mqac_patched.sys = 10.0.19041.7052) compiled with different toolchains (28000 uses ExAllocatePool2, 19041 uses ExAllocatePoolWithTag) and different inlining, which accounts for the 61.97% similarity and the large number of changed function bodies. The bounds check, state-validation checks, and handle-sentinel check that an earlier body diff appeared to add are present in BOTH builds: in one build they live in out-of-line callees (CBitmap::FillBits at 0x14000428C for the bitmap capacity check; ValidateProperties at 0x14001A9F8 for the 0xC00E0020/0xC00E0006 state checks; CQEntry::Buffer at 0x14000263C for the 0xFFFFFFFF sentinel; CPacket::CheckPacket for the packet CRC), and in the other build the compiler inlined those callees into their callers. The instruction-level capacity check in CBitmap::FillBits (mov edi,[rcx]; cmp r9d,edi/ja; cmp r8d,edi/ja before any write) confirms the unpatched build already rejects out-of-range bitmap indices. No newly added bounds check, length/size validation, null/handle guard, integer-overflow guard, or error-return path guarding a memory operation exists in either build that is absent from the other. The earlier out-of-bounds-write finding, its exploit primitive, and the cross-function trigger chain are not supported by the binaries."
+}

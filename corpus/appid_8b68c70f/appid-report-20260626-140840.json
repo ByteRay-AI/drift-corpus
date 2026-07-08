@@ -1,0 +1,190 @@
+{
+  "binaries": {
+    "id_unpatched": "appid_unpatched.sys",
+    "id_patched": "appid_patched.sys",
+    "overall_similarity": 0.9909,
+    "matched": 372,
+    "changed": 6,
+    "identical": 366,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmartlockerConstructOriginClaim (sub_1C001F138)",
+      "similarity": 0.8129,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched version allocates a buffer via ExAllocatePoolWithTag(PagedPool, size, 'smtA') WITHOUT zeroing it afterward, leaving 4 bytes uninitialized when arg5==NULL (bytes 0x3C-0x3F) and roughly 6 trailing bytes when arg5!=NULL",
+        "Patched version adds a memset(buf, 0, size) that zeroes the whole buffer, but only on the code path taken when Feature_965997883__private_IsEnabledDeviceUsage @ 0x1C0002194 returns non-zero; the feature-disabled path (0x1C001F20B) allocates and jumps past the memset to 0x1C001F1C7, identical to the unpatched behavior (staged rollout)",
+        "For the arg5!=NULL case the size base becomes *arg5 + 0x40 when the feature is enabled and *arg5 + 0x42 (the original value) when it is disabled",
+        "The buffer is partially initialized (fields at 0x00-0x0C, BCryptGenRandom at 0x10-0x2F, metadata at 0x30-0x37, conditional 0x38+); the trailing bytes past the last written field retain stale kernel pool contents in the unpatched build",
+        "Buffer is returned via *arg7 (ptr) and *arg6 (full size) and is carried at full length into a process-token security attribute (SeSetSecurityAttributesToken via SmartlockerTagProcessToken @ 0x1C001F0C0) and a file extended attribute (AipSetEaFromOrigin)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Use of uninitialized resource (CWE-908) with a small information-disclosure consequence (CWE-200). The unpatched ExAllocatePoolWithTag returns uninitialized paged pool memory; only specific fields are written, leaving 4 bytes (arg5==NULL) or ~6 trailing bytes (arg5!=NULL) uninitialized. Both callers (SmartlockerManagedInstallerCheck @ 0x1C001F25C, SmartlockerSmartscreenProcessTokenCheck @ 0x1C001F374) pass the buffer at its full length to SmartlockerTagProcessToken @ 0x1C001F0C0, which wraps it as a CLAIM_SECURITY_ATTRIBUTE OCTET_STRING and calls SeSetSecurityAttributesToken (0x1C001F11F); SmartlockerManagedInstallerCheck also returns it up to SmartlockerVerifyProcess @ 0x1C0020344, which writes it into a file extended attribute via AipSetEaFromOrigin. Token security attributes and file EAs are user-mode-queryable by Windows design, but that read is performed by the OS, not by this driver, and the disclosed quantity is only 4-6 bytes of pool residue. The patched build adds a memset that zeroes the buffer, but only when Feature_965997883__private_IsEnabledDeviceUsage is enabled; the feature-disabled path retains the original unzeroed allocation. This is a feature-staged rollout, not an unconditional fix. Claims of a KASLR bypass or token/EPROCESS harvest are not supported by the binaries.",
+      "assembly_diff": "SmartlockerConstructOriginClaim @ 0x1C001F138 (UNPATCHED):\n00000001C001F138  mov     [rsp+arg_0], rbx\n00000001C001F13D  mov     [rsp+arg_8], rbp\n00000001C001F142  mov     [rsp+arg_10], rsi\n00000001C001F147  push    rdi\n00000001C001F148  push    r14\n00000001C001F14A  push    r15\n00000001C001F14C  sub     rsp, 20h\n00000001C001F150  mov     rdi, [rsp+38h+arg_20]   ; arg5\n00000001C001F155  mov     r15d, r9d               ; arg4\n00000001C001F158  mov     ebp, ecx                ; arg1\n00000001C001F15A  mov     esi, 40h                ; default size = 0x40\n00000001C001F15F  test    rdi, rdi\n00000001C001F162  jz      short loc_1C001F16A\n00000001C001F164  movzx   esi, word ptr [rdi]     ; size = *arg5\n00000001C001F167  add     esi, 42h                ; size += 0x42 (no zeroing follows)\n00000001C001F16A  mov     r14d, 1\n00000001C001F170  cmp     ebp, r14d\n00000001C001F173  jbe     short loc_1C001F17F\n00000001C001F175  mov     eax, 0C000000Dh         ; STATUS_INVALID_PARAMETER\n00000001C001F17A  jmp     loc_1C001F23A\n00000001C001F17F  mov     edx, esi                ; NumberOfBytes\n00000001C001F181  mov     r8d, 41746D73h          ; Tag 'smtA'\n00000001C001F187  mov     ecx, r14d               ; PoolType = PagedPool\n00000001C001F18A  call    cs:__imp_ExAllocatePoolWithTag\n00000001C001F191  nop     dword ptr [rax+rax+00h]\n00000001C001F196  mov     rbx, rax\n00000001C001F199  test    rax, rax\n00000001C001F19C  jnz     short loc_1C001F1A8\n00000001C001F19E  mov     eax, 0C0000017h         ; STATUS_NO_MEMORY\n00000001C001F1A3  jmp     loc_1C001F23A\n00000001C001F1A8  and     dword ptr [rax+8], 0    ; buf[0x08]=0\n00000001C001F1AC  lea     rdx, [rax+10h]\n00000001C001F1B0  mov     r9d, 2\n00000001C001F1B6  mov     [rax], r14d             ; buf[0x00]=1\n00000001C001F1B9  xor     ecx, ecx\n00000001C001F1BB  mov     [rax+4], ebp            ; buf[0x04]=arg1\n00000001C001F1BE  mov     [rax+0Ch], r14d         ; buf[0x0C]=1\n00000001C001F1C2  lea     r8d, [r9+0Eh]\n00000001C001F1C6  call    cs:__imp_BCryptGenRandom ; buf[0x10..0x1F]\n00000001C001F1CD  nop     dword ptr [rax+rax+00h]\n00000001C001F1D2  lea     rdx, [rbx+20h]\n00000001C001F1D6  test    ebp, ebp\n00000001C001F1D8  jnz     short loc_1C001F1E4\n00000001C001F1DA  movups  xmm0, xmmword ptr [rbx+10h]\n00000001C001F1DE  movdqu  xmmword ptr [rdx], xmm0 ; buf[0x20..0x2F]=buf[0x10..0x1F]\n00000001C001F1E2  jmp     short loc_1C001F1FA\n00000001C001F1E4  xor     ecx, ecx\n00000001C001F1E6  lea     r9d, [rcx+2]\n00000001C001F1EA  lea     r8d, [rcx+10h]\n00000001C001F1EE  call    cs:__imp_BCryptGenRandom ; buf[0x20..0x2F]\n00000001C001F1F5  nop     dword ptr [rax+rax+00h]\n00000001C001F1FA  mov     [rbx+30h], r15d         ; buf[0x30]=arg4\n00000001C001F1FE  mov     eax, cs:dword_1C0016660 ; version\n00000001C001F204  mov     [rbx+34h], eax          ; buf[0x34]=version\n00000001C001F207  test    rdi, rdi\n00000001C001F20A  jz      short loc_1C001F225\n00000001C001F20C  movzx   eax, word ptr [rdi]\n00000001C001F20F  lea     rcx, [rbx+3Ch]\n00000001C001F213  mov     [rbx+38h], eax          ; buf[0x38]=*arg5\n00000001C001F216  movzx   r8d, word ptr [rdi]     ; Size\n00000001C001F21A  mov     rdx, [rdi+8]            ; Src\n00000001C001F21E  call    memmove                 ; copy *arg5 bytes to buf[0x3C]\n00000001C001F223  jmp     short loc_1C001F229\n00000001C001F225  and     dword ptr [rbx+38h], 0  ; arg5==NULL: buf[0x38]=0, buf[0x3C..0x3F] left uninitialized\n00000001C001F229  mov     rax, [rsp+38h+arg_28]   ; arg6\n00000001C001F22E  mov     [rax], esi              ; *arg6=size\n00000001C001F230  mov     rax, [rsp+38h+arg_30]   ; arg7\n00000001C001F235  mov     [rax], rbx              ; *arg7=buffer\n00000001C001F238  xor     eax, eax                ; STATUS_SUCCESS\n00000001C001F23A  mov     rbx, [rsp+38h+arg_0]\n00000001C001F23F  mov     rbp, [rsp+38h+arg_8]\n00000001C001F244  mov     rsi, [rsp+38h+arg_10]\n00000001C001F249  add     rsp, 20h\n00000001C001F24D  pop     r15\n00000001C001F24F  pop     r14\n00000001C001F251  pop     rdi\n00000001C001F252  retn\n\nPATCHED @ 0x1C001F138 (allocation region, feature-gated):\n00000001C001F165  call    Feature_965997883__private_IsEnabledDeviceUsage\n00000001C001F174  add     esi, 40h                ; size += 0x40\n00000001C001F177  test    edx, edx\n00000001C001F179  jnz     short loc_1C001F17E     ; feature ON -> keep +0x40\n00000001C001F17B  add     esi, 2                  ; feature OFF -> +0x42 (original)\n00000001C001F190  call    Feature_965997883__private_IsEnabledDeviceUsage\n00000001C001F1A2  test    eax, eax\n00000001C001F1A4  jz      short loc_1C001F20B     ; feature OFF -> allocate WITHOUT zeroing\n00000001C001F1A6  call    cs:__imp_ExAllocatePoolWithTag\n00000001C001F1BF  mov     rcx, rax\n00000001C001F1C2  call    memset                  ; THE FIX (feature ON path only)\n00000001C001F20B  call    cs:__imp_ExAllocatePoolWithTag ; feature OFF path\n00000001C001F21D  jnz     short loc_1C001F1C7     ; jumps PAST the memset"
+    },
+    {
+      "name": "Feature_4060024122__private_IsEnabledFallback (sub_1C0002E00)",
+      "similarity": 0.6736,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Thunk function: unpatched calls wil_details_IsEnabledFallback (sub_1c0002850)(arg1, arg2); patched (relocated to 0x1C0002E74) calls wil_details_IsEnabledFallback (sub_1c0001bb0)(arg1, arg2, &Feature_4060024122__private_descriptor) — adds a third parameter (this feature's descriptor) so the callee stops relying on the single global descriptor"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security change. Part of a WIL (Windows Implementation Library) feature-staging refactor: the callee stops hard-coding the single global feature descriptor and instead receives a per-descriptor context pointer as a parameter. The underlying feature-state access was already a correct lock-free atomic compare-and-swap in both builds, and none of these functions participate in an AppLocker allow/deny decision.",
+      "assembly_diff": "--- UNPATCHED Feature_4060024122__private_IsEnabledFallback (sub_1C0002E00)\nsub     rsp, 0x28\ncall    0x1c0002850              ; 2 args\nadd     rsp, 0x28\nretn\n+++ PATCHED Feature_4060024122__private_IsEnabledFallback (sub_1C0002E74)\nsub     rsp, 0x28\nlea     r8, [rel 0x1c0015b70]    ; 3rd arg = context ptr\ncall    0x1c0001bb0              ; 3 args\nadd     rsp, 0x28\nretn"
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC)",
+      "similarity": 0.8176,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched: atomic compare-and-swap targets the global feature descriptor (wil_details_featureDescriptors_a, loaded at 0x1C00028DC)",
+        "Patched (relocated to 0x1C0001C44): takes a new third parameter arg3 (per-descriptor context pointer); the same CAS targets *arg3, with added checks on per-descriptor bytes at arg3+0x1d and arg3+0x1e",
+        "Patched adds a lock or fast path (0x1C0001C89) when *(arg3+0x1e) or *(arg3+0x1d) is set, instead of the cmpxchg loop"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security change. The unpatched code at 0x1C00028DC performs a correct lock-free atomic compare-and-swap: it loads the current value (0x1C00028F9), computes the new value, does lock cmpxchg [r9], edx (0x1C000290E), and on failure jnz (0x1C0002913) branches back to 0x1C00028FC to re-read and retry. That is a thread-safe CAS-with-retry loop in both builds, so there is no genuine data race and no torn or lost update. The patch only changes where the descriptor comes from (global vs. *arg3), a WIL feature-staging refactor. These bits are WIL feature enablement/usage telemetry; no AppLocker allow/deny decision is involved. CWE-362/CWE-366 do not apply.",
+      "assembly_diff": "UNPATCHED wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath @ 0x1C00028DC:\n00000001C00028DC  mov     r9, cs:wil_details_featureDescriptors_a  ; global descriptor\n00000001C00028E3  sub     edx, 3\n00000001C00028E6  jz      short loc_1C00028F3\n00000001C00028E8  cmp     edx, 1\n00000001C00028EB  jnz     short locret_1C0002915\n00000001C00028ED  lea     r8d, [rdx+1Fh]          ; 0x20 for event type 4\n00000001C00028F1  jmp     short loc_1C00028F9\n00000001C00028F3  mov     r8d, 10h                ; 0x10 for event type 3\n00000001C00028F9  mov     eax, [r9]               ; read state (re-read each retry)\n00000001C00028FC  test    al, 2\n00000001C00028FE  jz      short locret_1C0002915\n00000001C0002900  mov     edx, eax\n00000001C0002902  xor     edx, ecx\n00000001C0002904  test    dl, 1\n00000001C0002907  jnz     short locret_1C0002915\n00000001C0002909  mov     edx, eax\n00000001C000290B  or      edx, r8d\n00000001C000290E  lock cmpxchg [r9], edx          ; atomic CAS\n00000001C0002913  jnz     short loc_1C00028FC      ; retry -> correct lock-free loop\n00000001C0002915  retn\n\nPATCHED @ 0x1C0001C44 (same CAS on *arg3):\n00000001C0001C44  mov     r9, [r8]                 ; per-descriptor state = *arg3\n00000001C0001C5D  cmp     byte ptr [r8+1Eh], 0\n00000001C0001C62  jnz     short loc_1C0001C89\n00000001C0001C64  cmp     byte ptr [r8+1Dh], 0\n00000001C0001C69  jnz     short loc_1C0001C89\n00000001C0001C80  lock cmpxchg [r9], edx\n00000001C0001C87  jmp     short loc_1C0001C6E      ; retry\n00000001C0001C89  lock or [r9], r10d               ; fast path"
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (sub_1C0002850)",
+      "similarity": 0.9535,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched: hard-codes the global descriptor (mov rcx, cs:wil_details_featureDescriptors_a at 0x1C0002880) when calling wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+        "Patched (relocated to 0x1C0001BB0): takes new arg3 (descriptor pointer); reads the descriptor from *arg3 (mov rcx, [r8] at 0x1C0001BDD) and threads arg3 down to the usage-reporting and fast-path helpers"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security change. This orchestrator drives the WIL feature-enablement state cache. The refactor moves it from the single global feature descriptor to a per-descriptor context passed as arg3. There is no synchronization defect: the underlying state update is a correct lock-free atomic CAS in both builds, and none of this participates in an AppLocker allow/deny decision.",
+      "assembly_diff": "UNPATCHED wil_details_IsEnabledFallback @ 0x1C0002850 (excerpt):\n00000001C0002879  lea     r8, wil_details_featureDescriptors_a\n00000001C0002880  mov     rcx, cs:wil_details_featureDescriptors_a  ; hard-coded global\n00000001C0002887  call    wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState\n00000001C00028A9  call    wil_details_FeatureReporting_ReportUsageToService\n00000001C00028BB  call    wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath\n\nPATCHED @ 0x1C0001BB0 (excerpt):\n00000001C0001BCA  mov     r14, r8                  ; save arg3\n00000001C0001BDD  mov     rcx, [r8]                ; descriptor = *arg3\n00000001C0001BE0  call    wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState\n00000001C0001C02  mov     rcx, r14\n00000001C0001C05  call    wil_details_FeatureReporting_ReportUsageToService\n00000001C0001C12  mov     r8, r14\n00000001C0001C1A  call    wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath"
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00022FC)",
+      "similarity": 0.9765,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched: uses hardcoded feature GUID 0x39f21e2 and global config table data_1c0016208 for RtlQueryFeatureConfiguration and RtlNotifyFeatureUsage",
+        "Patched: takes new arg1 (context pointer); reads feature GUID from *(arg1+0x18) and config table from *(arg1+8) — supports per-instance feature configuration"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService (sub_1C00023EC)",
+      "similarity": 0.9897,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched: uses hardcoded GUID 0x39f21e2 and global data_1c0015b68 for feature event dispatch; passes hardcoded values to callback via data_1c0016228",
+        "Patched: takes new arg1 (context pointer); reads GUID from *(arg1+0x18), config from *(arg1+0x10), and callback from data_1c0016230 — per-instance configuration support",
+        "Otherwise functionally identical (same event type mapping logic, same dispatch pattern)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SmartlockerConstructOriginClaim (sub_1C001F138)",
+      "entry_point": "AppLocker policy evaluation reachable through file execution/creation operations that trigger AppID/Smartlocker evaluation",
+      "call_chain": [
+        "file execution/creation on an AppLocker/WDAC-enforced system",
+        "SmartlockerVerifyProcess (sub_1c0020344) (policy evaluation dispatcher)",
+        "SmartlockerManagedInstallerCheck (sub_1C001F25C) or SmartlockerSmartscreenProcessTokenCheck (sub_1C001F374)",
+        "SmartlockerConstructOriginClaim (sub_1C001F138) (buffer allocation without zeroing)"
+      ],
+      "vulnerability_class": "Use of Uninitialized Resource (CWE-908); information-disclosure consequence (CWE-200)",
+      "description": "The function SmartlockerConstructOriginClaim (sub_1C001F138) allocates a kernel paged pool buffer via ExAllocatePoolWithTag(PagedPool, size, 'smtA') but does NOT zero it before partially initializing it. Fields written: [0x00]=1, [0x04]=arg1, [0x08]=0, [0x0C]=1, [0x10-0x1F]=BCryptGenRandom, [0x20-0x2F]=BCryptGenRandom or a copy of [0x10-0x1F], [0x30-0x33]=arg4, [0x34-0x37]=version, [0x38+]=conditional. When arg5==NULL the allocation is 0x40 bytes and bytes 0x3C-0x3F (4 bytes) are never written; when arg5!=NULL the allocation is *arg5+0x42 bytes and roughly 6 trailing bytes are left uninitialized. Those bytes retain stale paged pool residue. The patched build adds memset(buf, 0, size) to scrub the buffer, but only on the path taken when Feature_965997883__private_IsEnabledDeviceUsage @ 0x1C0002194 returns non-zero; the feature-disabled path allocates without zeroing, identical to the unpatched code. The fix is therefore a WIL feature-staged rollout, not an unconditional fix.",
+      "trigger_conditions": "Triggering requires an AppLocker/Smartlocker policy evaluation path that causes SmartlockerConstructOriginClaim to allocate a claim buffer, during file execution/creation on an AppLocker/WDAC-enforced system. The callers SmartlockerManagedInstallerCheck (sub_1C001F25C) and SmartlockerSmartscreenProcessTokenCheck (sub_1C001F374) are reached from SmartlockerVerifyProcess (sub_1c0020344). The optional arg5 (at rsp+0x60, a struct with a WORD size at offset 0 and a data pointer at offset 8) controls the allocation size: *arg5+0x42 when provided (~6 uninitialized trailing bytes), or 0x40 when NULL (bytes 0x3C-0x3F uninitialized).",
+      "primitive": "Disclosure of 4-6 bytes of uninitialized paged pool residue per allocation. The buffer, at full length, is carried into a process-token security attribute (SeSetSecurityAttributesToken via SmartlockerTagProcessToken @ 0x1C001F0C0) and a file extended attribute (AipSetEaFromOrigin); both object types are user-mode-queryable by Windows design, though the actual read is performed by the OS rather than by this driver, and the driver itself does not copy the buffer to any user IRP/IOCTL output buffer. The disassembly does not establish that the leaked bytes contain any specific class of sensitive data; claims of KASLR bypass or token/EPROCESS harvest are not supported.",
+      "evidence": "UNPATCHED pseudocode of SmartlockerConstructOriginClaim (sub_1C001F138):\n```\nint32_t rsi = 0x40;\nif (arg5)\n    rsi = *arg5 + 0x42;\n\nif (arg1 > 1)\n    return 0xc000000d;\n\nint32_t* rax_1 = ExAllocatePoolWithTag(PagedPool, rsi, 0x41746d73);\n// *** NO RtlZeroMemory / memset call here — buffer contains stale pool data ***\n\nif (!rax_1)\n    return 0xc0000017;\n\nrax_1[2] = 0;           // only offsets 0x08 zeroed\n*rax_1 = 1;             // offset 0x00\nrax_1[1] = arg1;        // offset 0x04\nrax_1[3] = 1;           // offset 0x0C\nBCryptGenRandom(0, &rax_1[4], 0x10, 2);   // offsets 0x10-0x1F\n\nif (arg1)\n    BCryptGenRandom(0, &rax_1[8], 0x10, 2); // offsets 0x20-0x2F\nelse\n    *(rax_1 + 0x20) = *(rax_1 + 0x10);      // copy 0x10-0x1F to 0x20-0x2F\n\nrax_1[0xc] = arg4;      // offset 0x30\nrax_1[0xd] = data_1c0016660; // offset 0x34\n\nif (!arg5)\n    rax_1[0xe] = 0;     // offset 0x38 — ONLY this dword zeroed, NOT 0x3C-0x3F\nelse {\n    rax_1[0xe] = *arg5; // offset 0x38\n    memmove (sub_1c0006b80)(&rax_1[0xf], *(arg5 + 8), *arg5); // copy to offset 0x3C+\n}\n// Offsets 0x3C-0x3F (when arg5==NULL) or trailing bytes beyond copied data\n// remain UNINITIALIZED — stale kernel pool data\n*arg6 = rsi;\n*arg7 = rax_1;\nreturn 0;\n```\n\nPATCHED version (feature-gated):\n```\nif (Feature_965997883__private_IsEnabledDeviceUsage()) {  // feature ON\n    buf = ExAllocatePoolWithTag(PagedPool, size, 'smtA');\n    if (!buf) return 0xc0000017;\n    memset(buf, 0, size);   // THE FIX: zero the whole buffer\n} else {                    // feature OFF: same as unpatched\n    buf = ExAllocatePoolWithTag(PagedPool, size, 'smtA');\n    if (!buf) return 0xc0000017;\n    // no zeroing\n}\n// size base for arg5!=NULL is *arg5+0x40 when feature ON, *arg5+0x42 when OFF\n```\nThe zeroing is only delivered when the feature is enabled; the feature-off path retains the original unzeroed allocation.",
+      "assembly": "SmartlockerConstructOriginClaim @ 0x1C001F138 (UNPATCHED):\n00000001C001F138  mov     [rsp+arg_0], rbx\n00000001C001F13D  mov     [rsp+arg_8], rbp\n00000001C001F142  mov     [rsp+arg_10], rsi\n00000001C001F147  push    rdi\n00000001C001F148  push    r14\n00000001C001F14A  push    r15\n00000001C001F14C  sub     rsp, 20h\n00000001C001F150  mov     rdi, [rsp+38h+arg_20]\n00000001C001F155  mov     r15d, r9d\n00000001C001F158  mov     ebp, ecx\n00000001C001F15A  mov     esi, 40h\n00000001C001F15F  test    rdi, rdi\n00000001C001F162  jz      short loc_1C001F16A\n00000001C001F164  movzx   esi, word ptr [rdi]\n00000001C001F167  add     esi, 42h\n00000001C001F16A  mov     r14d, 1\n00000001C001F170  cmp     ebp, r14d\n00000001C001F173  jbe     short loc_1C001F17F\n00000001C001F175  mov     eax, 0C000000Dh\n00000001C001F17A  jmp     loc_1C001F23A\n00000001C001F17F  mov     edx, esi\n00000001C001F181  mov     r8d, 41746D73h\n00000001C001F187  mov     ecx, r14d\n00000001C001F18A  call    cs:__imp_ExAllocatePoolWithTag  ; no zeroing follows\n00000001C001F191  nop     dword ptr [rax+rax+00h]\n00000001C001F196  mov     rbx, rax\n00000001C001F199  test    rax, rax\n00000001C001F19C  jnz     short loc_1C001F1A8\n00000001C001F19E  mov     eax, 0C0000017h\n00000001C001F1A3  jmp     loc_1C001F23A\n00000001C001F1A8  and     dword ptr [rax+8], 0\n00000001C001F1AC  lea     rdx, [rax+10h]\n00000001C001F1B0  mov     r9d, 2\n00000001C001F1B6  mov     [rax], r14d\n00000001C001F1B9  xor     ecx, ecx\n00000001C001F1BB  mov     [rax+4], ebp\n00000001C001F1BE  mov     [rax+0Ch], r14d\n00000001C001F1C2  lea     r8d, [r9+0Eh]\n00000001C001F1C6  call    cs:__imp_BCryptGenRandom\n00000001C001F1CD  nop     dword ptr [rax+rax+00h]\n00000001C001F1D2  lea     rdx, [rbx+20h]\n00000001C001F1D6  test    ebp, ebp\n00000001C001F1D8  jnz     short loc_1C001F1E4\n00000001C001F1DA  movups  xmm0, xmmword ptr [rbx+10h]\n00000001C001F1DE  movdqu  xmmword ptr [rdx], xmm0\n00000001C001F1E2  jmp     short loc_1C001F1FA\n00000001C001F1E4  xor     ecx, ecx\n00000001C001F1E6  lea     r9d, [rcx+2]\n00000001C001F1EA  lea     r8d, [rcx+10h]\n00000001C001F1EE  call    cs:__imp_BCryptGenRandom\n00000001C001F1F5  nop     dword ptr [rax+rax+00h]\n00000001C001F1FA  mov     [rbx+30h], r15d\n00000001C001F1FE  mov     eax, cs:dword_1C0016660\n00000001C001F204  mov     [rbx+34h], eax\n00000001C001F207  test    rdi, rdi\n00000001C001F20A  jz      short loc_1C001F225\n00000001C001F20C  movzx   eax, word ptr [rdi]\n00000001C001F20F  lea     rcx, [rbx+3Ch]\n00000001C001F213  mov     [rbx+38h], eax\n00000001C001F216  movzx   r8d, word ptr [rdi]\n00000001C001F21A  mov     rdx, [rdi+8]\n00000001C001F21E  call    memmove\n00000001C001F223  jmp     short loc_1C001F229\n00000001C001F225  and     dword ptr [rbx+38h], 0  ; arg5==NULL: 0x3C-0x3F left uninitialized\n00000001C001F229  mov     rax, [rsp+38h+arg_28]\n00000001C001F22E  mov     [rax], esi\n00000001C001F230  mov     rax, [rsp+38h+arg_30]\n00000001C001F235  mov     [rax], rbx\n00000001C001F238  xor     eax, eax\n00000001C001F23A  mov     rbx, [rsp+38h+arg_0]\n00000001C001F23F  mov     rbp, [rsp+38h+arg_8]\n00000001C001F244  mov     rsi, [rsp+38h+arg_10]\n00000001C001F249  add     rsp, 20h\n00000001C001F24D  pop     r15\n00000001C001F24F  pop     r14\n00000001C001F251  pop     rdi\n00000001C001F252  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "appid!SmartlockerConstructOriginClaim + 0x52",
+            "address": "0x1C001F18A",
+            "why": "The call cs:__imp_ExAllocatePoolWithTag in the unpatched build. At this point: ecx=PagedPool(1), edx=allocation size (rsi, either 0x40 or *arg5+0x42), r8d=tag 'smtA'. After this call returns, rax holds the allocated but unzeroed buffer pointer. In the patched build this call is on the feature-enabled path at 0x1C001F1A6 and is followed by a memset at 0x1C001F1C2."
+          },
+          {
+            "symbol": "appid!SmartlockerConstructOriginClaim return path",
+            "address": "0x1C001F229",
+            "why": "This is the success return path where *arg6 = size and *arg7 = buffer_ptr. At this point rbx holds the buffer pointer. Inspect rbx[0x3C..0x3F] (when arg5==NULL) or trailing bytes to confirm uninitialized/stale data is present in the buffer being returned."
+          }
+        ],
+        "watch": [
+          "rbx (after 0x1c001f196) = allocated buffer pointer — inspect bytes at offsets 0x3C-0x3F and beyond the last initialized field for stale pool residue",
+          "esi (at 0x1c001f17f) = allocation size — 0x40 for default path, *arg5+0x42 when arg5 is provided",
+          "rdi (at 0x1c001f150) = arg5 pointer (from rsp+0x60) — if NULL, fields 0x3C+ are uninitialized; if non-NULL, size and copy source come from this structure",
+          "qword [rsp+0x68] = arg6 (output size pointer), qword [rsp+0x70] = arg7 (output buffer pointer) — these receive the unzeroed buffer"
+        ],
+        "key_offsets": [
+          "0x1C001F18A: call cs:__imp_ExAllocatePoolWithTag — the allocation point; no zeroing follows in the unpatched build",
+          "0x1C001F1A8-0x1C001F204: partial field initialization — only specific dwords/qwords are written, leaving gaps",
+          "0x1C001F225: and dword ptr [rbx+38h], 0 — only zeroes offset 0x38 when arg5==NULL; bytes 0x3C-0x3F remain uninitialized",
+          "0x1C001F22E: mov [rax], esi — writes the allocation size to *arg6",
+          "0x1C001F235: mov [rax], rbx — writes the buffer pointer to *arg7",
+          "PATCHED 0x1C001F1C2: call memset — the zeroing, only on the feature-enabled path (0x1C001F1A6); the feature-disabled path (0x1C001F20B) skips it via jnz to 0x1C001F1C7"
+        ],
+        "trigger_setup": "On a system with AppLocker/WDAC enabled, trigger a file execution or creation event that causes the AppID driver to evaluate policy and allocate a claim buffer. The call chain is: SmartlockerVerifyProcess (sub_1c0020344) → SmartlockerManagedInstallerCheck (sub_1C001F25C) or SmartlockerSmartscreenProcessTokenCheck (sub_1C001F374) → SmartlockerConstructOriginClaim (sub_1C001F138).",
+        "expected_observation": "At the return path (0x1C001F229), inspecting the buffer at rbx will show offsets 0x00-0x37 initialized (constants, random data, metadata), while bytes 0x3C-0x3F (when arg5==NULL) or the trailing bytes beyond the copied data (when arg5 is provided) contain uninitialized paged pool residue. The disclosed quantity is 4-6 bytes; the disassembly does not establish that the residue contains any particular class of sensitive data.",
+        "notes": "ExAllocatePoolWithTag does not zero memory. The tag 'smtA' (0x41746D73) identifies AppID Smartlocker pool allocations. The patched-only feature gate Feature_965997883__private_IsEnabledDeviceUsage @ 0x1C0002194 reads the WIL feature state (checks bit 0x10 of Feature_965997883__private_featureState, otherwise calls the fallback) and controls whether the zeroing memset runs; when the feature is disabled the patched driver takes the original unzeroed allocation path. The buffer is placed at full length into a process-token security attribute and a file extended attribute (both user-mode-queryable via standard Windows APIs, with the read performed by the OS, not this driver)."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC)",
+      "entry_point": "WIL feature-enablement check (feature Feature_4060024122) inside appid.sys",
+      "call_chain": [
+        "Feature_4060024122 enablement check",
+        "Feature_4060024122__private_IsEnabledFallback (sub_1C0002E00) (thunk)",
+        "wil_details_IsEnabledFallback (sub_1C0002850) (orchestrator)",
+        "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC)"
+      ],
+      "vulnerability_class": "No security-relevant change (WIL feature-staging refactor; not CWE-362/CWE-366)",
+      "description": "This is NOT a security defect. wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC) updates the WIL feature-enablement/usage state cache with a correct lock-free atomic compare-and-swap. In the unpatched build the state comes from the single global feature descriptor (wil_details_featureDescriptors_a, loaded at 0x1C00028DC); for event type 3 it sets bit 0x10, for event type 4 bit 0x20, using the loop: load current value (0x1C00028F9), or in the bit, lock cmpxchg (0x1C000290E), and on failure jnz (0x1C0002913) branches back to 0x1C00028FC to re-read and retry. That is a textbook CAS-with-retry, thread-safe with no torn read and no lost update, so there is no data race to fix. The patched build performs the same CAS on a per-descriptor context (*arg3) and adds a lock or fast path (0x1C0001C89); this is a WIL library refactor (global descriptor to per-descriptor context, a 2-arg to 3-arg ABI change), not a synchronization fix. None of these bits affect an AppLocker allow/deny decision.",
+      "trigger_conditions": "Not applicable; there is no exploitable condition. Concurrent WIL feature-enablement checks for Feature_4060024122 reach wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath via the thunk (sub_1C0002E00) and orchestrator (sub_1C0002850), and multiple threads may contend on the same global dword, but the lock-free CAS-with-retry handles contention correctly, so no inconsistent or torn state results.",
+      "primitive": "None. The atomic CAS is correct in both builds; the affected state is WIL feature enablement/usage telemetry, never an AppLocker allow/deny decision. There is no primitive and no policy bypass.",
+      "evidence": "UNPATCHED wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC), correct lock-free CAS on the global descriptor:\n```\nvoid FastPath(char arg1, int32_t arg2)\n{\n    int32_t* r9 = wil_details_featureDescriptors_a;  // global descriptor\n    int32_t bit = (arg2 == 3) ? 0x10 : (arg2 == 4) ? 0x20 : return;\n    int32_t cur = *r9;                 // load\n    while (cur & 2) {                  // while pending bit set\n        if ((cur ^ arg1) & 1) break;   // parity mismatch\n        if (lock_cmpxchg(r9, cur | bit, cur) == cur) break;  // success\n        cur = *r9;                     // CAS failed: re-read and retry (no lost update)\n    }\n}\n```\n\nPATCHED wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0001C44), same CAS on a per-descriptor context:\n```\nvoid FastPath(char arg1, int32_t arg2, int64_t* arg3)\n{\n    int32_t* r9 = *arg3;               // per-descriptor state\n    if (*(arg3 + 0x1e) || *(arg3 + 0x1d))\n        *r9 |= bit;                    // lock or fast path\n    else {\n        // identical lock_cmpxchg-with-retry loop on *arg3\n    }\n}\n```\nThe only change is the source of the state pointer (global vs. *arg3); both are correct lock-free CAS loops.",
+      "assembly": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath @ 0x1C00028DC (UNPATCHED):\n00000001C00028DC  mov     r9, cs:wil_details_featureDescriptors_a  ; global descriptor\n00000001C00028E3  sub     edx, 3\n00000001C00028E6  jz      short loc_1C00028F3\n00000001C00028E8  cmp     edx, 1\n00000001C00028EB  jnz     short locret_1C0002915\n00000001C00028ED  lea     r8d, [rdx+1Fh]                 ; 0x20 for event type 4\n00000001C00028F1  jmp     short loc_1C00028F9\n00000001C00028F3  mov     r8d, 10h                       ; 0x10 for event type 3\n00000001C00028F9  mov     eax, [r9]                      ; load (re-read each retry)\n00000001C00028FC  test    al, 2\n00000001C00028FE  jz      short locret_1C0002915\n00000001C0002900  mov     edx, eax\n00000001C0002902  xor     edx, ecx\n00000001C0002904  test    dl, 1\n00000001C0002907  jnz     short locret_1C0002915\n00000001C0002909  mov     edx, eax\n00000001C000290B  or      edx, r8d\n00000001C000290E  lock cmpxchg [r9], edx                 ; atomic CAS\n00000001C0002913  jnz     short loc_1C00028FC             ; retry -> correct lock-free loop\n00000001C0002915  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "appid!wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath",
+            "address": "0x1C00028DC",
+            "why": "Function entry. cl=arg1 (parity/flags byte), edx=arg2 (event type 3 or 4). r9 is loaded from the global feature descriptor here."
+          },
+          {
+            "symbol": "appid!wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath lock cmpxchg",
+            "address": "0x1C000290E",
+            "why": "The lock cmpxchg that atomically updates the state via r9. On failure the jnz at 0x1C0002913 re-reads and retries. This is a correct lock-free CAS: contention causes a retry, not corruption."
+          }
+        ],
+        "watch": [
+          "r9 (at 0x1C00028DC) = pointer to the global feature descriptor state (unpatched)",
+          "cl (at entry) = arg1, bit 0 used as parity value for the CAS condition",
+          "edx (at entry) = arg2, event type: 3 sets bit 0x10, 4 sets bit 0x20"
+        ],
+        "key_offsets": [
+          "0x1C00028DC: mov r9, cs:wil_details_featureDescriptors_a — loads the global descriptor pointer",
+          "0x1C00028F9: mov eax, [r9] — load current state (re-read on each retry)",
+          "0x1C000290E: lock cmpxchg [r9], edx — atomic CAS",
+          "0x1C0002913: jnz 0x1C00028FC — retry on CAS failure (re-reads current value; no lost update)"
+        ],
+        "trigger_setup": "Not applicable; there is no exploitable race. For inspection, drive concurrent WIL feature-enablement checks for Feature_4060024122 so multiple threads reach wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C00028DC).",
+        "expected_observation": "Under contention the cmpxchg at 0x1C000290E may fail and the jnz at 0x1C0002913 retries after re-reading the current value. This is the expected, correct behavior of a lock-free CAS: no update is lost and no state is torn or corrupted. Nothing security-relevant results, and no AppLocker allow/deny decision is involved.",
+        "notes": "In the unpatched build the state pointer is the global feature descriptor. In the patched build the third parameter arg3 supplies a per-descriptor context pointer, and the function also checks per-descriptor bytes at arg3+0x1d and arg3+0x1e to choose between a lock-or fast path and the full cmpxchg loop. This is a WIL library refactor (global descriptor to per-descriptor context), not a synchronization fix."
+      }
+    }
+  ],
+  "summary": "The patch to the Windows AppID driver (appid.sys) contains one Low-severity security-relevant change and one non-security refactor. (1) Use of uninitialized resource (CWE-908, Low): SmartlockerConstructOriginClaim (sub_1C001F138) allocates a paged pool buffer via ExAllocatePoolWithTag without zeroing it, leaving 4 bytes uninitialized when its arg5 is NULL and roughly 6 trailing bytes otherwise; both callers pass the buffer at full length into a process-token security attribute (SeSetSecurityAttributesToken via SmartlockerTagProcessToken @ 0x1C001F0C0) and a file extended attribute (AipSetEaFromOrigin), which are user-mode-queryable via standard Windows APIs. The patched build adds a memset that zeroes the buffer, but only on the path taken when the WIL feature Feature_965997883 is enabled; the feature-disabled path retains the original unzeroed allocation, so the fix is a staged rollout. The disclosed quantity is small (4-6 bytes of pool residue) and the disassembly does not establish it carries any specific sensitive content, so KASLR-bypass and token-harvest claims are not made. (2) The wil_details_* feature-state cache functions (sub_1C00028DC, sub_1C0002850, sub_1C0002E00 and the two ReportUsage helpers) were refactored from a single global feature descriptor to a per-descriptor context passed as a parameter. The underlying atomic compare-and-swap is a correct lock-free CAS-with-retry in both builds, so there is no data race; none of these functions participate in an AppLocker allow/deny decision. This is WIL feature-staging library churn, not a security fix."
+}

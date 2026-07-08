@@ -1,0 +1,189 @@
+{
+  "binaries": {
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9457,
+    "matched": 2531,
+    "changed": 101,
+    "identical": 2430,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaSampleInBall (sub_180029FE8)",
+      "similarity": 0.763,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Added per-index iteration limit (counter >= 0x79) to the inner rejection-sampling loop of the ML-DSA challenge sampler that was previously uncapped",
+        "Returns error code 0x8008 instead of continuing when the iteration limit is exceeded",
+        "Loop now increments a counter (edi, reset per index) on each squeeze and breaks early with an error status"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaSampleInBall constructs the ML-DSA (FIPS 204) challenge polynomial. For each index i from 0x100 - tau up to 0xFF, it squeezes one byte j at a time from a SHAKE256 (Keccak) stream via SymCryptKeccakExtract and rejects while j > i; in the unpatched build the inner loop has no iteration counter (CWE-835 shape). This is not an attacker-reachable DoS: the tested bytes are SHAKE256 sponge output, not attacker bytes. The attacker controls only the seed c~ and cannot bias the sponge output, which behaves as a cryptographic random oracle. tau is a static per-parameter-set constant (39/49/60) read from the trusted context at arg1+0x18, not attacker input. The per-squeeze rejection probability is at most (tau-1)/256 <= ~0.23, so reaching even the new 121-iteration cap at the hardest index has probability on the order of 10^-77; no feasible offline search yields a seed that makes the loop run long. SymCryptKeccakExtract squeezes from a sponge state and never exhausts an input buffer, so there is no memory over-read either. The patched version caps iterations per index at 0x79 (121) and returns 0x8008. This is defense-in-depth hardening, not the fix for a reachable vulnerability.",
+      "assembly_diff": "; UNPATCHED SymCryptMlDsaSampleInBall (sub_180029FE8) - vulnerable inner loop (0x18002A098-0x18002A0FE):\n; NO iteration counter check exists before or inside the loop\n\n0x18002a098 : lea     rdi, [r14+rbx*4]    ; rdi = output ptr into challenge poly (arg4)\n0x18002a09c : mov     esi, 0x1             ; size constant = 1 byte\n; === INNER LOOP START - NO ITERATION LIMIT ===\n0x18002a0a1 : mov     byte [rsp+0x20], 0x0 ; reset scratch byte\n0x18002a0a6 : xor     r9d, r9d             ; r9d = 0\n0x18002a0a9 : lea     rdx, [rsp+0x20]       ; pointer to single-byte buffer\n0x18002a0ae : mov     r8, rsi              ; r8 = 1 (squeeze size)\n0x18002a0b1 : lea     rcx, [rsp+0x30]       ; SHAKE256 sponge state\n0x18002a0b6 : call    0x18002b878          ; SymCryptKeccakExtract: squeeze 1 byte\n0x18002a0bb : movzx   eax, byte [rsp+0x20]  ; load the byte just squeezed\n0x18002a0c0 : cmp     eax, ebx             ; compare byte j with index i (ebx)\n0x18002a0c2 : ja      0x18002a0a6          ; if j > i: JUMP BACK TO LOOP START - UNBOUNDED!\n; === INNER LOOP END ===\n0x18002a0c4 : movzx   r8d, byte [rsp+0x20]  ; jv = accepted byte value\n0x18002a0ca : mov     rcx, r15             ; rcx = sign bit reservoir\n0x18002a0cd : and     rcx, rsi             ; test bit 0\n0x18002a0d0 : shr     r15, 0x1             ; shift reservoir\n0x18002a0d3 : neg     rcx                  ; sign-extend bit\n0x18002a0d6 : add     ebx, esi             ; i += 1\n0x18002a0d8 : shr     rcx, 0x20            ; get high 32 bits\n0x18002a0dc : mov     eax, dword [r14+r8*4]; read poly[jv]\n0x18002a0e0 : mov     dword [rdi], eax     ; poly[i] = poly[jv] (Fisher-Yates swap)\n0x18002a0e2 : mov     eax, ecx\n0x18002a0e4 : not     eax\n0x18002a0e6 : and     ecx, 0x7fe000\n0x18002a0ec : and     eax, esi\n0x18002a0ee : add     rdi, 0x4             ; advance output pointer\n0x18002a0f2 : or      eax, ecx\n0x18002a0f4 : mov     dword [r14+r8*4], eax; poly[jv] = +/-1 with sign\n0x18002a0f8 : cmp     ebx, 0x100           ; outer loop: i < 256?\n0x18002a0fe : jb      0x18002a0a1          ; outer loop continuation\n\n; PATCHED SymCryptMlDsaSampleInBall (sub_1800273E0) adds before the squeeze:\n;   if (edi >= 0x79) { r14d = 0x8008; goto cleanup; }\n;   ... ; inc edi after the squeeze\n; capping iterations per index at 121."
+    },
+    {
+      "name": "SymCryptMlDsaRejNttPoly (sub_180029F0C)",
+      "similarity": 0.0,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Added iteration limit (counter >= 0x12A) to the previously uncapped uniform-NTT rejection-sampling loop",
+        "Returns error code 0x8008 when the limit is exceeded"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaRejNttPoly samples a uniform NTT-domain polynomial (coefficients in [0, q)) by squeezing 3-byte groups from a SHAKE256 stream keyed on rho and an index, rejecting values >= q. The unpatched inner loop has no iteration cap (CWE-835 shape). As with SymCryptMlDsaSampleInBall, the tested bytes are SHAKE256 sponge output; rho is only the seed and the attacker cannot bias the output, so a long-running loop is not reachable. Reached via SymCryptMlDsaExpandA (sub_180028FE4). The patched version (sub_1800272EC) caps iterations at 0x12A (298) (cmp r14d,12Ah at 0x180027369) and returns 0x8008 (0x1800273AD). Defense-in-depth hardening, same pattern as SymCryptMlDsaSampleInBall.",
+      "assembly_diff": "; PATCHED sub_1800272EC adds: cmp r14d, 0x12A ; jnb -> mov edi, 0x8008 ; goto cleanup ; inc r14d per squeeze."
+    },
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (sub_180029D6C)",
+      "similarity": 0.0,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Added iteration limit (counter >= 0x1E1) to the previously uncapped [-eta, eta] rejection-sampling loop",
+        "Returns error code 0x8008 when the limit is exceeded"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaRejBoundedPoly samples a polynomial with coefficients in [-eta, eta] by squeezing bytes from a SHAKE256 stream and rejecting out-of-range nibbles. The unpatched inner loop has no iteration cap (CWE-835 shape). As with the other samplers, the tested bytes are SHAKE256 sponge output the attacker cannot bias, so a long-running loop is not reachable. The patched version (sub_180027128) caps iterations at 0x1E1 (481) (cmp esi,1E1h at 0x1800271A6) and returns 0x8008 (0x1800272A9). Reached via SymCryptMlDsaExpandS (sub_180029184) on the key-derivation / signing side. Defense-in-depth hardening, same pattern as SymCryptMlDsaSampleInBall.",
+      "assembly_diff": "; PATCHED sub_180027128 adds: cmp esi, 0x1E1 ; jnb -> mov edi, 0x8008 ; goto cleanup ; inc esi per squeeze."
+    },
+    {
+      "name": "SymCryptMlDsaExpandS (sub_180029184)",
+      "similarity": 0.7159,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Now checks the return value of SymCryptMlDsaRejBoundedPoly (sub_180029D6C, patched sub_180027128) and propagates error codes instead of ignoring them",
+        "Both secret-vector loops (s1 and s2) now break early on a non-zero status",
+        "Return value now carries the error code (eax/edi) from the sampling step"
+      ],
+      "security_relevant": false,
+      "security_notes": "In the unpatched version, SymCryptMlDsaExpandS calls SymCryptMlDsaRejBoundedPoly twice (for the s1 and s2 secret vectors) and ignores both return values, always continuing and returning success. Once the sampler gains its iteration cap and can return 0x8008, the unpatched caller would discard that error. The patched version captures the return value into edi (mov edi, eax; test eax, eax; jnz done), breaks out of both loops on any non-zero status, and returns it. Companion to the sampler caps; it only has an observable effect if a cap fires, which is not reachable (see SymCryptMlDsaSampleInBall). Defense-in-depth.",
+      "assembly_diff": "; UNPATCHED (sub_180029184): call SymCryptMlDsaRejBoundedPoly ; result discarded, loops continue, no error returned.\n; PATCHED (sub_18002651C): after each call: mov edi, eax ; test eax, eax ; jnz loc_1800265FA ; at end: mov eax, edi (return error)."
+    },
+    {
+      "name": "SymCryptMlDsaExpandA (sub_180028FE4)",
+      "similarity": 0.0,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Now checks the return value of SymCryptMlDsaRejNttPoly (sub_180029F0C, patched sub_1800272EC) and propagates error codes instead of ignoring them",
+        "The nested matrix-expansion loop now breaks early on a non-zero status",
+        "Return value now carries the error code from the sampling step"
+      ],
+      "security_relevant": false,
+      "security_notes": "In the unpatched version, SymCryptMlDsaExpandA expands the public matrix A from rho by calling SymCryptMlDsaRejNttPoly in a nested loop and ignoring the return value. The patched version captures the return into edx (mov edx, eax; test eax, eax; jnz cleanup) and returns it (mov eax, edx). Companion to SymCryptMlDsaRejNttPoly's new iteration cap; propagates the 0x8008 status, which only arises against a non-terminating or misbehaving sponge (not reachable). Defense-in-depth.",
+      "assembly_diff": "; UNPATCHED (sub_180028FE4): call SymCryptMlDsaRejNttPoly ; result discarded.\n; PATCHED (sub_180026374): after call: mov edx, eax ; test eax, eax ; jnz loc_1800263FD ; at end: mov eax, edx (return error)."
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (sub_180020E68)",
+      "similarity": 0.4969,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "ML-DSA verification path that calls SymCryptMlDsaSampleInBall (the challenge sampler) at 0x180020FBB",
+        "Now checks the SampleInBall return value and aborts verification on the 0x8008 error instead of continuing"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaVerifyEx recomputes the challenge c = SampleInBall(c~) from the signature during ML-DSA signature verification. The patched build handles the new 0x8008 error return from SymCryptMlDsaSampleInBall. Companion to the sampler cap; the 0x8008 path is not reachable for real input. Defense-in-depth.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaSignEx (sub_18002097C)",
+      "similarity": 0.5245,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "ML-DSA signing path that calls SymCryptMlDsaSampleInBall (the challenge sampler) at 0x180020C38",
+        "Now checks the SampleInBall return value (r15d = 0x8008 path) and aborts on error"
+      ],
+      "security_relevant": false,
+      "security_notes": "Signing counterpart of SymCryptMlDsaVerifyEx; also calls SymCryptMlDsaSampleInBall and, in the patched build, handles the new 0x8008 error return. Companion to the sampler cap; not reachable for real input. Defense-in-depth.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipApplySiPolicyEx (sub_1800DC2D4)",
+      "similarity": 0.7951,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function (603 instructions) with extensive structural changes to CI policy evaluation logic",
+        "Added sub_180018ED8() feature check that gates new code paths for policy state handling",
+        "Changes to how CI policy objects are selected (offsets 0x930 vs 0x9A0) and how runFullTrust capability is evaluated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiInstrumentSignatureFailuresForWNC (sub_180060828)",
+      "similarity": 0.8233,
+      "change_type": "behavioral",
+      "key_changes": [
+        "CI policy verification logging function with structural reorganization",
+        "Updated function call targets for refactored subroutines (sub_1800958EC -> sub_18009B13C, etc.)",
+        "Added feature check (sub_180018ED8) for new code paths in policy state evaluation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiValidateImageHeader (sub_18005B880)",
+      "similarity": 0.1344,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactor from 1273 lines to 55 lines - function rewritten as a thin wrapper",
+        "Logic moved into helper functions sub_18001975C, sub_180019704, sub_18006F7EC"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaSampleInBall (sub_180029FE8)",
+      "entry_point": "ML-DSA signature (c~ seed) processed during Code Integrity signature verification (PE/catalog). Reached via SymCryptMlDsaVerify (sub_180020E24) -> SymCryptMlDsaVerifyEx (sub_180020E68, call at 0x180020FBB) -> SymCryptMlDsaSampleInBall (sub_180029FE8). Also reached on the signing side via SymCryptMlDsaSignEx (sub_18002097C, call at 0x180020C38). Reaching the code is routine; the uncapped loop running long is not reachable.",
+      "call_chain": ["sub_180020E24", "sub_180020E68", "sub_180029FE8"],
+      "vulnerability_class": "Loop with data-dependent exit / uncapped rejection sampling (CWE-835 shape). Defense-in-depth hardening, not an attacker-reachable DoS.",
+      "description": "SymCryptMlDsaSampleInBall (sub_180029FE8) builds the ML-DSA (FIPS 204) challenge polynomial c, which has exactly tau nonzero coefficients of value +/-1 placed by a Fisher-Yates-style shuffle. The seed is absorbed into a SHAKE256 sponge via SymCryptKeccakAppend (sub_18002B65C). For each index i from 0x100 - tau up to 0xFF (tau = *(uint8_t*)(arg1+0x18)), the routine squeezes one byte j from the SHAKE256 stream via SymCryptKeccakExtract (sub_18002B878) and rejects while j > i. In the unpatched build there is no iteration counter: `do { j = squeeze(); } while (j > i);` (CWE-835 shape). This is not attacker-reachable: the tested bytes are SHAKE256 sponge output, not attacker bytes. The attacker controls only c~ and cannot bias the sponge output, which behaves as a cryptographic random oracle. tau is a static per-parameter-set constant (39/49/60), read from the trusted context at arg1+0x18, not attacker input. The per-squeeze rejection probability is at most (tau-1)/256 <= ~0.23 (hardest index i = 0x100 - tau), so reaching even the new 121-iteration cap at a single index has probability on the order of 10^-77; there is no feasible offline search for a c~ that makes the loop run long. SymCryptKeccakExtract squeezes from the sponge state and never exhausts an input buffer, so there is no memory over-read. The patched version adds a per-index counter that caps iterations at 0x79 (121) and returns error code 0x8008. The two sibling samplers SymCryptMlDsaRejNttPoly (sub_180029F0C) and SymCryptMlDsaRejBoundedPoly (sub_180029D6C) receive the same defense-in-depth caps 0x12A (298) and 0x1E1 (481) respectively. This is hardening of the ML-DSA sampler family, not the fix for a reachable vulnerability.",
+      "trigger_conditions": "During ML-DSA verification, SymCryptMlDsaVerifyEx recomputes c = SampleInBall(c~) from the signature's c~ seed (passed to arg2/arg3 and absorbed by SymCryptKeccakAppend into the sponge at [rsp+0x30]). The inner loop exits once a squeezed byte j <= i. Because j is SHAKE256 sponge output, the loop terminates in a few squeezes per index in every reachable case. There is no c~ an attacker can search for that forces the loop past even the 121-iteration patched cap: the target event (>= 121 consecutive rejects at the hardest index) has probability ~10^-77, and the attacker cannot bias the sponge by choosing the seed.",
+      "primitive": "None demonstrable. The uncapped loop is CWE-835-shaped but not attacker-reachable: the byte source is a Keccak/SHAKE256 sponge (random-oracle output the attacker cannot steer), tau is a static constant, and forcing a long loop has probability ~10^-77. There is no memory over-read (the sponge regenerates bytes and never reads past an input buffer) and no CPU-exhaustion DoS. The change is defense-in-depth against a non-terminating or misbehaving sponge.",
+      "evidence": "// UNPATCHED SymCryptMlDsaSampleInBall (sub_180029FE8) - vulnerable inner loop:\nif (i < 0x100)\n{\n    void* out = arg4 + (i << 2);\n    do\n    {\n        uint8_t j[0x10];\n        j[0] = 0;\n        // CWE-835 shape: no iteration limit on this rejection loop\n        do\n            SymCryptKeccakExtract(&sponge, &j, 1, 0);  // squeeze 1 byte from sponge\n        while (j[0] > i);                               // terminates fast for sponge output\n\n        uint64_t jv = j[0];\n        int64_t sbit = signs & 1;\n        signs u>>= 1;\n        i = i + 1;\n        uint32_t sx = -(sbit) >> 0x20;\n        *out = *(arg4 + (jv << 2));                     // Fisher-Yates swap\n        out += 4;\n        *(arg4 + (jv << 2)) = (~sx & 1) | (sx & 0x7fe000);\n    } while (i < 0x100);\n}\n\n// PATCHED SymCryptMlDsaSampleInBall (sub_1800273E0):\n        do\n        {\n            if (ctr >= 0x79)            // NEW: iteration cap at 121\n            {\n                r14 = 0x8008;            // error code\n                goto label_180027508;   // exit with error\n            }\n            SymCryptKeccakExtract(&sponge, &j, 1, 0);\n            ctr += 1;                   // NEW: increment counter\n        } while (j[0] > i);",
+      "assembly": "; Full assembly of vulnerable function SymCryptMlDsaSampleInBall (sub_180029FE8) in ci_unpatched.dll:\n0x180029fe8 : push    rbp\n0x180029fea : push    rbx\n0x180029feb : push    rsi\n0x180029fec : push    rdi\n0x180029fed : push    r14\n0x180029fef : push    r15\n0x180029ff1 : lea     rbp, [rsp-0x38]\n0x180029ff6 : sub     rsp, 0x138\n0x180029ffd : mov     rax, qword [rel 0x180046280]\n0x18002a004 : xor     rax, rsp\n0x18002a007 : mov     qword [rbp+0x28], rax\n0x18002a00b : mov     rdi, r8\n0x18002a00e : mov     rbx, rdx\n0x18002a011 : mov     rsi, rcx\n0x18002a014 : xor     edx, edx\n0x18002a016 : mov     r8d, 0x400\n0x18002a01c : mov     rcx, r9\n0x18002a01f : mov     r14, r9\n0x18002a022 : call    0x18002c640          ; memset\n0x18002a027 : xor     edx, edx\n0x18002a029 : lea     rcx, [rsp+0x30]\n0x18002a02e : mov     r8d, 0xf0\n0x18002a034 : call    0x18002c640          ; memset\n0x18002a039 : mov     edx, 0xc8\n0x18002a03e : mov     dword [rbp-0x8], 0x88\n0x18002a045 : lea     rcx, [rsp+0x30]\n0x18002a04a : mov     byte [rbp], 0x1f\n0x18002a04e : call    0x180011840          ; SymCryptWipeAsm (init sponge)\n0x18002a053 : mov     r8, rdi\n0x18002a056 : mov     dword [rbp-0x4], 0x0\n0x18002a05d : mov     rdx, rbx\n0x18002a060 : mov     byte [rbp+0x1], 0x0\n0x18002a064 : lea     rcx, [rsp+0x30]\n0x18002a069 : call    0x18002b65c          ; SymCryptKeccakAppend (absorb c~)\n0x18002a06e : xor     r9d, r9d\n0x18002a071 : lea     rdx, [rbp+0x20]\n0x18002a075 : lea     rcx, [rsp+0x30]\n0x18002a07a : lea     r8d, [r9+0x8]\n0x18002a07e : call    0x18002b878          ; SymCryptKeccakExtract (8 sign bytes)\n0x18002a083 : movzx   eax, byte [rsi+0x18] ; tau\n0x18002a087 : mov     ecx, 0x100\n0x18002a08c : mov     r15, qword [rbp+0x20]\n0x18002a090 : mov     ebx, ecx\n0x18002a092 : sub     ebx, eax             ; i = 0x100 - tau\n0x18002a094 : cmp     ebx, ecx\n0x18002a096 : jnb     0x18002a100\n; === VULNERABLE LOOP REGION ===\n0x18002a098 : lea     rdi, [r14+rbx*4]\n0x18002a09c : mov     esi, 0x1\n; --- INNER LOOP (NO ITERATION LIMIT) ---\n0x18002a0a1 : mov     byte [rsp+0x20], 0x0\n0x18002a0a6 : xor     r9d, r9d\n0x18002a0a9 : lea     rdx, [rsp+0x20]\n0x18002a0ae : mov     r8, rsi\n0x18002a0b1 : lea     rcx, [rsp+0x30]\n0x18002a0b6 : call    0x18002b878          ; SymCryptKeccakExtract: squeeze 1 byte\n0x18002a0bb : movzx   eax, byte [rsp+0x20]\n0x18002a0c0 : cmp     eax, ebx\n0x18002a0c2 : ja      0x18002a0a6           ; <== UNBOUNDED: loops back if j > i\n; --- END INNER LOOP ---\n0x18002a0c4 : movzx   r8d, byte [rsp+0x20]\n0x18002a0ca : mov     rcx, r15\n0x18002a0cd : and     rcx, rsi\n0x18002a0d0 : shr     r15, 0x1\n0x18002a0d3 : neg     rcx\n0x18002a0d6 : add     ebx, esi\n0x18002a0d8 : shr     rcx, 0x20\n0x18002a0dc : mov     eax, dword [r14+r8*4]\n0x18002a0e0 : mov     dword [rdi], eax\n0x18002a0e2 : mov     eax, ecx\n0x18002a0e4 : not     eax\n0x18002a0e6 : and     ecx, 0x7fe000\n0x18002a0ec : and     eax, esi\n0x18002a0ee : add     rdi, 0x4\n0x18002a0f2 : or      eax, ecx\n0x18002a0f4 : mov     dword [r14+r8*4], eax\n0x18002a0f8 : cmp     ebx, 0x100\n0x18002a0fe : jb      0x18002a0a1\n; === END VULNERABLE LOOP REGION ===\n0x18002a100 : mov     edx, 0xf0\n0x18002a105 : lea     rcx, [rsp+0x30]\n0x18002a10a : call    0x180011840          ; SymCryptWipeAsm (wipe sponge)\n0x18002a10f : mov     rcx, qword [rbp+0x28]\n0x18002a113 : xor     rcx, rsp\n0x18002a116 : call    0x18002c1f0          ; __security_check_cookie\n0x18002a11b : add     rsp, 0x138\n0x18002a122 : pop     r15\n0x18002a124 : pop     r14\n0x18002a126 : pop     rdi\n0x18002a127 : pop     rsi\n0x18002a128 : pop     rbx\n0x18002a129 : pop     rbp\n0x18002a12a : retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptMlDsaSampleInBall (sub_180029FE8)",
+            "address": "0x180029FE8",
+            "why": "Entry to the challenge sampler. At entry: rcx = arg1 (ML-DSA context, byte at [rcx+0x18] is tau), rdx = arg2 (c~ seed pointer), r8 = arg3 (seed length), r9 = arg4 (output challenge polynomial, 0x400 bytes / 256 int32). Set a conditional breakpoint here or on the inner loop at 0x18002A0A6 to measure the per-index squeeze count (a handful for any real input)."
+          },
+          {
+            "symbol": "ci!SymCryptKeccakExtract (sub_18002B878)",
+            "address": "0x18002B878",
+            "why": "The SHAKE256 squeeze function called in the reject loop. rcx = sponge state ([rsp+0x30]), rdx = output byte buffer ([rsp+0x20]), r8 = squeeze size (1), r9 = 0. Each squeeze re-permutes the sponge and returns a fresh byte; the byte source is the sponge, not an attacker buffer, so there is no over-read. In the unpatched version there is no call counter, but the loop still terminates in a few squeezes per index for any real input."
+          }
+        ],
+        "watch": [
+          "ebx (i) = current challenge index, starts at 0x100 - byte_at[rsi+0x18] (tau); inner loop continues while squeezed byte > this value",
+          "byte at [rsp+0x20] = the byte squeezed from the SHAKE256 stream; the loop continues while this value > i",
+          "rdi = output pointer into the challenge polynomial at arg4 + (i * 4); advances by 4 per outer iteration",
+          "r14 = pointer to the challenge polynomial base (arg4); reads/writes at [r14 + jv*4] where jv is the accepted byte value",
+          "r15 = sign bit reservoir, shifted right by 1 each outer iteration"
+        ],
+        "key_offsets": [
+          "0x18002A0A6: start of the uncapped inner loop (xor r9d, r9d). This is where the patched version inserts the 'cmp edi, 0x79' check - INSTRUCTION IS ABSENT IN UNPATCHED.",
+          "0x18002A0B6: call to SymCryptKeccakExtract (SHAKE256 squeeze). Invoked only a few times per index for any real input; not steerable by the attacker.",
+          "0x18002A0C0: cmp eax, ebx - the reject comparison. If the byte at [rsp+0x20] > i (ebx), execution jumps back to 0x18002A0A6.",
+          "0x18002A0C2: ja 0x18002A0A6 - the reject backward jump. Uncapped in the unpatched build, but bounded in practice by the sponge output distribution.",
+          "0x18002A0FE: jb 0x18002A0A1 - outer loop continuation (i < 0x100)"
+        ],
+        "trigger_setup": "Reach the code by submitting an ML-DSA-signed PE binary or catalog (.cat) file for Code Integrity signature verification (WinVerifyTrust or image load). The data path is: SymCryptMlDsaVerify (sub_180020E24) -> SymCryptMlDsaVerifyEx (sub_180020E68, call at 0x180020FBB) -> SymCryptMlDsaSampleInBall (sub_180029FE8). SymCryptMlDsaVerifyEx recomputes c = SampleInBall(c~) from the signature. There is no c~ that makes the inner loop at 0x18002A0B6 run long: the squeezed bytes are SHAKE256 sponge output (not attacker bytes), the reject probability at index i = 0x100 - tau is at most (tau-1)/256 <= ~0.23, and reaching even the 121-iteration patched cap has probability ~10^-77. The attacker cannot bias the sponge by choosing the seed.",
+        "expected_observation": "With either binary the inner loop at 0x18002A0A6-0x18002A0C2 terminates within a few squeezes per index; ebx (i) advances once per accepted coefficient, tau times total. No reachable input freezes ebx or triggers a hang / DPC watchdog bugcheck. There is no over-read (the squeeze source is a Keccak sponge, not an input buffer). In the patched build the cmp edi,0x79 cap (0x1800274A1) and the 0x8008 path (0x180027502) are present but not exercised by real input.",
+        "notes": "The 0x79 (121) cap in the patched version is a generous per-index bound; the sibling samplers get analogous caps: SymCryptMlDsaRejNttPoly (sub_180029F0C -> sub_1800272EC) at 0x12A (298) and SymCryptMlDsaRejBoundedPoly (sub_180029D6C -> sub_180027128) at 0x1E1 (481). The SHAKE256 sponge is set up by SymCryptKeccakAppend (sub_18002B65C) which absorbs the seed. Companion error-propagation changes in SymCryptMlDsaExpandS (sub_180029184 -> sub_18002651C), SymCryptMlDsaExpandA (sub_180028FE4 -> sub_180026374), SymCryptMlDsaVerifyEx (sub_180020E68) and SymCryptMlDsaSignEx (sub_18002097C) ensure the new 0x8008 status is checked and propagated. All of these are defense-in-depth against a non-terminating or misbehaving sponge, not fixes for a reachable vulnerability."
+      }
+    }
+  ],
+  "summary": "The patch adds bounded-iteration hardening (CWE-835 shape) to the ML-DSA (FIPS 204 / CRYSTALS-Dilithium) rejection-sampling routines that Windows Code Integrity (ci.dll) uses through its embedded SymCrypt post-quantum signature code. SymCryptMlDsaSampleInBall (sub_180029FE8) samples the challenge polynomial by repeatedly squeezing bytes from a SHAKE256 (Keccak) stream and rejecting values until it accepts one; in the unpatched build the inner loop has no iteration cap, as with SymCryptMlDsaRejNttPoly (sub_180029F0C) and SymCryptMlDsaRejBoundedPoly (sub_180029D6C). This is not an attacker-reachable denial of service: the tested bytes are SHAKE256 sponge output (a random oracle the attacker cannot steer), the attacker controls only the seeds (c~ from the signature, rho from the public key), and tau is a static per-parameter-set constant. Reaching even the new per-index caps has probability on the order of 10^-77, so the loops always terminate in a handful of squeezes for reachable input; the byte source is a sponge, so there is no memory over-read either. The patched version adds a per-index iteration cap (0x79 / 0x12A / 0x1E1) and returns error code 0x8008 from each sampler, and adds error propagation in the callers SymCryptMlDsaExpandS, SymCryptMlDsaExpandA, SymCryptMlDsaVerifyEx and SymCryptMlDsaSignEx so the new status is not discarded. Severity: Low (defense-in-depth), not High."
+}

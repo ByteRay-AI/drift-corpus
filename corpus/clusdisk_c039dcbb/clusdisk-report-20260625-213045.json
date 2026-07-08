@@ -1,0 +1,311 @@
+{
+  "binaries": {
+    "id_unpatched": "clusdisk_unpatched.sys",
+    "id_patched": "clusdisk_patched.sys",
+    "overall_similarity": 0.7793,
+    "matched": 220,
+    "changed": 153,
+    "identical": 67,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "Pool::PendDefenseIrp",
+      "similarity": 0.841,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Lock scope change: In the unpatched version (0x1C000AB76), ExAcquireResourceExclusiveLite(this+0x40) is acquired BEFORE calling SpacePortCallbackProxy::PrmGetNumberOfDevices() (0x1C000ABA8), so the callback runs while the exclusive resource is held. In the patched version, PrmGetNumberOfDevices() is called FIRST with no lock held (0x14000CB33); on failure it returns immediately; only on success are the exclusive (this+0x40, 0x14000CB71) and shared (this+0x178, 0x14000CB89) locks acquired.",
+        "Both builds acquire the two resources in the same order (this+0x40 exclusive, then this+0x178 shared), so this is a change in lock scope, not lock ordering.",
+        "Both versions perform the same IRP queuing logic using KeAcquireSpinLockRaiseToDpc and the ClusDskSpinLock for the defense IRP list, and both set CancelRoutine to Pool::s_CancelDefenseIrp."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version calls SpacePortCallbackProxy::PrmGetNumberOfDevices while holding the exclusive ERESOURCE lock at this+0x40; the patched version runs the callback with no lock held and acquires the lock afterward. This narrows the critical section so a pool-wide exclusive lock is no longer held across an external subsystem callback. A concrete deadlock/contention impact is not proven by the binaries and is undercut by the sibling Pool::Arbitrate, which still calls the same callback while holding this+0x40 exclusive in BOTH builds. Whether the callback can re-enter clusdisk and re-acquire this+0x40 is not visible in this diff.",
+      "assembly_diff": "Unpatched (0x1C000AB5C):\n00000001C000AB67  lea     rdi, [rcx+40h]        ; this+0x40 exclusive ERESOURCE\n00000001C000AB6E  mov     rbp, rcx              ; rbp = this\n00000001C000AB73  mov     rcx, rdi\n00000001C000AB76  call    cs:__imp_ExAcquireResourceExclusiveLite  ; lock first\n00000001C000AB82  mov     rcx, [rbp+218h]       ; callback proxy ctx\n00000001C000AB89  lea     rdx, [rbp+28h]\n00000001C000ABA8  call    ?PrmGetNumberOfDevices@SpacePortCallbackProxy@@...  ; callback under lock\n00000001C000ABB1  jns     short loc_1C000ABCC\n00000001C000ABE0  call    cs:__imp_ExAcquireResourceSharedLite     ; this+0x178 shared\n\nPatched (0x14000CAF8):\n000000014000CB2C  mov     rcx, [rcx+218h]       ; callback proxy ctx\n000000014000CB33  call    ?PrmGetNumberOfDevices@SpacePortCallbackProxy@@...  ; NO lock held\n000000014000CB3C  jns     short loc_14000CB60\n000000014000CB52  mov     eax, ebx              ; early return on failure\n000000014000CB64  lea     rbx, [rbp+40h]        ; this+0x40\n000000014000CB71  call    cs:__imp_ExAcquireResourceExclusiveLite  ; lock AFTER callback\n000000014000CB7D  lea     rdi, [rbp+178h]       ; this+0x178\n000000014000CB89  call    cs:__imp_ExAcquireResourceSharedLite"
+    },
+    {
+      "name": "Pool::Arbitrate",
+      "similarity": 0.5074,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation API changed from ExAllocatePoolWithTag((POOL_TYPE)0x200, ...) (NonPagedPoolNx, tags 0x34506443/0x35506443/0x36506443) to ExAllocatePool2(0x40, ...) (POOL_FLAG_NON_PAGED, zero-initialized).",
+        "The patched version wraps the file-object handle arrays in CAutoArrayMemPtr objects, default-constructed in a loop (call to the CAutoArrayMemPtr ctor at 0x14000987A, add rdi,8 / sub r12,1 / jnz 0x140009877).",
+        "In BOTH builds, Pool::Arbitrate calls SpacePortCallbackProxy::PrmGetNumberOfDevices while holding this+0x40 exclusive; the lock-scope change in Pool::PendDefenseIrp was not applied here.",
+        "Both versions perform the same core arbitration: count disks, allocate handle arrays sized to disk count, submit defense work items, wait for completion."
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched allocation region stores the element count at offset 0 and memsets the element region to zero immediately after a successful allocation; the raw buffer is not returned to a caller before that initialization. The change to ExAllocatePool2 (zero-init) plus CAutoArrayMemPtr wrappers is allocation-API modernization and refactoring, not a fix for an observed information leak or memory-safety bug.",
+      "assembly_diff": "Unpatched first handle-array allocation (0x1C000AF01):\n00000001C000AF01  mov     r8d, 34506443h        ; Tag 'CdP4'\n00000001C000AF13  mov     ecx, 200h             ; NonPagedPoolNx (no zero-init)\n00000001C000AF18  mov     rdx, rax\n00000001C000AF1B  call    cs:__imp_ExAllocatePoolWithTag\n00000001C000AF2C  mov     [rax], rsi            ; count at offset 0\n00000001C000AF2F  lea     r12, [rax+8]\n00000001C000AF44  call    memset                ; zero element region\n\nPatched (0x140009873):\n0000000140009877  mov     rcx, rdi\n000000014000987A  call    ??0?$CAutoArrayMemPtr@...@@QEAA@XZ   ; wrapper ctor\n000000014000987F  add     rdi, 8\n0000000140009883  sub     r12, 1\n0000000140009887  jnz     short loc_140009877\n000000014000992E  mov     r8d, 34506443h        ; Tag 'CdP4'\n0000000140009940  mov     ecx, 40h              ; POOL_FLAG_NON_PAGED (zero-init)\n0000000140009948  call    cs:__imp_ExAllocatePool2\n000000014000995E  mov     [r12], r14            ; count at offset 0"
+    },
+    {
+      "name": "ClusPoolReadRegistrationKeys",
+      "similarity": 0.8423,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation API changed from ExAllocatePoolWithTag((POOL_TYPE)0x200, ..., 0x30536443) to ExAllocatePool2(0x40, ..., 0x30536443) (zero-initialized).",
+        "Error-path cleanup restructured: the unpatched version keeps a single cleanup pointer (v4) freed once at a common exit label; on success it sets v4=nullptr so the returned buffer is not freed. The patched version frees the current buffer on each error path and returns directly, and returns the buffer on success.",
+        "Both versions read a big-endian key-list length from buffer bytes [4..7], validate output length >= 8 and length <= outlen-8, and cap reallocation at 0x8000."
+      ],
+      "security_relevant": false,
+      "security_notes": "ClusPoolReadRegistrationKeys reads SCSI Persistent Registration key data via control code 0x2d5018. Traced end-to-end, both builds free the buffer correctly: on realloc the previous buffer is freed at the top of the next iteration, on success the returned buffer is not freed, and on error the current buffer is freed exactly once. There is no double-free or use-after-free in either build. The change is error-path restructuring plus zero-initialized allocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClusPoolReadReservationKeys",
+      "similarity": 0.843,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same allocation API change (ExAllocatePoolWithTag → ExAllocatePool2, tag 0x31536443) and error-path restructuring as ClusPoolReadRegistrationKeys.",
+        "Same length read (big-endian bytes [4..7]) and validation logic preserved.",
+        "Initial buffer size is 0x18 bytes (smaller than registration keys' 0x808 initial size)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same pattern as ClusPoolReadRegistrationKeys: both builds free the buffer correctly and there is no double-free or use-after-free. The change is error-path restructuring plus zero-initialized allocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClusPoolDeviceControl",
+      "similarity": 0.759,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail. No claim is made about specific IOCTL codes or status-code changes here.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClusDskDeviceControl",
+      "similarity": 0.8066,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail. No specific IOCTL-handler additions are asserted here.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Disk::IncrementDirtyPrCount",
+      "similarity": 0.726,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail. No security implication claimed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Disk::ScrubRegistrations",
+      "similarity": 0.829,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClusPoolSendIoctl3",
+      "similarity": 0.8341,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation API changed to ExAllocatePool2, consistent with the rest of the patch.",
+        "IRP freeing restructured: the unpatched build frees the IRP through a single common IoFreeIrp at 0x1C000FAF6; the patched build splits this into explicit per-path IoFreeIrp calls (0x1400119D2, 0x1400119FE).",
+        "The callers now pass 5 arguments instead of 8 (changed call signature)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched ClusPoolSendIoctl3 frees its IRP through a single common IoFreeIrp, so error paths converge on that free and the IRP is not leaked. The patched build makes the frees explicit per path. This is a refactor and allocation-API/signature change, not a leak fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Pool::StartDefense",
+      "similarity": 0.6988,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report. Restructured alongside Pool::Arbitrate."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Disk::PreemptAbort",
+      "similarity": 0.5228,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ClusDskpDetachDisk",
+      "similarity": 0.9514,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed function; not analyzed in detail in this report."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not analyzed in detail.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "Pool::PendDefenseIrp",
+      "entry_point": "Pool device-control path (ClusPoolDeviceControl -> Pool::PendDefenseIrp). The exact IOCTL numeric value is not established from this diff.",
+      "call_chain": ["ClusDskDeviceControl (IRP_MJ_DEVICE_CONTROL)", "ClusPoolDeviceControl", "Pool::PendDefenseIrp", "SpacePortCallbackProxy::PrmGetNumberOfDevices"],
+      "vulnerability_class": "Improper synchronization - exclusive lock held across an external callback (CWE-662)",
+      "description": "In the unpatched Pool::PendDefenseIrp, the exclusive ERESOURCE lock at this+0x40 is acquired at 0x1C000AB76 BEFORE calling SpacePortCallbackProxy::PrmGetNumberOfDevices at 0x1C000ABA8, so the callback runs while the pool's exclusive resource is held. The patched version calls the callback first at 0x14000CB33 with no lock held, returns immediately on failure, and only then acquires the exclusive (0x14000CB71) and shared (0x14000CB89) locks. The net effect is a narrower critical section: the exclusive resource is no longer held across the external callback. Both builds keep the same acquisition order, so this is a lock-scope change, not a lock-ordering change. Note that the sibling Pool::Arbitrate still holds this+0x40 exclusive across the same callback in both builds, so a self-deadlock impact is not demonstrated by the binaries.",
+      "trigger_conditions": "Reach Pool::PendDefenseIrp through the pool device-control path. Any observable hang would additionally require a second thread to block on this+0x40 while the callback runs, which depends on PrmGetNumberOfDevices re-entering clusdisk and re-acquiring the resource - re-entrancy that this diff does not confirm.",
+      "primitive": "None demonstrated. The change narrows a critical section; a deadlock/contention impact is unproven and is undercut by Pool::Arbitrate retaining the lock-across-callback pattern in both builds.",
+      "evidence": "Unpatched Pool::PendDefenseIrp (0x1C000AB5C):\n    v2 = (char*)this + 64;                                   // this+0x40 exclusive\n    ExAcquireResourceExclusiveLite((char*)this + 64, 1);     // LOCK FIRST\n    v22 = 0; v21 = 0;\n    NumberOfDevices = SpacePortCallbackProxy::PrmGetNumberOfDevices(\n                          *((...)this + 67), (char*)this + 40, &v22, &v21);  // CALLBACK UNDER LOCK\n    if (NumberOfDevices < 0) goto release_exclusive;\n    ExAcquireResourceSharedLite((char*)this + 376, 1);       // this+0x178 shared\n\nPatched Pool::PendDefenseIrp (0x14000CAF8):\n    v21 = 0; v20 = 0;\n    NumberOfDevices = SpacePortCallbackProxy::PrmGetNumberOfDevices(\n                          *((...)this + 67), (char*)this + 40, &v21, &v20);  // NO LOCK\n    if (NumberOfDevices < 0) return NumberOfDevices;         // early return\n    ExAcquireResourceExclusiveLite((char*)this + 64, 1);     // LOCK AFTER callback\n    ExAcquireResourceSharedLite((char*)this + 376, 1);",
+      "assembly": "Unpatched (0x1C000AB5C):\n00000001C000AB67  lea     rdi, [rcx+40h]        ; this+0x40 exclusive ERESOURCE\n00000001C000AB73  mov     rcx, rdi\n00000001C000AB76  call    cs:__imp_ExAcquireResourceExclusiveLite  ; lock first\n00000001C000AB82  mov     rcx, [rbp+218h]       ; callback proxy ctx\n00000001C000ABA8  call    ?PrmGetNumberOfDevices@SpacePortCallbackProxy@@...  ; callback under lock\n00000001C000ABB1  jns     short loc_1C000ABCC\n00000001C000ABE0  call    cs:__imp_ExAcquireResourceSharedLite     ; this+0x178 shared\n\nPatched (0x14000CAF8):\n000000014000CB2C  mov     rcx, [rcx+218h]       ; callback proxy ctx\n000000014000CB33  call    ?PrmGetNumberOfDevices@SpacePortCallbackProxy@@...  ; NO lock held\n000000014000CB3C  jns     short loc_14000CB60\n000000014000CB52  mov     eax, ebx              ; early return on failure\n000000014000CB64  lea     rbx, [rbp+40h]        ; this+0x40\n000000014000CB71  call    cs:__imp_ExAcquireResourceExclusiveLite  ; lock AFTER callback\n000000014000CB89  call    cs:__imp_ExAcquireResourceSharedLite",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "clusdisk_unpatched!Pool::PendDefenseIrp",
+            "address": "0x1c000ab5c",
+            "why": "Break at function entry. Monitor when this function is called and observe the lock state. After the ExAcquireResourceExclusiveLite call completes, check whether other threads are blocked waiting for this+0x40 resource lock."
+          },
+          {
+            "symbol": "clusdisk_unpatched!SpacePortCallbackProxy::PrmGetNumberOfDevices",
+            "address": "0x1c0008fa8",
+            "why": "This is the callback called while the exclusive lock is held. Set a breakpoint here and observe the call stack to see if any re-entrant path back into clusdisk occurs."
+          }
+        ],
+        "watch": [
+          "Lock at this+0x40 (ERESOURCE): ExclusiveOwnerThread, ActiveCount, ContentionCount — watch for self-deadlock where the owning thread re-enters",
+          "this+0x218: SpacePort callback proxy context pointer",
+          "Thread ID owning the exclusive lock vs thread ID executing the callback"
+        ],
+        "key_offsets": [
+          "0x1c000ab76: call cs:__imp_ExAcquireResourceExclusiveLite — acquires exclusive lock (this+0x40)",
+          "0x1c000aba8: call PrmGetNumberOfDevices — callback while the exclusive lock is held",
+          "0x1c000abe0: call cs:__imp_ExAcquireResourceSharedLite — second lock (this+0x178, shared)",
+          "Patched: 0x14000cb33 callback (no lock), 0x14000cb71 exclusive lock, 0x14000cb89 shared lock"
+        ],
+        "trigger_setup": "Reach Pool::PendDefenseIrp through the pool device-control path. The exact IOCTL numeric value and input-structure layout are not established from this diff and would have to be recovered from the routing in ClusPoolDeviceControl before writing a user-mode trigger.",
+        "expected_observation": "The exclusive lock is held across the callback in the unpatched build and not in the patched build. Whether this produces a hang depends on a second thread blocking on this+0x40 during the callback, which depends on re-entrancy that this diff does not confirm. No specific bugcheck is asserted.",
+        "notes": "clusdisk.sys manages cluster shared disks. The observation to confirm here is only the structural difference in where the exclusive resource is acquired relative to the callback; the exploitability of that difference is not established by the binaries."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "ClusPoolSendIoctl3",
+      "entry_point": "Internal IOCTL dispatch via ClusPoolSendIoctl3 (called by ClusPoolReadRegistrationKeys, ClusPoolReadReservationKeys, and other storage-query callers).",
+      "call_chain": ["ClusPoolReadRegistrationKeys / ClusPoolReadReservationKeys / other callers", "ClusPoolSendIoctl3", "IoAllocateIrp / IoFreeIrp"],
+      "vulnerability_class": "Refactor / allocation-API change (originally suspected CWE-401, not present)",
+      "description": "The unpatched ClusPoolSendIoctl3 (0x1C000F8E8) frees its IRP through a single common IoFreeIrp at 0x1C000FAF6, so all paths converge on that free and the IRP is not leaked. The patched build splits this into explicit per-path IoFreeIrp calls (0x1400119D2, 0x1400119FE) and changes the call signature (callers pass 5 arguments instead of 8). No leak exists in the unpatched build; the change is a refactor.",
+      "trigger_conditions": "None - there is no leak to trigger.",
+      "primitive": "None.",
+      "evidence": "Unpatched ClusPoolSendIoctl3 has exactly one IoFreeIrp (0x1C000FAF6), a common exit reached by all paths. Patched build has two IoFreeIrp calls (0x1400119D2, 0x1400119FE) on separate paths.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [
+          "0x1c000faf6: unpatched common IoFreeIrp (single free, all paths converge)",
+          "0x1400119d2 / 0x1400119fe: patched per-path IoFreeIrp calls"
+        ],
+        "trigger_setup": "",
+        "expected_observation": "",
+        "notes": "The unpatched control flow frees the IRP on every path via the single common IoFreeIrp. Not a leak; not exploitable."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "ClusPoolReadRegistrationKeys / ClusPoolReadReservationKeys",
+      "entry_point": "Reads PR key data from a disk device object via ClusPoolSendIoctl3 (control code 0x2d5018).",
+      "call_chain": ["ClusPoolReadRegistrationKeys / ClusPoolReadReservationKeys", "ClusPoolSendIoctl3 (control code 0x2d5018)", "Disk storage stack"],
+      "vulnerability_class": "Allocation-API modernization and error-path restructuring (no memory-safety bug present)",
+      "description": "The unpatched ClusPoolReadRegistrationKeys keeps a single cleanup pointer (v4). Each iteration allocates a new buffer, frees the previous v4, then sets v4 to the new buffer. On success it sets v4=nullptr before handing the buffer to the caller, so the returned buffer is not freed; on error the current v4 is freed once at the common exit. Traced end-to-end, both the success and error paths free correctly and there is no double-free or use-after-free. The patched version restructures into per-path handling (immediate free on error, direct return on success) and switches to ExAllocatePool2 (zero-init). This is a refactor plus zero-initialization.",
+      "trigger_conditions": "The realloc loop can be exercised by returning PR data whose big-endian length at bytes [4..7] exceeds the current buffer (0x808 registrations, 0x18 reservations) but stays <= 0x8000. This only causes reallocation and retry; it does not cause a memory-safety fault in either build.",
+      "primitive": "None. Both builds free the PR-key buffers correctly.",
+      "evidence": "Unpatched ClusPoolReadRegistrationKeys (0x1C000FB28):\n    v4 = nullptr;\n    for (i = 2056; ; i = keycount + 8) {\n        buf = ExAllocatePoolWithTag((POOL_TYPE)512, i, 0x30536443);  // NOT zeroed\n        if (v4) ExFreePoolWithTag(v4, 0);   // free previous\n        v4 = buf;\n        if (!buf) goto trace_exit;\n        rc = ClusPoolSendIoctl3(DeviceObject, 0x2D5018, ..., buf, i, &outlen);\n        if (rc < 0) goto trace_exit;        // v4 (== buf) freed at exit\n        keycount = be32(buf[4..7]);\n        if (keycount + 8 <= i) break;       // enough -> validate below\n        if (keycount + 8 > 0x8000) goto trace_exit;\n    }\n    if (outlen >= 8 && be32(buf[4..7]) <= outlen - 8) { v4 = nullptr; *a2 = buf; rc = 0; }\ntrace_exit:\n    if (v4) ExFreePoolWithTag(v4, 0);\n    return rc;\n\nPatched ClusPoolReadRegistrationKeys (0x140010E00):\n    v2 = nullptr;\n    for (i = 2056; ; i = keycount + 8) {\n        buf = ExAllocatePool2(64, i, 0x30536443);   // zero-init\n        if (v2) ExFreePoolWithTag(v2, 0);\n        v2 = buf;\n        if (!buf) break;                    // -> trace + return\n        rc = ClusPoolSendIoctl3(DeviceObject, 48, buf, i, scratch);  // 5-arg form\n        if (rc < 0) { ExFreePoolWithTag(buf, 0); return rc; }\n        keycount = be32(buf[4..7]);\n        if (keycount + 8 <= i) {\n            if (outlen >= 8 && be32(buf[4..7]) <= outlen - 8) { *a2 = buf; return 0; }\n            ExFreePoolWithTag(buf, 0); return -1073741823;\n        }\n        if (keycount + 8 > 0x8000) { ExFreePoolWithTag(buf, 0); return -1073741670; }\n    }",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "clusdisk_unpatched!ClusPoolReadRegistrationKeys",
+            "address": "0x1c000fb28",
+            "why": "Monitor the realloc loop behavior when reading SCSI PR registration data. Watch for the case where r9_2 (key count from disk) exceeds the initial buffer size (0x808), triggering the continue/realloc path."
+          },
+          {
+            "symbol": "clusdisk_unpatched!ClusPoolReadReservationKeys",
+            "address": "0x1c000fcfc",
+            "why": "Same pattern as registration keys. Initial buffer is only 0x18 bytes, so realloc is more likely to be triggered."
+          }
+        ],
+        "watch": [
+          "r14d: current buffer allocation size (starts at 0x808 for registrations, 0x18 for reservations)",
+          "rsi: pool pointer for the current buffer (rax from allocation, moved to rsi)",
+          "[rsi+4]..[rsi+7]: big-endian key-list length read back from the buffer",
+          "[rsp+0x54] (var_5C): IOCTL output size returned by the storage stack"
+        ],
+        "key_offsets": [
+          "0x1c000fb7f: ExAllocatePoolWithTag call — allocation (rax -> rsi)",
+          "0x1c000fb98: ExFreePoolWithTag — free of previous buffer",
+          "0x1c000fba4: 'mov rbx, rsi' — cleanup pointer set to new buffer",
+          "0x1c000fc31: 'mov r14d, eax' — realloc size (keycount+8)",
+          "0x1c000fc00: key length read from buffer bytes [4..7]"
+        ],
+        "trigger_setup": "Return PR data where the big-endian length at bytes [4..7] makes keycount+8 exceed the current buffer size but stay <= 0x8000, forcing the loop to reallocate at keycount+8.",
+        "expected_observation": "The loop reallocates and retries; the previous buffer is freed once at the top of the next iteration and the final buffer is freed once (or handed to the caller). No double-free or use-after-free occurs in either build.",
+        "notes": "Pool tag 0x30536443 ('CdS0') for registrations, 0x31536443 ('CdS1') for reservations. The reservation-keys initial buffer is only 0x18 bytes, so the realloc path is easy to exercise, but exercising it does not cause a fault."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "Pool::Arbitrate",
+      "entry_point": "Pool device-control path (ClusPoolDeviceControl -> Pool::StartDefense -> Pool::Arbitrate). The exact IOCTL numeric value is not established from this diff.",
+      "call_chain": ["ClusDskDeviceControl", "ClusPoolDeviceControl", "Pool::StartDefense", "Pool::Arbitrate"],
+      "vulnerability_class": "Allocation-API modernization / zero-initialization (no demonstrable disclosure)",
+      "description": "The unpatched Pool::Arbitrate allocates handle arrays via ExAllocatePoolWithTag((POOL_TYPE)0x200) (NonPagedPoolNx), which does not zero-initialize. Immediately after a successful allocation it stores the element count at offset 0 and memsets the element region to zero when the count is non-zero. There is no path that returns the raw buffer to a caller before this initialization, so no stale-pool disclosure is demonstrable. The patched version uses ExAllocatePool2(0x40) (zero-initialized) and wraps the arrays in CAutoArrayMemPtr objects. Note: in both builds Pool::Arbitrate calls PrmGetNumberOfDevices while holding this+0x40 exclusive; the Finding 1 lock-scope change was not applied here.",
+      "trigger_conditions": "Reach Pool::Arbitrate through the pool device-control path. The element region is memset to zero before use in the unpatched build.",
+      "primitive": "None demonstrated. The unpatched buffer is initialized before use and is not exposed raw to a caller.",
+      "evidence": "Unpatched Pool::Arbitrate (0x1C000ADDC):\n    buf = ExAllocatePoolWithTag((POOL_TYPE)512, NumberOfBytes, 0x34506443);  // NonPagedPoolNx, not zeroed\n    if (buf) {\n        *buf = count;                  // count at offset 0\n        elems = &buf[1];               // data at offset 8\n        if (count) memset(elems, 0, count << 3);  // zero element region\n    }\n\nPatched Pool::Arbitrate (0x140009778):\n    // CAutoArrayMemPtr wrappers default-constructed in a loop, then:\n    buf = ExAllocatePool2(64, NumberOfBytes, 0x34506443);  // POOL_FLAG_NON_PAGED, zero-init\n    if (buf) *buf = count;",
+      "assembly": "Unpatched Pool::Arbitrate allocation (0x1C000AF01):\n00000001C000AF01  mov     r8d, 34506443h        ; Tag 'CdP4'\n00000001C000AF13  mov     ecx, 200h             ; NonPagedPoolNx (no zero-init)\n00000001C000AF18  mov     rdx, rax\n00000001C000AF1B  call    cs:__imp_ExAllocatePoolWithTag\n00000001C000AF2C  mov     [rax], rsi            ; count at offset 0\n00000001C000AF2F  lea     r12, [rax+8]          ; data at offset 8\n00000001C000AF44  call    memset                ; zero element region\n\nPatched Pool::Arbitrate (0x140009873):\n0000000140009877  mov     rcx, rdi\n000000014000987A  call    ??0?$CAutoArrayMemPtr@...@@QEAA@XZ   ; wrapper ctor\n000000014000987F  add     rdi, 8\n0000000140009883  sub     r12, 1\n0000000140009887  jnz     short loc_140009877\n000000014000992E  mov     r8d, 34506443h        ; Tag 'CdP4'\n0000000140009940  mov     ecx, 40h              ; POOL_FLAG_NON_PAGED (zero-init)\n0000000140009948  call    cs:__imp_ExAllocatePool2\n000000014000995E  mov     [r12], r14            ; count at offset 0",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "clusdisk_unpatched!Pool::Arbitrate",
+            "address": "0x1c000addc",
+            "why": "Break at the arbitration function. Monitor the ExAllocatePoolWithTag calls and inspect whether the allocated buffers contain non-zero data before initialization."
+          },
+          {
+            "symbol": "clusdisk_unpatched!Pool::Arbitrate+first ExAllocatePoolWithTag call",
+            "address": "0x1c000af1b",
+            "why": "The first allocation of the handle array (tag 0x34506443). NonPagedPoolNx does not zero-initialize; the element region is zeroed by the memset at 0x1c000af44 before use."
+          }
+        ],
+        "watch": [
+          "rsi_1: disk count used for array sizing — this determines how many FILE_OBJECT handles are allocated",
+          "rax (after ExAllocatePoolWithTag): returned pool pointer — inspect first 64 bytes for stale kernel data",
+          "this+0x38: must be non-zero for arbitration to proceed",
+          "this+0x1e0/0x1f0: linked list heads — must be non-empty (pool must have disks)"
+        ],
+        "key_offsets": [
+          "0x1c000af13: 'mov ecx, 0x200' — NonPagedPoolNx flag (no zero-init)",
+          "0x1c000af1b: call ExAllocatePoolWithTag — first array allocation (tag 0x34506443)",
+          "0x1c000af44: call memset — element region zeroed before use",
+          "0x1c000af9e: ExAllocatePoolWithTag — second array allocation (tag 0x35506443)",
+          "0x1c000b085: ExAllocatePoolWithTag — third allocation (tag 0x36506443, size 8)"
+        ],
+        "trigger_setup": "Reach Pool::Arbitrate through the pool device-control path (Pool::StartDefense). The exact IOCTL numeric value is not established from this diff.",
+        "expected_observation": "The element region is zeroed by the memset at 0x1c000af44 before use; the raw buffer is not returned to a caller. The patched build allocates with ExAllocatePool2 (zero-init). No leak to a caller is demonstrable in either build.",
+        "notes": "The memset zeroes the element region immediately after allocation, before any use. The change to ExAllocatePool2 removes the transient uninitialized window; it is a hardening/refactor, not a fix for an observed disclosure."
+      }
+    }
+  ],
+  "summary": "The diff between clusdisk_unpatched.sys and clusdisk_patched.sys (Windows Cluster Disk driver) shows a large changed-function set across a version gap. The one clearly security-relevant behavioral change is in Pool::PendDefenseIrp (unpatched 0x1C000AB5C, patched 0x14000CAF8): the unpatched build acquires the exclusive ERESOURCE lock at this+0x40 (0x1C000AB76) BEFORE calling SpacePortCallbackProxy::PrmGetNumberOfDevices (0x1C000ABA8), so the callback runs under the lock; the patched build calls the callback first with no lock held (0x14000CB33), returns on failure, and acquires the exclusive (0x14000CB71) and shared (0x14000CB89) locks afterward. This narrows the critical section so a pool-wide exclusive lock is no longer held across an external callback (CWE-662). The exploitability of this as a deadlock is NOT established by the binaries and is undercut by the sibling Pool::Arbitrate, which still holds this+0x40 exclusive across the same callback in both builds. The remaining changes examined - ClusPoolReadRegistrationKeys/ReservationKeys, Pool::Arbitrate, and ClusPoolSendIoctl3 - are allocation-API modernization (ExAllocatePoolWithTag -> ExAllocatePool2, zero-init) and error-path restructuring; traced end-to-end, none exhibit a use-after-free, double-free, information leak, or IRP leak in either build. The exact IOCTL numeric values that reach these functions are not recovered from this diff."
+}

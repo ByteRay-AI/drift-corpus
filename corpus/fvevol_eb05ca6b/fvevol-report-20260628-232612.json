@@ -1,0 +1,298 @@
+{
+  "binaries": {
+    "title": "fvevol.sys (BitLocker Full Volume Encryption) - Datum type-field high-bit masking hardening; new key-protector datum types and helper refactor",
+    "id_unpatched": "fvevol_unpatched.sys",
+    "id_patched": "fvevol_patched.sys",
+    "overall_similarity": 0.9778,
+    "matched": 1382,
+    "changed": 30,
+    "identical": 1352,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FveDatumIsValidBounded (sub_1C0003F6C) -> patched FveDatumIsValidBounded (sub_1C0003F14)",
+      "similarity": 0.076,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Depth-bounded recursive datum-tree validator (max depth 10, arg3 <= 0xa). Present in both builds: unpatched at 0x1C0003F6C, patched at 0x1C0003F14. The recursive self-call ('call FveDatumIsValidBounded' at 0x1C0004045 / 0x1C0003FED) and the offset-advance loop ('add di, word [rsp+var_38]' at 0x1C000404E / 0x1C0003FF6, then 'cmp di, [rsp+arg_18]; jb') are present and unchanged in both builds.",
+        "Only substantive change: the type-table bound is raised from 'cmp ecx, 1Ah' (26 datum types) to 'cmp ecx, 23h' (35 datum types), and the dispatch table is relocated (off_1C0023AD0 -> off_1C0025AD0), matching the newly added key-protector datum types 0x1c-0x22.",
+        "No loop-termination, bounds, or recursion change. This function is not the subject of a security fix in this patch."
+      ],
+      "security_relevant": false,
+      "security_notes": "The recursive datum validator's structure (self-recursion, 16-bit offset advance, loop while consumed < total) is identical between the two builds. The low similarity score reflects the enlarged type dispatch table and address relocation for the new datum types, not a change to the validation logic. CWE anchoring for the patch is the datum type-field masking in the keyring routines (see security_findings), not this function.",
+      "assembly_diff": "Unpatched FveDatumIsValidBounded @ 0x1C0003F6C (recursive datum-tree validator):\n0x1c0003f9a: call FveDatumHeaderSafe        ; validate datum header\n0x1c0003fa7: cmp si, 0xa                     ; depth <= 10?\n0x1c0003fc3: movzx ecx, word [rsp+0x7c]      ; datum type code\n0x1c0003fc8: lea r8, off_1C0023AD0           ; type dispatch table (26 entries)\n0x1c0003fd5: cmp ecx, 0x1a                   ; type < 26?\n0x1c0004045: call FveDatumIsValidBounded     ; recursive call\n0x1c000404e: add di, word [rsp+0x20]         ; consumed += sub-datum size\n0x1c0004053: cmp di, word [rsp+0x78]         ; consumed < total?\n0x1c0004058: jb 0x1c000400f                  ; loop\n\nPatched FveDatumIsValidBounded @ 0x1C0003F14 (same structure, enlarged table):\n0x1c0003f42: call FveDatumHeaderSafe\n0x1c0003f4f: cmp si, 0xa\n0x1c0003f6b: movzx ecx, word [rsp+0x7c]\n0x1c0003f70: lea r8, off_1C0025AD0           ; type dispatch table (35 entries)\n0x1c0003f7d: cmp ecx, 0x23                   ; type < 35? (only change)\n0x1c0003fed: call FveDatumIsValidBounded     ; recursive call (retained)\n0x1c0003ff6: add di, word [rsp+0x20]         ; consumed += sub-datum size (retained)\n0x1c0003ffb: cmp di, word [rsp+0x78]         ; consumed < total? (retained)\n0x1c0004000: jb 0x1c0003fb7                  ; loop (retained)"
+    },
+    {
+      "name": "FveDatasetGetDatumPointer (sub_1C00097F4) [patched-only helper]",
+      "similarity": 0.0,
+      "change_type": "refactor",
+      "key_changes": [
+        "Patched-only helper. Computes ptr = base + offset and remaining = *(base+0xC) - offset, then calls FveDatumIsValidBounded (sub_1C0003F14) to validate the datum at that offset, returning the validated pointer via the output argument.",
+        "Wraps the existing recursive datum validator; it does not add new bounds checking and does not replace the recursion. Call sites that previously invoked FveDatumIsValidBounded inline now route through this wrapper."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a call-site consolidation wrapper. The underlying validation is still performed by FveDatumIsValidBounded, unchanged.",
+      "assembly_diff": "Patched FveDatasetGetDatumPointer @ 0x1C00097F4:\nmov eax, [rcx+0xc]          ; total size from base\nmov edi, edx                ; offset\nsub eax, edx                ; remaining = total - offset\nadd rdi, rcx                ; ptr = base + offset\nmov edx, eax\nmov rcx, rdi\ncall FveDatumIsValidBounded ; sub_1C0003F14 (recursive validator, retained)\ntest eax, eax\njs 0x1c000982b\nmov [rbx], rdi              ; return validated pointer\nretn"
+    },
+    {
+      "name": "FveKeyringGetCachedVmkTargetType (sub_1C0008D28) -> patched sub_1C0009094",
+      "similarity": 0.9697,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Datum presence test masked: unpatched 'cmp dword [rdi+4], r15d' (raw type != 0) becomes patched 'test dword [rdi+4], 0x7fffffff' (bit 31 stripped, so 0x80000000 is treated as empty and skipped).",
+        "Datum walk refactored: unpatched called FveDatasetIsValid (sub_1C0003DD4) and inline FveDatumIsValidBounded (sub_1C0003F6C); patched calls FveDatasetIsValidEx (sub_1C0009840) and the wrapper FveDatasetGetDatumPointer (sub_1C00097F4)."
+      ],
+      "security_relevant": true,
+      "security_notes": "The type-field masking prevents a dataset whose type field is 0x80000000 (bit 31 only) from being treated as a present entry. CWE-20 (Improper Input Validation); the consequence is a presence/match discrepancy, not memory corruption. The datum-walk refactor is a call-site change with no security effect of its own.",
+      "assembly_diff": "Unpatched sub_1C0008D28:\n0x1c0008dad: cmp dword [rdi+0x4], r15d   ; raw type != 0 (0x80000000 passes)\n0x1c0008dbc: call FveDatasetIsValid       ; sub_1C0003DD4\n0x1c0008e05: call FveDatumIsValidBounded  ; sub_1C0003F6C\n\nPatched sub_1C0009094:\n0x1c0009111: test dword [rdi+0x4], 0x7fffffff ; bit 31 masked, 0x80000000 -> skip\n0x1c0009123: call FveDatasetIsValidEx        ; sub_1C0009840\n0x1c000915d: call FveDatasetGetDatumPointer  ; sub_1C00097F4"
+    },
+    {
+      "name": "FveKeyringGetNext (sub_1C000EE6C) -> patched sub_1C0010EA4",
+      "similarity": 0.99,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Datum type comparison masked: unpatched 'cmp dword [r15+4], ebp' (raw type vs requested type) becomes patched 'mov eax,[r15+4]; btr eax,0x1f; cmp eax,ebp' — bit 31 of the candidate datum type is cleared before matching.",
+        "This prevents a datum whose type is 'requested_type | 0x80000000' from failing to match, and prevents the high bit from steering type matching."
+      ],
+      "security_relevant": true,
+      "security_notes": "The btr (bit-test-and-reset) 'btr eax, 0x1f' strips bit 31 of the dataset type field before the type comparison, so the high bit cannot alter type identity during keyring enumeration. CWE-20.",
+      "assembly_diff": "Unpatched sub_1C000EE6C:\n0x1c000eefe: cmp dword [r15+0x4], ebp    ; raw type compared\n\nPatched sub_1C0010EA4:\n0x1c0010f36: mov eax, dword [r15+0x4]\n0x1c0010f3a: btr eax, 0x1f                ; clear bit 31\n0x1c0010f3e: cmp eax, ebp                 ; masked type compared"
+    },
+    {
+      "name": "FveKeyringEraseAll (sub_1C000EC74) -> patched sub_1C0010CA4",
+      "similarity": 0.9886,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added 'btr edx, 0x1f' to strip bit 31 of the datum type field before it is used, with no corresponding mask in the unpatched build.",
+        "Consistent with the masking added in FveKeyringGetCachedVmkTargetType and FveKeyringGetNext."
+      ],
+      "security_relevant": true,
+      "security_notes": "Same type-field masking pattern. Ensures the high bit of the type field does not participate in type-based handling. CWE-20.",
+      "assembly_diff": "Patched sub_1C0010CA4:\n0x1c0010cd3: btr edx, 0x1f    ; clear bit 31 (no equivalent in unpatched sub_1C000EC74)"
+    },
+    {
+      "name": "FveDatasetIsValidEx (sub_1C0009840) [patched-only helper] / FveDatasetIsValid (sub_1C0003DD4) -> relocated sub_1C000399C",
+      "similarity": 0.8926,
+      "change_type": "refactor",
+      "key_changes": [
+        "FveDatasetIsValidEx (sub_1C0009840) is a new patched-only helper holding the dataset structural-validation loop, with an added third parameter (char).",
+        "The original FveDatasetIsValid relocates to sub_1C000399C and becomes a thin forwarder ('call FveDatasetIsValidEx; retn').",
+        "Cross-field validation preserved: min size 0x30, data_size <= total, header consistency, and remaining >= 8. NOT_FOUND (0xC0000225) is handled inside the loop and converted to success."
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural validator refactor: the body moved into FveDatasetIsValidEx with an extra context parameter; the size-consistency checks are unchanged. No new validation weakened or added.",
+      "assembly_diff": "Patched FveDatasetIsValid @ 0x1C000399C (forwarder):\nsub rsp, 0x28\ncall FveDatasetIsValidEx   ; sub_1C0009840\nadd rsp, 0x28\nretn"
+    },
+    {
+      "name": "FveInformationIsValid (sub_1C00034BC) -> patched sub_1C0003B2C",
+      "similarity": 0.8804,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Calls the extended validator FveDatasetIsValidEx (sub_1C0009840) with the added parameter (was FveDatasetIsValid, sub_1C0003DD4).",
+        "Validates the '-FVE-FS-' signature and parses version/size fields from the BitLocker metadata header on disk."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveDatumIsValidTypeSpecificChecks (sub_1C000475C) -> patched sub_1C000474C",
+      "similarity": 0.693,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Dispatch expanded to handle new datum types 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x22 (new BitLocker key-protector datum types).",
+        "Existing type handlers (2, 7, 8, 0xf, 0x15) preserved with renamed callees."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition of new datum type handlers, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveSha256Init (sub_1C0004BD4) -> patched sub_1C0004C18",
+      "similarity": 0.8518,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added a per-object initialized flag: on success the patched build sets 'mov byte [rbx+8], 1'; on failure it skips that store via 'js loc_1C0004C63'. The flag gates deferred cleanup via sub_1C000AF34.",
+        "The BCryptCreateHash status is the function's return value (eax) in both builds, so the caller already sees a creation failure; the patch adds cleanup tracking, not return-value propagation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Resource-lifecycle hardening: the patch tracks whether the hash object was successfully created so deferred cleanup only runs on a valid object. The create status was already returned to the caller in both builds. Not attacker-reachable from disk metadata; requires BCryptCreateHash to fail.",
+      "assembly_diff": "Unpatched sub_1C0004BD4:\n0x1c0004c0b: call __imp_BCryptCreateHash   ; no return check follows\n\nPatched sub_1C0004C18:\n0x1c0004c4f: call __imp_BCryptCreateHash\n0x1c0004c5d: js loc_1C0004C63              ; return-value check added\n0x1c0004c5f: mov byte [rbx+0x8], 1         ; init flag for deferred cleanup"
+    },
+    {
+      "name": "FveDatumUpdateCreateFromDataset (sub_1C0007038) -> patched sub_1C0007074",
+      "similarity": 0.7455,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored hash lifecycle: uses create/finish/destroy wrappers with error checking and deferred cleanup.",
+        "Replaced a questionable 'rdi == -0xc' comparison with a proper sub_1C000AF68 call."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveDatumTpmEncBlobUnbox (sub_1C0011538) -> patched sub_1C00136C0; extracted FveUnsealTpmData (sub_1C000A424)",
+      "similarity": 0.7777,
+      "change_type": "refactor",
+      "key_changes": [
+        "The unpatched FveDatumTpmEncBlobUnbox inline-called FveDatumIsValidBounded (sub_1C0003F6C). In the patched build it relocates to sub_1C00136C0 and its TPM-unseal logic is extracted into the new helper FveUnsealTpmData (sub_1C000A424), which itself calls FveDatumIsValidBounded (0x1C000A537).",
+        "The recursive datum validator is still used, not eliminated; this is a code-organization refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "Extraction of the TPM-unseal flow into a helper. No change to the validation performed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LogErrorDataset (sub_1C005E578) -> patched sub_1C0062B4C",
+      "similarity": 0.495,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Simplified metadata iteration loop.",
+        "Added a 4th parameter (char) controlling processing of 0x1f and 0x20 datum types.",
+        "ETW telemetry events renumbered."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LogKeyRingErrors (sub_1C005E988) -> patched sub_1C0062CB4",
+      "similarity": 0.9922,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Predominantly ETW telemetry renumbering and helper function renames.",
+        "Passes the new 4th parameter (=1) to the iteration function."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveDatumPerformConcatHash (sub_1C0011780) -> patched sub_1C0013744",
+      "similarity": 0.9471,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored hash lifecycle with create/finish/destroy wrappers.",
+        "Added explicit cleanup call sub_1C000AF34 before function exit."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00A7414, sub_1C00A619C, sub_1C001090C (HSTI/DE platform reporting)",
+      "similarity": 0.99,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW telemetry event ID renumbering and global data reference address shifts.",
+        "No behavioral logic changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "FveDatasetGetDatumPointer (sub_1C00097F4) - patched-only wrapper around FveDatumIsValidBounded",
+      "FveDatasetIsValidEx (sub_1C0009840) - patched-only dataset validator with added parameter; FveDatasetIsValid (relocated sub_1C000399C) forwards to it",
+      "FveUnsealTpmData (sub_1C000A424) - patched-only extracted TPM-unseal helper that calls FveDatumIsValidBounded"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "FveKeyringGetCachedVmkTargetType (sub_1C0008D28), FveKeyringGetNext (sub_1C000EE6C), FveKeyringEraseAll (sub_1C000EC74)",
+      "entry_point": "BitLocker volume metadata parsing - triggered by mounting/accessing a volume with a '-FVE-FS-' metadata block whose datum entries carry crafted type fields (via VHD, USB, or disk image)",
+      "call_chain": [
+        "Disk I/O: read BitLocker metadata block from volume",
+        "FveInformationIsValid (sub_1C00034BC): checks '-FVE-FS-' signature at offset 0",
+        "FveDatasetIsValid (sub_1C0003DD4): structural validator, size-field consistency",
+        "FveKeyringGetCachedVmkTargetType (sub_1C0008D28): enumerates keyring datasets and inspects datum type fields"
+      ],
+      "vulnerability_class": "Improper input validation (CWE-20) on the datum type field",
+      "description": "Each BitLocker FVE keyring dataset carries a 32-bit type field at offset +4. The patched build treats bit 31 as not part of the type identity. In the unpatched build several keyring routines consume this field raw: FveKeyringGetCachedVmkTargetType tests presence with 'cmp dword [rdi+4], r15d' (r15d=0, so non-zero => present), and FveKeyringGetNext matches a requested type with 'cmp dword [r15+4], ebp'. As a result, in the unpatched build a dataset whose type field is 0x80000000 is treated as a present entry, and a dataset whose type is 'realtype | 0x80000000' does not compare equal to 'realtype'. The patched build strips bit 31 at every such site: 'test dword [rdi+4], 0x7fffffff' in FveKeyringGetCachedVmkTargetType (sub_1C0009094), 'mov eax,[r15+4]; btr eax,0x1f; cmp eax,ebp' in FveKeyringGetNext (sub_1C0010EA4), and 'btr edx, 0x1f' in FveKeyringEraseAll (sub_1C0010CA4). The datasets are still subject to the same structural validation in both builds, so the demonstrable consequence is a presence/match discrepancy, not a memory-safety condition.",
+      "trigger_conditions": "1) Craft a disk image (VHD, VMDK, or raw IMG) with a BitLocker-formatted volume containing the '-FVE-FS-' signature. 2) The metadata block must pass structural validation in FveInformationIsValid (sub_1C00034BC) and FveDatasetIsValid (sub_1C0003DD4): size >= 0x30, cross-field consistency. 3) Set a keyring datum's 32-bit type field at offset +4 with bit 31 set (0x80000000, or realtype | 0x80000000). 4) Mount or access the volume to trigger keyring enumeration.",
+      "primitive": "Logic-level type-handling discrepancy: an empty datum with only bit 31 set is treated as present, and a datum whose type is 'realtype | 0x80000000' will not match a lookup for 'realtype'. Depending on the caller this can cause a valid protector to be skipped or an unexpected datum to be handed to a type handler.",
+      "evidence": "Unpatched FveKeyringGetCachedVmkTargetType (sub_1C0008D28):\n```c\nif (datum[1])                       // type at offset+4 != 0 (0x80000000 passes)\n{\n    status = FveDatasetIsValid(datum, datum[0]);\n    // ... walk datums, validate each via FveDatumIsValidBounded\n}\n```\n\nPatched FveKeyringGetCachedVmkTargetType (sub_1C0009094):\n```c\nif (datum[1] & 0x7fffffff)          // 0x80000000 -> 0, skipped\n{\n    status = FveDatasetIsValidEx(datum, datum[0], flag);\n    // ... walk datums via FveDatasetGetDatumPointer wrapper\n}\n```\n\nPatched FveKeyringGetNext (sub_1C0010EA4):\n```c\nuint32_t t = datum[1];\nt &= ~0x80000000;                   // btr eax, 0x1f\nif (t == requested_type) { /* match */ }\n```",
+      "assembly": "Datum presence test - FveKeyringGetCachedVmkTargetType:\n; Unpatched sub_1C0008D28\n0x1c0008dad: cmp dword [rdi+0x4], r15d       ; raw type != 0 (0x80000000 passes)\n0x1c0008db1: jz 0x1c0008e73\n; Patched sub_1C0009094\n0x1c0009111: test dword [rdi+0x4], 0x7fffffff ; bit 31 masked, 0x80000000 -> skip\n0x1c0009118: jz 0x1c00091c9\n\nDatum type comparison - FveKeyringGetNext:\n; Unpatched sub_1C000EE6C\n0x1c000eefe: cmp dword [r15+0x4], ebp        ; raw type compared\n; Patched sub_1C0010EA4\n0x1c0010f36: mov eax, dword [r15+0x4]\n0x1c0010f3a: btr eax, 0x1f                    ; clear bit 31\n0x1c0010f3e: cmp eax, ebp                     ; masked type compared\n\nDatum type value - FveKeyringEraseAll:\n; Patched sub_1C0010CA4 (no equivalent in unpatched sub_1C000EC74)\n0x1c0010cd3: btr edx, 0x1f                     ; clear bit 31 before use",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fvevol_unpatched!sub_1C0008D28+0x7D",
+            "address": "0x1C0008DA5",
+            "why": "FveKeyringGetCachedVmkTargetType datum presence test. RDI points to the datum; [rdi+4] is the type field. In the unpatched build 0x80000000 passes the raw non-zero test; inspect this value."
+          },
+          {
+            "symbol": "fvevol_unpatched!sub_1C000EE6C+0x92",
+            "address": "0x1C000EEFE",
+            "why": "FveKeyringGetNext raw type comparison 'cmp [r15+4], ebp'. [r15+4] = candidate datum type, ebp = requested type. A candidate of 'ebp | 0x80000000' fails to match in the unpatched build."
+          },
+          {
+            "symbol": "fvevol_patched!sub_1C0010EA4+0x96",
+            "address": "0x1C0010F3A",
+            "why": "The added 'btr eax, 0x1f' in FveKeyringGetNext that clears bit 31 before the masked comparison."
+          },
+          {
+            "symbol": "fvevol_unpatched!sub_1C00046A0",
+            "address": "0x1C00046A0",
+            "why": "FveDatumHeaderSafe, the datum header validator used by both the keyring routines and FveDatumIsValidBounded. Inspect the parsed datum header (type at offset+4, size fields)."
+          }
+        ],
+        "watch": [
+          "dword [rdi+0x4] at 0x1C0008DA5 - datum type field; 0x80000000 passes the unpatched presence test",
+          "dword [r15+0x4] at 0x1C000EEFE - candidate datum type; 'requested | 0x80000000' fails the unpatched match",
+          "eax at 0x1C0010F3A (patched) - datum type after 'btr eax, 0x1f' clears bit 31"
+        ],
+        "key_offsets": [
+          "0x1C0008DA5 (unpatched): 'cmp dword [rdi+4], r15d' - raw presence test (no mask)",
+          "0x1C0009111 (patched): 'test dword [rdi+4], 0x7fffffff' - masked presence test",
+          "0x1C000EEFE (unpatched): 'cmp dword [r15+4], ebp' - raw type match",
+          "0x1C0010F3A (patched): 'btr eax, 0x1f' - mask before type match",
+          "0x1C0010CD3 (patched): 'btr edx, 0x1f' - mask in FveKeyringEraseAll"
+        ],
+        "trigger_setup": "1) Create a VHD or raw disk image with a BitLocker-formatted volume (e.g. 'format X: /FS:NTFS' then 'manage-bde -on X:'). 2) Locate the '-FVE-FS-' metadata blocks. 3) Set a keyring datum's 32-bit type field at offset +4 with bit 31 set (0x80000000 or realtype | 0x80000000), keeping the block structurally valid (size >= 0x30, cross-field checks). 4) Mount the VHD (via 'mountvol' or 'diskpart') to trigger keyring enumeration.",
+        "expected_observation": "In the unpatched build, a datum with bit 31 set in its type field passes the presence test (FveKeyringGetCachedVmkTargetType) or fails a type match (FveKeyringGetNext). In the patched build, bit 31 is cleared before either check, so only the low 31 type bits are used.",
+        "notes": "The FVE datum structure (parsed by FveDatumHeaderSafe, sub_1C00046A0) is: offset+0 = uint16 size, offset+2 = uint8 flags, offset+4 = uint32 type, offset+8+ = type-specific data. The 0x7fffffff / btr 0x1f masking is applied consistently in FveKeyringGetCachedVmkTargetType, FveKeyringGetNext, and FveKeyringEraseAll. Note that the recursive datum validator FveDatumIsValidBounded (unpatched sub_1C0003F6C, patched sub_1C0003F14) is present in both builds with an unchanged recursion and offset-advance loop; its only change is the enlarged type-table bound (0x1a -> 0x23) for the new key-protector datum types."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "FveSha256Init (sub_1C0004BD4) -> patched sub_1C0004C18",
+      "entry_point": "BitLocker key/hash operations that initialize a SHA-256 hash object",
+      "call_chain": [
+        "FveSha256Init (sub_1C0004BD4): allocates and initializes a SHA-256 hash object via BCryptCreateHash"
+      ],
+      "vulnerability_class": "Resource-lifecycle hardening (initialized-flag for deferred cleanup)",
+      "description": "In both builds the BCryptCreateHash status is the function's return value (eax), so the caller already sees a creation failure. The patched build adds a per-object initialized flag: on success it sets byte [rbx+8]=1, and on failure it skips that store via 'js loc_1C0004C63', so deferred cleanup (sub_1C000AF34) only runs on a successfully created hash object. This is cleanup tracking, not a change to how the create status is propagated.",
+      "trigger_conditions": "Requires BCryptCreateHash to fail (e.g. resource exhaustion). Not attacker-controlled from disk metadata.",
+      "primitive": "None demonstrated. The change gates deferred cleanup on a successfully created hash object; the create status is returned to the caller in both builds.",
+      "evidence": "Unpatched sub_1C0004BD4:\n```asm\n0x1c0004c0b: call __imp_BCryptCreateHash   ; return value ignored\n```\nPatched sub_1C0004C18:\n```asm\n0x1c0004c4f: call __imp_BCryptCreateHash\n0x1c0004c5d: js loc_1C0004C63             ; return-value check added\n0x1c0004c5f: mov byte [rbx+0x8], 1        ; init flag for deferred cleanup\n```",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fvevol_patched!sub_1C0004C18+0x37",
+            "address": "0x1C0004C4F",
+            "why": "The BCryptCreateHash call; the following 'js' and init-flag store are the added hardening."
+          }
+        ],
+        "watch": [
+          "eax after BCryptCreateHash - now checked in the patched build",
+          "byte [rbx+0x8] - init flag set to 1 on success in the patched build"
+        ],
+        "key_offsets": [
+          "0x1C0004C4F (patched): 'call __imp_BCryptCreateHash'",
+          "0x1C0004C5D (patched): 'js loc_1C0004C63' - added return check",
+          "0x1C0004C5F (patched): 'mov byte [rbx+0x8], 1' - added init flag"
+        ],
+        "trigger_setup": "Force BCryptCreateHash to fail (resource pressure) and observe the divergent error handling between builds.",
+        "expected_observation": "The unpatched build proceeds without checking the result; the patched build branches to the error path and does not set the init flag."
+      }
+    }
+  ],
+  "summary": "The patch hardens how BitLocker fvevol.sys consumes the 32-bit datum type field in its FVE metadata. Bit 31 of that field is a flag, not part of the type identity, and the unpatched build used the field raw when deciding whether a datum is present (FveKeyringGetCachedVmkTargetType: 'cmp [rdi+4], r15d') and when matching datums by type (FveKeyringGetNext: 'cmp [r15+4], ebp'). The patched build strips bit 31 at every such site ('test [rdi+4], 0x7fffffff' and 'btr reg, 0x1f' in FveKeyringGetCachedVmkTargetType, FveKeyringGetNext, and FveKeyringEraseAll), preventing an empty/flagged dataset (0x80000000) from being treated as present and preventing the high bit from altering a type match (CWE-20). The datasets are still subject to the same structural validation in both builds, so the consequence is a presence/match discrepancy rather than a memory-safety condition. Alongside this, the patch adds support for new key-protector datum types 0x1c-0x22 (dispatch table grown from 26 to 35 entries in FveDatumIsValidBounded and FveDatumIsValidTypeSpecificChecks), refactors datum/dataset access into new helpers (FveDatasetGetDatumPointer, FveDatasetIsValidEx, FveUnsealTpmData), and adds a per-object initialized flag in FveSha256Init that gates deferred hash cleanup (the create status is returned to the caller in both builds). The recursive datum validator FveDatumIsValidBounded is present in both builds with an unchanged recursion/offset-advance loop."
+}

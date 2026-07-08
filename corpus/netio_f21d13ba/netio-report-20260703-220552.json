@@ -1,0 +1,136 @@
+{
+  "binaries": {
+    "title": "netio.sys - No security-relevant change (NBL refcount hardening + WFP stream-inspection verifier/telemetry)",
+    "id_unpatched": "netio_unpatched.sys",
+    "id_patched": "netio_patched.sys",
+    "overall_similarity": 0.6138,
+    "matched": 1582,
+    "changed": 1250,
+    "identical": 332,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NetioDereferenceNetBufferListChain",
+      "address_unpatched": "0x1C0004180",
+      "address_patched": "0x140011CB0",
+      "similarity": 0.1834,
+      "change_type": "hardening",
+      "key_changes": [
+        "Unpatched already decrements atomically: it uses 'lock xadd [rbx+40h], eax' for the general case, plus a non-atomic last-reference fast path ('cmp dword ptr [rbx+40h], 1' then 'mov [rbx+40h], r12d' when the count is exactly 1). There is no plain 'sub qword [rbx+40h], 1' anywhere.",
+        "Patched removes the non-atomic last-reference fast path and always uses 'lock xadd [rbx+40h], rax' (widened from 32-bit to 64-bit).",
+        "Patched adds an underflow fail-fast: if the post-decrement value is negative it executes 'mov ecx, 0Eh; int 29h' (RtlFailFast code 0x0E).",
+        "Inline cleanup body extracted into the real helper NetiopCleanupNetBufferListInformation (0x140015880)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The general decrement was already atomic in the unpatched build, so this is not a non-atomic-to-atomic race fix. The removed fast path only fires when the observed count is 1 (last reference); under the standard reference-count invariant (a reference can only be taken by a thread that already holds one) the non-atomic zero store on that path is safe. The added RtlFailFast on underflow is a fail-fast integrity check that detects hypothetical refcount corruption rather than fixing a demonstrated race. Defensive hardening; the patched build is stricter, so not a regression.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpStreamInspectReceive",
+      "address_unpatched": "0x1C00061B0",
+      "address_patched": "0x140014F50",
+      "similarity": 0.641,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched delegates NBL chain cleanup to NetioDereferenceNetBufferListChain via a real call at 0x1C00305C5 (NOT at 0x1C000629E, which is 'call __guard_dispatch_icall_fptr').",
+        "Patched inlines the equivalent cleanup: calls NetiopCleanupNetBufferListInformation at 0x1400151DE and carries the same RtlFailFast (int 29h) at 0x14001522D.",
+        "The 'v12 != 23 && v12 != 2' test near entry is only a WPP trace guard (gates a WPP_SF_qqdl call); it does not reject or return on any protocol type."
+      ],
+      "security_relevant": false,
+      "security_notes": "Restructuring/inlining of the NBL cleanup that mirrors the NetioDereferenceNetBufferListChain hardening. No new bounds check and no protocol whitelist that rejects input.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpStreamInspectSend",
+      "address_unpatched": "0x1C0006420",
+      "address_patched": "0x140014210",
+      "similarity": 0.4666,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Mirrors the receive-path NBL cleanup restructuring; part of the same stream-inspection pipeline."
+      ],
+      "security_relevant": false,
+      "security_notes": "No new stream data length bounds check is added here. The only added length-consistency gate in the pipeline lives in StreamNormalizeClassifyOut and is verifier/telemetry.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "StreamNormalizeClassifyOut",
+      "address_unpatched": "0x1C000C944",
+      "address_patched": "0x140023C28",
+      "similarity": 0.0,
+      "change_type": "instrumentation",
+      "key_changes": [
+        "Unpatched already clamps the permit length against the stream data length: when v8 > v14 it calls StreamVerifierBreak(0x5000) and clamps a4[3] = *((_QWORD*)*a4 + 6).",
+        "Patched adds a new gate for the zero-permit case: 'cmp [rax+30h], rbx' / 'cmp [rax+80h], rbx' at 0x140023C7C-0x140023C8D, then WfpStreamCalloutDiagTraceInvalidDataLength, 'mov ecx, 5003h; call StreamVerifierBreak' at 0x140023CDE.",
+        "On the new path it forces the classify verdict (*a6 = 7, state = 2), records the length, and emits the 'StreamInvalidDataLength-StreamActionAllow' / 'StreamInvalidDataLength-StreamActionNone' telemetry strings (patched-only)."
+      ],
+      "security_relevant": false,
+      "security_notes": "StreamVerifierBreak (0x1C005FFB8) is KeBugCheckEx(0xC4) guarded by a WFP-stream-verifier flag bit; it only bugchecks when the verifier is enabled (a debugging feature, off in production) and otherwise returns. The rest is MicrosoftTelemetryAssert, a one-shot g_LogStreamInvalidData log gate, and WPP tracing. The load-bearing change is forcing a block verdict and recording the length on an inconsistency; it does not add a missing bounds check ahead of a copy. The string 'InvalidStreamDataLength' claimed at 0x14008e858 does not exist in either build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FwppStreamInject",
+      "address_unpatched": "0x1C0059690",
+      "address_patched": "0x14003AFA0",
+      "similarity": 0.5274,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds WPP/ETW tracing around the NBL chain walk and endpoint-context acquisition.",
+        "Core injection logic (KfdAleAcquireEndpointContextFromFlow -> stream data copy -> completion) preserved but reorganized."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpNblInfoCleanup",
+      "address_unpatched": "0x1C001A430",
+      "address_patched": "0x1400149A0",
+      "similarity": 0.0,
+      "change_type": "instrumentation",
+      "key_changes": [
+        "Patched adds a WFP_NBL_INFO_CONTAINER signature check using magic 0x6E706657 ('Wfpn' = 1852859991). The signature is written by WfpNblInfoAlloc in BOTH builds; the unpatched WfpNblInfoCleanup performs no signature check.",
+        "The check bugchecks only under Driver Verifier: KeBugCheckEx(0xC4) gated on gVerifierFlags & 0x2000000 (or gWfpVerifierEnabled).",
+        "It also emits MicrosoftTelemetryAssert('WfpNblInfoValidate: WFP_NBL_INFO_CONTAINER signature has been corrupt') behind the feature flag gWFPFeature_Firewall_042024_IsEnabled, with the old path retained in the else branch."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged Driver-Verifier and telemetry instrumentation with the old path retained. It does not enforce anything in production (verifier off, feature staged). Defense-in-depth diagnostics, not a delivered security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioPhParseIpv6TlvNdOption",
+      "address_unpatched": "0x1C001BAA0",
+      "address_patched": "0x140040B20",
+      "similarity": 0.5849,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Patched wraps a contiguity check then calls the pre-existing helper NetioPhParseIpv6TlvNdOptionContiguous (0x1C003F688 unpatched / 0x140040B88 patched).",
+        "The DataLength >= 2 bounds check is present in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FwppCopyStreamDataToBuffer",
+      "address_unpatched": "0x1C001B550",
+      "address_patched": "0x1400198B0",
+      "similarity": 0.6447,
+      "change_type": "behavioral",
+      "key_changes": [
+        "MDL-walk restructured; the patch inlines RtlCopyMdlToBuffer with the same ByteCount - offset clamp present in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "No bounds change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "The patch to netio.sys is servicing and defensive-hardening churn in the WFP stream-inspection pipeline, not a fix for a demonstrable reachable vulnerability. (1) NetioDereferenceNetBufferListChain (0x1C0004180 -> 0x140011CB0) already decremented the NBL reference count atomically in the unpatched build (lock xadd [rbx+40h], eax) alongside a non-atomic last-reference fast path that is safe under the standard refcount invariant; the patch removes that fast path, widens the atomic op to 64-bit, adds an RtlFailFast (int 29h, code 0x0E) on underflow, and extracts cleanup to NetiopCleanupNetBufferListInformation (0x140015880). This is robustness hardening, not a non-atomic-to-atomic race fix. (2) StreamNormalizeClassifyOut (0x1C000C944 -> 0x140023C28) already clamps the stream permit length in both builds; the patched addition on the zero-permit path is Driver-Verifier (StreamVerifierBreak = KeBugCheckEx(0xC4), verifier-gated) plus MicrosoftTelemetryAssert and WPP tracing emitting the patched-only 'StreamInvalidDataLength-*' strings, with a forced block verdict. The 'InvalidStreamDataLength' string claimed at 0x14008e858 does not exist. (3) WfpNblInfoCleanup adds a feature-staged, verifier-gated container signature check (magic 'Wfpn' 0x6E706657) that does not enforce in production. An independent content-matched diff of both builds found no omitted minimum-length or bounds fix in any packet/record parser (all carry identical bounds checks), and netio.sys contains no TLS/DTLS/record parser. No demonstrable reachable memory-safety vulnerability is fixed or introduced; every change moves toward stricter behavior in the patched build."
+}

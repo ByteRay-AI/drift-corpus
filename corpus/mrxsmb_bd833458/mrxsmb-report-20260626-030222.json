@@ -1,0 +1,97 @@
+{
+  "binaries": {
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9898,
+    "matched": 1230,
+    "changed": 6,
+    "identical": 1224,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmbQuicDisconnectEvent",
+      "similarity": 0.6948,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-flag gating that duplicated ETW/telemetry code paths",
+        "Unified ETW tracing path",
+        "WPP trace GUID changed from WPP_29dfa564178530fd1e553851b6dfa829 to WPP_204de8b894eb30a604d55fc295d80353"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbQuicConnEventPeerCertificateReceived",
+      "similarity": 0.7348,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-flag gating",
+        "Unified ETW tracing code paths",
+        "WPP trace GUID refresh"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbQuicAsynchronousConnectCompletion",
+      "similarity": 0.8126,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-flag gating",
+        "Unified ETW tracing paths for ConnectionEstablished / MultiChannelNetworkConnectFailureV2 events"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbQuicInitiateAsynchronousConnect",
+      "similarity": 0.8797,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-flag gating",
+        "Replaced the feature-disabled buffer-reuse path with an unconditional 'query-first' MsQuicConnectionGetParam call: NULL output buffer and a zeroed stack-local size, then allocate a fresh 'SmQu' buffer sized to the value MsQuic reports, then retry, then store the buffer/size into blk+0xE0 / blk+0xE8 only after a successful retry.",
+        "Unpatched default path passed the block's cached output buffer *(blk+0xE0) and size field blk+0xE8 to the first call; patched never hands a stored pointer to the API before validation.",
+        "Rundown-protection release accounting simplified alongside the gate removal"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a defense-in-depth hardening, not a fix for a demonstrable memory-safety flaw. In the unpatched default (feature-disabled) path the first MsQuicConnectionGetParam call (MsQuic dispatch table +0x20, parameter 0x5000018) receives the connection block's cached buffer pointer *(blk+0xE0) and size blk+0xE8. Verified against both binaries: the block (blk = *(a1+0x40)) is allocated by SmbMmAllocateServerTransport via ExAllocatePool2(0x40, 664, 'SmCe'), pool flag 0x40 does not set the uninitialized bit, so blk+0xE0 and blk+0xE8 are 0 on first use (NULL buffer / zero size -> STATUS_BUFFER_TOO_SMALL, no write). The only writes to blk+0xE0 set it to a freshly allocated buffer with a matching blk+0xE8 size, or to 0 with blk+0xE8 = 0 on failure. Both frees of the 'SmQu' buffer (local failure path and SmbQuicTearDown) null the field afterward. No path was found that reaches the call with a stale, dangling, or uninitialized pointer in blk+0xE0, and the receiving buffer is always sized to the length MsQuic reports, so the write stays in bounds. No reachable use-after-free or overflow primitive is demonstrable; therefore no CWE/severity is assigned.",
+      "assembly_diff": "Unpatched (feature-disabled default branch, real disassembly):\n0x14008FA31: mov rax, [rax+0x20]        ; MsQuic vtable +0x20 = GetParam\n0x14008FA35: jz  loc_14008FA50          ; feature OFF -> cached-buffer path\n0x14008FA50: mov r9, [rbx+0xE0]         ; r9 = cached buffer *(blk+0xE0)\n0x14008FA57: lea r14, [rbx+0xE8]        ; r14 = &blk[0xE8]\n0x14008FA5E: mov r8, r14                ; r8 = &blk[0xE8] (size in/out)\n0x14008FA61: call _guard_dispatch_icall ; GetParam(handle, 0x5000018, &blk[0xE8], cached buffer)\n0x14008FA69: cmp eax, 0xC0000023        ; STATUS_BUFFER_TOO_SMALL?\n0x14008FA6E: jnz loc_14008FC20\n0x14008FAF6: mov edx, [r14]             ; size = *(blk+0xE8) (set by MsQuic)\n0x14008FAF9: call ExAllocatePool2       ; allocate 'SmQu' buffer of that size\n0x14008FB05: mov [rbx+0xE0], rax        ; store fresh buffer\n\nUnpatched feature-enabled branch (query-first):\n0x14008FA37: xor r9d, r9d              ; r9 = NULL buffer\n0x14008FA3A: lea r8, [rsp+0x80]        ; r8 = &stack-local size (zeroed at 0x14008FA0C)\n0x14008FA42: call _guard_dispatch_icall\n\nPatched (unconditional query-first, real disassembly):\n0x14008F932: and dword [rsp+0x80], 0   ; stack-local size = 0\n0x14008F946: xor r9d, r9d              ; r9 = NULL buffer (always)\n0x14008F94C: mov edx, ebp              ; 0x5000018\n0x14008F953: mov rax, [rax+0x20]       ; GetParam\n0x14008F957: call _guard_dispatch_icall ; GetParam(handle, 0x5000018, &stacksize, NULL)\n0x14008F95F: cmp eax, 0xC0000023       ; STATUS_BUFFER_TOO_SMALL?\n0x14008F97F: call ExAllocatePool2      ; fresh allocation\n0x14008F9E3: mov r9, rsi               ; r9 = fresh buffer\n0x14008F9EC: call _guard_dispatch_icall ; retry with fresh buffer\n0x14008FA4C: mov [rbx+0xE0], rsi       ; store buffer only after success\n0x14008FA5A: mov [rbx+0xE8], eax       ; store size"
+    },
+    {
+      "name": "RxCeCompleteConnectRequest",
+      "similarity": 0.9119,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-flag gating for ETW code paths",
+        "Rundown-protection release accounting simplified alongside the gate removal",
+        "Function signature parameter type inference differences are decompiler artifacts"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.9894,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP trace GUID updates",
+        "Minor address shifts due to string/data relocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "The patch to mrxsmb.sys (SMB mini-redirector) removes the Feature_3679766840__private_IsEnabledDeviceUsageNoInline() feature-staging gate across a cluster of SMB-over-QUIC functions and, in SmbQuicInitiateAsynchronousConnect, replaces a feature-gated buffer-reuse path with an unconditional 'query-first' MsQuicConnectionGetParam call (NULL output buffer, zeroed stack-local size, fresh allocation, retry). This is a defense-in-depth hardening, not a fix for a demonstrable memory-safety vulnerability: verified against both builds, the connection block (blk = *(a1+0x40), pool tag 'SmCe') is zero-initialized by ExAllocatePool2(0x40, 664, ...), so the cached fields blk+0xE0/blk+0xE8 are 0 on first use; the buffer pointer and size are always kept consistent (allocated-and-sized together, freed-and-nulled together), and no path reaches the API with a stale, dangling, or uninitialized pointer. The receiving buffer is always sized to the length MsQuic reports, so the write is in bounds. No reachable use-after-free or pool-overflow primitive exists, so no CWE/severity is assigned. An independent whole-binary diff confirms the remaining changed functions are feature-staging/telemetry/WPP servicing churn and global-data-symbol relocations with no behavioural or security impact; no security-relevant change was omitted."
+}

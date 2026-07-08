@@ -1,0 +1,213 @@
+{
+  "binary": "ci.dll",
+  "kb": "KB5077181",
+  "release_date": "2026-02-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-21248",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21247",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21236",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21255",
+      "title": "Windows Hyper-V Security Feature Bypass Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Security Feature Bypass",
+      "cvss": 8.8
+    },
+    {
+      "id": "CVE-2026-21250",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21245",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21244",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21240",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21241",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-21239",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21238",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21232",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21231",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21222",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    }
+  ],
+  "naming_corrected": true,
+  "patched": {
+    "version": "10.0.26100.8737",
+    "sha256": "ac205af767df30ce6e7b6614097c301898d0143863aaaaaa1dce500bc6ab3b70",
+    "file": "ci_patched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "ductName": "\u0010",
+      "efresh": ""
+    }
+  },
+  "prev": {
+    "version": "10.0.26100.7705",
+    "sha256": "062db11ac522e73939e9a8342de8e4d9a26840be449e2856cb7348c15b53e2b1",
+    "kb_numbers": [
+      "KB5095093"
+    ],
+    "win_versions": [
+      "11-24H2"
+    ],
+    "file": "ci_unpatched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {},
+    "selection_tier": 1,
+    "selection_tier_description": "same Windows version (e.g. both from '10-1809')"
+  }
+}

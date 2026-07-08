@@ -1,0 +1,364 @@
+{
+  "binaries": {
+    "id_unpatched": "lan7800-x64-n650f_unpatched.sys",
+    "id_patched": "lan7800-x64-n650f_patched.sys",
+    "overall_similarity": 0.978,
+    "matched": 244,
+    "changed": 28,
+    "identical": 216,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MPIdleNotification",
+      "similarity": 0.9865,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version adds *(arg1 + 0x44) |= 0x8000000 before calling NdisMIdleNotificationConfirm — sets a 'selective suspend pending' flag that is entirely absent in the unpatched version",
+        "Unpatched version proceeds to confirm USB idle/suspend notification without setting any state flag to notify concurrent receive processing loops"
+      ],
+      "security_relevant": true,
+      "security_notes": "The patched build adds 'bts dword ptr [rbx+44h], 1Bh' (set bit 27, 0x8000000, the 'selective-suspend pending' flag at adapter offset 0x44) before NdisMIdleNotificationConfirm; the unpatched build sets no such flag. The flag is consumed by NICProcessBulkInWaitList, which in the patched build tests it and stops processing. Note the unpatched receive loop is NOT an unconditional while(true): both builds already bound the loop by an elapsed-time cap of 0x989680 (~1 second). The added synchronization closes a race window in which the receive loop can keep dequeuing, processing, and freeing receive control blocks (RCBs) while selective-suspend teardown operates on those same resources — a race that can lead to use-after-free (CWE-416). The freed-memory dereference is the condition the fix guards against; it was not demonstrated as an exploit primitive from the binaries.",
+      "assembly_diff": "; UNPATCHED MPIdleNotification @ 0x140001030\npush    rbx\nsub     rsp, 20h\nmov     rbx, rcx\ncall    NICWaitForReset\nmov     eax, [rbx+104h]\ncmp     eax, 0FFFFFFFFh\njnz     loc_14000105C\nmov     rcx, [rbx+78h]         ; NDIS adapter handle\nmov     edx, 3                 ; NdisDeviceStateD3\ncall    NdisMIdleNotificationConfirm_0  ; no suspend-pending flag set first\nmov     eax, 103h\n\n; PATCHED MPIdleNotification @ 0x140001034 adds before NdisMIdleNotificationConfirm:\nbts     dword ptr [rbx+44h], 1Bh   ; SET bit 27 (0x8000000) suspend-pending flag"
+    },
+    {
+      "name": "NICStopRxPath",
+      "similarity": 0.9452,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds a check !(*(arg1 + 0x44) & 0x4000000) before calling NICCollectSplitRxPackets",
+        "Unpatched version only checks rsi.b == 0 && *(arg1 + 0xff8) == 0 before calling NICCollectSplitRxPackets",
+        "The 0x4000000 flag (bit 26) is set/cleared by NICSetPowerState on low-power (D3) entry/resume — this flag lifecycle is present in BOTH builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "DOWNGRADED — not a use-after-free. NICCollectSplitRxPackets is a bounded poll-wait: it reads a split-RX pending counter ([rdi+0xF78] unpatched / [rdi+0xFA8] patched) and while non-zero sleeps 10 ms via NdisMSleep, exiting when the counter reaches 0 or after 100 iterations (~1 second). It makes no other calls and dereferences no RCB, NET_BUFFER_LIST, MDL, or USB transfer buffer, so it cannot cause a use-after-free. The added low-power guard only skips this poll-wait when the device is in D3 (where the counter would not drain and the routine would otherwise busy-wait to its cap). This is a robustness/latency improvement, not a memory-safety fix. The 0x4000000 flag itself is set/cleared by NICSetPowerState in both builds; only the consumer check in NICStopRxPath is new.",
+      "assembly_diff": "; UNPATCHED NICStopRxPath @ 0x140012418 — vulnerable call path:\n0x1400124be : test    sil, sil              ; check arg2\n0x1400124c1 : jne     0x1400124d4           ; skip if arg2 != 0\n0x1400124c3 : cmp     dword [rdi+0xff8], 0x0 ; check split RX packets pending\n0x1400124ca : jne     0x1400124d4           ; skip if pending\n0x1400124cc : mov     rcx, rdi              ; arg1 = adapter\n0x1400124cf : call    0x140010444           ; NICCollectSplitRxPackets(arg1) — NO power-state check!\n\n; PATCHED adds before the call:\n; test    dword [rdi+0x44], 0x4000000  ; check low-power flag\n; jne     skip_collect                  ; skip if in low-power state"
+    },
+    {
+      "name": "NICProcessBulkInWaitList",
+      "similarity": 0.9206,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version adds an early 'test dword ptr [rbx+44h], 8000000h' exit (0x140010FE4) before the loop and a per-iteration 'test [rbx+44h], 8000000h' loop-exit check (0x14001111D)",
+        "Both builds already bound the loop by an elapsed-time cap 'cmp rax, 989680h' (~1 second); the unpatched loop is NOT an unconditional while(true). The change is the added suspend-flag check, not the removal of an infinite loop",
+        "NICProcessSingleReceivePacket call unchanged in argument count; register allocation and struct offsets shifted"
+      ],
+      "security_relevant": true,
+      "security_notes": "This function processes received USB bulk transfer completions from a wait list, calling NICProcessSingleReceivePacket / NICProcessMultipleReceivePackets and freeing RCBs via NICFreeRCB when their refcount reaches 1. In the unpatched build the loop's only exit conditions are an empty wait list and the ~1-second elapsed-time cap; it cannot observe that selective suspend has begun. The patched build exits the loop when the 0x8000000 suspend-pending flag (set by MPIdleNotification) is detected, closing the race window in which the receive loop and the suspend teardown path both operate on the same receive control blocks. The use-after-free is the condition guarded against; no exploit primitive was demonstrated.",
+      "assembly_diff": "; UNPATCHED @ 0x140010C4C loop exit — time cap only, no suspend-flag test:\n0x140010D98 : mov  rax, [r13+0]     ; KUSER_SHARED_DATA interrupt-time\n0x140010D9C : sub  rax, r15\n0x140010D9F : cmp  rax, 989680h     ; 10,000,000 (~1 second)\n0x140010DA5 : ja   loc_140010DDF    ; exit if elapsed\n\n; PATCHED @ 0x140010FA0 adds two suspend-flag tests around the same time-capped loop:\n0x140010FE4 : test dword ptr [rbx+44h], 8000000h  ; early exit before loop\n0x140010FEB : jnz  loc_14001112A\n0x14001111D : test dword ptr [rbx+44h], 8000000h  ; re-check each iteration\n0x140011124 : jz   loc_140010FFF                  ; continue only if not suspending"
+    },
+    {
+      "name": "NICSetPowerState",
+      "similarity": 0.9806,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Sets the 0x4000000 low-power flag via 'bts dword ptr [reg+..], 1Ah' on low-power entry and clears it via 'btr ..., 1Ah' on resume — this logic is PRESENT IN BOTH BUILDS (unpatched at offset 0x80 @ 0x14000E287/0x14000E322, patched at offset 0x44 @ 0x14000E617/0x14000E6AF)",
+        "Struct field-offset shift (0x80 -> 0x44) and error-log suppression are the only differences",
+        "Restructured if-else logic for PHY interrupt handling (flattened nesting, same semantics)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function maintains the 0x4000000 low-power flag, but that set/clear logic exists in both the unpatched and patched builds — it is not a patch-introduced change. The patched build's only differences here are the struct-offset shift and error-log suppression. The flag is newly consulted by NICStopRxPath in the patched build, but because the consumer (NICCollectSplitRxPackets) is a poll-wait that touches no freed memory, that new check is a robustness improvement, not a use-after-free fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICResetWorkItemCallBack",
+      "similarity": 0.9679,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added if (!(*(arg1 + 0x44) & 0x10)) check before NdisWriteErrorLogEntry to suppress error logging when device is already in removed state",
+        "Calls NICStopRxPath(arg1, 0)",
+        "Field offset shifts throughout (0x80 -> 0x44, 0x78 -> 0x98, etc.)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error-log suppression via the 0x10 device-removed flag. This function calls NICStopRxPath(arg1, 0); in the unpatched build that reaches NICCollectSplitRxPackets without the low-power guard, but NICCollectSplitRxPackets is a bounded poll-wait that touches no freed memory, so this is not a use-after-free path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "USBAbortPipe",
+      "similarity": 0.29,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched was a bare tail-call stub (4 instructions, no error handling, no security cookie)",
+        "Patched version adds full function prologue/epilogue with security cookie, proper USB request setup with timeout, error logging via NdisWriteErrorLogEntry, and proper NTSTATUS translation for USB errors (STATUS_DEVICE_NOT_CONNECTED, STATUS_DEVICE_REMOVED)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error handling hardening. The unpatched version was a minimal wrapper that jumped directly to WdfUsbTargetPipeAbortSynchronously without setting up proper request options or handling errors. Not directly exploitable but contributes to the race condition surface by not properly handling USB pipe abort failures during suspend.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "USBGetPortStatus",
+      "similarity": 0.4868,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added security cookie and stack frame setup",
+        "Added error logging via NdisWriteErrorLogEntry for USB failures",
+        "Added 0x10 flag check/set for device removed state (STATUS_DEVICE_NOT_CONNECTED handling)",
+        "Changed field offsets (0x80 -> 0x44, 0x60 -> 0x80)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error handling improvements for USB port status queries. When USB returns STATUS_DEVICE_NOT_CONNECTED (0xC000009D), the patched version sets the 0x10 device-removed flag and logs the error. This prevents further USB operations on a disconnected device.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "USBResetPipe",
+      "similarity": 0.9854,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Now calls USBAbortPipe function instead of inline WDF call",
+        "Passes additional arg1 parameter to USBAbortPipe",
+        "Field offset change (0x80 -> 0x44) for flag check"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactored to use the improved USBAbortPipe function. No direct security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICReadRegister",
+      "similarity": 0.9304,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added if (!(r9_1 & 0x10)) check before NdisWriteErrorLogEntry to suppress redundant error logging when device is removed",
+        "Field offset shifts (0x68 -> 0x88, 0x80 -> 0x44, 0x78 -> 0x98)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error logging hardening. The 0x10 device-removed flag check prevents excessive error logging after device removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICWriteRegister",
+      "similarity": 0.9159,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added if (!(r9_2 & 0x10)) check before NdisWriteErrorLogEntry",
+        "Field offset shifts (0x68 -> 0x88, 0x80 -> 0x44, 0x78 -> 0x98)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same error logging hardening pattern as NICReadRegister.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICInitUSB",
+      "similarity": 0.7386,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured loop from do-while to while(true) with explicit break conditions",
+        "Added if (*(arg1 + 0x44) & 0x10) checks before error logging throughout USB interface enumeration",
+        "Field offset shifts (0x60 -> 0x80, 0x68 -> 0x88, etc.)"
+      ],
+      "security_relevant": false,
+      "security_notes": "USB initialization error handling improvements. Added device-removed state checks during USB interface/pipe enumeration to prevent error logging storms after device removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICProcessSingleReceivePacket",
+      "similarity": 0.894,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Field offset shifts throughout (0x80 -> 0x44, 0xee8 -> 0xf18, 0x798 -> 0x7c0, etc.)",
+        "Added test r9b, 0x10 check before NdisWriteErrorLogEntry in error path",
+        "Register allocation change (r10d -> r11d for buffer size)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Predominantly struct layout offset changes with minor error logging hardening. The packet validation logic (size checks, header parsing) is functionally identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICConfigureTRRegs",
+      "similarity": 0.8545,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Field offset shifts (0xbc -> 0xdc, 0x7e8 -> 0x810, 0xc0 -> 0xe0, etc.)",
+        "Added new PHY register configuration code block (label_140006166) with multiple NICWriteTRPhy calls for additional PHY initialization"
+      ],
+      "security_relevant": false,
+      "security_notes": "New PHY register configuration values added. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICHandleDriverCmd",
+      "similarity": 0.993,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Field offset shifts throughout (arg1[8] -> *(arg1 + 0x44), arg1[0x1df] -> arg1[0x1e1], etc.)",
+        "Variable name changes (rax_95 -> rax_96, etc.) due to decompiler differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "Purely struct offset changes. The OTP read/write command handling logic (commands 0x17-0x1a) is functionally identical. No validation changes in any command path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICQueryInformation",
+      "similarity": 0.9657,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICSetInformation",
+      "similarity": 0.9839,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICRequestWorkItemCallback",
+      "similarity": 0.9673,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICPeriodicCheckWorkItemCallBack",
+      "similarity": 0.9807,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICProcessMultipleReceivePackets",
+      "similarity": 0.9773,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICSetMediaType",
+      "similarity": 0.9406,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICDeconfigureDevice",
+      "similarity": 0.898,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICReadRegParameters",
+      "similarity": 0.957,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICPhySpecificInitialization",
+      "similarity": 0.9589,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICResetAdapter",
+      "similarity": 0.9605,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICInitializeMedia",
+      "similarity": 0.9716,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICAddWOLSample",
+      "similarity": 0.9872,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICAddWolPattern",
+      "similarity": 0.9927,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NICProcessWakeReason",
+      "similarity": 0.9928,
+      "change_type": "cosmetic",
+      "key_changes": ["Field offset shifts throughout"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "MPIdleNotification",
+      "entry_point": "USB Selective Suspend (NdisMIdleNotificationConfirm callback registered via NDIS miniport adapter)",
+      "call_chain": ["NDIS USB selective suspend engine", "MPIdleNotification", "NdisMIdleNotificationConfirm (device enters D3)", "NICProcessBulkInWaitList (concurrent receive processing loop continues, bounded only by a ~1s elapsed-time cap)", "NICProcessSingleReceivePacket / NICProcessMultipleReceivePackets / NICFreeRCB (processes and frees RCBs concurrently with suspend teardown)"],
+      "vulnerability_class": "Race condition (CWE-362) leading to use-after-free (CWE-416)",
+      "description": "In the unpatched LAN7800 USB Ethernet driver, MPIdleNotification confirms USB selective suspend via NdisMIdleNotificationConfirm without setting any state flag observable by the concurrent receive processing loop. NICProcessBulkInWaitList walks the bulk-in wait list, calls NICProcessSingleReceivePacket / NICProcessMultipleReceivePackets, and frees receive control blocks (RCBs) via NICFreeRCB when their refcount reaches 1; in the unpatched build its only exit conditions are an empty wait list and an elapsed-time cap of 0x989680 (~1 second). It is NOT an unconditional while(true) loop — the same time cap exists in both builds. Because the unpatched build sets no suspend-pending flag, the receive loop cannot observe that selective-suspend teardown has begun and can keep processing and freeing the same RCBs the teardown path is releasing, a race that can lead to use-after-free of receive control blocks. The patched build adds 'bts dword ptr [rbx+44h], 1Bh' (bit 27, 0x8000000) in MPIdleNotification before the confirm, and two 'test [rbx+44h], 8000000h' checks in NICProcessBulkInWaitList so the loop exits once suspend is pending.",
+      "trigger_conditions": "1. The LAN7800 USB Ethernet adapter is configured for USB selective suspend (registry SelectiveSuspend=1 or OS default). 2. Inbound receive traffic keeps RCBs on the bulk-in wait list so NICProcessBulkInWaitList is actively iterating. 3. The selective-suspend idle timer fires, causing NDIS to call MPIdleNotification, which confirms the D3 transition while receive processing is still draining the wait list. 4. The race window is between the NdisMIdleNotificationConfirm call (which starts suspend teardown) and NICProcessBulkInWaitList's continued iteration. This is a narrow, timing-dependent window and depends on receive processing overlapping suspend teardown.",
+      "primitive": "None demonstrated. The evidence establishes a missing synchronization between the selective-suspend confirmation path and the bulk-in receive processing loop, and the patched build adds a suspend-pending flag plus the corresponding loop checks. Whether the resulting use-after-free of a receive control block can be developed into a controlled read/write or code-execution primitive was not shown by the disassembly and is not claimed.",
+      "evidence": "; UNPATCHED MPIdleNotification @ 0x140001030 — no suspend-pending flag set before suspend confirm:\n0x140001030 : push    rbx\n0x140001032 : sub     rsp, 20h\n0x140001036 : mov     rbx, rcx\n0x140001039 : call    NICWaitForReset\n0x14000103E : mov     eax, [rbx+104h]        ; power-state cache\n0x140001044 : cmp     eax, 0FFFFFFFFh\n0x140001047 : jnz     loc_14000105C\n0x140001049 : mov     rcx, [rbx+78h]         ; NDIS adapter handle\n0x14000104D : mov     edx, 3                 ; NdisDeviceStateD3\n; (no flag set here)\n0x140001052 : call    NdisMIdleNotificationConfirm_0\n0x140001057 : mov     eax, 103h\n\n; PATCHED MPIdleNotification @ 0x140001034 adds, before the confirm:\n; 0x14000104D : bts   dword ptr [rbx+44h], 1Bh   ; set bit 27 (0x8000000) suspend-pending\n\n; UNPATCHED NICProcessBulkInWaitList @ 0x140010C4C — loop exit is time-cap only, no suspend test:\n0x140010D9F : cmp     rax, 989680h           ; ~1s elapsed-time cap (present in both builds)\n0x140010DA5 : ja      loc_140010DDF          ; exit if elapsed\n; PATCHED @ 0x140010FA0 adds: 0x140010FE4 test [rbx+44h], 8000000h (early exit)\n;                            0x14001111D test [rbx+44h], 8000000h (per-iteration exit)",
+      "assembly": "; MPIdleNotification (unpatched) @ 0x140001030:\n0x140001030: push    rbx\n0x140001032: sub     rsp, 20h\n0x140001036: mov     rbx, rcx\n0x140001039: call    NICWaitForReset\n0x14000103E: mov     eax, [rbx+104h]\n0x140001044: cmp     eax, 0FFFFFFFFh\n0x140001047: jnz     loc_14000105C\n0x140001049: mov     rcx, [rbx+78h]\n0x14000104D: mov     edx, 3\n0x140001052: call    NdisMIdleNotificationConfirm_0\n0x140001057: mov     eax, 103h\n0x14000105C: add     rsp, 20h\n0x140001060: pop     rbx\n0x140001061: retn\n\n; NICCollectSplitRxPackets (unpatched) @ 0x140010444 — bounded poll-wait, NOT a UAF:\n0x140010444: mov     [rsp+arg_0], rbx\n0x140010449: push    rdi\n0x14001044A: sub     rsp, 20h\n0x14001044E: mov     rdi, rcx\n0x140010451: xor     ebx, ebx\n0x140010453: cmp     dword ptr [rdi+0F78h], 0   ; poll split-RX pending counter\n0x14001045A: jz      loc_14001047B             ; return when it reaches 0\n0x14001045C: inc     ebx\n0x14001046B: cmp     ebx, ecx                   ; ebx == (ebx/100)*100 ?\n0x14001046D: jz      loc_14001047B             ; return after 100 iterations\n0x14001046F: mov     ecx, 2710h                 ; 10 ms\n0x140010474: call    NdisMSleep_0\n0x140010479: jmp     loc_140010453\n; (no RCB / NBL / MDL / USB buffer dereference anywhere in this function)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "lan7800!MPIdleNotification",
+            "address": "0x140001030",
+            "why": "Break here to observe USB selective suspend confirmation. After this function calls NdisMIdleNotificationConfirm at 0x140001052, the device begins the D3 transition. In the unpatched build no suspend-pending flag is set beforehand; in the patched build 'bts dword ptr [rbx+44h], 1Bh' (bit 27, 0x8000000) executes just before the call. rbx = adapter context."
+          },
+          {
+            "symbol": "lan7800!NICProcessBulkInWaitList",
+            "address": "0x140010c4c",
+            "why": "Break here to inspect the bulk-in wait-list processing loop. In the unpatched build the loop exits only on an empty wait list or when the elapsed-time counter exceeds 0x989680 at 0x140010D9F; there is no suspend-flag test, so processing can overlap suspend teardown. In the patched build the loop tests [rbx+44h] & 0x8000000 and exits when the suspend-pending flag is set."
+          }
+        ],
+        "watch": [
+          "[rbx+0x80] (unpatched) / [rbx+0x44] (patched) — adapter flags field: bit 26 (0x4000000)=low-power state (set/cleared by NICSetPowerState in BOTH builds), bit 27 (0x8000000)=selective-suspend pending (set by MPIdleNotification and checked by NICProcessBulkInWaitList only in the patched build)",
+          "The elapsed-time comparison 'cmp rax, 989680h' in NICProcessBulkInWaitList — the ~1s cap that bounds the loop in both builds",
+          "rdi+0xff8 (unpatched) / rdi+0x1028 (patched) — split-RX pending count checked by NICStopRxPath before it decides whether to call NICCollectSplitRxPackets"
+        ],
+        "key_offsets": [
+          "0x14000104d (patched MPIdleNotification): 'bts dword ptr [rbx+44h], 1Bh' — sets the suspend-pending flag before the NdisMIdleNotificationConfirm call at 0x14000105e; absent in the unpatched build",
+          "0x140010fe4 / 0x14001111d (patched NICProcessBulkInWaitList): 'test dword ptr [rbx+44h], 8000000h' — the added early-exit and per-iteration suspend-flag checks; absent in the unpatched build",
+          "0x140010d9f (both builds, NICProcessBulkInWaitList): 'cmp rax, 989680h' — the elapsed-time cap that already bounds the loop",
+          "0x14000e287 (unpatched NICSetPowerState): 'bts dword ptr [rcx+80h], 1Ah' — sets the low-power flag; the corresponding 'btr ..., 1Ah' at 0x14000e322 clears it. Both are present in the patched build too (at offset 0x44, @ 0x14000e617 / 0x14000e6af)"
+        ],
+        "trigger_setup": "1. Ensure LAN7800 USB Ethernet adapter is plugged in and driver loaded. 2. Enable USB selective suspend via the driver's registry SelectiveSuspend setting (or rely on OS default). 3. Generate continuous receive traffic so RCBs remain on the bulk-in wait list and NICProcessBulkInWaitList is actively iterating. 4. Let the device go idle so the selective-suspend timer fires and MPIdleNotification confirms the D3 transition while receive processing is still draining the wait list. The race window is between the NdisMIdleNotificationConfirm call and the receive loop's continued iteration.",
+        "expected_observation": "This is a narrow timing-dependent race; a bugcheck is not deterministically reproducible from the binaries. If the receive loop dereferences or frees a receive control block that suspend teardown has already released, expect a pool-related bugcheck such as 0xD1 (DRIVER_IRQL_NOT_LESS_OR_EQUAL), 0x50 (PAGE_FAULT_IN_NONPAGED_AREA), or, with Driver Verifier Special Pool enabled for the unpatched driver, 0xCC (PAGE_FAULT_IN_FREED_SPECIAL_POOL). No such crash was reproduced during this analysis; the finding rests on the added synchronization visible in the patched build.",
+        "notes": "The adapter context struct was reorganized between builds; the flags field is at offset 0x80 in the unpatched binary and 0x44 in the patched binary, the NDIS adapter handle moved from 0x78 to 0x98, and the power-state cache from 0x104 to 0x12C. Use the unpatched offsets when inspecting the unpatched image. The second path originally reported here (NICStopRxPath -> NICCollectSplitRxPackets) is NOT a use-after-free: NICCollectSplitRxPackets only polls a split-RX pending counter and calls NdisMSleep, dereferencing no receive control block, NET_BUFFER_LIST, MDL, or USB buffer; the low-power guard added to NICStopRxPath only avoids a needless poll-wait while the device is in D3."
+      }
+    }
+  ],
+  "summary": "The patch adds power-state synchronization to the USB receive path of the LAN7800 driver. In the unpatched build, MPIdleNotification confirms USB selective suspend via NdisMIdleNotificationConfirm without setting any state flag, and the concurrent bulk-in receive processing loop NICProcessBulkInWaitList has no way to observe the suspend (its only exit conditions are an empty wait list and a ~1s elapsed-time cap; it is not an unconditional while(true) — that cap exists in both builds). The patched build adds 'bts [rbx+44h], 1Bh' (bit 27, 0x8000000, suspend-pending) in MPIdleNotification before the confirm, and two 'test [rbx+44h], 8000000h' checks in NICProcessBulkInWaitList so the loop stops once suspend is pending. This closes a race window in which the receive loop can keep processing and freeing receive control blocks (RCBs) concurrently with suspend teardown, a race that can lead to use-after-free (CWE-416); severity is assessed as medium because the window is narrow and timing-dependent and no exploit primitive was demonstrated. A second path originally reported (NICStopRxPath -> NICCollectSplitRxPackets, gated by a new 0x4000000 low-power check) was re-examined and is NOT a use-after-free: NICCollectSplitRxPackets is a bounded poll-wait (NdisMSleep on a counter) that dereferences no receive control block or USB buffer, and the low-power flag it now consults is set/cleared by NICSetPowerState in both builds; that change is a robustness improvement only."
+}

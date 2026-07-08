@@ -1,0 +1,390 @@
+{
+  "binary": "ntfs.sys",
+  "kb": "KB5082123",
+  "release_date": "2026-04-14",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-26180",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-27908",
+      "title": "Windows TDI Translation Driver (tdx.sys) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-27917",
+      "title": "Windows WFP NDIS Lightweight Filter Driver (wfplwfs.sys) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-27921",
+      "title": "Windows TDI Translation Driver (tdx.sys) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-27926",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-27929",
+      "title": "Windows LUA File Virtualization Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-32073",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-32215",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    },
+    {
+      "id": "CVE-2026-32217",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    },
+    {
+      "id": "CVE-2026-33098",
+      "title": "Windows Container Isolation FS Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26156",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        },
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26163",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-415",
+          "name": "Double Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26169",
+      "title": "Windows Kernel Memory Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-126",
+          "name": "Buffer Over-read"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 6.1
+    },
+    {
+      "id": "CVE-2026-26173",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26176",
+      "title": "Windows Client Side Caching driver (csc.sys) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26177",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26182",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-27922",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-32070",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-32149",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        },
+        {
+          "id": "CWE-191",
+          "name": "Integer Underflow (Wrap or Wraparound)"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-33099",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-33100",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-33104",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-33827",
+      "title": "Windows TCP/IP Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.1
+    },
+    {
+      "id": "CVE-2026-26168",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.17763.8641",
+    "sha256": "a31666593d5520413552bafe11d342b829153622a4b5060e9fe0aea28902c225",
+    "file": "ntfs_patched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "NT File System Driver",
+      "FileVersion": "10.0.17763.8641 (WinBuild.160101.0800)",
+      "InternalName": "ntfs.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "ntfs.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.8641"
+    }
+  },
+  "prev": {
+    "version": "10.0.17763.8510",
+    "sha256": "390435f0a6f9ee2210971589cc5c1e16e66cb6237cce2e67f175bdc5e06b59b9",
+    "kb_numbers": [
+      "KB5078752"
+    ],
+    "win_versions": [],
+    "file": "ntfs_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "NT File System Driver",
+      "FileVersion": "10.0.17763.8510 (WinBuild.160101.0800)",
+      "InternalName": "ntfs.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "ntfs.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.8510"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

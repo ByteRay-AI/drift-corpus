@@ -1,0 +1,217 @@
+{
+  "binaries": {
+    "title": "msnfsflt.sys - Uninitialized kernel stack padding leaked through the NFS server-call record (memset added in two stack-record sites)",
+    "id_unpatched": "msnfsflt_unpatched.sys",
+    "id_patched": "msnfsflt_patched.sys",
+    "overall_similarity": 0.8262,
+    "matched": 76,
+    "changed": 45,
+    "identical": 31,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MsNfsFltNotifyServerOfBlockingFileOpen",
+      "address_unpatched": "0x1C0009C50",
+      "address_patched": "0x1C0009DA8",
+      "similarity": 0.9793,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED adds memset(&record, 0, 0x4c) at 0x1C0009DFE (rcx=&record [rbp-0x30], r8d=0x4c size, edx=0 fill) BEFORE the record is populated by MsNfsFltServerCallInformationInitialization. UNPATCHED declares the 0x4c-byte record on the stack without zeroing it, leaving 8 bytes of padding at record offsets 0x04-0x07 and 0x14-0x17 with stale kernel stack contents.",
+        "OBJECT_ATTRIBUTES.Attributes and the flags-field computation are compiled differently between builds but are functionally equivalent; not security-relevant."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched function does not zero-initialize the record before calling MsNfsFltServerCallInformationInitialization to populate it. The builder writes specific fields but leaves 8 bytes of padding (offsets 0x04-0x07 and 0x14-0x17) unwritten. The record is then passed to the registered NFS server notification callback stored at arg1[8] ([rdi+0x40]) and invoked through the Control Flow Guard dispatch stub as arg1[8](arg1[7], &record). This is CWE-908 (Use of Uninitialized Resource) / CWE-200 (Information Exposure). The patch adds memset(&record, 0, 0x4c) to zero the padding before population. The builder itself is byte-for-byte identical across builds (relocated 0x1C0003578 -> 0x1C0002E18), so the memset is the fix.",
+      "assembly_diff": "UNPATCHED tail (record built and delivered to callback):\n  0x1C0009E27: lea     rcx, [rbp+60h+var_90]           ; rcx = &record ([rbp-0x30]) UNINITIALIZED\n  0x1C0009E33: mov     rdx, r14                        ; rdx = a2\n  0x1C0009E36: call    MsNfsFltServerCallInformationInitialization  ; leaves +0x04 and +0x14 stale\n  0x1C0009E6B: call    MsNfsFltOperationBegin\n  0x1C0009E74: mov     rax, [rdi+40h]                  ; a1[8] = server callback pointer\n  0x1C0009E78: test    rax, rax\n  0x1C0009E7B: jz      short 0x1C0009E91\n  0x1C0009E7D: cmp     r14, 1                          ; a2 != 1 ?\n  0x1C0009E81: jz      short 0x1C0009E91\n  0x1C0009E83: mov     rcx, [rdi+38h]                  ; a1[7] = callback context\n  0x1C0009E87: lea     rdx, [rbp+60h+var_90]           ; rdx = &record (padding still stale)\n  0x1C0009E8B: call    cs:__guard_dispatch_icall_fptr  ; CFG-dispatched a1[8](a1[7], &record)\n\nPATCHED prologue (memset added):\n  0x1C0009DEC: lea     r8d, [r15+4Ch]                  ; size = 0x4c\n  0x1C0009DF0: xor     edx, edx                        ; fill = 0\n  0x1C0009DF6: lea     rcx, [rbp+60h+var_90]           ; &record\n  0x1C0009DFE: call    memset                          ; memset(&record, 0, 0x4c)\n  ; record builder is later called at 0x1C0009FB9"
+    },
+    {
+      "name": "MsNfsFltPostOpCreate",
+      "address_unpatched": "0x1C0008BB0",
+      "address_patched": "0x1C000A080",
+      "similarity": 0.9835,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED adds memset(&var_70, 0, 0x4c) at 0x1C000A0B6 at the very top of the function, before the record builder call at 0x1C000A217. UNPATCHED builds the same 0x4c-byte stack record (var_70) via MsNfsFltServerCallInformationInitialization at 0x1C0008D25 with no prior zeroing, leaving the same 8 bytes of padding (0x04-0x07, 0x14-0x17) stale.",
+        "Unrelated pool-API refactoring (ExAllocatePoolWithTag -> ExAllocatePool2 style) and register reallocation."
+      ],
+      "security_relevant": true,
+      "security_notes": "Second site of the same uninitialized-record leak. In the unpatched build, MsNfsFltPostOpCreate populates its stack record (var_70) with the shared builder without zeroing it, then forwards the record to MsNfsFltNotifyServerOfFileActivity / MsNfsFltNotifyServerOfVolumeActivity, which relay it to the registered server callback. This path runs on normal (non-error) monitored creates, so it does not require a sharing violation. The patch adds the same memset(&var_70, 0, 0x4c). CWE-908 / CWE-200.",
+      "assembly_diff": "PATCHED entry (memset added):\n  0x1C000A0A9: xor     edx, edx                        ; Val = 0\n  0x1C000A0AE: lea     rcx, [rbp+57h+var_70]           ; &record\n  0x1C000A0B2: lea     r8d, [rdx+4Ch]                  ; Size = 0x4c\n  0x1C000A0B6: call    memset                          ; memset(&var_70, 0, 0x4c)\n  ; builder later at 0x1C000A217\n\nUNPATCHED (no memset before builder):\n  0x1C0008D0B: lea     rcx, [rbp+57h+var_70]           ; &record (not zeroed)\n  0x1C0008D25: call    MsNfsFltServerCallInformationInitialization"
+    },
+    {
+      "name": "MsNfsFltCheckFileForActivity",
+      "address_unpatched": "0x1C0009830",
+      "similarity": 0.8756,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Loop traversal logic restructured and activity-flag bit encoding reorganized; functionally equivalent."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltPreOpGetFileContext",
+      "address_unpatched": "0x1C0009160",
+      "similarity": 0.7208,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Large pre-operation callback. Also calls MsNfsFltServerCallInformationInitialization, but into a pool-allocated object at [rdi+0x30] (zeroed at allocation), so it receives no memset. Register reallocation and control-flow restructuring only."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltInstanceSetup",
+      "address_unpatched": "0x1C0008550",
+      "similarity": 0.7633,
+      "change_type": "cosmetic",
+      "key_changes": ["Volume attachment callback - ExAllocatePoolWithTag -> ExAllocatePool2, register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNFsFltContextCallbackCleanupAndDelete",
+      "address_unpatched": "0x1C0003628",
+      "similarity": 0.8188,
+      "change_type": "cosmetic",
+      "key_changes": ["Pool management modernization: custom SLIST pool replaced with lookaside-list free"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltNotifyServerOfNewlyMountedVolumeByWorkItem",
+      "address_unpatched": "0x1C0002CC0",
+      "similarity": 0.8314,
+      "change_type": "cosmetic",
+      "key_changes": ["Work item queueing - ExAllocatePoolWithTag -> ExAllocatePool2, error path restructuring, functionally equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltContextCreateStreamHandle",
+      "address_unpatched": "0x1C0001DA0",
+      "similarity": 0.8323,
+      "change_type": "cosmetic",
+      "key_changes": ["Stream handle context creation - control flow restructuring, same FltAllocateContext/FltSetStreamHandleContext logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltGetSourceDirectoryFileId",
+      "address_unpatched": "0x1C0009EFC",
+      "similarity": 0.9576,
+      "change_type": "cosmetic",
+      "key_changes": ["FileHardLinkInformation query - ExAllocatePoolWithTag -> ExAllocatePool2, register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltGetTargetDirectoryFileId",
+      "address_unpatched": "0x1C000A010",
+      "similarity": 0.98,
+      "change_type": "cosmetic",
+      "key_changes": ["File rename/destination query handler - explicit local variable initialization, struct zeroing, functionally equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsNfsFltContextFileUpdateFileId",
+      "address_unpatched": "0x1C0009ACC",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": ["File activity update function - register reallocation, functionally equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WppLoadTracingSupport",
+      "address_unpatched": "0x1C0008008",
+      "similarity": 0.9842,
+      "change_type": "cosmetic",
+      "key_changes": ["Tracing initialization - UNICODE_STRING explicit zeroing, functionally equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "MsNfsFltNotifyServerOfBlockingFileOpen (0x1C0009C50) and MsNfsFltPostOpCreate (0x1C0008BB0)",
+      "entry_point": "IRP_MJ_CREATE post-operation callback (MsNfsFltPostOpCreate) on NFS-filtered volumes. The MsNfsFltNotifyServerOfBlockingFileOpen sub-path is reached when a create returns STATUS_SHARING_VIOLATION (0xC0000043); the MsNfsFltPostOpCreate record is built on the normal activity path of every monitored create.",
+      "call_chain": [
+        "IRP_MJ_CREATE (user-mode CreateFile/NtCreateFile on NFS-filtered volume)",
+        "MsNfsFltPostOpCreate (post-create minifilter callback)",
+        "normal path: MsNfsFltServerCallInformationInitialization fills var_70 -> MsNfsFltNotifyServerOfFileActivity / MsNfsFltNotifyServerOfVolumeActivity -> registered server callback",
+        "sharing-violation path: cmp eax,0xC0000043 at 0x1C0008DA9 -> call MsNfsFltNotifyServerOfBlockingFileOpen at 0x1C0008DBA",
+        "MsNfsFltNotifyServerOfBlockingFileOpen -> MsNfsFltServerCallInformationInitialization fills record at [rbp-0x30]",
+        "arg1[8](arg1[7], &record) dispatched via __guard_dispatch_icall_fptr at 0x1C0009E8B"
+      ],
+      "vulnerability_class": "uninitialized stack memory / information disclosure (CWE-908, CWE-200)",
+      "description": "Two functions build a 0x4c-byte 'server call information' record on the kernel stack and populate it through the shared builder MsNfsFltServerCallInformationInitialization (0x1C0003578 unpatched, relocated to 0x1C0002E18 patched, byte-for-byte identical). The builder writes offsets 0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x44, 0x48 and 0x4C, but never writes the 4-byte gaps at 0x04-0x07 and 0x14-0x17. In the unpatched builds the record is not zeroed before this call, so those 8 bytes carry stale kernel stack contents. The record is then delivered to the registered NFS server notification callback (installed via MsNfsFltRegisterServer, stored at arg1[8] == [rdi+0x40]) through the Control Flow Guard dispatch stub. The patch adds memset(&record, 0, 0x4c) before population in both functions: at 0x1C0009DFE in MsNfsFltNotifyServerOfBlockingFileOpen and at 0x1C000A0B6 in MsNfsFltPostOpCreate. The third caller of the builder, MsNfsFltPreOpGetFileContext, populates a pool-allocated (zeroed) object at [rdi+0x30] and correctly receives no memset.",
+      "trigger_conditions": "1. msnfsflt minifilter loaded and attached (Services for NFS installed). 2. A user-mode application opens a file on a filtered volume. 3. The MsNfsFltPostOpCreate record is built on every monitored create; the MsNfsFltNotifyServerOfBlockingFileOpen record additionally requires the create to return STATUS_SHARING_VIOLATION (0xC0000043), reproduced by opening a file with exclusive sharing and then opening it again with incompatible access. 4. For callback delivery, the NFS server callback (arg1[8]) must be registered via MsNfsFltRegisterServer and arg2 != 1.",
+      "primitive": "Uninitialized kernel stack padding: 8 bytes per record (4 at +0x04, 4 at +0x14) are structure padding left unwritten by the builder and unzeroed by the caller in the unpatched builds. The record is passed to the registered server callback. Whether the callback copies, stores, or transmits the padding bytes to any lower-privilege or remote sink is NOT determinable from these two binaries (the callback target is not present here), so the exploit value of the leaked bytes is not demonstrable. No control-flow or write primitive is produced.",
+      "evidence": "UNPATCHED MsNfsFltNotifyServerOfBlockingFileOpen (0x1C0009C50), decompiled tail:\n\n  _BYTE record[0x4c];   // [rbp-0x30], NOT zero-initialized\n  // ... FltGetFileNameInformation / FltCreateFile / ObReferenceObjectByHandle / FltQueryInformationFile x2 ...\n  MsNfsFltServerCallInformationInitialization(record, a2, a3, 1, 1, FileInformation);\n  // builder leaves +0x04 and +0x14 unwritten\n  *(int*)(record+0x10) = (*(int*)(record+0x10) & 0xFFFFFF6F) | ...;\n  if ( MsNfsFltOperationBegin(a1) >= 0 ) {\n      if ( a1[8] && a2 != 1 )\n          a1[8](a1[7], record);   // CFG-dispatched; padding still stale\n  }\n\nPATCHED MsNfsFltNotifyServerOfBlockingFileOpen (0x1C0009DA8):\n\n  _BYTE record[0x4c];   // [rbp-0x30]\n  memset(&record, 0, 0x4c);   // FIX at 0x1C0009DFE\n  // ... same acquisition sequence ...\n  MsNfsFltServerCallInformationInitialization(record, a2, a3, 1, 1, FileInformation);\n\nPATCHED MsNfsFltPostOpCreate (0x1C000A080) entry:\n\n  memset(&var_70, 0, 0x4c);   // FIX at 0x1C000A0B6, before builder at 0x1C000A217\n\nMsNfsFltServerCallInformationInitialization write map (identical in both builds):\n  [+0x00] 4B: WRITTEN (flags = 1)\n  [+0x04] 4B: NOT WRITTEN (leaked padding)\n  [+0x08] 8B: WRITTEN (a2, file id/type)\n  [+0x10] 4B: WRITTEN (op flags)\n  [+0x14] 4B: NOT WRITTEN (leaked padding)\n  [+0x18] 8B: WRITTEN (file information)\n  [+0x20..0x3F] WRITTEN zero\n  [+0x40],[+0x44],[+0x48],[+0x4C] 4B each: WRITTEN 0xFFFFFFFF",
+      "assembly": "UNPATCHED MsNfsFltNotifyServerOfBlockingFileOpen (0x1C0009C50) - record build and callback delivery:\n\n  0x1C0009E1A: mov     rax, [rbp+60h+FileInformation]\n  0x1C0009E22: mov     [rsp+160h+IoStatusBlock], rax\n  0x1C0009E27: lea     rcx, [rbp+60h+var_90]           ; rcx = &record ([rbp-0x30]) UNINITIALIZED\n  0x1C0009E2B: mov     r8, rsi                         ; r8 = a3\n  0x1C0009E2E: mov     byte ptr [rsp+160h+ObjectAttributes], 1\n  0x1C0009E33: mov     rdx, r14                        ; rdx = a2\n  0x1C0009E36: call    MsNfsFltServerCallInformationInitialization\n  0x1C0009E3B: mov     r8, [rsi+10h]                   ; a3->Iopb\n  0x1C0009E55: mov     eax, [rbp+60h+var_80]           ; record+0x10 flags field\n  0x1C0009E5B: and     eax, 0FFFFFF6Fh\n  0x1C0009E65: mov     [rbp+60h+var_80], ecx\n  0x1C0009E6B: call    MsNfsFltOperationBegin\n  0x1C0009E70: test    eax, eax\n  0x1C0009E72: js      short 0x1C0009EA6\n  0x1C0009E74: mov     rax, [rdi+40h]                  ; a1[8] = server callback pointer\n  0x1C0009E78: test    rax, rax\n  0x1C0009E7B: jz      short 0x1C0009E91\n  0x1C0009E7D: cmp     r14, 1                          ; a2 != 1 ?\n  0x1C0009E81: jz      short 0x1C0009E91\n  0x1C0009E83: mov     rcx, [rdi+38h]                  ; a1[7] = callback context\n  0x1C0009E87: lea     rdx, [rbp+60h+var_90]           ; rdx = &record (padding still stale)\n  0x1C0009E8B: call    cs:__guard_dispatch_icall_fptr  ; CFG-dispatched a1[8](a1[7], &record)\n\nPATCHED MsNfsFltNotifyServerOfBlockingFileOpen (0x1C0009DA8) - memset added:\n\n  0x1C0009DEC: lea     r8d, [r15+4Ch]                  ; size = 0x4c\n  0x1C0009DF0: xor     edx, edx                        ; fill = 0\n  0x1C0009DF6: lea     rcx, [rbp+60h+var_90]           ; &record\n  0x1C0009DFE: call    memset                          ; memset(&record, 0, 0x4c)\n\nPATCHED MsNfsFltPostOpCreate (0x1C000A080) - memset added:\n\n  0x1C000A0A9: xor     edx, edx                        ; Val = 0\n  0x1C000A0AE: lea     rcx, [rbp+57h+var_70]           ; &record\n  0x1C000A0B2: lea     r8d, [rdx+4Ch]                  ; Size = 0x4c\n  0x1C000A0B6: call    memset                          ; memset(&var_70, 0, 0x4c)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "msnfsflt_unpatched!MsNfsFltNotifyServerOfBlockingFileOpen",
+            "address": "0x1C0009C50",
+            "why": "Entry of the STATUS_SHARING_VIOLATION handler. RCX=a1 (instance/server context), RDX=a2, R8=a3 (FLT_CALLBACK_DATA*). The record at [rbp-0x30] is uninitialized on entry."
+          },
+          {
+            "symbol": "msnfsflt_unpatched!MsNfsFltNotifyServerOfBlockingFileOpen+0x1E6",
+            "address": "0x1C0009E36",
+            "why": "Call to MsNfsFltServerCallInformationInitialization(&record). RCX=[rbp-0x30]. Dump RCX+0x04 and RCX+0x14 before and after; the builder leaves those two DWORDs unwritten."
+          },
+          {
+            "symbol": "msnfsflt_unpatched!MsNfsFltNotifyServerOfBlockingFileOpen+0x23B",
+            "address": "0x1C0009E8B",
+            "why": "CFG-dispatched call arg1[8](arg1[7], &record). RDX=[rbp-0x30] = record with stale padding at +0x04 and +0x14. The callback pointer is [rdi+0x40] (loaded to RAX at 0x1C0009E74)."
+          },
+          {
+            "symbol": "msnfsflt_unpatched!MsNfsFltPostOpCreate+0x1F9",
+            "address": "0x1C0008DA9",
+            "why": "cmp eax,0xC0000043: MsNfsFltPostOpCreate deciding whether to enter the sharing-violation handler (jnz at 0x1C0008DAE, call at 0x1C0008DBA). The var_70 record is also built earlier at 0x1C0008D25 without zeroing."
+          }
+        ],
+        "watch": [
+          "[rbp-0x30]+0x04 (4 bytes) - first uninitialized padding gap in the record",
+          "[rbp-0x30]+0x14 (4 bytes) - second uninitialized padding gap",
+          "RDX at 0x1C0009E8B - pointer to the record passed to the server callback",
+          "RAX at 0x1C0009E74 - [rdi+0x40] = server callback function pointer (must be non-NULL for delivery)",
+          "R14 at 0x1C0009E7D - a2 value (must != 1 for callback to fire)",
+          "NTSTATUS at [r8+0x18] - 0xC0000043 selects the MsNfsFltNotifyServerOfBlockingFileOpen path in MsNfsFltPostOpCreate"
+        ],
+        "key_offsets": [
+          "unpatched 0x1C0009E27: lea rcx,[rbp+60h+var_90] - record address loaded; UNINITIALIZED",
+          "unpatched 0x1C0009E36: call MsNfsFltServerCallInformationInitialization - leaves +0x04 and +0x14 unwritten",
+          "unpatched 0x1C0009E74: mov rax,[rdi+40h] - server callback pointer a1[8]",
+          "unpatched 0x1C0009E87: lea rdx,[rbp+60h+var_90] - &record for the callback",
+          "unpatched 0x1C0009E8B: call cs:__guard_dispatch_icall_fptr - CFG-dispatched a1[8](a1[7], &record)",
+          "patched 0x1C0009DFE: call memset - memset(&record, 0, 0x4c) in MsNfsFltNotifyServerOfBlockingFileOpen",
+          "patched 0x1C000A0B6: call memset - memset(&var_70, 0, 0x4c) in MsNfsFltPostOpCreate"
+        ],
+        "trigger_setup": "1. Install Services for NFS and confirm msnfsflt.sys is attached (fltmc). 2. Ensure an NFS server callback is registered via MsNfsFltRegisterServer. 3. For the sharing-violation path: open a file from process A with CreateFile(path, GENERIC_READ|GENERIC_WRITE, 0, ..., CREATE_ALWAYS, 0, NULL), then from process B open the same file with CreateFile(path, GENERIC_READ, FILE_SHARE_READ, ..., OPEN_EXISTING, 0, NULL) to force STATUS_SHARING_VIOLATION (0xC0000043). 4. MsNfsFltPostOpCreate compares the status at 0x1C0008DA9 and calls MsNfsFltNotifyServerOfBlockingFileOpen. The var_70 record path in MsNfsFltPostOpCreate is exercised by any monitored create.",
+        "expected_observation": "At 0x1C0009E8B, dump the record at RDX. The 4 bytes at RDX+0x04 and RDX+0x14 hold non-zero stale stack contents in the unpatched build; in the patched build they are zero because of the added memset. Whether those bytes are observable outside the kernel depends on the registered callback, which is not present in these binaries.",
+        "notes": "The leaked bytes are structure padding, not semantically meaningful fields. The record layout: [0x00]int32 flags=1, [0x08]int64 a2, [0x10]int32 opFlags, [0x18]int64 fileInformation, [0x20-0x3F] zeros, [0x40/0x44/0x48/0x4C] 0xFFFFFFFF. The 8 leaked bytes are alignment padding at [0x04-0x07] and [0x14-0x17]. Impact depends on the downstream server callback, which cannot be characterized from this diff."
+      }
+    }
+  ],
+  "summary": "The patch fixes uninitialized kernel stack padding in msnfsflt.sys (Services for NFS Filesystem Filter Driver). Two functions - MsNfsFltNotifyServerOfBlockingFileOpen (the STATUS_SHARING_VIOLATION handler, 0x1C0009C50) and MsNfsFltPostOpCreate (the post-create callback, 0x1C0008BB0) - build a 0x4c-byte server-call record on the kernel stack and populate it with the shared builder MsNfsFltServerCallInformationInitialization, which writes every field except the 4-byte padding gaps at 0x04-0x07 and 0x14-0x17. The unpatched builds do not zero the record first, so those 8 bytes carry stale kernel stack contents; the record is then delivered to the registered NFS server notification callback (arg1[8], dispatched via Control Flow Guard). The patch adds memset(record, 0, 0x4c) before population in both functions (at 0x1C0009DFE and 0x1C000A0B6). The builder is byte-for-byte identical across builds, and the third builder caller (MsNfsFltPreOpGetFileContext) writes into a zeroed pool object and correctly needs no memset. CWE-908 / CWE-200, Medium: the uninitialized padding and the fix direction are confirmed, but downstream observability of the leaked bytes (whether the server callback transmits them out of the kernel) is not determinable from these binaries. All other changed functions exhibit only compiler and pool-API modernization differences with no security-relevant behavioral change."
+}

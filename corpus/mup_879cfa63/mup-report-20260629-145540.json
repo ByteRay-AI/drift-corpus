@@ -1,0 +1,89 @@
+{
+  "binaries": {
+    "title": "mup.sys - No security-relevant change (WIL feature-staging library churn)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.9862,
+    "matched": 361,
+    "changed": 5,
+    "identical": 356,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState (unpatched 0x1400032CC, patched 0x140003384)",
+      "similarity": 0.748,
+      "change_type": "non_security",
+      "key_changes": [
+        "NEW: When the WIL feature-state word has both bits of the 0xc00 mask set, the patched build calls the new helper wil_details_AreDependenciesEnabled (0x140002CA8) to evaluate the feature's dependency list at descriptor offset +0x20",
+        "NEW: Conditionally clears WIL state bit 0x400 (btr eax, 0Ah) when feature dependencies are not enabled",
+        "The 0x400/0x800 state bits are derived from the two halves of wil_RtlStagingConfig_QueryFeatureState's output; they encode WIL feature state, not UNC mutual-authentication / integrity requirements",
+        "REFACTORED: added registers (rbp/rsi/r14) to accommodate the dependency call"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is wil_details_GetCurrentFeatureEnabledState, a Windows Implementation Library feature-staging routine. It computes a WIL feature-enabled state word from wil_RtlStagingConfig_QueryFeatureState and, in the patched build, gates the result on wil_details_AreDependenciesEnabled (feature-dependency evaluation). The 0xc00 and 0x400/0x800 values are WIL feature-state cache encodings, not Hardened UNC Paths policy flags. The bytes at descriptor offsets +0x1c..+0x1f and the list pointer at +0x20 are WIL feature-descriptor fields, not UNC provider capability bytes. No UNC authentication, integrity, or provider-selection behavior is affected. Not security-relevant.",
+      "assembly_diff": "UNPATCHED wil_details_GetCurrentFeatureEnabledState (0x1400032CC):\n0x14000330c: call wil_RtlStagingConfig_QueryFeatureState\n0x140003326: and edx, 0x400        ; WIL state bit\n0x140003331: and r8d, 0x800        ; WIL state bit\n0x14000336b: or  ecx, edx          ; merge WIL state word\n0x14000336f: shr eax, 0x6          ; gate list walk on bit 6\n0x140003385: mov rdi, [rdi+0x20]   ; WIL feature-dependency list\n\nPATCHED wil_details_GetCurrentFeatureEnabledState (0x140003384):\n0x14000342a: or  ebx, ecx          ; merge WIL state word\n0x14000342c: mov edx, 0xc00        ; two WIL state bits\n0x140003435: and eax, edx\n0x140003437: cmp eax, edx          ; both set?\n0x140003453: call wil_details_AreDependenciesEnabled  ; NEW WIL helper\n0x140003469: btr eax, 0xa          ; clear WIL bit 0x400 if deps disabled"
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (0x140012D90)",
+      "similarity": 0.7537,
+      "change_type": "non_security",
+      "key_changes": [
+        "NEW: masks the WIL state word with 0xc00 and, when both bits are set and the dependency check fails, clears WIL state bit 0x400 (btr edx, 0Ah) before the atomic lock cmpxchg into the WIL feature cache",
+        "The btr ecx, 9 that clears bit 0x200 is present in BOTH builds and is unrelated to the change",
+        "REFACTORED: expanded register usage (r13/r14/r15) for the added dependency gate",
+        "This is the dependency-aware counterpart to wil_details_GetCurrentFeatureEnabledState; the list at +0x20 is the WIL feature-dependency list"
+      ],
+      "security_relevant": false,
+      "security_notes": "wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState re-evaluates a cached WIL feature-enabled state and commits it via lock cmpxchg. The patched build adds the same WIL feature-dependency gate as wil_details_GetCurrentFeatureEnabledState. Reached from wil_details_EvaluateFeatureDependencies (0x140012C9C) and wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (0x140012D54), both WIL internals. No UNC provider or authentication behavior is affected. Not security-relevant.",
+      "assembly_diff": "UNPATCHED (0x140012D90):\n0x140012e2e: btr ecx, 0x9          ; clear WIL bit 0x200 (both builds)\n0x140012e36: lock cmpxchg [rbp], ecx\n\nPATCHED (0x140012D90):\n0x140012dbd: mov ecx, 0xc00        ; NEW: two WIL state bits\n0x140012dcf: cmp eax, ecx          ; both set?\n0x140012e56: btr edx, 0xa          ; NEW: clear WIL bit 0x400 if deps failed\n0x140012e6b: btr ecx, 0x9          ; clear WIL bit 0x200 (unchanged)\n0x140012e73: lock cmpxchg [r15], ecx"
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (unpatched 0x14000317C, patched 0x14000321C)",
+      "similarity": 0.9726,
+      "change_type": "non_security",
+      "key_changes": [
+        "NEW: sets WIL cache-marker bit 0x40000 (bts eax, 0x12) in the state value written by lock cmpxchg",
+        "The surrounding WIL state-encoding masks (0x9C1, 0xFFFFF63E, 0x400) and the btr ...,0Ah clear already exist in the unpatched build",
+        "REFACTORED: register reallocation (added r12; rbp->r14/r15)"
+      ],
+      "security_relevant": false,
+      "security_notes": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState recomputes a WIL feature's cached state and commits it. The patched build only adds a WIL cache-marker bit (0x40000) and reshuffles registers. Bit 0x40000 is a WIL feature-state cache encoding flag, not an enforcement flag. Not security-relevant.",
+      "assembly_diff": "PATCHED adds: bts eax, 0x12  (set WIL cache-marker bit 0x40000) before lock cmpxchg. All other state-encoding masks identical to unpatched."
+    },
+    {
+      "name": "MupCallSurrogatePrePost (unpatched 0x14001D3F0, patched 0x14001D4C0)",
+      "similarity": 0.926,
+      "change_type": "non_security",
+      "key_changes": [
+        "REFACTORED: linked-list pointer arithmetic changed from manual add/dereference to scaled indexing ([rbx+rax*8+...], [rsi+rax*8+8])",
+        "Preserved: control flow and STATUS_MORE_PROCESSING_REQUIRED (0x103) handling unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler refactor of linked-list traversal with identical semantics. This is the only Mup* function with a real code difference; all other Mup* differences are jump-target relocation only. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_InitializeFeatureStaging (0x1400230F4)",
+      "similarity": 0.9831,
+      "change_type": "non_security",
+      "key_changes": [
+        "Call-target address relocations",
+        "RtlRegisterFeatureUsageProvider call moved into new wrapper wil_details_RegisterFeatureUsageProvider (0x140012F2C)"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging initialization; call-target relocation plus extraction of a registration wrapper. Not security-relevant.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "wil_details_AreDependenciesEnabled (0x140002CA8) - WIL feature-dependency evaluator",
+      "wil_details_RegisterFeatureUsageProvider (0x140012F2C) - WIL usage-provider registration wrapper"
+    ]
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The functions that differ between the two mup.sys builds are all part of the statically-linked Windows Implementation Library (WIL) feature-staging runtime: wil_details_GetCurrentFeatureEnabledState, wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState, and wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState. The patch is a WIL library version bump that adds feature-dependency evaluation (new helper wil_details_AreDependenciesEnabled at 0x140002CA8) and a WIL feature-state cache marker bit (0x40000). The 0xc00 and 0x40000 bit values are WIL feature-state cache encodings sourced from wil_RtlStagingConfig_QueryFeatureState, not Hardened UNC Paths mutual-authentication / message-integrity policy flags. Every UNC-facing Mup* function is byte-identical between the builds apart from jump-target relocation, except MupCallSurrogatePrePost, whose only change is a semantics-preserving compiler refactor of linked-list pointer arithmetic. An independent full-diff triage (matching by content across relocations) confirms no Mup* routine involved in UNC path handling, provider registration, hardening-configuration parsing, or authentication changed in logic, and no security fix was omitted."
+}

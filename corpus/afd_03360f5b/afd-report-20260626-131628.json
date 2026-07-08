@@ -1,0 +1,346 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9742,
+    "matched": 1093,
+    "changed": 21,
+    "identical": 1072,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdSanFastCompleteRequest (0x1C0077700 / 0x1C00787A0)",
+      "similarity": 0.9721,
+      "change_type": "behavioral",
+      "key_changes": [
+        "NEW state check added at patched 0x1c0078afb: 'cmp byte [r15+0x91], 0x0' \u2014 refuses to queue the IRP onto an endpoint whose abort byte is set; the IRP is instead completed with STATUS_CANCELLED (0xc0000120)",
+        "The new check is gated by a Windows feature-staging flag: EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) at patched 0x1c0078af2. When the feature is disabled the code falls through (0x1c0078af9 je 0x1c0078b05) to the identical unpatched queuing path (old path retained in else branch)",
+        "The IRP-list insertion at [endpoint+0x70] is performed under the endpoint spinlock (KeAcquireInStackQueuedSpinLock on [endpoint+0x30]) in BOTH builds; the added check runs under that same lock",
+        "AfdSanCancelRequest is the same cancel routine in both builds (relocated 0x1c0076090 -> 0x1c0077190)",
+        "The AccessMode && Length!=0 guard before the buffer poke is present identically in both builds (decompiler register renaming only; not a behavior change)"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSanFastCompleteRequest is an AFD SAN (Sockets-Direct) completion handler. In both builds the IRP is linked into the endpoint pending list at [endpoint+0x70] while the endpoint spinlock [endpoint+0x30] is held, so the insertion is already serialized. The patch adds, under that same lock and behind a feature-staging flag, a refusal to queue when the endpoint abort byte [endpoint+0x91] is set (completing the IRP STATUS_CANCELLED instead). This is a defense-in-depth hardening state check, staged behind a feature flag with the prior behavior retained when the flag is off. It is not a demonstrable, reachable use-after-free: no lock is removed, no lifetime/refcount change is made, and no freed-object dereference or exploit primitive is present in or reachable from this function on the evidence in the two builds.",
+      "assembly_diff": "UNPATCHED (0x1c0077700) \u2014 IRP queuing path under the endpoint spinlock:\n  0x1c0077a15: lea  rcx, [r15+0x30]                 ; endpoint spinlock\n  0x1c0077a21: call KeAcquireInStackQueuedSpinLock\n  0x1c0077a27: lea  rax, AfdSanCancelRequest\n  0x1c0077a2e: xchg [rdi+0x68], rax                 ; set IRP->CancelRoutine\n  0x1c0077a32: cmp  byte [rdi+0x44], 0x0            ; IRP->Cancel\n  0x1c0077a36: jne  0x1c0077a75                     ; if cancelled -> cancel path\n  0x1c0077a38: add  rdi, 0xa8\n  0x1c0077a3f: lea  rax, [r15+0x70]                 ; endpoint IRP list head\n  0x1c0077a53: mov  [rdi], rcx                      ; InsertTailList (under lock)\n  0x1c0077a69: call KeReleaseInStackQueuedSpinLock\n\nPATCHED (0x1c00787a0) \u2014 same lock, added feature-gated abort-state check:\n  0x1c0078ac8: lea  rcx, [r15+0x30]                 ; endpoint spinlock\n  0x1c0078ad4: call KeAcquireInStackQueuedSpinLock\n  0x1c0078ada: lea  rax, AfdSanCancelRequest\n  0x1c0078ae1: xchg [rsi+0x68], rax\n  0x1c0078ae5: cmp  byte [rsi+0x44], 0x0            ; IRP->Cancel\n  0x1c0078ae9: jne  0x1c0078b42                     ; if cancelled -> cancel path\n  0x1c0078aeb: lea  rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\n  0x1c0078af2: call EvaluateCurrentState            ; feature-staging gate\n  0x1c0078af7: test eax, eax\n  0x1c0078af9: je   0x1c0078b05                     ; feature OFF -> old queuing path\n  0x1c0078afb: cmp  byte [r15+0x91], 0x0            ; endpoint abort state\n  0x1c0078b03: jne  0x1c0078b42                     ; if aborting -> STATUS_CANCELLED\n  0x1c0078b05: add  rsi, 0xa8                       ; queue (under lock)\n  0x1c0078b36: call KeReleaseInStackQueuedSpinLock"
+    },
+    {
+      "name": "AfdSanRedirectRequest (0x1C00785E4 / 0x1C0079734)",
+      "similarity": 0.9546,
+      "change_type": "behavioral",
+      "key_changes": [
+        "NEW state check added at patched 0x1c0079819: 'cmp byte [rsi+0x91], 0x0' \u2014 same endpoint abort-state gate as AfdSanFastCompleteRequest, completing the IRP STATUS_CANCELLED instead of queuing when set",
+        "Gated by EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) at patched 0x1c0079810; when disabled (0x1c0079817 je 0x1c0079826) the original queuing path runs unchanged",
+        "The IRP-list insertion at [endpoint+0x70] runs under the endpoint spinlock [endpoint+0x30] in BOTH builds; AfdSanCancelRequest is the same cancel routine (relocated 0x1c0076090 -> 0x1c0077190)"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSanRedirectRequest is an AFD SAN (Sockets-Direct) redirect-request handler, invoked from AfdDispatch/AfdReceive/AfdSend only for SAN/switch endpoints. Same shape as AfdSanFastCompleteRequest: the whole handler runs under the endpoint spinlock [endpoint+0x30], and the patch adds under that lock a feature-staged refusal to queue onto an endpoint whose abort byte [endpoint+0x91] is set. Defense-in-depth hardening state check, staged behind a feature flag with the old path retained. Not a demonstrable, reachable use-after-free.",
+      "assembly_diff": "UNPATCHED (0x1c00785e4) \u2014 IRP linked into list under the endpoint spinlock, no abort-byte check:\n  0x1c00786a4: lea  rax, AfdSanCancelRequest\n  0x1c00786ab: xchg [rbx+0x68], rax                 ; set IRP->CancelRoutine\n  0x1c00786af: cmp  byte [rbx+0x44], 0x0            ; IRP->Cancel\n  0x1c00786b3: je   0x1c00786f2                     ; not cancelled -> queue\n  0x1c00786f2: ...  link IRP into [rsi+0x70] under spinlock, then release\n\nPATCHED (0x1c0079734) \u2014 adds feature-gated abort-byte check before queuing:\n  0x1c00797f4: lea  rax, AfdSanCancelRequest\n  0x1c00797fb: xchg [rdi+0x68], rax\n  0x1c00797ff: cmp  byte [rdi+0x44], 0x0            ; IRP->Cancel\n  0x1c0079803: jne  0x1c00798aa                     ; if cancelled -> cancel path\n  0x1c0079809: lea  rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\n  0x1c0079810: call EvaluateCurrentState            ; feature-staging gate\n  0x1c0079815: test eax, eax\n  0x1c0079817: je   0x1c0079826                     ; feature OFF -> old queuing path\n  0x1c0079819: cmp  byte [rsi+0x91], 0x0            ; endpoint abort state\n  0x1c0079820: jne  0x1c00798aa                     ; if aborting -> STATUS_CANCELLED\n  0x1c0079826: ...  link IRP into [rsi+0x70] under spinlock, then release"
+    },
+    {
+      "name": "sub_1C003B310 / sub_1C003C3F0",
+      "similarity": 0.7366,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection endpoint creation refactored: monolithic sub_1c0047f50 call replaced with feature-flagged dispatch between sub_1c0015af8 (standard path) and sub_1c00491b0 (WinIObj/accelerated path) via sub_1c0015714(&data_1c0027080)",
+        "SLIST push logic reorganized: condition 'if (!(*rdi_1->Next[4] & 2) || !TEST_BITD(rcx_9, 0x16))' simplified from nested condition in unpatched code"
+      ],
+      "security_relevant": false,
+      "security_notes": "Connection endpoint creation wrapper. The refactoring splits the IoCreateFile-based connection creation into two code paths gated by a feature flag, but does not directly introduce or fix a vulnerability. The sub_1c0047f50 function (now sub_1c0015af8) creates transport connection objects via IoCreateFile with proper handle validation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0058000 / sub_1C00592B0",
+      "similarity": 0.9238,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection endpoint creation refactored: sub_1c0047f50 replaced with feature-flagged sub_1c0015af8 or sub_1c00491b0 via sub_1c0015714(&data_1c0027080)",
+        "Counter threshold conditions reorganized (rax_3 & 2 branch inverted in decompiler output but semantically identical)",
+        "SLIST overflow threshold function calls rebased: sub_1c0056a6c \u2192 sub_1c0057d1c, sub_1c0015ab0 \u2192 sub_1c0015ad0"
+      ],
+      "security_relevant": false,
+      "security_notes": "Connection endpoint pool management (SLIST pop/push for reusable connection objects). Changes are primarily refactoring of the connection creation call and cosmetic register/variable reassignments.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0046CD4 / sub_1C007DA4",
+      "similarity": 0.9136,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection endpoint creation refactored: sub_1c0047f50 replaced with feature-flagged sub_1c0015af8 or sub_1c00491b0 via sub_1c0015714(&data_1c0027080)",
+        "Completion callback function rebased: sub_1c0052580 \u2192 sub_1c0053820, sub_1c0052430 \u2192 sub_1c00536d0"
+      ],
+      "security_relevant": false,
+      "security_notes": "IRP completion helper for connection acceptance. The connection creation refactoring is the same pattern seen across the patch \u2014 gating between old and new IoCreateFile wrappers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007508C / sub_1C007608C",
+      "similarity": 0.9904,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inline endpoint initialization extracted into helper sub_1c0079474() \u2014 the ~12 lines of field assignments (endpoint->State=0x1afd, endpoint->Refcount=1, list init, etc.) are now a single call",
+        "Feature flag check rebased: sub_1c00156f4(&data_1c0026048) \u2192 sub_1c0015714(&data_1c00270d0)",
+        "MDL copy operations: argument order swapped in decompiler (sub_1c000c900 dest/src args reordered cosmetically)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Accept-connection IRP processing. The inline endpoint initialization was extracted to a helper function but the logic is identical. The feature flag address changed due to rebasing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0076FF0 / sub_1C00780E0",
+      "similarity": 0.9893,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inline endpoint initialization extracted into helper sub_1c0079474() \u2014 same pattern as sub_1C007508C",
+        "Handle reference function rebased: sub_1c0041d74 \u2192 sub_1c0042ef4",
+        "Lock acquire/release functions rebased: sub_1c00306a0 \u2192 sub_1c00316a0, sub_1c00306e4 \u2192 sub_1c00316e4"
+      ],
+      "security_relevant": false,
+      "security_notes": "Another accept-connection IRP processing path. Same endpoint initialization extraction pattern.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0046EC0 / sub_1C0047FD0",
+      "similarity": 0.9357,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Variable type cleanup: 'union arg2' \u2192 'void* arg2', SLIST_ENTRY variable initialization via __builtin_memset",
+        "Connection creation function rebased: sub_1c0058150 \u2192 sub_1c0059588",
+        "Endpoint initialization extracted to helper functions: sub_1c0046b40 \u2192 sub_1c0047c0c, sub_1c006544c \u2192 sub_1c00667fc, sub_1c0064dec \u2192 sub_1c006619c",
+        "SLIST pool operations rebased across all function calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "Large AFD connect/bind IOCTL handler (791 instructions). Changes are predominantly function rebasing and helper extraction. No security-relevant logic changes identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0046010 / sub_1C0047000",
+      "similarity": 0.9079,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large AFD dispatch handler \u2014 changes are primarily address rebasing and function name reassignments",
+        "SLIST pool management function calls rebased throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant logic changes found. Changes are cosmetic rebasing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0052810 / sub_1C0053AB0",
+      "similarity": 0.9617,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pure address/label renaming \u2014 no logic changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0046CA0 / sub_1C0047D70",
+      "similarity": 0.9236,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pure address/label renaming \u2014 tailcall target rebased"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000CE50 / sub_1C000CEB0",
+      "similarity": 0.3288,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Decompiler artifact in crash/breakpoint stub \u2014 __noreturn function"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00379D0 / sub_1C003891B",
+      "similarity": 0.4396,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Decompiler artifact in crash/breakpoint stub \u2014 __noreturn function"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005988A / sub_1C000D660",
+      "similarity": 0.5905,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Callback offset changed from arg2+0x40 to arg2+0x30 \u2014 minor parameter adjustment in wrapper"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00761A0 / sub_1C00491B0",
+      "similarity": 0.3447,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major function restructuring \u2014 unpatched was a 775-line IRP handler, patched is a 253-line connection creation wrapper",
+        "These may be incorrectly matched by the diff algorithm due to significant restructuring"
+      ],
+      "security_relevant": false,
+      "security_notes": "The diff tool's matching between these functions is unreliable due to the massive size difference. The patched sub_1c00491b0 appears to be the new WinIObj-accelerated connection creation path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0075770 / sub_1C0015AF8",
+      "similarity": 0.1929,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major function restructuring \u2014 unpatched was a 382-line IRP dispatch handler, patched is a 210-line connection creation wrapper",
+        "These may be incorrectly matched by the diff algorithm"
+      ],
+      "security_relevant": false,
+      "security_notes": "The diff tool's matching is unreliable. The patched sub_1c0015af8 is the refactored standard connection creation path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0040EF0 / sub_1C0076720",
+      "similarity": 0.129,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Completely different functions incorrectly matched by diff algorithm"
+      ],
+      "security_relevant": false,
+      "security_notes": "False positive match. sub_1c0040ef0 is a buffered IOCTL handler, sub_1c0076720 is an MDL-based IOCTL handler. Not comparable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0033AD0 / sub_1C00772A0",
+      "similarity": 0.3198,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Completely different functions incorrectly matched by diff algorithm"
+      ],
+      "security_relevant": false,
+      "security_notes": "False positive match due to restructuring.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00156F4 / sub_1C0047F50",
+      "similarity": 0.0089,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Incorrect match \u2014 tiny feature flag function vs large connection creation function"
+      ],
+      "security_relevant": false,
+      "security_notes": "False positive match.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047F50 / sub_1C0015714",
+      "similarity": 0.1014,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Incorrect match \u2014 large connection creation function vs tiny feature flag check"
+      ],
+      "security_relevant": false,
+      "security_notes": "False positive match. sub_1c0015714 is a simple feature-flag check function (reads **arg1 != 1).",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "AfdSanFastCompleteRequest (AFD SAN / Sockets-Direct completion handler, 0x1C0077700 / 0x1C00787A0)",
+      "entry_point": "AFD SAN (Winsock Sockets-Direct) request path; the sibling AfdSanRedirectRequest is reached from AfdDispatch/AfdReceive/AfdSend for SAN/switch endpoints only.",
+      "call_chain": [
+        "AFD SAN (Sockets-Direct) request dispatch on a SAN/switch endpoint",
+        "afd!AfdSanFastCompleteRequest",
+        "Endpoint spinlock [endpoint+0x30] acquired; IRP linked into endpoint pending list at [endpoint+0x70] under that lock in BOTH builds"
+      ],
+      "vulnerability_class": "Defense-in-depth state check under existing lock (hardening; not a demonstrated CWE-416/CWE-362)",
+      "description": "In both builds AfdSanFastCompleteRequest links the IRP into the endpoint pending list at [endpoint+0x70] while holding the endpoint spinlock [endpoint+0x30], so the insertion is already serialized. The patch adds, under that same lock and after the IRP->Cancel check, a call to EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) (a Windows feature-staging flag) followed by 'cmp byte [endpoint+0x91], 0'. When the feature is enabled and the endpoint abort byte is set, the IRP is completed with STATUS_CANCELLED (0xc0000120) instead of being queued; when the feature is disabled the code falls through to the identical unpatched queuing path (old path retained). This is a feature-staged hardening state check, not a demonstrable use-after-free: no lock is removed, no lifetime/refcount change is made, and no reachable freed-object dereference or exploit primitive is present in the two builds.",
+      "trigger_conditions": "No exploitable condition is demonstrable from the two builds. The changed code is the AFD SAN (Sockets-Direct) path, reached only for SAN/switch endpoints. Both builds insert the IRP under the endpoint spinlock [endpoint+0x30]; the patch only adds, under that lock and behind a feature-staging flag, a refusal to queue onto an endpoint whose abort byte [endpoint+0x91] is already set.",
+      "primitive": "None demonstrable. The added instructions are a state check performed while the endpoint spinlock is held; they do not create or expose a memory-corruption primitive.",
+      "evidence": "UNPATCHED AfdSanFastCompleteRequest \u2014 IRP linked into list under the endpoint spinlock:\n```c\n// endpoint spinlock [endpoint+0x30] already held\n*(Irp + 0x68) = AfdSanCancelRequest;      // set cancel routine\nif (!*(Irp + 0x44))                        // IRP->Cancel\n{\n    void* head = *(Endpoint + 0x70);       // endpoint IRP list head\n    *(Irp + 0xa8) = head;                   // link IRP into endpoint list (under lock)\n    ...\n}\n```\n\nPATCHED AfdSanFastCompleteRequest \u2014 added feature-gated abort-state check, same lock:\n```c\n*(Irp + 0x68) = AfdSanCancelRequest;\nif (!*(Irp + 0x44)\n    && (!EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails)\n        || !*(Endpoint + 0x91)))           // feature off OR endpoint not aborting\n{\n    void* head = *(Endpoint + 0x70);\n    *(Irp + 0xa8) = head;                   // otherwise complete IRP STATUS_CANCELLED\n    ...\n}\n```",
+      "assembly": "UNPATCHED (0x1c0077700) \u2014 IRP queuing path under the endpoint spinlock:\n  0x1c0077a15: lea  rcx, [r15+0x30]                 ; endpoint spinlock\n  0x1c0077a21: call KeAcquireInStackQueuedSpinLock\n  0x1c0077a27: lea  rax, AfdSanCancelRequest\n  0x1c0077a2e: xchg [rdi+0x68], rax                 ; set IRP->CancelRoutine\n  0x1c0077a32: cmp  byte [rdi+0x44], 0x0            ; IRP->Cancel\n  0x1c0077a36: jne  0x1c0077a75                     ; if cancelled -> cancel path\n  0x1c0077a38: add  rdi, 0xa8\n  0x1c0077a3f: lea  rax, [r15+0x70]                 ; endpoint IRP list head\n  0x1c0077a53: mov  [rdi], rcx                      ; InsertTailList (under lock)\n  0x1c0077a69: call KeReleaseInStackQueuedSpinLock\n\nPATCHED (0x1c00787a0) \u2014 same lock, added feature-gated abort-state check:\n  0x1c0078ac8: lea  rcx, [r15+0x30]                 ; endpoint spinlock\n  0x1c0078ad4: call KeAcquireInStackQueuedSpinLock\n  0x1c0078ada: lea  rax, AfdSanCancelRequest\n  0x1c0078ae1: xchg [rsi+0x68], rax\n  0x1c0078ae5: cmp  byte [rsi+0x44], 0x0            ; IRP->Cancel\n  0x1c0078ae9: jne  0x1c0078b42                     ; if cancelled -> cancel path\n  0x1c0078aeb: lea  rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\n  0x1c0078af2: call EvaluateCurrentState            ; feature-staging gate\n  0x1c0078af7: test eax, eax\n  0x1c0078af9: je   0x1c0078b05                     ; feature OFF -> old queuing path\n  0x1c0078afb: cmp  byte [r15+0x91], 0x0            ; endpoint abort state\n  0x1c0078b03: jne  0x1c0078b42                     ; if aborting -> STATUS_CANCELLED\n  0x1c0078b05: add  rsi, 0xa8                       ; queue (under lock)\n  0x1c0078b36: call KeReleaseInStackQueuedSpinLock",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdSanFastCompleteRequest",
+            "address": "0x1c0077700 (unpatched) / 0x1c00787a0 (patched)",
+            "why": "Break at the SAN completion handler entry to observe the changed queuing path. In the patched build, single-step to the EvaluateCurrentState call and the following 'cmp byte [endpoint+0x91], 0'."
+          },
+          {
+            "symbol": "afd_patched!AfdSanFastCompleteRequest queuing decision",
+            "address": "0x1c0078ae5",
+            "why": "Break at the IRP->Cancel check. r15 = endpoint (r15+0x30 = spinlock held here, r15+0x70 = IRP list head, r15+0x91 = abort byte); rsi = IRP (rsi+0x44 = IRP->Cancel, rsi+0x68 = IRP->CancelRoutine). The added feature-gated 0x91 check follows."
+          }
+        ],
+        "watch": [
+          "r15 (patched) / r15 (unpatched) = AFD SAN endpoint. r15+0x30 = spinlock (held across the check and the insertion), r15+0x70 = IRP list head, r15+0x91 = abort state byte, r15+0x8c = connection state (0x103 = STATUS_PENDING).",
+          "IRP pointer: rsi (patched) / rdi (unpatched). +0x44 = IRP->Cancel, +0x68 = IRP->CancelRoutine, +0xa8 = list entry being inserted."
+        ],
+        "key_offsets": [
+          "0x1c0077a15/0x1c0078ac8: KeAcquireInStackQueuedSpinLock on [endpoint+0x30] \u2014 the insertion is lock-protected in both builds",
+          "0x1c0078af2: call EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) \u2014 feature-staging gate (patched only)",
+          "0x1c0078afb: cmp byte [r15+0x91], 0x0 \u2014 endpoint abort-state check added in the patch"
+        ],
+        "trigger_setup": "Not applicable: no vulnerability to reproduce. For inspection only, break at the two handler addresses and compare the queuing path with and without the feature gate.",
+        "expected_observation": "No crash is expected from the change itself. In the patched build with the feature enabled and the endpoint abort byte set, the handler completes the IRP with STATUS_CANCELLED (0xc0000120) instead of queuing it.",
+        "notes": "The gate is a Windows feature-staging (velocity) flag evaluated by EvaluateCurrentState; the descriptor is g_Feature_757798200_60363861_FeatureDescriptorDetails. When the flag is disabled the code path is identical to the unpatched build (old path retained in the else branch)."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "AfdSanRedirectRequest (AFD SAN / Sockets-Direct redirect-request handler, 0x1C00785E4 / 0x1C0079734)",
+      "entry_point": "NtDeviceIoControlFile on an AFD socket bound to a SAN/switch endpoint; AfdSanRedirectRequest is called from AfdDispatch, AfdReceive, and AfdSend.",
+      "call_chain": [
+        "NtDeviceIoControlFile on a SAN/switch AFD endpoint",
+        "afd!AfdDispatch / afd!AfdReceive / afd!AfdSend",
+        "afd!AfdSanRedirectRequest",
+        "Whole handler runs under the endpoint spinlock [endpoint+0x30]; IRP linked into [endpoint+0x70] under that lock in BOTH builds"
+      ],
+      "vulnerability_class": "Defense-in-depth state check under existing lock (hardening; not a demonstrated CWE-416/CWE-362)",
+      "description": "AfdSanRedirectRequest is an AFD SAN (Sockets-Direct) redirect-request handler, not an event/select or poll handler. In both builds the handler runs entirely under the endpoint spinlock [endpoint+0x30], validates the endpoint (magic 0x1AFD at [endpoint+0], type byte 4 at [endpoint+2], connection state at [endpoint+0x8c]), sets AfdSanCancelRequest, checks IRP->Cancel, and links the IRP into the endpoint list at [endpoint+0x70]. The patch adds, under the same lock and after the IRP->Cancel check, EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) followed by 'cmp byte [endpoint+0x91], 0'. When the feature is enabled and the endpoint is aborting, the IRP is completed STATUS_CANCELLED instead of being queued; otherwise the original path runs. Feature-staged hardening state check, old path retained; not a demonstrable use-after-free.",
+      "trigger_conditions": "No exploitable condition is demonstrable from the two builds. Reachability is limited to the SAN/switch endpoint path. Both builds link the IRP under the endpoint spinlock; the patch adds a feature-gated refusal to queue onto an endpoint whose abort byte [endpoint+0x91] is set.",
+      "primitive": "None demonstrable. The added check runs while the endpoint spinlock is held and does not create or expose a memory-corruption primitive.",
+      "evidence": "UNPATCHED AfdSanRedirectRequest \u2014 IRP linked into list under the endpoint spinlock, no abort-byte check:\n```c\n// endpoint spinlock [endpoint+0x30] held throughout\narg1->CancelRoutine = AfdSanCancelRequest;\nif (!arg1->Cancel)                 // IRP->Cancel\n{\n    // link IRP into endpoint list at [endpoint+0x70]\n    ...\n}\n```\n\nPATCHED AfdSanRedirectRequest \u2014 feature-gated abort-byte check added, same lock:\n```c\narg1->CancelRoutine = AfdSanCancelRequest;\nif (!arg1->Cancel\n    && (!EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails)\n        || !*(Endpoint + 0x91)))   // feature off OR endpoint not aborting\n{\n    // otherwise complete IRP STATUS_CANCELLED\n    ...\n}\n```",
+      "assembly": "UNPATCHED (0x1c00785e4) \u2014 IRP linked into list under the endpoint spinlock, no abort-byte check:\n  0x1c00786a4: lea  rax, AfdSanCancelRequest\n  0x1c00786ab: xchg [rbx+0x68], rax                 ; set IRP->CancelRoutine\n  0x1c00786af: cmp  byte [rbx+0x44], 0x0            ; IRP->Cancel\n  0x1c00786b3: je   0x1c00786f2                     ; not cancelled -> queue\n  0x1c00786f2: ...  link IRP into [rsi+0x70] under spinlock, then release\n\nPATCHED (0x1c0079734) \u2014 adds feature-gated abort-byte check before queuing:\n  0x1c00797f4: lea  rax, AfdSanCancelRequest\n  0x1c00797fb: xchg [rdi+0x68], rax\n  0x1c00797ff: cmp  byte [rdi+0x44], 0x0            ; IRP->Cancel\n  0x1c0079803: jne  0x1c00798aa                     ; if cancelled -> cancel path\n  0x1c0079809: lea  rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\n  0x1c0079810: call EvaluateCurrentState            ; feature-staging gate\n  0x1c0079815: test eax, eax\n  0x1c0079817: je   0x1c0079826                     ; feature OFF -> old queuing path\n  0x1c0079819: cmp  byte [rsi+0x91], 0x0            ; endpoint abort state\n  0x1c0079820: jne  0x1c00798aa                     ; if aborting -> STATUS_CANCELLED\n  0x1c0079826: ...  link IRP into [rsi+0x70] under spinlock, then release",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdSanRedirectRequest",
+            "address": "0x1c00785e4 (unpatched) / 0x1c0079734 (patched)",
+            "why": "Break at the SAN redirect handler entry. rcx=IRP, rdx=arg2; the endpoint is loaded as rsi = *( *(rdx+0x30) + 0x18 ), and the endpoint spinlock [rsi+0x30] is acquired before the state validation and IRP insertion."
+          },
+          {
+            "symbol": "afd_patched!AfdSanRedirectRequest feature gate",
+            "address": "0x1c0079810",
+            "why": "Break at the EvaluateCurrentState call to observe the added feature-staged 'cmp byte [rsi+0x91], 0' check. rsi = endpoint, rdi = IRP."
+          }
+        ],
+        "watch": [
+          "rsi = AFD SAN endpoint. rsi+0x30 = spinlock (held), rsi+0x70 = IRP list head, rsi+0x91 = abort state byte, rsi+0x8c = connection state (0x103 = pending), rsi+0 = magic 0x1AFD.",
+          "IRP pointer: rbx (unpatched) / rdi (patched). +0x44 = IRP->Cancel, +0x68 = IRP->CancelRoutine."
+        ],
+        "key_offsets": [
+          "0x1c007860e/0x1c007975e: KeAcquireInStackQueuedSpinLock on [endpoint+0x30] \u2014 insertion is lock-protected in both builds",
+          "0x1c0079810: call EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails) \u2014 feature-staging gate (patched only)",
+          "0x1c0079819: cmp byte [rsi+0x91], 0x0 \u2014 endpoint abort-state check added in the patch"
+        ],
+        "trigger_setup": "Not applicable: no vulnerability to reproduce. For inspection only, break at the two handler addresses on a SAN/switch endpoint and compare the queuing path with and without the feature gate.",
+        "expected_observation": "No crash is expected from the change itself. With the feature enabled and the endpoint abort byte set, the patched handler completes the IRP STATUS_CANCELLED (0xc0000120) instead of queuing it.",
+        "notes": "Same feature-staging gate as AfdSanFastCompleteRequest: EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails). AfdSanCancelRequest is the same cancel routine in both builds (relocated 0x1c0076090 -> 0x1c0077190)."
+      }
+    }
+  ],
+  "summary": "The patch adds a feature-staged hardening state check inside two AFD SAN (Winsock Sockets-Direct) request handlers: AfdSanFastCompleteRequest (0x1c0077700 / 0x1c00787a0) and AfdSanRedirectRequest (0x1c00785e4 / 0x1c0079734). In both builds these handlers link an IRP into the endpoint pending list at [endpoint+0x70] while holding the endpoint spinlock [endpoint+0x30], so the insertion is already serialized. The patch adds, under that same lock and behind a Windows feature-staging flag (EvaluateCurrentState on g_Feature_757798200_60363861_FeatureDescriptorDetails), a refusal to queue when the endpoint abort byte [endpoint+0x91] is set, completing the IRP with STATUS_CANCELLED (0xc0000120) instead. When the flag is disabled the code falls through to the identical unpatched queuing path (old path retained in the else branch). This is a defense-in-depth hardening check on the niche Sockets-Direct path, not a demonstrable, reachable use-after-free: no lock is removed, no lifetime/refcount change is made, and no freed-object dereference or exploit primitive is present in or reachable from these functions on the evidence in the two builds. Rated informational."
+}

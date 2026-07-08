@@ -1,0 +1,146 @@
+{
+  "binaries": {
+    "title": "ndis.sys - No security-relevant change: feature-staged StatusBufferSize pre-check in ndisMRawIndicateStatusEx (StatusCode 0x40030053), old unchecked path retained",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9424,
+    "matched": 3576,
+    "changed": 379,
+    "identical": 3197,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ndisMRawIndicateStatusEx (unpatched 0x14005E940 / patched 0x14005D9A0)",
+      "similarity": 0.75,
+      "change_type": "feature_staged_no_delivered_fix",
+      "key_changes": [
+        "StatusCode 0x40030053: inline handler body moved into new callee ndisMIndicatePMCapabilities (0x1400B60E8)",
+        "StatusCode 0x40030053: added StatusBufferSize >= 0x34 pre-check, but gated behind WIL feature Feature_NDPSfiSpring2026; when the feature is off the code calls the unchecked handler (old path retained)",
+        "ndisMIndicatePMCapabilities (0x1400B60E8, patched only) contains no internal size check; its reads of StatusBuffer+0x30/+0x08/+0x28/+0x1c mirror the unpatched inline block",
+        "The StatusCode 0x40030053 filter counterpart (unpatched 0x14005FB00 / patched 0x14005EB30, calling ndisFilterIndicatePMCapabilities) is byte-identical between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "ndisMRawIndicateStatusEx is the miniport status-indication handler, not an OID Set-Information dispatcher. Its second argument (r15) is an _NDIS_STATUS_INDICATION; [r15+0x30] is StatusBuffer and [r15+0x38] is StatusBufferSize (loaded into edi at entry). r13d is the NDIS StatusCode, not an OID. For StatusCode 0x40030053 the unpatched handler reads StatusBuffer at offsets 0x30/0x08/0x28/0x1c (highest byte 0x33) without comparing StatusBufferSize to 0x34; the sibling StatusCode 0x40030054 case does validate (cmp ecx,34h / jb at 0x14005F21C). The patched build adds a StatusBufferSize >= 0x34 check but only when Feature_NDPSfiSpring2026 is enabled; when off, the jz at 0x14005E1E5 jumps directly to the ndisMIndicatePMCapabilities call with no length check, identical to unpatched. This is WIL feature staging with the old path retained, i.e. a staged rollout, not a delivered fix. The path is reachable only from a miniport driver calling NdisMIndicateStatusEx (kernel mode) via ndisMApplyInterfaceChange (0x1401687E0, call at 0x140168989) and the ndisMpHook*IndicateStatus wrappers; StatusBuffer and StatusBufferSize come from the indicating driver, not from a user-mode OID request. If reached with a short buffer the unpatched block would read past the buffer end (a read, CWE-125), but this is a latent kernel-to-kernel robustness issue, not a user-mode-reachable primitive and not a delivered fix.",
+      "assembly_diff": "UNPATCHED (ndisMRawIndicateStatusEx @ 0x14005E940) StatusCode 0x40030053 case @ 0x14005F17A, no size check:\n0x14005F17A: cmp     r13d, 40030053h\n0x14005F181: jnz     loc_14005F207\n0x14005F187: mov     rbx, [r15+30h]           ; StatusBuffer (no size check)\n0x14005F1AE: mov     ecx, [rbx+30h]           ; read StatusBuffer+0x30\n0x14005F1D1: mov     ecx, [rbx+8]             ; read StatusBuffer+0x08\n0x14005F1E0: mov     eax, [rbx+28h]           ; read StatusBuffer+0x28\n0x14005F1F9: mov     eax, [rbx+1Ch]           ; read StatusBuffer+0x1c\n0x14005F1FC: and     [rsi+468h], eax\n(sibling case validates: 0x14005F214 mov ecx,[r15+38h] ; 0x14005F21C cmp ecx,34h ; jb -> belongs to StatusCode 0x40030054)\n\nPATCHED (ndisMRawIndicateStatusEx @ 0x14005D9A0) StatusCode 0x40030053 case @ 0x14005E1D5, feature-gated size check:\n0x14005D9D1: mov     edi, [rdx+38h]           ; edi = StatusBufferSize (set at entry)\n0x14005E1D5: cmp     r13d, 40030053h\n0x14005E1DC: jnz     short loc_14005E23F\n0x14005E1DE: call    Feature_NDPSfiSpring2026__private_IsEnabledDeviceUsageNoInline\n0x14005E1E3: test    eax, eax\n0x14005E1E5: jz      short loc_14005E1EC      ; feature OFF -> call handler unchecked\n0x14005E1E7: cmp     edi, 34h                 ; feature ON  -> StatusBufferSize gate\n0x14005E1EA: jb      short loc_14005E1FC      ; too small -> WPP trace, skip\n0x14005E1F2: call    ndisMIndicatePMCapabilities  ; 0x1400B60E8\n\nEXTRACTED CALLEE (ndisMIndicatePMCapabilities @ 0x1400B60E8, patched only, no internal check):\n0x1400B60F2: mov     rdi, [rdx+30h]           ; StatusBuffer\n0x1400B6108: mov     eax, [rdi+30h]           ; read +0x30\n0x1400B612B: mov     ecx, [rdi+8]             ; read +0x08\n0x1400B613A: mov     eax, [rdi+28h]           ; read +0x28\n0x1400B6153: mov     eax, [rdi+1Ch]           ; read +0x1c"
+    },
+    {
+      "name": "ndisNsiSetThreadInformation (unpatched 0x14005BE90 / patched 0x1400892B0)",
+      "similarity": 0.0,
+      "change_type": "feature_staged_no_delivered_fix",
+      "key_changes": [
+        "Adds a NULL check on the request buffer pointer at [req+0x28] before dereferencing it, returning STATUS_INVALID_PARAMETER_MIX (0xC000000D)",
+        "Gated behind WIL feature Feature_TCPIP_SFI_60615470_Fix; the old unchecked dereference is retained when the feature is off"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same staged-rollout pattern as ndisMRawIndicateStatusEx: the NULL guard runs only when Feature_TCPIP_SFI_60615470_Fix is enabled, otherwise the unpatched unchecked dereference executes. If reached with a NULL buffer pointer this would be a NULL-pointer dereference (CWE-476, denial of service), not the out-of-bounds read originally reported. Not a delivered fix in the default configuration.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14007ba60 / sub_140089340",
+      "similarity": 0.68,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Pool allocation size and structure magic bumped, new field handling"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural/feature churn, not a vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1400826b0",
+      "similarity": 0.98,
+      "change_type": "behavioral",
+      "key_changes": [
+        "New field initialization matching the size bump above"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1400ce584",
+      "similarity": 0.96,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Statistics counter-update refactor (removed conditional call, counter global relocated)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Statistics-only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "bulk churn (WIL feature staging, WPP/ETW, NdisTriageData feature)",
+      "similarity": 0.0,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "WIL feature-staging gates: Feature_NDPSfiSpring2026, Feature_TCPIP_SFI_60615470_Fix, Feature_SSSurpriseRemoval_Fix, Feature_CFHCancelTimerFix, Feature_NDPQualitySpring26, Feature_NDPQualitySummer26",
+        "WPP/ETW tracing insertions",
+        "New NdisTriageData bugcheck-triage feature (*TriageData*, *DataCollector, IsMemoryValid)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Bulk of the 379 changed functions is servicing churn, not runtime data-path bounds fixes.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ndisMRawIndicateStatusEx",
+      "entry_point": "Miniport driver calling NdisMIndicateStatusEx with an NDIS_STATUS_INDICATION whose StatusCode == 0x40030053 (kernel-mode); NOT a user-mode OID request",
+      "call_chain": [
+        "miniport driver -> NdisMIndicateStatusEx",
+        "ndisMApplyInterfaceChange (0x1401687E0, calls ndisMRawIndicateStatusEx at 0x140168989) / ndisMpHookRawIndicateStatus (0x14005E90A) / ndisMpHookDefaultIndicateStatus (0x14005E924)",
+        "ndisMRawIndicateStatusEx (unpatched 0x14005E940 / patched 0x14005D9A0) - StatusCode dispatch",
+        "StatusCode 0x40030053 case (unpatched 0x14005F17A) reads StatusBuffer fields; patched moves body to ndisMIndicatePMCapabilities (0x1400B60E8) behind a feature-gated size check"
+      ],
+      "vulnerability_class": "Latent out-of-bounds read (CWE-125) on a kernel-to-kernel status-indication path; no delivered fix, no user-mode-reachable primitive",
+      "description": "ndisMRawIndicateStatusEx dispatches on an NDIS status indication's StatusCode (r13d). Its second argument (r15) is an _NDIS_STATUS_INDICATION: [r15+0x30] is StatusBuffer and [r15+0x38] is StatusBufferSize (loaded into edi at entry). For StatusCode 0x40030053 the unpatched handler reads StatusBuffer at offsets 0x30, 0x28, 0x1c, and 0x08 (highest byte accessed 0x33) without comparing StatusBufferSize to 0x34. The sibling StatusCode 0x40030054 case validates (cmp ecx,34h / jb at 0x14005F21C). The patched build moves the 0x40030053 body into ndisMIndicatePMCapabilities (0x1400B60E8) and adds a StatusBufferSize >= 0x34 pre-check, but only when the WIL feature Feature_NDPSfiSpring2026 is enabled; when off, the jz at 0x14005E1E5 goes straight to the unchecked call. This is a staged rollout with the old path retained, not a delivered fix. StatusBuffer and StatusBufferSize are supplied by the indicating kernel-mode miniport (StatusCode 0x40030053 is a PM-capabilities indication built from the miniport's own capability structure), so there is no user-mode trust boundary crossed and no attacker-controlled buffer size.",
+      "trigger_conditions": "Not reachable from a user-mode OID request. Executes when a miniport driver indicates status via NdisMIndicateStatusEx with StatusCode 0x40030053. Because the added StatusBufferSize >= 0x34 check is gated behind Feature_NDPSfiSpring2026 with the unchecked call retained for the feature-off case, the shipping default behaviour matches the unpatched build.",
+      "primitive": "None established. The reads are on a kernel-to-kernel status-indication path with a caller-supplied buffer, and no bounds check is delivered by default.",
+      "evidence": "UNPATCHED pseudocode (ndisMRawIndicateStatusEx, StatusCode 0x40030053 @ 0x14005F17A):\n```c\nif (r13d == 0x40030053)\n{\n    void* buf = *(void**)(r15 + 0x30);          // StatusBuffer, no size check\n    *(uint64_t*)(rsi + 0x208) = __readgsqword(0x188);\n    int32_t v30 = *(int32_t*)(buf + 0x30);       // read StatusBuffer+0x30\n    if (v30 == 2 || (uint32_t)(v30 - 3) <= 1) *(uint32_t*)(rsi + 0x46c) = 1;\n    else *(uint32_t*)(rsi + 0x46c) &= 0xFFFFFFFE;\n    int32_t v08 = *(int32_t*)(buf + 8) & *(uint32_t*)(rsi + 0x464);  // read +0x08\n    *(uint32_t*)(rsi + 0x464) = v08;\n    int32_t v28 = *(int32_t*)(buf + 0x28);       // read +0x28\n    if (v28 == 2 || (uint32_t)(v28 - 3) <= 1) *(uint32_t*)(rsi + 0x464) = v08 | 2;\n    *(uint32_t*)(rsi + 0x468) &= *(int32_t*)(buf + 0x1c);  // read +0x1c\n}\n```\n\nPATCHED pseudocode (ndisMRawIndicateStatusEx, StatusCode 0x40030053 @ 0x14005E1D5):\n```c\nif (r13d == 0x40030053)\n{\n    if (Feature_NDPSfiSpring2026__private_IsEnabled...() == 0   // feature OFF -> old path\n        || StatusBufferSize >= 0x34)                            // feature ON  -> size gate\n        ndisMIndicatePMCapabilities(rsi, r15);   // 0x1400B60E8: same reads, no internal check\n    else\n        /* WPP trace record, skip */;\n}\n```",
+      "assembly": "UNPATCHED ndisMRawIndicateStatusEx @ 0x14005E940 - StatusCode 0x40030053 case @ 0x14005F17A (no size check):\n0x14005F17A: cmp     r13d, 40030053h\n0x14005F181: jnz     loc_14005F207\n0x14005F187: mov     rbx, [r15+30h]           ; StatusBuffer (no size check)\n0x14005F1AE: mov     ecx, [rbx+30h]           ; read StatusBuffer+0x30\n0x14005F1D1: mov     ecx, [rbx+8]             ; read StatusBuffer+0x08\n0x14005F1E0: mov     eax, [rbx+28h]           ; read StatusBuffer+0x28\n0x14005F1F9: mov     eax, [rbx+1Ch]           ; read StatusBuffer+0x1c\n\nPATCHED ndisMRawIndicateStatusEx @ 0x14005D9A0 - StatusCode 0x40030053 case @ 0x14005E1D5 (feature-gated size check):\n0x14005D9D1: mov     edi, [rdx+38h]           ; edi = StatusBufferSize\n0x14005E1D5: cmp     r13d, 40030053h\n0x14005E1DE: call    Feature_NDPSfiSpring2026__private_IsEnabledDeviceUsageNoInline\n0x14005E1E3: test    eax, eax\n0x14005E1E5: jz      short loc_14005E1EC      ; feature OFF -> call handler unchecked\n0x14005E1E7: cmp     edi, 34h                 ; feature ON  -> StatusBufferSize gate\n0x14005E1EA: jb      short loc_14005E1FC      ; too small -> WPP trace, skip\n0x14005E1F2: call    ndisMIndicatePMCapabilities  ; 0x1400B60E8\n\nEXTRACTED CALLEE ndisMIndicatePMCapabilities @ 0x1400B60E8 (patched only, no internal size check):\n0x1400B60F2: mov     rdi, [rdx+30h]           ; StatusBuffer\n0x1400B6108: mov     eax, [rdi+30h]           ; read +0x30\n0x1400B612B: mov     ecx, [rdi+8]             ; read +0x08\n0x1400B613A: mov     eax, [rdi+28h]           ; read +0x28\n0x1400B6153: mov     eax, [rdi+1Ch]           ; read +0x1c",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisMRawIndicateStatusEx StatusCode 0x40030053 dispatch (unpatched)",
+            "address": "0x14005F17A",
+            "why": "cmp r13d, 40030053h. r13d is the NDIS StatusCode (not an OID). edi = StatusBufferSize (from [r15+0x38])."
+          },
+          {
+            "symbol": "ndis!ndisMRawIndicateStatusEx StatusBuffer load (unpatched)",
+            "address": "0x14005F187",
+            "why": "mov rbx, [r15+0x30] loads StatusBuffer with no size check. Reads follow at rbx+0x30/0x08/0x28/0x1c."
+          },
+          {
+            "symbol": "ndis!ndisMRawIndicateStatusEx feature gate (patched)",
+            "address": "0x14005E1DE",
+            "why": "call Feature_NDPSfiSpring2026...; the StatusBufferSize >= 0x34 check at 0x14005E1E7 runs only when this returns nonzero. When it returns 0 the jz at 0x14005E1E5 skips the check."
+          }
+        ],
+        "watch": [
+          "r13d = NDIS StatusCode; must equal 0x40030053 to reach this case (this is a StatusCode, not an OID)",
+          "r15 = _NDIS_STATUS_INDICATION*; [r15+0x30] = StatusBuffer, [r15+0x38] = StatusBufferSize",
+          "edi = StatusBufferSize (patched, set at entry via mov edi,[rdx+38h])",
+          "rsi = miniport block; fields at rsi+0x464, rsi+0x468, rsi+0x46c are written from the buffer reads"
+        ],
+        "key_offsets": [
+          "0x14005F17A: cmp r13d, 40030053h - StatusCode dispatch (unpatched)",
+          "0x14005F187: mov rbx, [r15+0x30] - StatusBuffer load, no size check (unpatched)",
+          "0x14005F21C: cmp ecx, 34h - validation present in the sibling StatusCode 0x40030054 case",
+          "0x14005E1E7: cmp edi, 34h - feature-gated StatusBufferSize check (patched)",
+          "0x1400B60E8: ndisMIndicatePMCapabilities - extracted body, no internal size check (patched)"
+        ],
+        "trigger_setup": "Only reachable from a kernel-mode miniport driver calling NdisMIndicateStatusEx with StatusCode 0x40030053 and a StatusBuffer/StatusBufferSize it supplies. No user-mode DeviceIoControl/OID path reaches this handler.",
+        "expected_observation": "With the feature off (staged-rollout default pattern) the patched build performs the same unchecked StatusBuffer reads as the unpatched build. No delivered bounds check executes; no user-mode-reachable primitive is demonstrable.",
+        "notes": "StatusCode 0x40030053 is a PM-capabilities status indication; the extracted callee is ndisMIndicatePMCapabilities (0x1400B60E8), which contains no internal size check. Feature_NDPSfiSpring2026 is a WIL feature-staging gate present only in the patched build."
+      }
+    }
+  ],
+  "summary": "No delivered security fix is present. The change the report targeted is in ndisMRawIndicateStatusEx (unpatched 0x14005E940 / patched 0x14005D9A0), a miniport status-indication handler - not an OID Set-Information dispatcher. 0x40030053 is an NDIS StatusCode, not an OID; r15 is an _NDIS_STATUS_INDICATION with StatusBuffer at +0x30 and StatusBufferSize at +0x38. For StatusCode 0x40030053 the patched build moves the inline body into ndisMIndicatePMCapabilities (0x1400B60E8) and adds a StatusBufferSize >= 0x34 pre-check, but only when the WIL feature Feature_NDPSfiSpring2026 is enabled; when off it calls the same unchecked handler as the unpatched build (old path retained), so this is a staged rollout, not a delivered fix. The path is reachable only from a kernel-mode miniport driver calling NdisMIndicateStatusEx, not from user mode, and the buffer/size are supplied by that driver. A second feature-staged change (ndisNsiSetThreadInformation under Feature_TCPIP_SFI_60615470_Fix) adds a NULL-pointer guard (CWE-476) with the old path retained - also not a delivered fix. The bulk of the 379 changed functions is servicing churn (WIL feature staging, WPP/ETW, the NdisTriageData bugcheck-triage feature)."
+}

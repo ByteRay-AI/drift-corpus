@@ -1,0 +1,212 @@
+{
+  "binaries": {
+    "title": "hvsocket.sys - VMBus TL loopback endpoint spinlock conditionally skipped behind a feature-staging gate; unsynchronized access race (fixed by unconditional locking)",
+    "id_unpatched": "hvsocket_unpatched.sys",
+    "id_patched": "hvsocket_patched.sys",
+    "overall_similarity": 0.9678,
+    "matched": 269,
+    "changed": 9,
+    "identical": 260,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0,
+    "diff_note": "Diff-tool counts retained. An independent content diff (matching by name across relocations) confirms the same nine loopback/connection functions changed, plus rbc_InitializeFeatureStaging (feature-descriptor table emptied) and the deletion of the gate helper EvaluateCurrentState. No security-relevant change exists outside the feature-staging removal theme."
+  },
+  "changed_functions": [
+    {
+      "name": "VmbusTlLoopbackDisconnect (unpatched 0x1C0006C30, patched 0x1C00068B0)",
+      "similarity": 0.9128,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched acquires the spinlock at rbx+0x48 only when EvaluateCurrentState() returns non-zero; when it returns zero, the endpoint pointer at rbx+0x2b8 is read (mov rsi,[rbx+2B8h]) and cleared (and [rbx+2B8h],0) WITHOUT the spinlock",
+        "Patched acquires the spinlock at rbx+0x48 unconditionally at 0x1C00068EB before reading/clearing rbx+0x2b8, and releases it unconditionally at 0x1C000691E",
+        "The three EvaluateCurrentState gates (acquire, clear of [rsi+68h], release) are removed"
+      ],
+      "security_relevant": true,
+      "security_notes": "When EvaluateCurrentState() returns zero, the loopback endpoint pointer at offset 0x2b8 is read and cleared without holding the spinlock at offset 0x48. That spinlock is the genuine synchronization primitive for this pointer: VmbusTlLoopbackReferenceEndpointDeliveryQueue and VmbusTlLoopbackSetEndpointDeliveryQueue acquire it unconditionally (in both builds) while reading 0x2b8 and adjusting the endpoint reference count. Skipping it lets a concurrent reference/set (potentially at DISPATCH_LEVEL) race the disconnect's read/clear, which can corrupt the endpoint reference count and lead to a premature reference drop and use-after-free of the 'Vnpi' NonPagedPool connection/endpoint object. The reference-count decrement (lock xadd [rbp+8]), CFG-checked cleanup callback (guard_dispatch_icall on [rbp+50h]), and ExFreePoolWithTag occur outside the spinlock in BOTH builds and are unchanged; the fix concerns only the atomicity of the pointer read/clear and reference acquisition.",
+      "assembly_diff": "UNPATCHED (VmbusTlLoopbackDisconnect @ 0x1C0006C30):\n0x1C0006C6F: call    EvaluateCurrentState        ; feature-staging check\n0x1C0006C74: test    eax, eax\n0x1C0006C76: jz      0x1C0006C8B                 ; skip spinlock when feature disabled\n0x1C0006C78: lea     rcx, [rbx+48h]              ; only if eax != 0\n0x1C0006C7C: call    KeAcquireSpinLockRaiseToDpc\n0x1C0006C88: mov     dil, al\n0x1C0006C8B: mov     rsi, [rbx+2B8h]             ; read endpoint ptr (unlocked if je taken)\n0x1C0006C92: and     qword ptr [rbx+2B8h], 0     ; clear endpoint ptr (unlocked if je taken)\n\nPATCHED (VmbusTlLoopbackDisconnect @ 0x1C00068B0):\n0x1C00068E7: lea     rcx, [rbx+48h]\n0x1C00068EB: call    KeAcquireSpinLockRaiseToDpc ; unconditional\n0x1C00068F7: mov     rsi, [rbx+2B8h]             ; read under spinlock\n0x1C00068FE: and     qword ptr [rbx+2B8h], 0     ; clear under spinlock\n0x1C000691E: call    KeReleaseSpinLock           ; unconditional"
+    },
+    {
+      "name": "VmbusTlLoopbackSend (unpatched 0x1C00065EC, patched 0x1C00062A4)",
+      "similarity": 0.8832,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched branches on EvaluateCurrentState(): true path calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (spinlock-protected reference), false path reads [r15+2B8h] directly without the spinlock",
+        "Patched always calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (relocated to 0x1C0006D10) unconditionally"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same feature gate as Disconnect: when EvaluateCurrentState() returns zero, the endpoint pointer at r15+0x2b8 is read without the spinlock and used to queue/deliver data. A concurrent disconnect can drop the endpoint reference mid-send, so the unlocked read participates in the same reference-count race.",
+      "assembly_diff": "UNPATCHED: 0x1C000660F call EvaluateCurrentState; 0x1C0006624 jz 0x1C0006640; 0x1C0006640 mov rbx,[r15+2B8h] (unlocked). PATCHED: 0x1C00062C2 call VmbusTlLoopbackReferenceEndpointDeliveryQueue unconditionally (helper acquires spinlock at arg1+0x48 before reading *(arg1+0x2b8))."
+    },
+    {
+      "name": "VmbusTlLoopbackNotifyReceiveConsumed (unpatched 0x1C0006F50, patched 0x1C0006BB0)",
+      "similarity": 0.8389,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched has a !EvaluateCurrentState() fallback branch that reads the endpoint at [rbx+2B8h] and takes the spinlock directly",
+        "Patched removes the fallback and always uses VmbusTlLoopbackReferenceEndpointDeliveryQueue (spinlock-protected reference at 0x1C0006BC2)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same feature gate. In the fallback path the endpoint pointer is dereferenced without first taking a spinlock-protected reference, so a concurrent disconnect that frees the endpoint can leave this path operating on freed memory.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlNotifyListenerAccept (unpatched 0x1C0005F18, patched 0x1C0005C68)",
+      "similarity": 0.8043,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched wraps the endpoint-reference / connect-dispatch path in if (EvaluateCurrentState()), with a duplicate else path",
+        "Patched removes the gate; the endpoint-reference path runs unconditionally and the duplicate path is dropped"
+      ],
+      "security_relevant": true,
+      "security_notes": "The gated dual-path reference handling could reference the endpoint on one path without the spinlock-protected path's synchronization; removal unifies to the spinlock-protected path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackSetupConnection (unpatched 0x1C001B1D0, patched 0x1C001B100)",
+      "similarity": 0.4819,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched uses EvaluateCurrentState() to choose a locked vs unlocked path for loopback endpoint setup (including a non-feature branch that writes/clears [arg2+0x2b8] without the spinlock helper)",
+        "Patched drops the gate; the critical-region / fast-mutex release path is unconditional and endpoint access goes through the spinlock-protected helpers; function reworked (signature/error-handling changed)"
+      ],
+      "security_relevant": true,
+      "security_notes": "During loopback connection setup the endpoint pointer at arg2+0x2b8 could be written without the spinlock helper on the non-feature path, racing with a concurrent disconnect/send. The patch routes setup through the locked helpers consistently.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackAcceptConnection (unpatched 0x1C001B630, patched 0x1C001B530)",
+      "similarity": 0.6072,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched uses EvaluateCurrentState() to decide between spinlock-protected and unprotected access to the endpoint",
+        "Patched always uses VmbusTlLoopbackReferenceEndpointDeliveryQueue and VmbusTlLoopbackSetEndpointDeliveryQueue for locked access, dropping the non-feature mutex branch"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same feature gate during loopback connection acceptance; the unlocked endpoint access could race a concurrent disconnect.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlCommonConnectCompletion (unpatched 0x1C0002670, patched 0x1C00023D0)",
+      "similarity": 0.9609,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched gates an abort/dereference branch on a compound condition: if (EvaluateCurrentState() && (flags & 0x80))",
+        "Patched removes the EvaluateCurrentState() term, leaving if (flags & 0x80)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The feature term gated whether the abort/dereference branch executed, making the endpoint handling depend on the feature-staging state. The patch removes that dependency.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProviderListen (unpatched 0x1C001E420, patched 0x1C001E290)",
+      "similarity": 0.5765,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched begins with an EvaluateCurrentState() gate that branches the silo/partition-resolution flow into two near-duplicate paths",
+        "Patched removes the gate, collapsing the two paths into one; the former VmbusTlCreateListenEndpoint wrapper is inlined here"
+      ],
+      "security_relevant": true,
+      "security_notes": "Top-level feature gate over the listen setup flow removed. Consistent with the overall removal of the feature-staging branch point; the inlining of VmbusTlCreateListenEndpoint is a compiler effect, not a behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProcessNewConnectionForListener (unpatched 0x1C0019E60, patched 0x1C0019DB0)",
+      "similarity": 0.9756,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched calls EvaluateCurrentState() twice to gate the fast-mutex-guarded partition lookup / state check",
+        "Patched removes both gates; that logic runs unconditionally"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-gated connection preparation logic unified to a single unconditional path, consistent with the overall pattern.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "rbc_InitializeFeatureStaging (unpatched 0x1C000C694, patched 0x1C000C4F8)",
+      "similarity": 0.0,
+      "change_type": "enabling_mechanism",
+      "key_changes": [
+        "Feature-descriptor registration loop bound changed from (&reg_FeatureDescriptors_a .. &reg_FeatureDescriptors_z) to an empty range (&reg_FeatureDescriptors_z .. &reg_FeatureDescriptors_z)",
+        "Effect: the WIL/Velocity feature-descriptor table is emptied"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a separate vulnerability. This is the mechanism that removes the feature gate driving all nine functions above; together with the deletion of the gate helper EvaluateCurrentState (0x1C0001D78, unpatched only), it makes the previously feature-flagged locking behavior permanent.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "EvaluateCurrentState (0x1C0001D78) - feature-staging gate helper deleted in the patched build",
+      "VmbusTlCreateListenEndpoint (0x1C00198A0) - inlined into VmbusTlProviderListen in the patched build (compiler inlining, not a behavioral change)"
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "VmbusTlLoopbackDisconnect (unpatched 0x1C0006C30, patched 0x1C00068B0) and eight related loopback/connection functions",
+      "entry_point": "Hyper-V socket (AF_HYPERV / HVSOCKET) send/disconnect/notify operations on a loopback (same-partition) connection reach VmbusTlLoopbackSend / VmbusTlLoopbackDisconnect / VmbusTlLoopbackNotifyReceiveConsumed.",
+      "call_chain": [
+        "User-mode AF_HYPERV socket: send()/closesocket()/shutdown() on a loopback connection",
+        "hvsocket.sys VMBus TL loopback dispatch: VmbusTlLoopbackDisconnect (0x1C0006C30) / VmbusTlLoopbackSend (0x1C00065EC)",
+        "These read/clear/reference the endpoint pointer at object+0x2b8; the spinlock at object+0x48 is skipped when the feature gate EvaluateCurrentState() returns zero"
+      ],
+      "vulnerability_class": "Race condition from improper synchronization (CWE-362); potential use-after-free consequence (CWE-416). Not a check-then-use TOCTOU (CWE-367).",
+      "description": "In the unpatched hvsocket.sys the VMBus TL loopback functions conditionally acquire the spinlock at object+0x48 (which protects the loopback endpoint pointer at object+0x2b8) based on EvaluateCurrentState() (0x1C0001D78). EvaluateCurrentState is a Windows feature-staging (WIL/Velocity) check: it calls EvaluateFeature on the feature descriptor reg_FeatureDescriptors_a and returns (cached_state != 1) - non-zero when the feature is enabled, zero when disabled. When it returns zero, the spinlock is skipped and the endpoint pointer at object+0x2b8 is read and cleared without synchronization. Because VmbusTlLoopbackReferenceEndpointDeliveryQueue and VmbusTlLoopbackSetEndpointDeliveryQueue acquire that same spinlock unconditionally (in both builds) while reading object+0x2b8 and adjusting the endpoint reference count, the disconnect/send/notify paths taking the unlocked path can race those reference/set paths (which may run at DISPATCH_LEVEL, where the enclosing fast mutex at object+0x10 does not serialize them). The plausible consequence is an inconsistent reference count on the 'Vnpi' NonPagedPool connection/endpoint object leading to a premature reference drop and use-after-free. The patch removes the gate (spinlock acquired unconditionally) and empties the feature-descriptor table via rbc_InitializeFeatureStaging, deleting EvaluateCurrentState.",
+      "trigger_conditions": "1. hvsocket.sys loaded. 2. The WIL/Velocity feature checked by EvaluateCurrentState resolves to the disabled state so the lock-skipping path is taken (governed by OS/servicing configuration, NOT attacker-controlled). 3. Establish an AF_HYPERV loopback (same-partition) connection. 4. Issue disconnect concurrently with send/notify on the same endpoint so the unlocked read/clear/reference of object+0x2b8 races the spinlock-holding reference/set paths.",
+      "primitive": "Data race on the loopback endpoint pointer (object+0x2b8) and its reference count. Realistic consequence: inconsistent reference count leading to premature reference drop and use-after-free of the 'Vnpi' (0x69706e56) NonPagedPool object. A concrete arbitrary read/write primitive, function-pointer hijack (the cleanup callback at endpoint+0x50 is invoked via a CFG-checked guard_dispatch_icall), pool-spray reclamation layout, or code-execution chain is NOT demonstrated by the binaries and is not claimed.",
+      "evidence": "UNPATCHED VmbusTlLoopbackDisconnect (0x1C0006C30) - conditional spinlock and unsynchronized read/clear (real disassembly):\n\n0x1C0006C6F: call    EvaluateCurrentState        ; feature-staging check\n0x1C0006C74: test    eax, eax\n0x1C0006C76: jz      0x1C0006C8B                 ; skip spinlock when feature disabled\n0x1C0006C78: lea     rcx, [rbx+48h]              ; only if eax != 0\n0x1C0006C7C: call    KeAcquireSpinLockRaiseToDpc\n0x1C0006C88: mov     dil, al\n0x1C0006C8B: mov     rsi, [rbx+2B8h]             ; endpoint ptr read (unlocked if je taken)\n0x1C0006C92: and     qword ptr [rbx+2B8h], 0     ; endpoint ptr cleared (unlocked if je taken)\n0x1C0006C9F: mov     rbp, [rsi+68h]             ; back-pointer to connection object\n\nPATCHED VmbusTlLoopbackDisconnect (0x1C00068B0) - unconditional spinlock:\n\n0x1C00068E7: lea     rcx, [rbx+48h]\n0x1C00068EB: call    KeAcquireSpinLockRaiseToDpc ; unconditional\n0x1C00068F7: mov     rsi, [rbx+2B8h]             ; read under spinlock\n0x1C00068FE: and     qword ptr [rbx+2B8h], 0     ; clear under spinlock\n0x1C000691E: call    KeReleaseSpinLock           ; unconditional\n\nGate helper EvaluateCurrentState (0x1C0001D78, unpatched only) - confirms feature-staging, not a runtime state variable:\n\n0x1C0001D7C: lea     rcx, reg_FeatureDescriptors_a\n0x1C0001D83: call    EvaluateFeature\n0x1C0001D88: mov     rax, cs:reg_FeatureDescriptors_a\n0x1C0001D8F: mov     ecx, [rax]\n0x1C0001D93: cmp     ecx, 1\n0x1C0001D96: setnz   al                          ; returns (cached_state != 1)",
+      "assembly": "See 'evidence'. Note: the reference-count decrement (0x1C0006D6A lock xadd [rbp+8],rax), cleanup callback (0x1C0006D88 mov rax,[rbp+50h]; 0x1C0006D94 guard_dispatch_icall), and ExFreePoolWithTag (0x1C0006DF1, tag 'Vnpi') execute after the fast mutex and (conditional) spinlock are released and are IDENTICAL in the patched build. The fix concerns only the atomicity of the pointer read/clear and reference acquisition, not these downstream operations.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackDisconnect+0x3F",
+            "address": "0x1C0006C6F",
+            "why": "call EvaluateCurrentState. If eax is zero on return, the spinlock is skipped (unlocked path via je at 0x1C0006C76)."
+          },
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackDisconnect+0x5B",
+            "address": "0x1C0006C8B",
+            "why": "mov rsi,[rbx+2B8h] - endpoint pointer read, unlocked when arriving via the je at 0x1C0006C76."
+          },
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackDisconnect+0x13A",
+            "address": "0x1C0006D6A",
+            "why": "lock xadd [rbp+8],rax - reference-count decrement on the connection object; watch for an inconsistent count under concurrent send/disconnect."
+          },
+          {
+            "symbol": "hvsocket_unpatched!EvaluateCurrentState",
+            "address": "0x1C0001D78",
+            "why": "The feature-staging gate. Reads reg_FeatureDescriptors_a via EvaluateFeature and returns (cached_state != 1). Zero return selects the lock-skipping path."
+          },
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackSend",
+            "address": "0x1C00065EC",
+            "why": "The racing partner. Also consults EvaluateCurrentState (0x1C000660F) before referencing the same endpoint at [r15+2B8h]."
+          }
+        ],
+        "watch": [
+          "rcx at VmbusTlLoopbackDisconnect entry = endpoint container object (arg1)",
+          "rbx+0x48 = KSPIN_LOCK guarding the endpoint pointer (skipped on the unlocked path)",
+          "rbx+0x2b8 = loopback endpoint pointer",
+          "eax after 0x1C0006C6F: zero => unlocked path taken",
+          "rbp+0x8 = connection-object reference count (lock xadd at 0x1C0006D6A)",
+          "Pool tag 0x69706e56 ('Vnpi') for the connection/endpoint allocation"
+        ],
+        "key_offsets": [
+          "0x1C0006C6F: call EvaluateCurrentState - the feature-staging gate",
+          "0x1C0006C76: je 0x1C0006C8B - skips spinlock acquisition when the feature is disabled",
+          "0x1C0006C78-0x1C0006C88: KeAcquireSpinLockRaiseToDpc - only on the feature-enabled path",
+          "0x1C0006C8B: mov rsi,[rbx+2B8h] - endpoint pointer read (unlocked on the je path)",
+          "0x1C0006C92: and [rbx+2B8h],0 - endpoint pointer clear (unlocked on the je path)",
+          "0x1C0001D78: EvaluateCurrentState - reads reg_FeatureDescriptors_a via EvaluateFeature",
+          "reg_FeatureDescriptors_a: WIL/Velocity feature descriptor consulted by the gate"
+        ],
+        "trigger_setup": "1. hvsocket.sys loaded (Hyper-V sockets available). 2. The feature checked by EvaluateCurrentState must resolve to disabled (OS/servicing-controlled, not attacker-controlled) for the lock-skipping path to run. 3. Create an AF_HYPERV socket and establish a loopback (same-partition) connection. 4. Concurrently issue send() (VmbusTlLoopbackSend) and closesocket()/shutdown() (VmbusTlLoopbackDisconnect) on the same endpoint. 5. The unlocked read/clear/reference of endpoint+0x2b8 races the spinlock-holding reference/set paths, which can corrupt the endpoint reference count.",
+        "expected_observation": "Under a lost race the endpoint reference count becomes inconsistent, typically surfacing as an int 29h reference-count fail-fast (RtlFailFast, code 0x0E) at the lock xadd sites, or a pool bugcheck (e.g. BAD_POOL_HEADER/BAD_POOL_CALLER) if the object is freed and reused. A concrete code-execution outcome is not demonstrated.",
+        "notes": "Endpoint container layout (arg1): +0x10 = FAST_MUTEX, +0x48 = KSPIN_LOCK (the conditionally-skipped lock), +0x70 = parent partition object, +0x2b8 = loopback endpoint pointer. Endpoint/connection object: +0x8 = reference count, +0x50 = cleanup callback (invoked via CFG-checked guard_dispatch_icall), +0x58 = disposal type, +0x60 = SLIST header, +0x68 = back-pointer to container. Pool tag 'Vnpi' (0x69706e56). The lock-skipping path is selected by the WIL/Velocity feature descriptor reg_FeatureDescriptors_a - a servicing-controlled flag, NOT a value the attacker sets. The patch removes the gate from all nine functions, empties the feature-descriptor table (rbc_InitializeFeatureStaging), and deletes EvaluateCurrentState."
+      }
+    }
+  ],
+  "summary": "The patch removes a Windows feature-staging (WIL/Velocity) gate, EvaluateCurrentState (0x1C0001D78), that in the unpatched hvsocket.sys conditionally skipped acquisition of the spinlock at object+0x48 protecting the VMBus TL loopback endpoint pointer at object+0x2b8. When the gate resolved to the lock-skipping path, the disconnect/send/notify functions read, cleared, and referenced the endpoint pointer and its reference count without the spinlock, racing the reference/set helpers (VmbusTlLoopbackReferenceEndpointDeliveryQueue / VmbusTlLoopbackSetEndpointDeliveryQueue) that hold that spinlock unconditionally and may run at DISPATCH_LEVEL. The realistic consequence is an inconsistent reference count on the 'Vnpi' NonPagedPool connection/endpoint object leading to a premature reference drop and use-after-free; no concrete arbitrary-read/write, function-pointer-hijack, or code-execution primitive is demonstrated by the binaries. The patch acquires the spinlock unconditionally in all nine affected functions, empties the feature-descriptor table via rbc_InitializeFeatureStaging, and deletes EvaluateCurrentState. Reachability of the unlocked path depends on the servicing-controlled feature-staging state, not on attacker input. Class: CWE-362 (improper synchronization / race condition) with potential CWE-416 (use-after-free); CWE-367 (TOCTOU) is not an accurate fit. Severity: Medium."
+}

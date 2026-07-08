@@ -1,0 +1,200 @@
+{
+  "binaries": {
+    "id_unpatched": "msseccore_unpatched.sys",
+    "id_patched": "msseccore_patched.sys",
+    "overall_similarity": 0.9011,
+    "matched": 43,
+    "changed": 11,
+    "identical": 32,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "memmove",
+      "similarity": 0.3011,
+      "change_type": "cosmetic",
+      "key_changes": ["Full rewrite of the compiler-generated CRT memmove implementation at 0x1C0001C80 (same address in both builds): the patched version adds small-size fast-path branches (<=8, <=16, <=32 bytes) ahead of the bulk SSE copy loop. Semantically equivalent memory-move. The driver contains no separate memcpy function; this is the only CRT block-copy routine that changed."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecAllocatePoolWithTag",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Fallback allocation path (reached only when the dynamically-resolved allocator pointer cs:qword_1C0007000 is NULL) changed the PoolType argument to ExAllocatePoolWithTag from 0x200 to 0x600",
+        "Primary path (indirect call via cs:__guard_dispatch_icall_fptr with ecx=0x40) is unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function was not listed in the report's original changed-function set; it is a genuine but non-security change identified by independent content diff. Both PoolType values (0x200 and 0x600) carry the non-executable pool bit 0x200; the additional 0x400 bit adjusts the requested pool allocation attributes on the rarely-taken fallback path. This is not a security vulnerability fix.",
+      "assembly_diff": "Unpatched SecAllocatePoolWithTag @ 0x1C0001008:\n  0x1C0001025  mov     ecx, 200h  ; PoolType (fallback)\n  0x1C000102A  call    cs:__imp_ExAllocatePoolWithTag\n\nPatched SecAllocatePoolWithTag @ 0x1C0001050:\n  0x1C000106D  mov     ecx, 600h  ; PoolType (fallback)\n  0x1C0001072  call    cs:__imp_ExAllocatePoolWithTag"
+    },
+    {
+      "name": "SecKernelIntegrityCheck",
+      "similarity": 0.931,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Two memset calls replaced with inline SSE zeroing (xorps/movups) - compiler optimization, semantically identical",
+        "Notification class constant changed from 0xa000006 to 0xa000008 in the kernel notification structure built on the stack before dispatch",
+        "The notification structure (base at [rbp+57h+var_70]) is populated with: Size=0x40 (var_70), Class=0xa000006(unpatched)/0xa000008(patched) (var_68), Flags=0x80000 (var_60), plus arg-dependent fields (var_40, var_3C=0x10, var_38), then dispatched via cs:qword_1C0007008 through the guarded indirect-call pointer cs:__guard_dispatch_icall_fptr"
+      ],
+      "security_relevant": false,
+      "security_notes": "The constant change (0xa000006->0xa000008) modifies the notification class ID for a kernel integrity check dispatch. This is a version/protocol compatibility change to match an updated kernel-side consumer, not a security vulnerability fix. The dispatch target cs:qword_1C0007008 is a kernel-resolved pointer and is not directly attacker-controlled.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecCreateKernelClient",
+      "similarity": 0.9514,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "memset(rax_1, 0, 0x28) replaced with inline SSE zeroing (__builtin_memset) - semantically identical",
+        "Variable naming changed from rax_1 to s in pseudocode - cosmetic only",
+        "Register allocation changes (ebp→edx for size constant) - compiler optimization"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecRegisterKernelExtension",
+      "similarity": 0.9722,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "memset(&var_28, 0, 0x20) replaced with inline stores - compiler optimization",
+        "Register allocation and instruction ordering changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecValidateDriverFileSignatureLevel",
+      "similarity": 0.9756,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Multiple memset calls replaced with inline SSE zeroing (xorps/movups) - compiler optimization",
+        "Decompiler now recognizes OBJECT_ATTRIBUTES struct instead of raw int32 - cosmetic pseudocode improvement",
+        "Call targets adjusted for function relocations (0x1c00085fc→0x1c0008560 for SecCreateDriverValidationKernelEcp, 0x1c000855c→0x1c00086b8 for SecIsWindowsSigned)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecBindHost",
+      "similarity": 0.9816,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation restructured (rbp→esi for arg2 copy, additional rsi save/restore)",
+        "Refcount increment logic changed from 'lock xadd + inc' to 'lea esi,[rbx+1] + lock xadd + add' - semantically identical arithmetic",
+        "SecKernelClientRegistered assignment changed from 'mov byte, 1' to 'mov byte, sil' (sil=1 in this context) - semantically identical",
+        "arg2 clamping logic restructured but equivalent: unpatched uses rax_6=min(1,arg2) then checks rax_6<=1; patched uses ebp=min(arg2,1) then checks ebp<=1 - same logic",
+        "Global counter increment changed from 'lock inc' to 'lock add ...rsi' (rsi=1) - semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.9842,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "ADDED: memset(&VersionInformation.dwMajorVersion, 0, 0x110) before calling RtlGetVersion - zero-initializes the OSVERSIONINFOW stack structure (0x114 bytes total; 0x110 zeroed starting at structure offset 0x4, with dwOSVersionInfoSize set separately)",
+        "UNPATCHED: Only sets VersionInformation.dwOSVersionInfoSize = 0x114 without zeroing the remaining 0x110 bytes of the structure",
+        "Prologue/stack-frame adjustment (push rbp/rsi/rdi, lea rbp) accompanies the added initialization"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched DriverEntry passes a stack-allocated OSVERSIONINFOW structure to RtlGetVersion() without first zeroing it; only dwOSVersionInfoSize is set. This is CWE-908 (Use of Uninitialized Resource). Impact is defense-in-depth only: the structure is a local variable used solely for a version comparison after the call, is never copied out, returned, or exposed to a lower-privilege context, and RtlGetVersion fully populates it and returns STATUS_SUCCESS on this build. The patched version adds explicit zero-initialization of the 0x110-byte region (structure offset 0x4 through 0x114, which includes the 256-byte szCSDVersion field at offset 0x14) before the RtlGetVersion call. Severity Low.",
+      "assembly_diff": "Unpatched DriverEntry @ 0x1C000A008:\n  0x1C000A070: lea     rcx, [rsp+1A8h+VersionInformation]                       ; &OSVERSIONINFOW\n  0x1C000A075: mov     [rsp+1A8h+VersionInformation.dwOSVersionInfoSize], 114h  ; only sets dwOSVersionInfoSize\n  0x1C000A07D: call    cs:__imp_RtlGetVersion                                   ; RtlGetVersion - NO prior zeroing\n\nPatched DriverEntry @ 0x1C000A078:\n  0x1C000A0E2: xor     edx, edx\n  0x1C000A0E4: lea     rcx, [rsp+1B0h+VersionInformation.dwMajorVersion]        ; &OSVERSIONINFOW + 4\n  0x1C000A0E9: mov     r8d, 110h                                                ; size to zero\n  0x1C000A0EF: call    memset                                                   ; memset (@ 0x1C0001F40) - ZEROS 0x110 bytes first\n  0x1C000A0F4: lea     rcx, [rsp+1B0h+VersionInformation]\n  0x1C000A0F9: mov     [rsp+1B0h+VersionInformation.dwOSVersionInfoSize], 114h   ; sets dwOSVersionInfoSize\n  0x1C000A101: call    cs:__imp_RtlGetVersion                                   ; RtlGetVersion"
+    },
+    {
+      "name": "SecCreateDriverValidationKernelEcp",
+      "similarity": 0.9862,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "GUID data reference changed from [rel 0x1c00031c8] to [rel 0x1c00031d8] - data layout shift by 0x10 bytes (one GUID entry), not a GUID value change",
+        "memset(arg1, 0, 0x28) replaced with inline SSE zeroing - compiler optimization",
+        "Stack initialization reordered but semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "The 0x10-byte offset difference in the GUID data reference is a data section layout change (the .rdata section was reordered), not a semantic GUID value change. The ECP GUID identifies the driver validation extra create parameter type and is used consistently with IoCreateFileEx in SecValidateDriverFileSignatureLevel.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon",
+      "similarity": 0.9871,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Byte load changed from 'mov dl, byte [rcx+rax+0x3]' to 'movzx edx, byte [rcx+rax+0x3]' for proper zero-extension",
+        "Corresponding 'movzx eax, dl' changed to 'mov eax, edx' since zero-extension is now done at load time"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a compiler CRT fix for the GS cookie validation handler. The unpatched version loads a byte into dl (8-bit) leaving upper bits of edx uninitialized, then later uses movzx to zero-extend. The patched version zero-extends at the point of load. While technically the upper bits are never used (the result is masked with 0xfffffff0), this is a defense-in-depth fix against potential compiler optimization hazards, not an exploitable vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecAllocateKernelApcObject",
+      "similarity": 0.9889,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed explicit 'mov byte [rbx+0x70], 0x0' instruction - the preceding memset already zeros this location, so it was redundant",
+        "Jump target address adjustments for relocated functions",
+        "memset call target changed from 0x1c0001fc0 to 0x1c0001f40 due to function relocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "DriverEntry",
+      "entry_point": "DriverEntry (kernel module load entry point)",
+      "call_chain": ["DriverEntry", "RtlGetVersion"],
+      "vulnerability_class": "Use of Uninitialized Resource (CWE-908)",
+      "description": "The unpatched DriverEntry function allocates an OSVERSIONINFOW structure (0x114 bytes) on the stack but only initializes the dwOSVersionInfoSize field (4 bytes) to 0x114 before passing it to RtlGetVersion(). The remaining 0x110 bytes of the structure (structure offset 0x4 through 0x114, including the 256-byte szCSDVersion wide-string field at offset 0x14) are left uninitialized on the kernel stack. The patched version adds an explicit memset(&VersionInformation.dwMajorVersion, 0, 0x110) call before the RtlGetVersion invocation. This is a defense-in-depth hardening fix. The uninitialized data is confined to a local stack variable in DriverEntry; it is not returned to any caller or written to shared/global state. The data is only used for a version comparison (dwMajorVersion/dwMinorVersion) after RtlGetVersion succeeds, and RtlGetVersion fully populates the structure and returns STATUS_SUCCESS on this build. No reachable information-disclosure path is demonstrated.",
+      "trigger_conditions": "The condition is in the boot-time DriverEntry path. It occurs automatically when the msseccore.sys driver is loaded (during system boot or driver load). No attacker-controlled input is involved; it is an inherent property of the unpatched code path. The uninitialized bytes occupy the OSVERSIONINFOW structure on DriverEntry's stack frame, from structure offset 0x4 through 0x114 (0x110 bytes), and are observable only in the window between the dwOSVersionInfoSize store at 0x1C000A075 and the RtlGetVersion call at 0x1C000A07D.",
+      "primitive": "None demonstrated. The uninitialized bytes are a local DriverEntry stack variable that RtlGetVersion fully populates on success and that is never copied out, returned, or exposed to a lower-privilege context. Any hypothetical disclosure would require a separate, unrelated primitive able to read DriverEntry's stack frame in that narrow window. This is a Low-severity defense-in-depth fix (CWE-908) with no practical exploitation path.",
+      "evidence": "// UNPATCHED DriverEntry (0x1C000A008):\n// OSVERSIONINFOW VersionInformation;  // stack-allocated, NOT zeroed\n// VersionInformation.dwOSVersionInfoSize = 0x114;  // only 4 bytes set\n// \n// if (RtlGetVersion(&VersionInformation) >= STATUS_SUCCESS)\n//     // ... uses VersionInformation.dwMajorVersion etc.\n//\n// PATCHED DriverEntry (0x1C000A078):\n// memset(&VersionInformation.dwMajorVersion, 0, 0x110);  // ADDED: zero 0x110 bytes first\n// VersionInformation.dwOSVersionInfoSize = 0x114;\n// if (RtlGetVersion(&VersionInformation) >= STATUS_SUCCESS)",
+      "assembly": "Unpatched DriverEntry key instructions (function @ 0x1C000A008):\n  0x1C000A070  lea     rcx, [rsp+1A8h+VersionInformation]                       ; &OSVERSIONINFOW\n  0x1C000A075  mov     [rsp+1A8h+VersionInformation.dwOSVersionInfoSize], 114h  ; dwOSVersionInfoSize = 0x114\n  ; NOTE: NO zeroing of the remaining 0x110 bytes (structure offset 0x4..0x114)\n  0x1C000A07D  call    cs:__imp_RtlGetVersion                                   ; RtlGetVersion(&VersionInformation)\n  0x1C000A089  test    eax, eax\n  0x1C000A08B  js      short loc_1C000A0A7                                      ; if failed, skip version check\n  0x1C000A08D  cmp     [rsp+1A8h+VersionInformation.dwMajorVersion], 6\n  0x1C000A09D  mov     cs:ExDefaultNonPagedPoolType, 200h\n\nPatched DriverEntry key instructions (function @ 0x1C000A078):\n  0x1C000A0E2  xor     edx, edx                                                 ; fill byte = 0\n  0x1C000A0E4  lea     rcx, [rsp+1B0h+VersionInformation.dwMajorVersion]         ; &OSVERSIONINFOW + 4\n  0x1C000A0E9  mov     r8d, 110h                                                ; count = 0x110 bytes\n  0x1C000A0EF  call    memset                                                   ; memset (@ 0x1C0001F40)\n  0x1C000A0F4  lea     rcx, [rsp+1B0h+VersionInformation]                        ; &OSVERSIONINFOW\n  0x1C000A0F9  mov     [rsp+1B0h+VersionInformation.dwOSVersionInfoSize], 114h   ; dwOSVersionInfoSize = 0x114\n  0x1C000A101  call    cs:__imp_RtlGetVersion                                   ; RtlGetVersion(&VersionInformation)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "msseccore_unpatched!DriverEntry",
+            "address": "0x1C000A008",
+            "why": "Break at DriverEntry entry to reach the OSVERSIONINFOW setup path."
+          },
+          {
+            "symbol": "msseccore_unpatched!DriverEntry",
+            "address": "0x1C000A075",
+            "why": "Break at the dwOSVersionInfoSize store, immediately before the RtlGetVersion call at 0x1C000A07D. This is the only point where the uninitialized region is observable; take the address from the preceding lea rcx (that is &OSVERSIONINFOW) and dump the 0x110 bytes starting at structure offset 0x4."
+          }
+        ],
+        "watch": [
+          "OSVERSIONINFOW.dwOSVersionInfoSize at structure offset 0x0 (should be 0x114)",
+          "dwMajorVersion at offset 0x4 (written by RtlGetVersion on success)",
+          "dwMinorVersion at offset 0x8 (written by RtlGetVersion on success)",
+          "szCSDVersion[128] at offset 0x14 (256 bytes) - UNINITIALIZED in unpatched before the call, zeroed in patched by the added memset",
+          "Inspect the 0x110 bytes at structure offset 0x4..0x114 before the call in the unpatched build"
+        ],
+        "key_offsets": [
+          "0x1C000A075: 'mov [rsp+1A8h+VersionInformation.dwOSVersionInfoSize], 114h' - sets dwOSVersionInfoSize, the ONLY field initialized before RtlGetVersion in unpatched",
+          "0x1C000A07D: 'call cs:__imp_RtlGetVersion' - RtlGetVersion call site (unpatched)",
+          "In patched: 0x1C000A0EF: 'call memset' (memset @ 0x1C0001F40) - the ADDED memset that zeros 0x110 bytes"
+        ],
+        "trigger_setup": "This condition occurs automatically during driver load. To observe it: (1) Boot the system with the unpatched msseccore.sys loaded, (2) Attach a kernel debugger before or at boot, (3) Set a breakpoint at 0x1C000A075, (4) Dump the 0x110 bytes at structure offset 0x4 before the RtlGetVersion call to observe the uninitialized region. No attacker action is involved.",
+        "expected_observation": "In the unpatched binary, the 0x110-byte region (structure offset 0x4 through 0x114, including szCSDVersion at 0x14) holds residual stack data at the breakpoint before the RtlGetVersion call; in the patched binary the added memset has zeroed it. After RtlGetVersion returns, both builds have the structure fully populated.",
+        "notes": "This is a low-severity defense-in-depth fix, not a directly exploitable vulnerability. The msseccore.sys driver is a Microsoft Security Core boot driver that loads early in the boot process. The OSVERSIONINFOW is a local stack variable that is not shared with other components and is fully populated by RtlGetVersion on success, so no information-disclosure path is demonstrated."
+      }
+    }
+  ],
+  "summary": "After diffing all 11 changed functions in msseccore.sys (Microsoft Security Core boot driver) by content across relocations, the vast majority of changes are compiler code-generation differences (memset folded into inline SSE zeroing, register reallocation) and a CRT memmove rewrite (the driver has no separate memcpy). The single security-relevant change is in DriverEntry, where the unpatched version passes a stack-allocated OSVERSIONINFOW structure to RtlGetVersion() without zeroing it first (only setting dwOSVersionInfoSize), while the patched version adds an explicit memset zeroing the 0x110-byte region before the call. This is a CWE-908 uninitialized-resource fix with Low, defense-in-depth impact: the structure is a local variable used only for version comparison, is fully populated by RtlGetVersion on success, and is never exposed to a lower-privilege context; no reachable information-disclosure path is demonstrated. Two behavioral (non-security) changes are a notification class constant update (0xa000006->0xa000008) in SecKernelIntegrityCheck (protocol/version compatibility) and a fallback PoolType constant change (0x200->0x600) in SecAllocatePoolWithTag; both PoolType values retain the non-executable pool bit. No memory corruption, privilege escalation, or code execution vulnerabilities were identified in the patch."
+}

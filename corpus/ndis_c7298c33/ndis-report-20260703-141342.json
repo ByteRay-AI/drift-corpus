@@ -1,0 +1,147 @@
+{
+  "binaries": {
+    "title": "ndis.sys - Servicing rebuild: WIL feature-staging flag rotation, KTRIAGE crash-dump additions, and compiler churn; no delivered security fix",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9423,
+    "matched": 3575,
+    "changed": 913,
+    "identical": 3193,
+    "unmatched_unpatched": 41,
+    "unmatched_patched": 156,
+    "diff_method_note": "changed/unmatched counts are from an independent content-normalized, name-matched diff (relocated sub_/loc_/data_ tokens and absolute addresses masked); they supersede the tool's raw 382 changed / 0 unmatched figures."
+  },
+  "changed_functions": [
+    {
+      "name": "ndisNicQuietCheckRef",
+      "unpatched_address": "0x14004BFD0",
+      "patched_address": "0x140048990",
+      "similarity": 0.7272,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Helper ndisAoAcIsD0Required (0x14004C1E0 unpatched, retained at 0x14004A090 patched) inlined into the entry guard; the guard tests +0x34, +0x17c, and +0x178 in BOTH builds (no state check added or removed)",
+        "Added WIL feature-staging gate Feature_SSSurpriseRemoval_Fix__private_IsEnabledDeviceUsageNoInline (0x140091624); off-by-default path preserves the unpatched behavior (calls ndisSelectiveSuspendStop)",
+        "When the staged feature is enabled, selects ndisSelectiveSuspendStopWdf vs ndisSelectiveSuspendStop based on bit 31 of *(MiniportBlock+0x78)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Previously claimed as a use-after-free fix that added a *(SpinLock+0x17c) state check. That claim is false: the unpatched helper ndisAoAcIsD0Required at 0x14004C1E0 already checks *(SpinLock+0x34) then *(SpinLock+0x17c), and the caller proceeds only when the helper returns 0 AND *(SpinLock+0x178)==0. The patched build inlines the identical three-field guard. The only real delta is a feature-staging gate with the old path retained.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisFSendNetBufferLists",
+      "similarity": 0.993,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (helper relocation, branch reshaping)",
+        "Runtime verifier twin ndisVerifierNdisFSendNetBufferLists is identical across both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "No list-corruption or use-after-free fix is demonstrable. The previously asserted data_14011ead8-gated address-filter mechanism does not exist: the symbol data_14011ead8 appears nowhere in either binary's disassembly or decompilation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EthFilterDprIndicateReceive",
+      "similarity": 0.8942,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn"
+      ],
+      "security_relevant": false,
+      "security_notes": "The previously asserted mechanism (a data_14011ead8-gated sign-extending helper sub_1400537f0 reading adapter flags at +0x78) is not present; no such global exists in either binary. No behavioral security change confirmed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisMDeferredSendPackets",
+      "unpatched_address": "0x1400DC4F0",
+      "similarity": 0.7601,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn"
+      ],
+      "security_relevant": false,
+      "security_notes": "Previously reported as sub_1400DC4F0 with a while(true) -> bit-22 loop-termination fix and a data_14011ead8 mechanism. Neither the mechanism nor the fabricated global exists; the real function is ndisMDeferredSendPackets. Treated as rebuild churn.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisCoOidRequest",
+      "similarity": 0.9738,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (helper relocation, control-flow flattening)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The data_14011ead8-gated sign-extending-helper mechanism previously attributed to this function does not exist in either binary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMOidRequestComplete",
+      "similarity": 0.8626,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (helper relocation, stack-frame layout)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The data_14011ead8 mechanism previously attributed here does not exist in either binary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMPromoteMiniport",
+      "similarity": 0.819,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (error-handling shape, worker-routine relocation)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The data_14011ead8 mechanism previously attributed here does not exist in either binary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisMSetAttributesEx",
+      "similarity": 0.7311,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (timer-init relocation, control-flow restructure); adapter-context validation preserved"
+      ],
+      "security_relevant": false,
+      "security_notes": "The data_14011ead8 mechanism previously attributed here does not exist in either binary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisGetReceivedPacket",
+      "similarity": 0.7388,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Body differs consistent with compiler-rebuild churn (dereference-chain inlining)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The data_14011ead8-gated dereference previously attributed here does not exist in either binary.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed_note": "41 symbols exist only in the unpatched build, dominated by retired WIL feature-staging descriptors (Feature_SSDeadlock_Fix, Feature_IfCompartmentKasanFix, Feature_MiniportFlagsKcsanFix, Feature_NDPQualitySpring25, several Feature_TCPIP_2025_*) and relocated helpers (ndisIfCompartmentNotificationWorker, ndisMIsOidTimedOut, ndisNsiScheduleCompartmentBlockChangeNotification). None is a removed mitigation.",
+    "added_note": "156 symbols exist only in the patched build, dominated by new WIL feature-staging descriptors (Feature_SSSurpriseRemoval_Fix, Feature_CFHCancelTimerFix, Feature_NDPQualitySpring26/Summer26, Feature_NDPSfiSpring2026, Feature_TCPIP_SFI_60615470_Fix, Feature_UDFDOD), KTRIAGE crash-dump C++ classes (TriageData, ObjectTriageData, MakeSizedPoolPtrNP), TraceLogging/ETW template instantiations, and relocated helpers (ndisSelectiveSuspendStopWdf, ndisWdfNotifyStuckOperation, ndisIncrementAsyncIdleCountersLocked). None is an added mitigation that constitutes a delivered security fix.",
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ndisNicQuietCheckRef",
+      "unpatched_address": "0x14004BFD0",
+      "patched_address": "0x140048990",
+      "entry_point": "AoAc power-management NIC-quiet reference check (invoked on the miniport power/idle path)",
+      "call_chain": [],
+      "vulnerability_class": "None - no security-relevant change",
+      "description": "Previously claimed as a missing-state-check use-after-free: the report asserted the unpatched build checked only *(SpinLock+0x34) and *(SpinLock+0x178) and the patch added a new *(SpinLock+0x17c) check. This is false. In the unpatched build the helper ndisAoAcIsD0Required at 0x14004C1E0 checks *(SpinLock+0x34) and *(SpinLock+0x17c); ndisNicQuietCheckRef proceeds only when that helper returns 0 AND *(SpinLock+0x178)==0. The patched build inlines the identical three-field guard (+0x34, +0x17c, +0x178) and retains the helper at 0x14004A090. The gating condition is equivalent in both builds; no state check was added or removed. The only real behavioral delta is a WIL feature-staging gate (Feature_SSSurpriseRemoval_Fix, 0x140091624) whose off-by-default path preserves the unpatched behavior.",
+      "trigger_conditions": "None. No code path is present in one build and absent in the other for a race to exercise differently.",
+      "primitive": "None demonstrable.",
+      "evidence": "Unpatched helper ndisAoAcIsD0Required @ 0x14004C1E0: cmp dword ptr [rcx+34h],0 / (nonzero->return 1) / cmp dword ptr [rcx+17Ch],0 / (nonzero->return 1) / return 0. Caller @ 0x14004BFFD calls this helper; proceeds only when it returns 0 and *(SpinLock+0x178)==0 (checked at 0x14004C042). Patched caller @ 0x1400489B5..0x1400489D6: cmp [rdi+34h],0 / cmp [rdi+17Ch],0 / cmp [rdi+178h],0 (all inline). Patched helper retained @ 0x14004A090 with identical +0x34/+0x17c logic. The claimed feature flag data_14011ead8 appears nowhere in either binary.",
+      "assembly": "; Unpatched helper ?ndisAoAcIsD0Required@@... @ 0x14004C1E0 (checks +0x34 AND +0x17c)\n000000014004C1E0  cmp     dword ptr [rcx+34h], 0\n000000014004C1E4  jz      short loc_14004C1EA\n000000014004C1E6  mov     al, 1\n000000014004C1E8  retn\n000000014004C1EA  cmp     dword ptr [rcx+17Ch], 0\n000000014004C1F1  jnz     short loc_14004C1E6\n000000014004C1F3  xor     al, al\n000000014004C1F5  retn\n\n; Patched ndisNicQuietCheckRef @ 0x140048990 (same guard, helper inlined)\n00000001400489B5  cmp     dword ptr [rdi+34h], 0\n00000001400489BC  jnz     loc_140048C2C\n00000001400489C2  cmp     dword ptr [rdi+17Ch], 0\n00000001400489C9  jnz     loc_140048C2C\n00000001400489CF  cmp     dword ptr [rdi+178h], 0\n00000001400489D6  jnz     loc_140048C2C\n\n; Patched staged gate (only real delta)\n0000000140048A8C  call    Feature_SSSurpriseRemoval_Fix__private_IsEnabledDeviceUsageNoInline\n0000000140048A98  test    eax, eax\n0000000140048A9A  jnz     loc_140048B7E",
+      "debugging_aids": {
+        "notes": "For reference only: the AoAc state fields +0x34, +0x17c, +0x178 live in the sub-structure reached from *(MiniportBlock+0x1168). Both builds accept/reject entry to the NIC-quiet path on the same field values; there is no divergence to trigger."
+      }
+    }
+  ],
+  "summary": "The ndis.sys unpatched-vs-patched diff is a servicing rebuild. An independent content-normalized, name-matched diff found 913 changed named functions, 156 patched-only symbols, and 41 unpatched-only symbols. The change set is dominated by (1) rotation of WIL feature-staging flags between servicing waves (new: Feature_SSSurpriseRemoval_Fix, Feature_NDPQualitySpring26/Summer26, Feature_CFHCancelTimerFix, Feature_TCPIP_SFI_60615470_Fix, Feature_UDFDOD; retired: Feature_SSDeadlock_Fix, Feature_IfCompartmentKasanFix, Feature_MiniportFlagsKcsanFix, Feature_NDPQualitySpring25), (2) new KTRIAGE crash-dump C++ helper classes and TraceLogging/ETW instrumentation, and (3) compiler-rebuild churn. The single previously claimed finding (ndisNicQuietCheckRef use-after-free via a missing *(SpinLock+0x17c) check) is a false positive: the +0x17c check is present in both builds, and the pervasive data_14011ead8 feature flag the change set was attributed to does not exist anywhere in either binary. No delivered, attacker-reachable security fix is present in this pair; where staged feature gates were added, the old code path is retained (off by default)."
+}

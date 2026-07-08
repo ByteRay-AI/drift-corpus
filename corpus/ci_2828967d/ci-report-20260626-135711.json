@@ -1,0 +1,65 @@
+{
+  "binaries": {
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9919,
+    "matched": 2212,
+    "changed": 3,
+    "identical": 2209,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CiAuditDriverAllow @ 0x1C0060920",
+      "similarity": 0.9903,
+      "change_type": "telemetry",
+      "key_changes": [
+        "ETW TraceLogging field count increased from 0x1a (26) to 0x1b (27); passed to tlgWriteTransfer_EtwWriteTransfer as 'mov [rsp+2D0h+var_2B0], 1Bh' at 0x1C0060CAF",
+        "Added one field with hardcoded int32 value 1 (v24=1 in decompilation) to the TraceLogging descriptor list",
+        "Stack frame expanded from 0x290 to 0x2a0 bytes ('sub rsp, 2A0h' at 0x1C0060938)",
+        "Event metadata pointer changed from dword_1C002E8FB to dword_1C002E911 ('lea rdx, dword_1C002E911' at 0x1C0060C2E); provider dword_1C0037188 unchanged",
+        "All signature verification logic, memory management (ExFreePoolWithTag, FsRtlReleaseFileNameInformation), and security checks unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiInstrumentDriverSignatureRetry @ 0x1C00621BC (unpatched) / 0x1C00621D4 (patched)",
+      "similarity": 0.9904,
+      "change_type": "telemetry",
+      "key_changes": [
+        "ETW TraceLogging field count increased from 0x16 (22) to 0x17 (23); 'mov [rsp+270h+var_250], 17h' at 0x1C00624DD",
+        "Added one field with hardcoded int32 value 1 (v23=1 in decompilation) to the TraceLogging descriptor list",
+        "Stack frame expanded from 0x230 to 0x240 bytes ('sub rsp, 240h' at 0x1C00621EC)",
+        "Event metadata pointer changed from dword_1C002FC3C to dword_1C002FC68; provider dword_1C0037188 unchanged",
+        "All signature verification logic, memory management (FsRtlReleaseFileNameInformation, RtlFreeUnicodeString), and security checks unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiInstrumentDriverBlock @ 0x1C00625A4 (unpatched) / 0x1C00625D8 (patched)",
+      "similarity": 0.9906,
+      "change_type": "telemetry",
+      "key_changes": [
+        "ETW TraceLogging field count increased from 0x1c (28) to 0x1d (29); 'mov [rsp+2F0h+var_2D0], 1Dh' at 0x1C0062A7E",
+        "Added one field with hardcoded int32 value 1 (v30=1 in decompilation) to the TraceLogging descriptor list",
+        "Stack frame expanded from 0x2b0 to 0x2d0 bytes ('sub rsp, 2D0h' at 0x1C00625F7)",
+        "Event metadata pointer unchanged (dword_1C002E391 in both builds); provider dword_1C0037188 unchanged",
+        "All signature verification logic, memory management (FsRtlReleaseFileNameInformation, RtlFreeUnicodeString), and security checks unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "This patch to ci.dll (Windows Code Integrity kernel module) contains no security-relevant changes. The three functionally changed functions (CiAuditDriverAllow @ 0x1C0060920, CiInstrumentDriverSignatureRetry @ 0x1C00621BC, CiInstrumentDriverBlock @ 0x1C00625A4) are ETW TraceLogging functions that record Code Integrity signature verification results via tlgWriteTransfer_EtwWriteTransfer. The patch uniformly adds one field with a hardcoded int32 value 1 to each of these three CI events, increasing their field counts by one (0x1a->0x1b, 0x16->0x17, 0x1c->0x1d) and, for two of them, advancing the event-metadata pointer (dword_1C002E8FB->dword_1C002E911, dword_1C002FC3C->dword_1C002FC68; CiInstrumentDriverBlock's dword_1C002E391 is unchanged). Stack frames grew to hold the extra field descriptors. Nine additional functions differ only by a relocated local-return jump target caused by the downstream code shift and are otherwise byte-for-byte identical. No changes were made to the signature verification logic, input validation, memory allocation/free patterns, access control checks, or any other security-relevant code path. The direction is an added telemetry field (a constant), not a removed or relaxed check. This is a pure telemetry/logging enhancement with no exploitable vulnerability in either version."
+}

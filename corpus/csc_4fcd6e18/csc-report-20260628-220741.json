@@ -1,0 +1,171 @@
+{
+  "binaries": {
+    "title": "csc.sys (Windows Offline Files / Client Side Caching driver) - CSC reboot-rename registry keys created without an explicit owner security descriptor when a feature-staging gate is off (owner-only SD, no DACL change)",
+    "id_unpatched": "csc_unpatched.sys",
+    "id_patched": "csc_patched.sys",
+    "overall_similarity": 0.9916,
+    "matched": 1432,
+    "changed": 7,
+    "identical": 1425,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CscRebootRenamepOpenKey (sub_1C004785C)",
+      "similarity": 0.7011,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: The decision to attach an owner-only security descriptor when creating a registry key via ZwCreateKey is gated on Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) — a WIL feature-staging (velocity/rollout) state flag (Feature_2858196282__private_featureState (data_1C003A080)). When Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) returns false (je 0x1c004797d), ZwCreateKey is called with OBJECT_ATTRIBUTES.SecurityDescriptor = 0 (NULL), so the created key's owner defaults to the creating (SYSTEM) context and its DACL is inherited from the parent.",
+        "PATCHED: The Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) call is removed entirely. The branch is now 'test r8b, r8b' (arg3 = create flag). When arg3 != 0 (create), CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) (SD builder) is ALWAYS called and ZwCreateKey always receives an SD whose owner is LocalSystem (SeLocalSystemSid from SeExports+0x108). When arg3 == 0, ZwOpenKey is used (no SD needed).",
+        "The SD built by CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) sets only the OWNER (RtlCreateSecurityDescriptor + RtlSetOwnerSecurityDescriptor); it never sets a DACL. The fix therefore makes the created key's owner explicit and deterministic, but does not change the key's DACL (access control), which is parent-inherited in both builds."
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-732 (Incorrect Permission Assignment for Critical Resource), scoped to owner-SID assignment on a created registry key. In the unpatched build, when the feature-staging flag (Feature_2858196282__private_featureState (data_1C003A080)) is off, keys created under HKLM\\System\\CurrentControlSet\\Services\\CSC\\Parameters (and its RebootRename subkey) are created with SecurityDescriptor=NULL. The SD that the patch attaches sets only the OWNER (LocalSystem); it carries no DACL. Consequently the key's DACL is parent-inherited in both builds and no principal's access changes. The keys are created in the SYSTEM/kernel context, so the default owner on the NULL-SD path is already admin-equivalent, and on a default install HKLM\\...\\Services does not grant non-admin write. No non-admin write, denial-of-service, or privilege-escalation primitive is demonstrable from the binaries. The delivered change is a low-severity defense-in-depth hardening that makes key ownership explicit and removes the dependency of a security-descriptor decision on a feature-staging flag. Severity: Low.",
+      "assembly_diff": "=== UNPATCHED CscRebootRenamepOpenKey (sub_1C004785C) (key relevant blocks) ===\n0x1c004789d: je      0x1c00478a3\n0x1c004789f: mov     byte [r9], 0x1\n0x1c00478a3: call    0x1c00088b4          ; <-- feature-flag gate (REMOVED in patch)\n0x1c00478a8: test    eax, eax\n0x1c00478aa: je      0x1c004797d          ; if flag==false -> NO-SD path\n...\n; SD-builder path (taken when Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4)==true):\n0x1c00478b0: test    r14b, r14b           ; arg3 (create flag)\n0x1c00478b3: je      0x1c0047928\n0x1c00478b5: lea     rcx, [rbp+0x48]\n0x1c00478b9: call    0x1c00454b0          ; build LocalSystem-owner SD\n0x1c00478be: test    eax, eax\n0x1c00478c0: js      0x1c00479ea\n0x1c00478c6: mov     rdi, qword [rbp+0x48]; rdi = SecurityDescriptor\n...0x1c004790a: call    qword [rel 0x1c0041338] ; ZwCreateKey WITH SD\n;\n; NO-SD path (taken when Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4)==false) (owner defaults; DACL parent-inherited):\n0x1c004797d: mov     dword [rbp-0x30], 0x30   ; OA.Length\n0x1c0047984: xorps   xmm0, xmm0\n0x1c0047987: mov     qword [rbp-0x28], r12    ; OA.RootDirectory = 0\n0x1c004798b: lea     r8, [rbp-0x30]\n0x1c004798f: mov     dword [rbp-0x18], 0x240  ; OA.Attributes\n0x1c0047996: mov     edx, 0xf003f\n0x1c004799b: mov     qword [rbp-0x20], r15    ; OA.ObjectName\n0x1c004799f: mov     rcx, rsi\n0x1c00479a2: movdqu  xmmword [rbp-0x10], xmm0; OA.SD=0, OA.SQOS=0 (NULL)\n0x1c00479a7: test    r14b, r14b           ; arg3 (create flag)\n0x1c00479aa: je      0x1c00479de\n0x1c00479de: call    qword [rel 0x1c00411e0] ; ZwOpenKey (no SD)\n; OR if r14b (create) != 0, falls through to ZwCreateKey block:\n0x1c00479c2: call    qword [rel 0x1c0041338] ; ZwCreateKey with SecurityDescriptor = NULL\n\n=== PATCHED CscRebootRenamepOpenKey (sub_1C004785C) (key relevant blocks) ===\n; Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) call REMOVED. Branch is now purely on arg3:\n0x1c0047898: test    r8b, r8b             ; arg3 (create flag)\n0x1c004789b: je      0x1c0047912          ; if create==0 -> ZwOpenKey path\n; create path ALWAYS builds SD:\n0x1c004789d: lea     rcx, [rbp+0x20]\n0x1c00478a1: call    0x1c00454b0          ; build LocalSystem-owner SD (ALWAYS)\n0x1c00478a6: test    eax, eax\n0x1c00478a8: js      0x1c0047962\n...0x1c00478b6: mov     rdi, qword [rbp+0x20]; rdi = SecurityDescriptor\n0x1c00478f0: mov     qword [rbp-0x10], rdi; OA.SecurityDescriptor = SD\n0x1c00478f4: call    qword [rel 0x1c0041338] ; ZwCreateKey WITH SD (always)"
+    },
+    {
+      "name": "CscRebootRenamepEnumRegistry (sub_1C0047F68)",
+      "similarity": 0.9912,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Calls Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) before ZwOpenKey (at 0x1c0048059); the return value (eax) is discarded here (not tested) — this is a WIL feature-usage reporting call, and the key open is ZwOpenKey (read-only) with no SD.",
+        "PATCHED: The Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) call is removed; the OBJECT_ATTRIBUTES is built directly without the feature-flag gate. This function enumerates/deletes registry subkeys under a CSC parameters path; the key open here uses ZwOpenKey (read-only) so no SD is needed, but the removal of the feature-flag dependency aligns with the overall fix.",
+        "Otherwise this function is a large registry-key enumeration/processing routine with only the Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) removal and call-target address shifts due to the telemetry refactor in surrounding functions."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_4082332987__private_IsEnabledFallback (sub_1C0007AA8)",
+      "similarity": 0.6736,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry wrapper: changed from calling wil_details_IsEnabledFallback (sub_1C0008248)(arg1, arg2, &data_1c00378f8) (3-arg) to wil_details_IsEnabledFallback (sub_1C0008230)(arg1, arg2) (2-arg). The third argument (a pointer to a feature-context global) is now embedded inside the callee. Part of the feature-usage/RtlNotifyFeatureUsage telemetry refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (sub_1C0008248)",
+      "similarity": 0.9582,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-usage notification dispatcher. UNPATCHED dereferences caller-supplied arg3 pointer (*arg3) for feature config; PATCHED uses hardcoded global data_1c00378c0 / Feature_2858196282__private_featureState (data_1C003A080). Call targets shifted (wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1C0007F70)->wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1C0007F68), wil_details_FeatureReporting_ReportUsageToService (sub_1C0007E00)->wil_details_FeatureReporting_ReportUsageToService (sub_1C0007DFC), wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0008070)->wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0008068)). Telemetry refactor only."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0008070)",
+      "similarity": 0.8176,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-flag state update helper (lock cmpxchg on a feature-state dword). UNPATCHED operates on *arg3 (caller-supplied pointer); PATCHED operates on global Feature_2858196282__private_featureState (data_1C003A080). The atomic CAS logic is identical; only the data source changed from caller pointer to global. Telemetry refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C0007E88)",
+      "similarity": 0.9765,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "RtlNotifyFeatureUsage caller. UNPATCHED reads feature ID and config from caller-supplied context (*(arg1+0x18), *(arg1+0x10), *(arg1+8)); PATCHED uses hardcoded values (0x3818aa2, 0x1c002fa60, &data_1c003a0a0). Telemetry refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService (sub_1C0007E00)",
+      "similarity": 0.9774,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-notification wrapper calling wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C0007E88) and a feature-callback at data_1c003a1a0. UNPATCHED passes caller context pointer (arg1); PATCHED passes hardcoded global values. Telemetry refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "CscRebootRenamepOpenKey (sub_1C004785C)",
+      "entry_point": "CSC reboot-time file-rename tracking (triggered via offline-files operations that queue a rename to be applied at next boot, causing the driver to create the tracking key \\Registry\\Machine\\System\\CurrentControlSet\\Services\\CSC\\Parameters\\RebootRename; reached from CscRebootRenameAddEntry (sub_1C006F0F4) and CscRebootRenamepAddToKey (sub_1C006F42C) via CscDclMRxRebootRenameAdd (sub_1C000C964) dispatch)",
+      "call_chain": [
+        "CSC driver operation (offline-files reboot-time file-rename queue)",
+        "CscDclMRxRebootRenameAdd (sub_1C000C964) (dispatch helper)",
+        "CscRebootRenameAddEntry (sub_1C006F0F4) (creates key at \\Registry\\Machine\\System\\CurrentControlSet\\Services\\CSC\\Parameters\\RebootRename via CscRebootRenamepOpenKey (sub_1C004785C)(&Handle, &path, 1, nullptr))",
+        "CscRebootRenamepOpenKey (sub_1C004785C) (key create/open helper)",
+        "Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) (feature-flag gate returning Feature_2858196282__private_featureState (data_1C003A080) state)",
+        "ZwCreateKey with SecurityDescriptor=NULL when flag is false"
+      ],
+      "vulnerability_class": "Incorrect Permission Assignment for Critical Resource (CWE-732) — owner-SID assignment on a created registry key; defense-in-depth hardening",
+      "description": "The unpatched CscRebootRenamepOpenKey (sub_1C004785C) decides whether to attach a security descriptor when creating registry keys via ZwCreateKey. This decision is gated on Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4), a WIL feature-staging (velocity/rollout) check reading Feature_2858196282__private_featureState (data_1C003A080). When the check returns false, the code at 0x1c004797d builds OBJECT_ATTRIBUTES with SecurityDescriptor=0 (NULL) and calls ZwCreateKey without a security descriptor; when it returns true, the SD is attached on create. The SD produced by CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) is an ABSOLUTE descriptor that sets ONLY the owner to SeLocalSystemSid (RtlCreateSecurityDescriptor + RtlSetOwnerSecurityDescriptor); it never sets a DACL. Because no DACL is set in either path, the created key's DACL is governed by parent-container inheritance in both builds (HKLM\\System\\CurrentControlSet\\Services\\CSC\\Parameters). The only behavioral difference is whether the key's owner is explicitly LocalSystem or defaults to the creating (SYSTEM) context. The patched version removes the Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) gate entirely and unconditionally calls CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) whenever arg3 (create flag) is non-zero, so ZwCreateKey always receives the owner-only (LocalSystem) SD. This is a low-severity defense-in-depth ownership hardening; the change does not alter the key's DACL and no exploitable weak-ACL primitive is demonstrable.",
+      "trigger_conditions": "1) The feature-staging state flag at Feature_2858196282__private_featureState (data_1C003A080) must be in the state where Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) returns false (its default runtime value is not determinable from the static image). 2) A code path calls CscRebootRenamepOpenKey (sub_1C004785C) with arg3 (r8b, create flag) = 1 (CREATE mode). Verified: CscRebootRenameAddEntry (sub_1C006F0F4) passes r8b=1 at 0x1c006f19c for path \\Registry\\Machine\\System\\CurrentControlSet\\Services\\CSC\\Parameters, and CscRebootRenamepAddToKey (sub_1C006F42C) passes r8b=1 at 0x1c006f538 for the RebootRename tracking key (it writes indexed rename entries under the LastIndexValue value). 3) The target key must not already exist, so ZwCreateKey creates it fresh. Observing the difference: read the created key's security descriptor (RegGetKeySecurity / accesschk). On the unpatched NULL-SD path the owner is the default (SYSTEM-context) principal and the DACL is parent-inherited; on the patched build the owner is explicitly LocalSystem and the DACL is the same inherited one. This is an ownership difference only, not an access-control (DACL) difference.",
+      "primitive": "None demonstrable. The security descriptor attached by the patch sets only the owner (LocalSystem) and carries no DACL, so the key's access control is parent-inherited and unchanged between builds. The keys are created in the SYSTEM/kernel context (default owner already admin-equivalent) and HKLM\\...\\Services does not grant non-admin write on a default install. There is no attacker-controlled input, no memory-safety issue, and no reachable authorization-boundary crossing; the change is a deterministic-ownership hardening.",
+      "evidence": "=== UNPATCHED CscRebootRenamepOpenKey (sub_1C004785C) — feature-staging gate ===\n// At 0x1c00478a3:\n0x1c00478a3: call    0x1c00088b4        ; returns feature-flag state\n0x1c00478a8: test    eax, eax\n0x1c00478aa: je      0x1c004797d        ; if FALSE -> no-SD path (owner defaults; DACL parent-inherited)\n\n// NO-SD path at 0x1c004797d — builds OA with SecurityDescriptor=0:\n0x1c004797d: mov     dword [rbp-0x30], 0x30  ; Length\n0x1c0047984: xorps   xmm0, xmm0\n0x1c0047987: mov     qword [rbp-0x28], r12   ; RootDirectory = 0\n0x1c004799f: mov     rcx, rsi\n0x1c00479a2: movdqu  xmmword [rbp-0x10], xmm0 ; SD=0, SQOS=0 (NULL)\n// ... then if arg3(create)!=0:\n0x1c00479c2: call    qword [rel 0x1c0041338] ; ZwCreateKey(handle, KEY_ALL_ACCESS, &OA, 0, NULL, 0, &disp) — SecurityDescriptor = NULL\n\n=== PATCHED CscRebootRenamepOpenKey (sub_1C004785C) — fixed (always SD on create) ===\n// Gate removed; now purely on arg3:\n0x1c0047898: test    r8b, r8b           ; create flag\n0x1c004789b: je      0x1c0047912        ; if !create -> ZwOpenKey\n// create -> ALWAYS build SD:\n0x1c00478a1: call    0x1c00454b0        ; CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) builds LocalSystem-owner SD\n0x1c00478b6: mov     rdi, qword [rbp+0x20] ; rdi = SD pointer\n0x1c00478f0: mov     qword [rbp-0x10], rdi  ; OA.SecurityDescriptor = SD\n0x1c00478f4: call    qword [rel 0x1c0041338] ; ZwCreateKey WITH SD\n\n=== CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0) (SD builder — sets OWNER only, no DACL; identical in both builds) ===\n// Absolute security descriptor; DACL is never constructed:\nPSID Sid = *(*SeExports + 0x108);  // SeLocalSystemSid\nPSECURITY_DESCRIPTOR sd = ExAllocatePool2(POOL_FLAG_NON_PAGED, RtlLengthSid(Sid)+0x28, 'CrsR');\nRtlCreateSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION);\nOwner = sd + RtlLengthSecurityDescriptor(sd);\nmemmove(Owner, Sid, RtlLengthSid(Sid));\nRtlSetOwnerSecurityDescriptor(sd, Owner, FALSE);  // OWNER only; no RtlSetDaclSecurityDescriptor",
+      "assembly": "CscRebootRenamepOpenKey (sub_1C004785C) (unpatched, full assembly):\n0x1c004785c: mov     qword [rsp+0x10], rbx\n0x1c0047861: mov     qword [rsp+0x18], rsi\n0x1c0047866: push    rbp\n0x1c0047867: push    rdi\n0x1c0047868: push    r12\n0x1c004786a: push    r14\n0x1c004786c: push    r15\n0x1c004786e: mov     rbp, rsp\n0x1c0047871: sub     rsp, 0x70\n0x1c0047875: xor     r12d, r12d\n0x1c0047878: mov     rbx, r9\n0x1c004787b: mov     dword [rbp-0x2c], r12d\n0x1c004787f: mov     r14b, r8b\n0x1c0047882: mov     dword [rbp-0x14], r12d\n0x1c0047886: mov     r15, rdx\n0x1c0047889: mov     dword [rbp+0x30], r12d\n0x1c004788d: mov     rsi, rcx\n0x1c0047890: mov     qword [rbp+0x48], r12\n0x1c0047894: mov     edi, r12d\n0x1c0047897: mov     qword [rcx], r12\n0x1c004789a: test    r9, r9\n0x1c004789d: je      0x1c00478a3\n0x1c004789f: mov     byte [r9], 0x1\n0x1c00478a3: call    0x1c00088b4          ; FEATURE-FLAG GATE (removed in patch)\n0x1c00478a8: test    eax, eax\n0x1c00478aa: je      0x1c004797d          ; false -> NO-SD path\n0x1c00478b0: test    r14b, r14b           ; arg3 = create flag\n0x1c00478b3: je      0x1c0047928\n0x1c00478b5: lea     rcx, [rbp+0x48]\n0x1c00478b9: call    0x1c00454b0          ; build LocalSystem-owner SD\n0x1c00478be: test    eax, eax\n0x1c00478c0: js      0x1c00479ea\n0x1c00478c6: mov     rdi, qword [rbp+0x48]\n0x1c00478ca: lea     rax, [rbp+0x30]\n0x1c00478ce: mov     qword [rsp+0x30], rax\n0x1c00478d3: lea     r8, [rbp-0x30]\n0x1c00478d7: mov     dword [rsp+0x28], r12d\n0x1c00478dc: xor     r9d, r9d\n0x1c00478df: mov     edx, 0xf003f\n0x1c00478e4: mov     qword [rsp+0x20], r12\n0x1c00478e9: mov     rcx, rsi\n0x1c00478ec: mov     dword [rbp-0x30], 0x30\n0x1c00478f3: mov     qword [rbp-0x28], r12\n0x1c00478f7: mov     dword [rbp-0x18], 0x240\n0x1c00478fe: mov     qword [rbp-0x20], r15\n0x1c0047902: mov     qword [rbp-0x10], rdi  ; OA.SecurityDescriptor = SD\n0x1c0047906: mov     qword [rbp-0x8], r12\n0x1c004790a: call    qword [rel 0x1c0041338] ; ZwCreateKey (WITH SD)\n0x1c0047916: cmp     dword [rbp+0x30], 0x1\n0x1c004791a: mov     esi, eax\n0x1c004791c: jne     0x1c0047960\n0x1c004791e: test    rbx, rbx\n0x1c0047921: je      0x1c0047960\n0x1c0047923: mov     byte [rbx], r12b\n0x1c0047926: jmp     0x1c0047960\n;\n; NO-SD path (owner defaults; DACL parent-inherited) — reached when Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4)==false:\n0x1c004797d: mov     dword [rbp-0x30], 0x30\n0x1c0047984: xorps   xmm0, xmm0\n0x1c0047987: mov     qword [rbp-0x28], r12\n0x1c004798b: lea     r8, [rbp-0x30]\n0x1c004798f: mov     dword [rbp-0x18], 0x240\n0x1c0047996: mov     edx, 0xf003f\n0x1c004799b: mov     qword [rbp-0x20], r15\n0x1c004799f: mov     rcx, rsi\n0x1c00479a2: movdqu  xmmword [rbp-0x10], xmm0 ; OA.SD=0, OA.SQOS=0 (NULL)\n0x1c00479a7: test    r14b, r14b           ; arg3 = create flag\n0x1c00479aa: je      0x1c00479de\n0x1c00479ac: lea     rax, [rbp+0x30]\n0x1c00479b0: xor     r9d, r9d\n0x1c00479b3: mov     qword [rsp+0x30], rax\n0x1c00479b8: mov     dword [rsp+0x28], r12d\n0x1c00479bd: mov     qword [rsp+0x20], r12\n0x1c00479c2: call    qword [rel 0x1c0041338] ; ZwCreateKey (SecurityDescriptor = NULL)\n0x1c00479ce: cmp     dword [rbp+0x30], 0x1\n0x1c00479d2: jne     0x1c00479ea\n0x1c00479d4: test    rbx, rbx\n0x1c00479d7: je      0x1c00479ea\n0x1c00479d9: mov     byte [rbx], r12b\n0x1c00479dc: jmp     0x1c00479ea\n0x1c00479de: call    qword [rel 0x1c00411e0] ; ZwOpenKey (no SD)\n...\n0x1c0047960: test    rdi, rdi\n0x1c0047963: je      0x1c0047979\n0x1c0047965: mov     edx, 0x52727343\n0x1c004796a: mov     rcx, rdi\n0x1c004796d: call    qword [rel 0x1c00410c0] ; ExFreePoolWithTag\n0x1c0047979: mov     eax, esi\n0x1c004797b: jmp     0x1c00479ea\n0x1c00479ea: lea     r11, [rsp+0x70]\n0x1c00479ef: mov     rbx, qword [r11+0x38]\n0x1c00479f3: mov     rsi, qword [r11+0x40]\n0x1c00479f7: mov     rsp, r11\n0x1c00479fa: pop     r15\n0x1c00479fc: pop     r14\n0x1c00479fe: pop     r12\n0x1c0047a00: pop     rdi\n0x1c0047a01: pop     rbp\n0x1c0047a02: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csc_unpatched!CscRebootRenamepOpenKey (sub_1C004785C)",
+            "address": "0x1c004785c",
+            "why": "This is the registry-key create/open helper. Break here to observe all registry key creation attempts. rcx = &KeyHandle output, rdx = UNICODE_STRING path, r8b = create flag (arg3), r9 = optional disposition-out pointer. When r8b==1 (create), the SD application is gated on the feature flag."
+          },
+          {
+            "symbol": "csc_unpatched!CscRebootRenamepOpenKey (sub_1C004785C)+0x47",
+            "address": "0x1c00478a3",
+            "why": "The call to Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) (feature-flag gate) — THE removed check. Step over this call and inspect eax: if eax==0 (ZF set after 'test eax,eax' at 0x1c00478a8), the code takes the vulnerable NO-SD path at 0x1c004797d. If eax!=0, it takes the safe SD-builder path. This is the exact decision point."
+          },
+          {
+            "symbol": "csc_unpatched!CscRebootRenamepOpenKey (sub_1C004785C)+0x15b",
+            "address": "0x1c004797d",
+            "why": "The NO-SD OBJECT_ATTRIBUTES setup block — only reached in the unpatched binary when the feature flag is false. If execution reaches here with r14b (create flag) != 0, ZwCreateKey will be called with SecurityDescriptor=NULL. Verify [rbp-0x10] and [rbp-0x8] are both zero (xmm0 was stored), confirming no SD."
+          },
+          {
+            "symbol": "csc_unpatched!ZwCreateKey (via IAT)",
+            "address": "0x1c0041338",
+            "why": "The ZwCreateKey IAT slot. When this hits, inspect r8 (OBJECT_ATTRIBUTES*) and check r8+0x28 (SecurityDescriptor field at OA offset 0x28): if it is NULL/0, the key is being created without a security descriptor (no security descriptor). If non-NULL, a proper SD is attached."
+          },
+          {
+            "symbol": "csc_unpatched!CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0)",
+            "address": "0x1c00454b0",
+            "why": "The SD builder that sets LocalSystem as owner. In the unpatched binary, this is only called when Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4)==true. In the patched binary, it is always called on create. Compare call frequency between patched/unpatched."
+          }
+        ],
+        "watch": [
+          "eax after call Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) @ 0x1c00478a3: eax==0 means vulnerable NO-SD path taken; eax!=0 means safe path",
+          "r14b (arg3, create flag): r14b==1 means a key is being CREATED (not just opened) — this is the dangerous case when combined with eax==0",
+          "r15 (arg2, rdx on entry): points to the UNICODE_STRING for the registry path (e.g., \\Registry\\Machine\\System\\CurrentControlSet\\Services\\CSC\\Parameters)",
+          "[rbp-0x10] and [rbp-0x8]: OBJECT_ATTRIBUTES.SecurityDescriptor and SecurityQualityOfService — both 0 (NULL) on the NULL-SD path, non-zero on the safe path",
+          "r8+0x28 at the ZwCreateKey call site: SecurityDescriptor field of OBJECT_ATTRIBUTES — 0 means no SD (no SD attached)",
+          "Feature_2858196282__private_featureState (data_1C003A080): the feature-usage state flag dword. Bit 0x10 set -> Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) returns flag&1; bit 0x10 clear -> goes through telemetry query path. The flag state determines whether the SD is applied."
+        ],
+        "key_offsets": [
+          "0x1c00478a3: call Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) — THE feature-flag gate that was REMOVED in the patch. This is the root cause.",
+          "0x1c00478aa: je 0x1c004797d — the branch that diverts to the no-SD path when the flag is false",
+          "0x1c00479a2: movdqu [rbp-0x10], xmm0 — zeroes OA.SecurityDescriptor and OA.SecurityQualityOfService on the NULL-SD path",
+          "0x1c00479c2: call qword [rel 0x1c0041338] — ZwCreateKey with NULL SecurityDescriptor (owner defaults to creating context; DACL parent-inherited)",
+          "0x1c00478b9: call 0x1c00454b0 — SD builder (only reached on the safe path in unpatched; always reached on create in patched)",
+          "0x1c0047902: mov [rbp-0x10], rdi — sets OA.SecurityDescriptor = SD on the safe path (contrast with 0x1c00479a2 which zeroes it)",
+          "0x1c00454d5: mov rbp, [rdx+0x108] — SeExports+0x108 = SeLocalSystemSid (the intended owner SID)"
+        ],
+        "trigger_setup": "1) Load the unpatched csc.sys driver on a test system. 2) Ensure the feature flag Feature_2858196282__private_featureState (data_1C003A080) is in the false state (Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) returns 0) — this is the default/initial state for the feature, OR set a breakpoint at 0x1c00478a3 and force eax=0. 3) Trigger a CSC driver operation that causes registry key creation under HKLM\\System\\CurrentControlSet\\Services\\CSC\\Parameters — this happens during offline-files parameter initialization or cache management. The caller CscRebootRenameAddEntry (sub_1C006F0F4) calls CscRebootRenamepOpenKey (sub_1C004785C)(&Handle, &path, 1, nullptr) where path = '\\Registry\\Machine\\System\\CurrentControlSet\\Services\\CSC\\Parameters'. 4) After the key is created, inspect its security descriptor with 'accesschk.exe -k HKLM\\System\\CurrentControlSet\\Services\\CSC\\Parameters\\<subkey>' or RegGetKeySecurity. On the unpatched NULL-SD path the owner is the default (SYSTEM-context) principal and the DACL is parent-inherited; on the patched build the owner is explicitly LocalSystem and the DACL is the same inherited one. The delta is the owner SID, not the DACL, so no change in who may access the key is expected on a default install.",
+        "expected_observation": "At the ZwCreateKey call (0x1c00479c2 on the NULL-SD path), the OBJECT_ATTRIBUTES.SecurityDescriptor field ([r8+0x28] or equivalently [rbp-0x10]) will be 0 (NULL), so the key is created with a default (SYSTEM-context) owner and a parent-inherited DACL. In the patched binary, [rbp-0x10] will be non-NULL (pointing to the ExAllocatePool2'd absolute SD); !sd shows S-1-5-18 (LocalSystem) as owner with NO DACL present in the descriptor. The created key's DACL is the parent-inherited one in both builds; on a default install HKLM\\...\\Services does not grant non-admin write, so the key is not standard-user-writable on either binary. The observable delta is the explicit owner SID on the patched build, not the DACL.",
+        "notes": "The feature flag at Feature_2858196282__private_featureState (data_1C003A080) is part of the Windows feature-usage/telemetry infrastructure (RtlNotifyFeatureUsage). Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4) checks bit 0x10: if set, returns (flag & 1); if clear, invokes the telemetry notification path (Feature_2858196282__private_IsEnabledFallback (sub_1C00088EC) -> wil_details_IsEnabledFallback (sub_1C0008248)) which may set the flag. The flag state can vary by Windows build/configuration. The IAT slots: 0x1c00411e0 = ZwOpenKey, 0x1c0041338 = ZwCreateKey, 0x1c00410c0 = ExFreePoolWithTag, 0x1c0041370 = ExAllocatePool2. The CscRebootRenamepAddToKey (sub_1C006F42C) caller creates parameter index subkeys (with 'LastIndexValue' value) and calls CscRebootRenamepOpenKey (sub_1C004785C)(&Handle, arg1, 1, &var_f8). Both callers use arg3=1 (CREATE mode). The 5 other changed functions (Feature_4082332987__private_IsEnabledFallback (sub_1C0007AA8), wil_details_FeatureReporting_ReportUsageToService (sub_1C0007E00), wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C0007E88), wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0008070), wil_details_IsEnabledFallback (sub_1C0008248)) are purely telemetry-refactoring: they switched from dereferencing caller-supplied feature-context pointers to using hardcoded global feature IDs/values. They are NOT security-relevant but were modified in the same patch because the telemetry infrastructure that fed the feature flag was being reworked."
+      }
+    }
+  ],
+  "summary": "The patch removes a WIL feature-staging gate in csc.sys (Windows Offline Files driver) so that a security descriptor is always attached when creating the CSC reboot-rename registry keys. In the unpatched CscRebootRenamepOpenKey (sub_1C004785C), whether the SD (built by CscRebootRenamepCreateSecurityDescriptor (sub_1C00454B0)) is attached on create is gated on Feature_2858196282__private_IsEnabledDeviceUsage (sub_1C00088B4), which reads Feature_2858196282__private_featureState (data_1C003A080); when that returns false, ZwCreateKey is called with SecurityDescriptor=NULL for keys under HKLM\\System\\CurrentControlSet\\Services\\CSC\\Parameters (and its RebootRename subkey). The patch removes the gate and always applies the SD on create. Crucially, that SD sets only the OWNER (LocalSystem) and carries no DACL, so the key's access control (DACL) is parent-inherited in both builds and is unchanged by the patch; the keys are created in the SYSTEM/kernel context and HKLM\\...\\Services does not grant non-admin write by default. The delivered change is therefore a low-severity CWE-732 defense-in-depth hardening that makes key ownership explicit and deterministic. No non-admin write, denial-of-service, or privilege-escalation primitive is demonstrable from the binaries; direction is correct (patched is stricter)."
+}

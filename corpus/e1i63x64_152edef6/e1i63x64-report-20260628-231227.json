@@ -1,0 +1,151 @@
+{
+  "binaries": {
+    "title": "e1i63x64.sys (Intel PRO/1000 PCIe NDIS Miniport Driver) - No security-relevant change: NDIS OID request-type check present in both builds; patch relocates OID extraction into a helper",
+    "id_unpatched": "e1i63x64_unpatched.sys",
+    "id_patched": "e1i63x64_patched.sys",
+    "overall_similarity": 0.8577,
+    "matched": 1201,
+    "changed": 257,
+    "identical": 944,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MiniportOidRequest (0x140026874 unpatched / 0x14000C5D4 patched) - OID request dispatch, request-type gate present in BOTH builds",
+      "similarity": 1.0,
+      "change_type": "unchanged_logic",
+      "key_changes": [
+        "Reads NDIS_OID_REQUEST RequestType at offset +4 and dispatches only for {0=Query,1=Set,2=QueryStatistics,12=Method}",
+        "Any RequestType outside {0,1,2,12} returns status 0xC0010015 immediately, before any OID handler runs",
+        "Instructions and constants are identical between the two builds (mov r8d,[rdx+4]; test/dec/dec; cmp r8d,0Ah; mov eax,0C0010015h; retn)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the single external entry point for NDIS OID requests and it enforces the request-type set {0,1,2,12} in both the unpatched and patched builds. Because this gate is unchanged, the request-type validation that the report previously claimed was 'missing' in the unpatched build is in fact present in both builds. No request with a RequestType outside {0,1,2,12} can reach ReqQueryInformation, ReqQueryCommonInformation, RxFilterQueryOidHandler, or RxFilterSetOidHandler in either build.",
+      "assembly_diff": "; UNPATCHED (0x140026874) and PATCHED (0x14000C5D4) - identical:\n; mov  r8d, [rdx+4]        ; RequestType\n; test r8d, r8d\n; jz   <query>             ; type 0  -> ReqQueryInformation\n; dec  r8d\n; jz   <set>               ; type 1  -> ReqSetInformation\n; dec  r8d\n; jz   <query>             ; type 2  -> ReqQueryInformation\n; cmp  r8d, 0Ah\n; jz   <method>            ; type 12 -> ReqMethod\n; mov  eax, 0C0010015h     ; any other type: rejected before any handler\n; retn"
+    },
+    {
+      "name": "GetOid (0x14000C3F8, patched only) - OID extraction helper that re-checks the same request-type set",
+      "similarity": 0.0,
+      "change_type": "refactor",
+      "key_changes": [
+        "New helper at 0x14000C3F8 in the patched binary reads RequestType at offset +4 and returns the OID at offset +0x20 for types {0,1,2,12}, otherwise returns 0 with a trace event",
+        "The request-type set it checks {0,1,2,12} is the same set already enforced upstream at MiniportOidRequest in both builds, so its reject branch is unreachable for externally supplied requests",
+        "This address (0x14000C3F8) holds an unrelated function (IntCauseInterruptForVector) in the unpatched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "GetOid centralizes OID extraction and adds a trace event. It does not add a reachable gate: on every path that reaches the OID handlers, MiniportOidRequest has already guaranteed RequestType is in {0,1,2,12}, so GetOid always returns the real OID and never takes its reject path for attacker-supplied requests. Defense-in-depth relocation plus tracing, not a security fix.",
+      "assembly_diff": "; PATCHED sub_14000c3f8:\n; 0x14000c407: mov esi, [rcx+4]        ; RequestType\n; 0x14000c40a: xor edi, edi            ; default return = 0\n; 0x14000c40e: test esi, esi\n; 0x14000c410: je 0x14000c476          ; type 0\n; 0x14000c412: dec edx\n; 0x14000c414: je 0x14000c476          ; type 1\n; 0x14000c416: dec edx\n; 0x14000c418: je 0x14000c476          ; type 2\n; 0x14000c41a: cmp edx, 0xa\n; 0x14000c41d: je 0x14000c476          ; type 12\n; 0x14000c41f: ... emit trace, return 0 (unreachable for requests that pass MiniportOidRequest)\n; 0x14000c476: mov edi, [rcx+0x20]     ; accepted type: return OID\n; 0x14000c483: mov eax, edi\n; 0x14000c48a: retn"
+    },
+    {
+      "name": "ReqQueryCommonInformation (0x140026E98) / ReqQueryCommonInformation (0x14000CFD4) - common query OID dispatch",
+      "similarity": 0.9234,
+      "change_type": "refactor",
+      "key_changes": [
+        "Signature changed from taking the OID as a raw unsigned long to taking a _NDIS_OID_REQUEST*",
+        "Unpatched reads the OID inline via the caller (mov r15d, r8d at 0x140026ED6); patched obtains it via GetOid (call at 0x14000D043; mov r15d, eax at 0x14000D04B) before the same switch dispatch",
+        "Trace calls added across the OID cases; register/helper relocations",
+        "The dispatch acts on the same OID value in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "The OID switched on is the same in both builds. The only difference is how the OID is fetched (inline in the unpatched build, via GetOid in the patched build) plus added tracing. RequestType is already validated upstream at MiniportOidRequest in both builds.",
+      "assembly_diff": "; UNPATCHED (0x140026E98):\n; 0x140026ED6: mov r15d, r8d      ; OID from the raw integer argument\n; 0x140026EEA: mov eax, 0x10203\n; 0x140026F0D: cmp r15d, eax      ; switch dispatch on the OID\n\n; PATCHED (0x14000CFD4):\n; 0x14000D026: mov rcx, r8        ; rcx = NDIS_OID_REQUEST*\n; 0x14000D043: call GetOid        ; read RequestType (already in {0,1,2,12}), return OID\n; 0x14000D04B: mov r15d, eax\n; 0x14000D04E: mov eax, 0x10203\n; 0x14000D05B: cmp r15d, eax      ; switch dispatch on the OID"
+    },
+    {
+      "name": "RxFilterQueryOidHandler (0x1400133C8) / RxFilterQueryOidHandler (0x14003E318) - OID 0xFF020188 VMQ queue-info query",
+      "similarity": 0.9757,
+      "change_type": "refactor",
+      "key_changes": [
+        "Function signature changed: arg2 from unsigned long (raw OID code) to _NDIS_OID_REQUEST*",
+        "OID obtained via GetOid(arg2) instead of using the raw arg2, then compared against 0xFF020188",
+        "Buffer/length guard (a3 != NULL && a4 >= 0x8A08) and the RxFilterGetVMQInfo call are unchanged",
+        "Trace additions"
+      ],
+      "security_relevant": false,
+      "security_notes": "This handler serves OID 0xFF020188 (VMQ queue information via RxFilterGetVMQInfo). It is reachable only under a Query/QueryStatistics request, which MiniportOidRequest already enforces in both builds. Obtaining the OID via GetOid rather than as a raw integer is a refactor; the reached behavior and its buffer/length guard are identical.",
+      "assembly_diff": "; UNPATCHED (0x1400133C8): int RxFilterQueryOidHandler(void* a1, unsigned long a2, void* a3, unsigned a4, ...) { if (a2 == 0xff020188) { if (a3 && a4 >= 0x8A08) RxFilterGetVMQInfo(a1, a3); } }\n; PATCHED (0x14003E318): int RxFilterQueryOidHandler(void* a1, _NDIS_OID_REQUEST* a2, void* a3, unsigned a4, ...) { int Oid = GetOid(a2); if (Oid == 0xff020188) { if (a3 && a4 >= 0x8A08) RxFilterGetVMQInfo(a1, a3); } }"
+    },
+    {
+      "name": "RxFilterSetOidHandler (0x140013730) / RxFilterSetOidHandler (0x14003E6B4) - OID 0x10224/0x10226/0x10228/0x10230 VMQ/VLAN receive filter set",
+      "similarity": 0.7856,
+      "change_type": "refactor",
+      "key_changes": [
+        "Function signature changed: arg2 from unsigned long (raw OID code) to _NDIS_OID_REQUEST*",
+        "OID obtained via GetOid(arg2) instead of raw arg2",
+        "SR-IOV terminology changed from queue-based to VPort-based helpers",
+        "Trace additions per OID case"
+      ],
+      "security_relevant": false,
+      "security_notes": "Processes VMQ/VLAN receive-filter set OIDs (0x10224 receive queue alloc, 0x10226 filter set, 0x10228 filter free, 0x10230 queue assignment). Reachable only under a Set request, which MiniportOidRequest already enforces in both builds. The OID-via-GetOid change is a refactor; the SR-IOV VPort renaming is a feature refactor.",
+      "assembly_diff": "; UNPATCHED (0x140013730): int RxFilterSetOidHandler(void* a1, unsigned long a2, char* a3) { if (a2 == 0x10224) ... else if (a2 == 0x10226) RxFilterSetQueueParams(a1, 0x10226, a3, ...); }\n; PATCHED (0x14003E6B4): int RxFilterSetOidHandler(void* a1, _NDIS_OID_REQUEST* a2, char* a3) { int Oid = GetOid(a2); if (Oid == 0x10224) ... }"
+    },
+    {
+      "name": "SRIOV_CTRL::GetNextUnusedQueue (sub_14002B910) / SRIOV_CTRL::GetNextUnusedVPort (sub_140047140) - SR-IOV VPort allocation",
+      "similarity": 0.9867,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Per-element structure size increased from 0x26c to 0x288 bytes (28-byte increase)",
+        "New field initializations added: offsets 0x274, 0x278, 0x288 now zeroed",
+        "Container offset changed: 0x17f70 -> 0x17f34",
+        "Sub-function call relocated: sub_14000f43c(arg2+0x17f40, ...) -> sub_14003cda8(arg2+0x17f00, ...)"
+      ],
+      "security_relevant": false,
+      "security_notes": "SR-IOV allocation renamed from queue-based to VPort-based with an enlarged per-element structure and added zero-initialization of the new fields. Feature refactor, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ADAPTER_CONTEXT::~ADAPTER_CONTEXT (sub_14002DDEC) / ADAPTER_CONTEXT::~ADAPTER_CONTEXT (sub_140049CE8) - adapter-context destructor",
+      "similarity": 0.7473,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The set of buffers freed via NdisFreeMemory_0 changes and the base offset shifts 0xa60 -> 0xa68, consistent with the surrounding structure being relaid out by the SR-IOV change"
+      ],
+      "security_relevant": false,
+      "security_notes": "Destructor updated to match the relaid-out adapter-context structure. Structural cleanup, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "e1000_read_pba_string_generic (sub_1400419C4) / e1000_read_pba_string_generic (sub_140062DD4) - NVM PBA string reader",
+      "similarity": 0.5294,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Trace additions",
+        "Register allocation differences",
+        "Core logic (0xfafa sentinel check, hex nibble formatting, length validation) preserved identically"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RECEIVE_FILTER::RxFilterReadRegistryParameters (sub_140013488) / RECEIVE_FILTER::RxFilterReadRegistryParameters (sub_14003E408) - receive-filter registry reader",
+      "similarity": 0.9809,
+      "change_type": "behavioral",
+      "key_changes": [
+        "New registry configuration value 'VMQLegacyOn650' added",
+        "Structure offset shifts throughout, consistent with the relaid-out structure"
+      ],
+      "security_relevant": false,
+      "security_notes": "New feature addition for VMQ legacy mode on I350 (650) controllers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "e1000_init_mac_params_ich8lan (sub_140035ADC) / e1000_init_mac_params_ich8lan (sub_140051468) - MAC function-pointer table init",
+      "similarity": 0.9897,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "All function pointer assignments updated to relocated addresses",
+        "arg1[0xa5]=1 changed to sub_140054e2c(arg1, 1) - function call instead of direct assignment"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The report previously claimed the unpatched e1i63x64.sys was missing validation of the NDIS request-type field, allowing an OID to reach a handler under an unexpected RequestType. Direct comparison of both binaries shows this is not the case: the sole external OID entry point, MiniportOidRequest (0x140026874 unpatched / 0x14000C5D4 patched), reads RequestType at offset +0x4 and dispatches only for {0=Query,1=Set,2=QueryStatistics,12=Method}, rejecting any other value with status 0xC0010015 before any OID handler runs. These instructions and constants are identical in both builds. What the patch actually does is relocate OID extraction into a new helper, GetOid (0x14000C3F8, patched only), which re-reads the same request-type set and returns the OID from offset +0x20, emitting a trace event otherwise; the common query dispatch (ReqQueryCommonInformation 0x140026E98 -> 0x14000CFD4) and the receive-filter handlers (RxFilterQueryOidHandler 0x1400133C8 -> 0x14003E318, OID 0xFF020188; RxFilterSetOidHandler 0x140013730 -> 0x14003E6B4, OID 0x10224/0x10226/0x10228/0x10230) are refactored from taking a raw OID integer to taking the NDIS_OID_REQUEST pointer. Because MiniportOidRequest already guarantees the request type is in {0,1,2,12} on every path reaching these functions in both builds, GetOid's reject branch is unreachable for attacker-supplied requests and no handler becomes reachable or unreachable as a result. The remainder of the changed-function set is an SR-IOV queue-to-VPort refactor (structure relayout, adapter-context destructor update), a new registry parameter (VMQLegacyOn650 for I350 controllers), and trace additions. No CWE and no reachable security impact."
+}

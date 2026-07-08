@@ -1,0 +1,260 @@
+{
+  "binaries": {
+    "id_unpatched": "pciidex_unpatched.sys",
+    "id_patched": "pciidex_patched.sys",
+    "overall_similarity": 0.9154,
+    "matched": 195,
+    "changed": 115,
+    "identical": 80,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "changed_functions": [
+    {
+      "name": "GenPopulateAccessRange",
+      "similarity": 0.9901,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "MmMapIoSpace (takes only a cache type, no page-protection argument) replaced with MmMapIoSpaceEx with explicit PageProtection=0x204 (PAGE_NOCACHE|PAGE_READWRITE)",
+        "The deprecated MmMapIoSpace mapping is read-write-execute; MmMapIoSpaceEx with 0x204 makes the mapping explicitly non-executable"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched code calls MmMapIoSpace(physicalAddress, length, MmNonCached) to map PCI IDE memory BARs (CmResourceTypeMemory descriptors) into kernel virtual address space. MmMapIoSpace takes no page-protection argument, so the resulting mapping is read-write-execute. MmMapIoSpaceEx(physicalAddress, length, 0x204) in the patched version passes PAGE_NOCACHE|PAGE_READWRITE, making the mapping explicitly non-executable. Defense-in-depth: the physical address and length originate from PnP-assigned PCI resource descriptors, not attacker input, so this hardens the mapping's protection but is not a self-contained code-execution primitive.",
+      "assembly_diff": "; Unpatched GenPopulateAccessRange, Type==3 branch:\n00000001C0009022  xor     r8d, r8d                ; CacheType = MmNonCached (0)\n00000001C0009025  call    cs:__imp_MmMapIoSpace\n\n; Patched GenPopulateAccessRange, Type==3 branch:\n00000001C000A196  mov     r8d, 204h               ; PAGE_NOCACHE|PAGE_READWRITE\n00000001C000A19C  call    cs:__imp_MmMapIoSpaceEx"
+    },
+    {
+      "name": "ControllerInitControllerInfo",
+      "similarity": 0.9217,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Field initialization for PCI IDE channel mode flags changed: unpatched writes single 32-bit value 0x10222 at offset 0x1ac; patched writes individual bytes (0x22 at 0x1ac, 0x02 at 0x1ad, 0x01 at 0x1ae, 0x01 at 0x1b0) producing identical final values",
+        "Bit-flag accumulation logic in the miniport capabilities section was restructured with cleaner conditional chains but produces the same result"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PciIdeRegReadDwordDeviceKey",
+      "similarity": 0.9714,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function signature gained 5th parameter (output buffer pointer) — registry DWORD value is now written directly to caller-provided buffer instead of a local stack variable that is then copied",
+        "Eliminates potential stack-residue leak of the intermediate local variable"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring to avoid unnecessary stack temporary. The registry value is now written directly to the caller's buffer. Both versions enforce a 4-byte size constraint via PortpRegQueryRoutine.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PciIdeChannelEnabled",
+      "similarity": 0.9219,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Updated to call PciIdeRegReadDwordDeviceKey with new 5-parameter signature",
+        "Simplified control flow in the fallback path: removed redundant 'if result != 2' check after the PciIdeReadConfigSpace bitwise AND"
+      ],
+      "security_relevant": false,
+      "security_notes": "The ChannelStateOffset from the registry is still passed to PciIdeReadConfigSpace without explicit bounds checking in both versions — the PCI bus interface is trusted to enforce config space bounds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerStartMiniport",
+      "similarity": 0.6378,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler reordered the callback invocation pattern: unpatched checks function pointer non-null before calling, patched uses direct call since null was already tested",
+        "Register allocation restructured (esi→r14d for size, etc.)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FdoSystemPowerDownCompletion",
+      "similarity": 0.5483,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address-only differences in jump targets and import table references",
+        "Identical power IRP completion logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PciIdeUnload",
+      "similarity": 0.5645,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "PciIdeUnregisterEtw changed from tailcall to call+return",
+        "Import table addresses changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RemovePdoExtension",
+      "similarity": 0.8712,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming (r15→rsi, r14→r15) and stack temporary reordering",
+        "Identical hash bucket lookup and unlink logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PciIdeXSetBusData",
+      "similarity": 0.9748,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler restructured the conditional check from sub/neg/sbb/and/jl pattern to cmp/jne pattern — both perform the same rax_1 == i_2 comparison",
+        "Byte-merge loop restructured but performs identical bit manipulation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerQueryBusRelations",
+      "similarity": 0.8531,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added if(arg2) NULL check wrapper — likely compiler defensive code",
+        "Variable renaming (rsi→rdi_1, rdi→rsi)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GenPnpFdoRemoveDevice",
+      "similarity": 0.7963,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Device teardown logic refactored: inline IoDetachDevice/IoDeleteDevice code extracted to new GenPnpFreeFdo() function",
+        "PDO removal loop unified — both remove-device and surprise-remove paths now call GenPnpFreePdo with a boolean flag instead of separate code paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of device teardown — the extracted GenPnpFreeFdo performs identical operations (set state to 5, remove from global list, detach, delete). No change to object lifetime management.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GenPnpPdoStartDevice",
+      "similarity": 0.9786,
+      "change_type": "behavioral",
+      "key_changes": [
+        "State flag masking changed: unpatched uses stale value of *(rbx+0xd8) read before device start; patched re-reads *(rbx+0xd8) after ChannelStartDevice/ControllerStartDevice completes and uses the fresh value for the final flag write"
+      ],
+      "security_relevant": false,
+      "security_notes": "Minor state machine correctness improvement — the patched version avoids using a stale register value for the PDO state flags. Not exploitable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerInterruptControl",
+      "similarity": 0.9729,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Offset arithmetic rewritten from rcx*0x30 to r8*2*0x18 (equivalent)",
+        "Register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ChannelBuildDeviceId",
+      "similarity": 0.8231,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Buffer size overflow check simplified from rbx_1-1<=0x7ffffffe to rbx_1!=0",
+        "String terminator placement restructured but equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ChannelQueryResourceRequirements",
+      "similarity": 0.8796,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Branch reordering: if/else branches for rax_1==0 and rax_1==1 swapped in order but logic is identical",
+        "Variable name changes (P_1→P)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      {
+        "name": "GenPnpFreeFdo",
+        "address": "0x1C000919C",
+        "security_relevant": false,
+        "notes": "FDO teardown helper extracted from the device-removal path (set state, unlink from global list, IoDetachDevice/IoDeleteDevice). Same operations previously inlined in the unpatched build."
+      },
+      {
+        "name": "PdoCompleteSystemPowerIrp",
+        "address": "0x1C0002B40",
+        "security_relevant": false,
+        "notes": "System power-IRP completion helper (records requested power state, calls PoSetPowerState on change, then PoStartNextPowerIrp and IofCompleteRequest), extracted from the PDO power dispatch path. No new security behavior."
+      }
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "GenPopulateAccessRange",
+      "entry_point": "ControllerStartDevice (IRP_MJ_PNP / IRP_MN_START_DEVICE) -> GenPopulateAccessRange",
+      "call_chain": [
+        "IRP_MJ_PNP / IRP_MN_START_DEVICE",
+        "GenPnpFdoStartDevice",
+        "ControllerStartDevice",
+        "GenPopulateAccessRange",
+        "MmMapIoSpace"
+      ],
+      "vulnerability_class": "incorrect permission assignment / weak memory protection on MMIO mapping (CWE-732)",
+      "description": "The unpatched GenPopulateAccessRange function uses the deprecated MmMapIoSpace() API to map PCI IDE controller memory resources (CmResourceTypeMemory descriptors, type 3) into kernel virtual address space. MmMapIoSpace accepts only a cache type (here MmNonCached) and no page protection, so the resulting mapping is read-write-execute with no explicit NX attribute. The patched version replaces this with MmMapIoSpaceEx(physicalAddress, length, 0x204) where 0x204 = PAGE_NOCACHE | PAGE_READWRITE, making the mapped MMIO region explicitly read-write and non-executable. The direction is correct: only the patched build enforces NX. The physical addresses and lengths come from PCI BAR resource descriptors assigned by the PnP/PCI bus driver, not from an attacker-supplied request. This is a defense-in-depth hardening, not a self-contained exploitable primitive.",
+      "trigger_conditions": "The path is reached when a PCI IDE controller device is started (IRP_MN_START_DEVICE). GenPopulateAccessRange is called with resource descriptors of type CmResourceTypeMemory (type 3). For each such descriptor, MmMapIoSpace is called with the physical address and length from the descriptor. The function is reachable during normal PnP device enumeration of any PCI IDE controller handled by pciidex.sys.",
+      "primitive": "None self-contained. The unpatched build leaves PCI IDE MMIO mappings executable; the patched build makes them non-executable. Converting the executable mapping into kernel code execution would require both control of the physical memory contents behind the mapped BAR (e.g. a malicious/DMA-capable device or an emulated/pass-through device in a guest) and a separate control-flow hijack to redirect execution into the mapped VA. Under HVCI/VBS the two builds are equivalent. The practical impact is limited to hardening.",
+      "evidence": "/* Unpatched GenPopulateAccessRange @ 0x1C0008FB0 - deprecated MmMapIoSpace */\nif ( *((_BYTE *)v10 - 12) == 3 )   // CmResourceTypeMemory\n{\n    v11 = MmMapIoSpace(*(PHYSICAL_ADDRESS *)&v8[5 * v9 + 1], (unsigned int)*v10, MmNonCached);\n    *(_QWORD *)(a2 + 24 * v2) = v11;\n    *(PHYSICAL_ADDRESS *)(a2 + 24 * v2 + 8) = MmGetPhysicalAddress(v11);\n    *(_DWORD *)(a2 + 24 * v2 + 16) = *v10;\n    *(_BYTE *)(a2 + 24 * v2 + 20) = 1;\n}\n\n/* Patched GenPopulateAccessRange @ 0x1C000A120 - MmMapIoSpaceEx, 516 == 0x204 */\nif ( *((_BYTE *)v10 - 12) == 3 )   // CmResourceTypeMemory\n{\n    v11 = (void *)MmMapIoSpaceEx(*(_QWORD *)&v8[5 * v9 + 1], (unsigned int)*v10, 516);\n    *(_QWORD *)(a2 + 24 * v2) = v11;\n    *(PHYSICAL_ADDRESS *)(a2 + 24 * v2 + 8) = MmGetPhysicalAddress(v11);\n    *(_DWORD *)(a2 + 24 * v2 + 16) = *v10;\n    *(_BYTE *)(a2 + 24 * v2 + 20) = 1;\n}",
+      "assembly": "; Unpatched GenPopulateAccessRange @ 0x1C0008FB0, Type==3 (CmResourceTypeMemory) path:\n00000001C0009017  mov     edx, [rdi]              ; NumberOfBytes (length)\n00000001C0009019  lea     rcx, [r14+r14*4]\n00000001C000901D  mov     rcx, [r12+rcx*4+4]      ; PhysicalAddress\n00000001C0009022  xor     r8d, r8d                ; CacheType = MmNonCached (0)\n00000001C0009025  call    cs:__imp_MmMapIoSpace\n\n; Patched GenPopulateAccessRange @ 0x1C000A120, Type==3 path:\n00000001C000A18B  mov     edx, [rdi]              ; NumberOfBytes (length)\n00000001C000A18D  lea     rcx, [r14+r14*4]\n00000001C000A191  mov     rcx, [r12+rcx*4+4]      ; PhysicalAddress\n00000001C000A196  mov     r8d, 204h               ; Protect = PAGE_NOCACHE|PAGE_READWRITE\n00000001C000A19C  call    cs:__imp_MmMapIoSpaceEx",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "pciidex!GenPopulateAccessRange",
+            "address": "0x1c0008fb0",
+            "why": "Break here to observe the resource list parsing and verify which descriptors trigger MmMapIoSpace. rcx=arg1 (resource list pointer), rdx=arg2 (output access range array). Watch for the rcx_1==3 branch to confirm CmResourceTypeMemory path is taken."
+          },
+          {
+            "symbol": "MmMapIoSpace",
+            "address": "nt!MmMapIoSpace",
+            "why": "Break on the actual deprecated API call to inspect the physical address (rcx), length (rdx), and cache type (r8=MmNonCached=0). Verify the returned virtual address and check its page protection with !pte in WinDbg to confirm whether NX is enforced."
+          }
+        ],
+        "watch": [
+          "rcx at MmMapIoSpace call = physical address from PCI BAR descriptor",
+          "rdx at MmMapIoSpace call = length from PCI BAR descriptor",
+          "r8d = 0 (MmNonCached) — no explicit page protection in unpatched",
+          "Return value in rax = mapped kernel VA — use !pte <rax> to check if NX bit is set"
+        ],
+        "key_offsets": [
+          "0x1C0008FB0: GenPopulateAccessRange function entry (unpatched)",
+          "0x1C0009025: MmMapIoSpace call site in unpatched (type==3 / CmResourceTypeMemory branch)",
+          "0x1C0009073: loop increment after successful mapping (unpatched)",
+          "0x1C000A196 / 0x1C000A19C: patched mov r8d, 204h and MmMapIoSpaceEx call site"
+        ],
+        "trigger_setup": "This path is triggered during normal PCI IDE controller enumeration. Any PCI IDE controller managed by pciidex.sys will hit GenPopulateAccessRange during IRP_MN_START_DEVICE processing. No special PoC needed — the code runs on every boot with IDE/SATA controllers in legacy IDE mode. To trigger deliberately: use Device Manager to disable and re-enable a PCI IDE controller, or use 'pnputil /restart-device' on the IDE controller device node.",
+        "expected_observation": "In the unpatched binary, break at MmMapIoSpace and check the page protection of the returned VA with '!pte <address>'. The mapping lacks the NX (Execute-Disable) bit. In the patched binary with MmMapIoSpaceEx and 0x204, the mapping is non-executable. This confirms the fix direction; it is not by itself a code-execution demonstration.",
+        "notes": "This is primarily a defense-in-depth / deprecated-API remediation fix. MmMapIoSpace behavior regarding NX depends on the Windows version and hardware. On modern x64 with NX enforced globally, the practical difference may be minimal, but the fix ensures explicit non-executable MMIO mappings per Microsoft's deprecation guidance (MmMapIoSpace deprecated since Windows 10 1607, KB article recommending MmMapIoSpaceEx)."
+      }
+    }
+  ],
+  "summary": "The pciidex.sys diff shows 115 changed functions, but the vast majority are compiler/build differences: register allocation, address relocations, tailcall-vs-call restructuring, and decompiler annotation differences with no behavioral impact. The one security-relevant change is in GenPopulateAccessRange, where the deprecated MmMapIoSpace() call was replaced with MmMapIoSpaceEx() using an explicit page-protection argument of 0x204 (PAGE_NOCACHE|PAGE_READWRITE). This makes PCI IDE controller memory-BAR mappings explicitly non-executable instead of read-write-execute (CWE-732). The change is real and correctly directed, but it is a defense-in-depth hardening rather than a self-contained exploitable bug: the mapped physical addresses come from PnP-assigned PCI resource descriptors, not attacker input, and code execution would additionally require control of the mapped physical memory contents plus a separate control-flow hijack; under HVCI/VBS the builds are equivalent. Severity: Low. Two functions appear only in the patched build (GenPnpFreeFdo and PdoCompleteSystemPowerIrp); both are benign refactoring extractions of previously inlined code. Other behavioral changes (e.g. PciIdeRegReadDwordDeviceKey writing directly to a caller buffer) have no security impact."
+}

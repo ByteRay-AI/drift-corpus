@@ -1,0 +1,231 @@
+{
+  "binary": "http.sys",
+  "kb": "KB5075941",
+  "release_date": "2026-02-10",
+  "relevant_cves": [
+    {
+      "id": "CVE-2026-21240",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21232",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "cve_attribution": "title component match",
+  "cves": [
+    {
+      "id": "CVE-2026-21248",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21247",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21236",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21255",
+      "title": "Windows Hyper-V Security Feature Bypass Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Security Feature Bypass",
+      "cvss": 8.8
+    },
+    {
+      "id": "CVE-2026-21244",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21240",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21241",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-21239",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21238",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21232",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21231",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21222",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.22621.6630",
+    "sha256": "e65b51d75222890888f7dce7db26ba70255ac457489acfcace6d1513bc8c88a8",
+    "file": "http_patched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "HTTP Protocol Stack",
+      "FileVersion": "10.0.22621.6630 (WinBuild.160101.0800)",
+      "InternalName": "http.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "http.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.22621.6630"
+    }
+  },
+  "prev": {
+    "version": "10.0.22621.6493",
+    "sha256": "11d3fc809fdb46161932404373eba03619ebf74e5c93df6b546a4509e2edacf4",
+    "kb_numbers": [
+      "KB5073455",
+      "KB5077797",
+      "KB5078132"
+    ],
+    "win_versions": [
+      "11-23H2"
+    ],
+    "file": "http_unpatched.sys",
+    "hash_match": false,
+    "expected_sha256": "412f48ae0c5e641ca48e77efa124b35d468dda05635aa0b7dc5c9b4d0b6c9880",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "HTTP Protocol Stack",
+      "FileVersion": "10.0.22621.6493 (WinBuild.160101.0800)",
+      "InternalName": "http.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "http.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.22621.6493"
+    },
+    "selection_tier": 1,
+    "selection_tier_description": "same Windows version (e.g. both from '10-1809')"
+  }
+}

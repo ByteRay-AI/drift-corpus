@@ -1,0 +1,260 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9806,
+    "matched": 1228,
+    "changed": 16,
+    "identical": 1212,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C0059BA0",
+      "similarity": 0.0622,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Old connection-creation body at this address is, in the patched build, a small feature-check stub (data_1c002b9a8 & 0x10) that dispatches to either the legacy path or a new path (sub_1c005ae64)",
+        "The new path is reported to set Options including IO_FORCE_ACCESS_CHECK and a different DesiredAccess (FILE_READ_DATA|FILE_WRITE_DATA)",
+        "Feature-staged: the legacy path is retained in the feature-off branch"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-staged dispatch between the legacy connection-creation path and a new path (sub_1c005ae64) that tightens access checks (IO_FORCE_ACCESS_CHECK). Consistent with a defense-in-depth hardening; the legacy path is retained under the feature gate and no reachable memory-safety impact is asserted. Secondary to the titled findings.",
+      "assembly_diff": "Old body at this address (large IoCreateFile-based connection creation) is replaced at the reused address by a small stub: sub rsp, 0x28 ; and qword [rsp+0x30], 0x0 ; mov eax, dword [rel 0x1c002b9a8] ; test al, 0x10 ; je 0x1c0009c3d ; and eax, 0x1 ; retn . This is a same-address replacement; the real new connection-creation logic lives in sub_1c005ae64."
+    },
+    {
+      "name": "AfdSanFastCompleteRequest (0x1C007EF30 -> 0x1C0081030)",
+      "similarity": 0.9609,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds a feature-gated post-cancel state check before linking the IRP into the endpoint pending list at [ep+0x70]",
+        "Unpatched gate: if (!Irp->Cancel) queue",
+        "Patched gate: if (!Irp->Cancel && (!Feature_623580472__private_IsEnabledDeviceUsage() || *(BYTE*)(ep+0x91)==0)) queue; else complete STATUS_CANCELLED",
+        "The +0x91 byte is new to the patched build and is not referenced anywhere in the unpatched binary"
+      ],
+      "security_relevant": true,
+      "security_notes": "The patched receive/accept fast-complete handler adds a guard (cmp byte [r15+0x91],0 at 0x1C0081445) so that a request IRP is not linked onto the endpoint pending list when the endpoint's accept has been cancelled/drained (the +0x91 byte set to 1 by AfdSanCancelAccept). This is a state-validation guard, feature-staged behind Feature_623580472__private_IsEnabledDeviceUsage; with the feature off the behavior is identical to the unpatched build. There is no uninitialized read in the unpatched build: +0x91 does not exist there.",
+      "assembly_diff": "UNPATCHED (0x1C007EF30): after setting cancel routine, cmp byte [rdi+0x44],0 then queue into [ep+0x70] if not cancelled. No feature call, no +0x91 reference.\nPATCHED (0x1C0081030):\n0x1C0081436 cmp byte [rsi+44h], 0\n0x1C008143A jnz <cancel_path>\n0x1C008143C call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C0081441 test eax, eax\n0x1C0081443 jz <queue>\n0x1C0081445 cmp byte [r15+91h], 0\n0x1C008144D jnz <cancel_path>\n0x1C008144F ... link IRP into [r15+0x70]"
+    },
+    {
+      "name": "AfdSanRedirectRequest (0x1C0080198 -> 0x1C0082338)",
+      "similarity": 0.9456,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds a feature-gated post-cancel state check before linking the accept IRP into the endpoint pending list at [ep+0x70]",
+        "Unpatched: if (!Irp->Cancel) queue",
+        "Patched: if (!Irp->Cancel && (!Feature_623580472__private_IsEnabledDeviceUsage() || *(BYTE*)(ep+0x91)==0)) queue; else complete STATUS_CANCELLED (0xC0000120)",
+        "Reached under the endpoint spinlock when endpoint status is 0x103 (STATUS_PENDING) or 0xC0000016 (STATUS_MORE_PROCESSING_REQUIRED)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The patched accept-redirect handler adds a guard (call Feature_623580472__private_IsEnabledDeviceUsage at 0x1C0082424, cmp byte [rsi+0x91],0 at 0x1C008242D) so that a request IRP is not queued onto an endpoint whose accept has been cancelled/drained. The +0x91 byte is a new state flag set to 1 by AfdSanCancelAccept and zero-inited by AfdSanInitEndpoint; it is not referenced in the unpatched build. This is a feature-staged state-validation guard, not an uninitialized-field read.",
+      "assembly_diff": "UNPATCHED (0x1C0080198) at 0x1C008027A: cmp byte [rdi+0x44],0 ; jz 0x1C00802D6 (queue). Only gate; no +0x91.\nPATCHED (0x1C0082338):\n0x1C008241A cmp byte [rbx+44h], 0\n0x1C008241E jnz <cancel_path>\n0x1C0082424 call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C0082429 test eax, eax\n0x1C008242B jz <queue>\n0x1C008242D cmp byte [rsi+91h], 0\n0x1C0082434 jnz <cancel_path>\n0x1C008243A <queue>"
+    },
+    {
+      "name": "AfdSanAcceptCore (0x1C007C0CC -> 0x1C007E0CC)",
+      "similarity": 0.9912,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inline endpoint initialization replaced with a call to the new function AfdSanInitEndpoint (0x1C0082020)",
+        "AfdSanInitEndpoint zero-inits +0x90 unconditionally and +0x91 under the Feature_623580472 gate; these bytes are new to the patched build"
+      ],
+      "security_relevant": true,
+      "security_notes": "TDI accept path. The inline endpoint init is replaced by AfdSanInitEndpoint, which additionally clears the two new state bytes (+0x90 unconditional, +0x91 feature-gated). Supports the state-guard change in the redirect/fast-complete handlers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanFastCementEndpoint (0x1C007E6B0 -> 0x1C0080800)",
+      "similarity": 0.9898,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same migration as AfdSanAcceptCore: inline endpoint init replaced with AfdSanInitEndpoint (0x1C0082020) call"
+      ],
+      "security_relevant": true,
+      "security_notes": "Connect/listen endpoint init path migrated to the shared AfdSanInitEndpoint, which clears the new +0x90/+0x91 state bytes.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanCancelAccept (unpatched 0x1C007D130 -> patched 0x1C007F140)",
+      "similarity": 0.2588,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "This is the producer of the +0x91 flag. In the patched build it sets byte [ep+0x91]=1 (feature-gated, 0x1C007F1F7) when cancelling an endpoint's accept, then drains the [ep+0x70] pending list",
+        "The unpatched function at 0x1C007D130 neither writes [ep+0x91] nor drains [ep+0x70]; it unlinks only the single cancelling IRP",
+        "The diff originally matched this address to sub_1c0048800 (a TDI transmit/receive handler) - that is a same-address mismatch; the correct patched counterpart is AfdSanCancelAccept at 0x1C007F140"
+      ],
+      "security_relevant": true,
+      "security_notes": "Corrects a same-address mismatch. sub_1C007D130 is AfdSanCancelAccept, the function that sets the new +0x91 'accept cancelled' flag consumed by the redirect/fast-complete guards. Part of the feature-staged state-guard change.",
+      "assembly_diff": "PATCHED 0x1C007F1EE call Feature_623580472__private_IsEnabledDeviceUsage ; 0x1C007F1F7 mov byte [rdi+91h],1 ; then unlink loop over [rdi+70h]. UNPATCHED 0x1C007D130 has no +0x91 write and no [ep+0x70] drain."
+    },
+    {
+      "name": "AfdSanAcquireContext (unpatched 0x1C007C860 -> patched 0x1C007E830)",
+      "similarity": 0.3398,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Third consumer of the +0x91 guard: reads [ep+0x91] at 0x1C007EE79 and 0x1C007EEB4 (feature-gated) before proceeding to queue/complete a request",
+        "Not a cosmetic register reshuffle"
+      ],
+      "security_relevant": true,
+      "security_notes": "sub_1C007C860 is AfdSanAcquireContext. It gains the same feature-gated [ep+0x91] state check as the redirect/fast-complete handlers, so a request is not queued onto an endpoint whose accept was cancelled. The low similarity reflects both this logic addition and structural reordering.",
+      "assembly_diff": "PATCHED reads: 0x1C007EE70 call Feature_623580472__private_IsEnabledDeviceUsage ; 0x1C007EE79 cmp [rsi+91h], bl ; and again at 0x1C007EEB4. No such references in the unpatched counterpart."
+    },
+    {
+      "name": "sub_1C0047620",
+      "similarity": 0.3417,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Large function with structural reorganization",
+        "No clear security-relevant changes identified"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00403C4",
+      "similarity": 0.7562,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds the sub_1c0009c20() feature-gate to select between the legacy (sub_1c0009ce8) and new (sub_1c005ae64) connection-creation paths",
+        "Updated SLIST insertion (ExpInterlockedPushEntrySList) and function references"
+      ],
+      "security_relevant": true,
+      "security_notes": "Connection endpoint allocator that now dispatches between legacy and new connection-creation paths via the feature gate. Feature-staged (legacy path retained); no independent reachable impact asserted.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdIsValidTdiDeviceName (0x1C000896C)",
+      "similarity": 0.7674,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds a Feature_2480880955__private_IsEnabledDeviceUsage() gate; when enabled uses RtlFindUnicodeSubstring instead of RtlEqualUnicodeString",
+        "Tightens the one-entry AfdTdiInvalidDeviceNames blocklist from exact-match to substring-match, closing a bypass where the blocked name is embedded inside a longer name"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-staged blocklist tightening (exact -> substring). Closes an incomplete-blocklist bypass (CWE-184). Impact limited to rejecting a name that should have been rejected; no memory-safety impact.",
+      "assembly_diff": "UNPATCHED: 0x1C00089AE call RtlEqualUnicodeString (exact only). PATCHED: 0x1C00089A3 call Feature_2480880955__private_IsEnabledDeviceUsage ; 0x1C00089B7 call RtlFindUnicodeSubstring (feature on) vs 0x1C00089D0 call RtlEqualUnicodeString (feature off)."
+    },
+    {
+      "name": "sub_1C00598CC",
+      "similarity": 0.9171,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds the sub_1c0009c20() feature-gate to select the connection-creation path",
+        "Buffer-init call switched from sub_1c000a640 to sub_1c000ac00"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged connection-creation dispatch plus updated helper references. No independent reachable impact identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0058BA0",
+      "similarity": 0.9226,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and address updates throughout",
+        "No security-relevant changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005B6B0",
+      "similarity": 0.9238,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and address updates",
+        "No security-relevant changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C004F090",
+      "similarity": 0.9248,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds the sub_1c0009c20() feature-gate for connection-creation path selection",
+        "Updated SLIST operations and function references"
+      ],
+      "security_relevant": true,
+      "security_notes": "Endpoint allocation function that now dispatches between legacy and new connection-creation paths via the feature gate. Feature-staged (legacy retained); no independent reachable impact asserted.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0038DB0",
+      "similarity": 0.9478,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register and variable renaming throughout",
+        "No security-relevant changes identified"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007D550",
+      "similarity": 0.9601,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and address updates",
+        "No security-relevant changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "cwe": "CWE-416",
+      "function": "AfdSanRedirectRequest (0x1C0080198 -> 0x1C0082338)",
+      "entry_point": "AFD SAN accept-redirect request handled via NtDeviceIoControlFile on \\Device\\Afd",
+      "call_chain": [
+        "Winsock accept-side request -> \\Device\\Afd dispatch -> AfdSanRedirectRequest (accept-redirect handler)"
+      ],
+      "vulnerability_class": "Missing state validation guarding a dangling pending-IRP / use-after-free class window (feature-staged fix)",
+      "description": "The patched build adds a new endpoint state byte at offset +0x91 and a feature-gated guard in the accept-redirect handler. In both builds the handler runs under the endpoint spinlock ([ep+0x30]), checks the endpoint signature 0x1AFD, state 4, and status 0x103/0xC0000016, sets the IRP CancelRoutine to AfdSanCancelRequest, and checks IRP->Cancel ([irp+0x44]). In the unpatched build, if the IRP is not cancelled it is linked onto the endpoint pending list at [ep+0x70]. In the patched build, after the Cancel check it also calls Feature_623580472__private_IsEnabledDeviceUsage() and, when enabled, checks [ep+0x91]; if that byte is non-zero the IRP is completed with STATUS_CANCELLED (0xC0000120) instead of being queued. The +0x91 byte is new to the patched build (referenced nowhere in the unpatched binary): AfdSanInitEndpoint zero-inits it (feature-gated) and AfdSanCancelAccept sets it to 1 when it cancels/drains an endpoint's accept. The guard prevents a request IRP from being linked onto an endpoint whose accept was already cancelled. This is NOT an uninitialized-field read (CWE-908 does not apply) and the earlier claim of a reachable use-after-free via closing a socket while an accept IRP is pending is not supported by the binaries.",
+      "trigger_conditions": "Observable only when Feature_623580472__private_IsEnabledDeviceUsage() is enabled (absent from the unpatched binary). Drive an endpoint's accept to be cancelled (AfdSanCancelAccept sets [ep+0x91]=1 and drains [ep+0x70] in the patched build), then cause a further accept request to reach AfdSanRedirectRequest for the same endpoint. Patched: the IRP is completed STATUS_CANCELLED. Unpatched: the IRP is linked onto the pending list of a cancelled endpoint.",
+      "primitive": "None demonstrable from the two binaries. The queuing and the cancel-accept drain both run under the endpoint spinlock, and pending IRPs carry a cancel routine, so the ordering the guard defends against is not shown to yield a controllable free-then-use. No information leak, pool-grooming, or privilege-escalation chain is demonstrable and none is claimed.",
+      "evidence": "UNPATCHED AfdSanRedirectRequest @ 0x1C0080198:\n0x1C008027A cmp byte [rdi+44h], 0        ; IRP->Cancel -- the ONLY pre-queue gate\n0x1C0080285 jz 0x1C00802D6               ; not cancelled -> link into [rsi+0x70]\n0x1C00802F5 mov [rcx], rax               ; list link\n0x1C0080380 mov eax, 103h                ; STATUS_PENDING\n(no reference to [rsi+0x91] anywhere in this build)\n\nPATCHED AfdSanRedirectRequest @ 0x1C0082338:\n0x1C008241A cmp byte [rbx+44h], 0\n0x1C008241E jnz 0x1C00824F5\n0x1C0082424 call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C0082429 test eax, eax\n0x1C008242B jz 0x1C008243A\n0x1C008242D cmp byte [rsi+91h], 0\n0x1C0082434 jnz 0x1C00824F5\n0x1C008243A ... link IRP into [rsi+0x70]\n0x1C008253E mov edi, 0C0000120h ; STATUS_CANCELLED\n\nPRODUCER AfdSanCancelAccept @ 0x1C007F140 (patched):\n0x1C007F1EE call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C007F1F7 mov byte [rdi+91h], 1\n0x1C007F1FE lea rcx, [rdi+70h] ; drain pending list\n(unpatched AfdSanCancelAccept @ 0x1C007D130 has neither)\n\nINITIALIZER AfdSanInitEndpoint @ 0x1C0082020 (patched, new):\n0x1C0082069 mov byte [rbx+90h], 0        ; unconditional\n0x1C0082070 call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C0082079 mov byte [rbx+91h], 0        ; feature-gated\n0x1C0082089 mov [rbx], ax (0x1AFD)"
+    },
+    {
+      "severity": "low",
+      "cwe": "CWE-416",
+      "function": "AfdSanFastCompleteRequest (0x1C007EF30 -> 0x1C0081030)",
+      "entry_point": "AFD SAN receive/accept fast-complete request handled via NtDeviceIoControlFile on \\Device\\Afd",
+      "call_chain": [
+        "Winsock receive/accept-side request -> \\Device\\Afd dispatch -> AfdSanFastCompleteRequest"
+      ],
+      "vulnerability_class": "Missing state validation guarding a dangling pending-IRP / use-after-free class window (feature-staged fix)",
+      "description": "Same feature-staged guard as AfdSanRedirectRequest, applied to the receive/accept fast-complete handler. Under the endpoint spinlock, after checking IRP->Cancel ([irp+0x44]) the patched build calls Feature_623580472__private_IsEnabledDeviceUsage() and, when enabled, checks [ep+0x91] (cmp byte [r15+0x91],0 at 0x1C0081445) before linking the IRP into [ep+0x70]. The unpatched handler has neither the feature call nor the +0x91 check. A third consumer, AfdSanAcquireContext (patched 0x1C007E830), carries the same read guard.",
+      "trigger_conditions": "As Finding #1, on the receive/accept fast-complete path. Observable only when the feature is enabled.",
+      "primitive": "None demonstrable from the two binaries.",
+      "evidence": "UNPATCHED (0x1C007EF30): cmp byte [rdi+0x44],0 then queue into [ep+0x70] if not cancelled; no feature call, no +0x91.\nPATCHED (0x1C0081030):\n0x1C0081436 cmp byte [rsi+44h], 0\n0x1C008143A jnz <cancel>\n0x1C008143C call Feature_623580472__private_IsEnabledDeviceUsage\n0x1C0081441 test eax, eax\n0x1C0081443 jz <queue>\n0x1C0081445 cmp byte [r15+91h], 0\n0x1C008144D jnz <cancel>\n0x1C008144F link into [r15+0x70]"
+    },
+    {
+      "severity": "low",
+      "cwe": "CWE-184",
+      "function": "AfdIsValidTdiDeviceName (0x1C000896C)",
+      "entry_point": "TDI device-name validation during socket/transport creation on \\Device\\Afd",
+      "call_chain": [
+        "Socket/transport creation -> \\Device\\Afd create handler -> AfdIsValidTdiDeviceName (name validation)"
+      ],
+      "vulnerability_class": "Incomplete list of disallowed inputs (exact-match blocklist bypass via substring embedding)",
+      "description": "The unpatched function validates a caller-supplied TDI device name against the one-entry AfdTdiInvalidDeviceNames blocklist using exact RtlEqualUnicodeString (case-insensitive). The patched function adds a Feature_2480880955__private_IsEnabledDeviceUsage() gate: when enabled it uses RtlFindUnicodeSubstring(callerName, blockedName), so a name that merely contains the blocked name is now rejected. This closes a bypass where the blocked device name is embedded inside a longer string. Also feature-staged (exact-match retained in the feature-off branch).",
+      "trigger_conditions": "Supply a TDI device name that contains a blocklist entry as a substring but is not byte-equal to it. Accepted by the unpatched build; rejected by the patched build when the feature is enabled.",
+      "primitive": "Security check bypass reaching a device name that should have been rejected. No memory-safety impact.",
+      "evidence": "UNPATCHED @ 0x1C000896C: 0x1C00089AE call RtlEqualUnicodeString ; loop bound cmp ebx,1 (one blocklist entry).\nPATCHED @ 0x1C000896C: 0x1C00089A3 call Feature_2480880955__private_IsEnabledDeviceUsage ; 0x1C00089AD jz 0x1C00089C8 (exact-match branch) ; 0x1C00089B7 call RtlFindUnicodeSubstring (substring branch)."
+    }
+  ],
+  "summary": "The patch introduces a new, feature-staged endpoint state byte at offset +0x91 in the AFD SAN endpoint structure and a guard that consumes it. AfdSanInitEndpoint (new, 0x1C0082020) zero-initializes the byte when Feature_623580472__private_IsEnabledDeviceUsage() is enabled; AfdSanCancelAccept (unpatched 0x1C007D130 -> patched 0x1C007F140) sets it to 1 and drains the endpoint pending list when an accept is cancelled; and the accept/receive redirect handlers AfdSanRedirectRequest (0x1C0082338), AfdSanFastCompleteRequest (0x1C0081030), and AfdSanAcquireContext (0x1C007E830) check it and complete an incoming request IRP with STATUS_CANCELLED instead of linking it onto [ep+0x70] when set. This guards against a request IRP being queued onto an endpoint whose accept was already cancelled/drained (a dangling pending-IRP / use-after-free class window). The offset +0x91 is referenced nowhere in the unpatched binary, so the earlier 'uninitialized field (CWE-908) read of stale pool residue leading to a reachable use-after-free' characterization is incorrect: this is a new state flag, not an uninitialized field, and no reachable memory-corruption primitive is demonstrable from the two binaries. The whole change is gated behind the WIL feature, which has no counterpart in the unpatched binary, so it is a staged rollout with the pre-patch behavior retained in the feature-off branch. Severity is Low. A secondary, also feature-gated change tightens the AfdIsValidTdiDeviceName blocklist from exact-match to substring-match (CWE-184), closing a name-embedding bypass with no memory-safety impact. Two changed-function entries in the source diff were same-address mismatches and are corrected here: sub_1C007D130 is AfdSanCancelAccept (not a TDI transmit handler), and sub_1C007C860 is AfdSanAcquireContext (a real guard consumer, not cosmetic)."
+}

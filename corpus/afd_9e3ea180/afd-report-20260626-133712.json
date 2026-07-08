@@ -1,0 +1,326 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9845,
+    "matched": 1182,
+    "changed": 22,
+    "identical": 1160,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "WskTdiCreateCO (unpatched @ 0x1C00480F8, patched @ 0x1C0048298)",
+      "similarity": 0.8598,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Adds a device-identity check after IoGetRelatedDeviceObject, guarded by a feature-staging flag. Patched: at 0x1C00483E8 calls EvaluateCurrentState(g_Feature_2881162555_60797108_FeatureDescriptorDetails); at 0x1C00483EF 'jz loc_1C004847F' jumps to the unchanged AfdIssueDeviceControl path when the feature is off. When on, it calls IoGetDeviceAttachmentBaseRef([rdi+0x10]) and compares against the cached expected device at [rsi+0x28]; on mismatch sets ebx=0xC0000184 (STATUS_INVALID_DEVICE_STATE) and tears down.",
+        "The unpatched version stores IoGetRelatedDeviceObject(FileObject) at [rsi+0x10] and proceeds to AfdIssueDeviceControl with no device comparison. This exact path is preserved in the patched build's feature-off branch.",
+        "AfdIssueDeviceControl call target is a relocated equivalent (function moved), not a behavior change.",
+        "IoGetDeviceAttachmentBaseRef is not a new import: it already exists at five call sites in the unpatched binary."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged defense-in-depth device-identity check, not a delivered fix. The pre-patch behavior is retained intact behind the disabled-feature branch (jz 0x1C004847F). The check verifies that the opened transport device's attachment base matches a device cached earlier at offset 0x28. Producing a mismatch requires attaching a filter driver to, or redirecting the namespace name of, the transport device stack, which are administrative operations; an unprivileged Winsock caller opens a fixed transport device for the requested protocol and cannot steer AFD to an unexpected device. No memory-corruption or type-confusion consequence is demonstrable from either build.",
+      "assembly_diff": "UNPATCHED WskTdiCreateCO @ 0x1C00480F8 (no identity check):\n0x1C0048229: call IoGetRelatedDeviceObject\n0x1C0048248: mov [rsi+10h], rax        ; store device object\n0x1C0048255: call AfdIssueDeviceControl ; proceed, no comparison\n0x1C0048260: xor eax, eax               ; return SUCCESS\n\nPATCHED WskTdiCreateCO @ 0x1C0048298 (feature-gated check):\n0x1C00483D1: call IoGetRelatedDeviceObject\n0x1C00483DD: lea rcx, g_Feature_2881162555_60797108_FeatureDescriptorDetails\n0x1C00483E4: mov [rdi+10h], rax\n0x1C00483E8: call EvaluateCurrentState\n0x1C00483EF: jz  loc_1C004847F          ; FEATURE OFF -> unchanged old path\n0x1C00483F9: call IoGetDeviceAttachmentBaseRef\n0x1C0048408: cmp [rsi+28h], rax         ; compare cached expected device\n0x1C004840C: jz  loc_1C0048473          ; match -> proceed\n0x1C004841A: mov ebx, 0C0000184h        ; STATUS_INVALID_DEVICE_STATE (mismatch)\n0x1C004849B: call AfdIssueDeviceControl ; loc_1C004847F: issue path"
+    },
+    {
+      "name": "WskTdiCreateAO (unpatched @ 0x1C0047CD4, patched @ 0x1C0047E24)",
+      "similarity": 0.9461,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Same feature-gated IoGetDeviceAttachmentBaseRef identity check as WskTdiCreateCO, guarded by EvaluateCurrentState(g_Feature_2881162555_60797108...) with the pre-patch path retained in the feature-off branch.",
+        "Cache field offsets shifted by 8 bytes to accommodate the new cached-device field at offset 0x28."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged variant of the same device-identity check. Not a delivered fix; pre-patch behavior retained behind the feature flag.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTdiCreateAO (@ 0x1C003D750)",
+      "similarity": 0.9491,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Main transport-create handler. Adds the same feature-gated identity check: 0x1C003E0A3 calls EvaluateCurrentState; 0x1C003E0AA 'jz 0x1C003E0FA' skips the check (old behavior, r15=rdi) when the feature is off; when on, IoGetDeviceAttachmentBaseRef + cmp [r13+0x28] + ebx=0xC0000184 on mismatch.",
+        "Cache structure field offsets shifted, reflecting the 8-byte-larger cache entry.",
+        "Error path calls the relocated AfdFreeTransportInfo for cache-entry cleanup."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged device-identity check in the main transport-create handler. Pre-patch behavior retained in the feature-off branch (jz 0x1C003E0FA). The cached expected device at offset 0x28 is only populated when the feature is on (see AfdGetTransportInfo).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetTransportInfo (@ 0x1C003B044)",
+      "similarity": 0.8669,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Transport-cache entry enlarged by 8 bytes; new device-pointer field at offset 0x28 (P[5]).",
+        "The new field is populated only when the feature is on: 0x1C003B4B7 calls EvaluateCurrentState; 0x1C003B4BE 'jz 0x1C003B4E5' skips storing IoGetDeviceAttachmentBaseRef(IoGetRelatedDeviceObject(fileobj)) into [r14] when the feature is off.",
+        "Data copy offsets shifted due to the new field; newly allocated entries initialize the new field to 0."
+      ],
+      "security_relevant": false,
+      "security_notes": "Cache-management function that stores the expected base device pointer later compared in the transport-create paths. Storage is feature-gated; when the feature is off the field is never written and no comparison occurs anywhere.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdQueryProviderInfo (@ 0x1C003B220)",
+      "similarity": 0.6383,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Signature gains an output parameter for the base device object.",
+        "When the feature is on, retrieves IoGetDeviceAttachmentBaseRef(IoGetRelatedDeviceObject(fileobj)) and returns it via the new output parameter.",
+        "Calls the relocated AfdIssueDeviceControl; error path restructured for the new output."
+      ],
+      "security_relevant": false,
+      "security_notes": "Provider/device lookup helper called by AfdGetTransportInfo. Returns the base device object used to seed the feature-gated cache field. Not security-relevant on its own.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdFreeTransportInfo (@ 0x1C003B300)",
+      "similarity": 0.2879,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Adds a feature-gated ObfDereferenceObject of the new cached device pointer (arg1[5] / offset 0x28) when freeing the cache entry, balancing the reference taken by the cache path."
+      ],
+      "security_relevant": false,
+      "security_notes": "Reference cleanup for the feature-gated cached device pointer. Only relevant when the feature is on; balances the added reference. Not an independent security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferEnd (@ 0x1C0061C30)",
+      "similarity": 0.6833,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Bluetooth RFCOMM IRP forwarding handler; reference-management helper functions relocated/renamed, refcount logic reorganized (InterlockedDecrement with conditional cleanup).",
+        "IRP minor code 0x520f."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferBegin (@ 0x1C0061E50)",
+      "similarity": 0.6833,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Mirror of AfdSocketTransferEnd with IRP minor code 0x510f. Same relocation and refcount reorganization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdWaitForListen (@ 0x1C005DE80)",
+      "similarity": 0.9086,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Receive handler with reordered conditional branches.",
+        "Cancel routine relocated.",
+        "Feature-staging check added in the not-connected path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanAcceptCore (@ 0x1C007E0B8)",
+      "similarity": 0.8636,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "SAN (Winsock Direct) receive-completion size handling. Unpatched requires the 12-byte minimum only when feature flag g_Feature_30880057_59779870 is on: at 0x1C007E379 EvaluateCurrentState, then 0x1C007E382 'cmp [r13+0x10], 0Ch; jb skip'. Patched makes the check unconditional: 0x1C007E360 'cmp ebx, 0Ch; jb loc_1C007E533'.",
+        "MDL mapping via MmMapLockedPages and buffer copy via memmove."
+      ],
+      "security_relevant": false,
+      "security_notes": "Finalizes a feature-staged minimum-size gate on the SAN accept path (makes the 12-byte minimum unconditional). This is the AFD SAN feature-staging pattern, not the transport-create change, and no impact for the sub-12-byte case is demonstrable. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLSendMessage (@ 0x1C0039544)",
+      "similarity": 0.9414,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature-staging conditional removed: an assignment made unconditional.",
+        "Helper function references relocated/renamed."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLSendMsgComplete (@ 0x1C0062070)",
+      "similarity": 0.9522,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-staging conditional removed from an IRP-completion test."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLDgramSendToComplete (@ 0x1C0077030)",
+      "similarity": 0.9539,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Same feature-staging conditional removal as AfdTLSendMsgComplete.",
+        "Variable renames."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanConnectHandler (@ 0x1C007F630)",
+      "similarity": 0.9549,
+      "change_type": "cosmetic",
+      "key_changes": ["Large function with mostly variable renames and address shifts."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLVcSendDgram (@ 0x1C0062790)",
+      "similarity": 0.9579,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-staging conditional removed: assignment made unconditional.",
+        "Cancel and completion routine references relocated."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLVcSendDgramComplete (@ 0x1C00629A0)",
+      "similarity": 0.9594,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Same feature-staging conditional removal as AfdTLSendMsgComplete."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetInformation (@ 0x1C00389B0)",
+      "similarity": 0.9746,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames and address shifts in large IOCTL dispatch function."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSendDatagram (@ 0x1C00765A0)",
+      "similarity": 0.9814,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IRP dispatch handler with variable renames and function reference updates.",
+        "Feature-staging conditional removed for an assignment."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdUnload (@ 0x1C0040330)",
+      "similarity": 0.9839,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Driver unload: adds a feature-staging teardown call and relocated references."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBind (@ 0x1C0037A80)",
+      "similarity": 0.9848,
+      "change_type": "cosmetic",
+      "key_changes": ["Address shifts and variable renames in large IOCTL dispatch function."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSend (@ 0x1C0050950)",
+      "similarity": 0.7593,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Receive IRP handler with restructured error handling and status-code ordering changes (STATUS_LOCAL_DISCONNECT / STATUS_PIPE_DISCONNECTED)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0052029",
+      "similarity": 0.7574,
+      "change_type": "behavioral",
+      "key_changes": ["Large function with structural reorganization and variable renames."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "WskTdiCreateCO / WskTdiCreateAO / AfdTdiCreateAO / AfdGetTransportInfo / AfdQueryProviderInfo / AfdFreeTransportInfo",
+      "entry_point": "AFD device IOCTL (NtDeviceIoControlFile on \\Device\\Afd) via Winsock connect/bind operations",
+      "call_chain": [
+        "NtDeviceIoControlFile(\\Device\\Afd)",
+        "AFD IOCTL dispatch",
+        "AfdTdiCreateAO (transport connection establishment)",
+        "WskTdiCreateCO or WskTdiCreateAO (device open via IoCreateFile)",
+        "IoGetRelatedDeviceObject (device stored; feature-gated identity check added in patched build)"
+      ],
+      "vulnerability_class": "Feature-staged defense-in-depth device-identity check (no delivered fix)",
+      "description": "The patch stages a new device-identity check in the AFD transport-create and transport-cache paths. In the unpatched build, WskTdiCreateCO (@ 0x1C00480F8) opens the transport device via IoCreateFile, references the FILE_OBJECT, obtains the device via IoGetRelatedDeviceObject, stores it, and issues the control request with no device comparison. In the patched build, WskTdiCreateCO (relocated to @ 0x1C0048298), WskTdiCreateAO, and AfdTdiCreateAO add, after IoGetRelatedDeviceObject, a check guarded by EvaluateCurrentState(g_Feature_2881162555_60797108_FeatureDescriptorDetails). When the feature is off, the code branches directly to the unchanged pre-patch request path (jz 0x1C004847F in WskTdiCreateCO). When on, it calls IoGetDeviceAttachmentBaseRef on the opened device and compares the attachment-base against a device pointer cached earlier at offset 0x28 (populated by AfdGetTransportInfo/AfdQueryProviderInfo only when the feature is on, and released by AfdFreeTransportInfo); on mismatch it returns STATUS_INVALID_DEVICE_STATE (0xC0000184). Because the pre-patch behavior is fully retained behind the disabled-feature branch, this is a staged rollout, not a delivered remediation. IoGetDeviceAttachmentBaseRef is not a new import; it already exists at five call sites in the unpatched binary.",
+      "trigger_conditions": "For the added check to ever fail, the transport device AFD opens must resolve to, or be intercepted by, a device other than the expected transport. Producing that state requires attaching a filter driver to the transport device stack or redirecting a \\Device\\ transport name in the Object Manager namespace, both administrative operations. An unprivileged process performing a normal Winsock connect/bind opens a fixed transport device determined by the protocol catalog and cannot steer AFD to an unexpected device. No unprivileged trigger produces a mismatch or any fault.",
+      "primitive": "None demonstrable from the binaries. The opened device is fixed by the protocol catalog for an unprivileged caller; no attacker-controlled input steers device selection, and neither build demonstrates any memory-corruption or type-confusion consequence. The only way to make the opened device differ from the expected one is itself an administrative capability, so the check is defense-in-depth robustness rather than a fix for an unprivileged-reachable flaw.",
+      "evidence": "UNPATCHED WskTdiCreateCO @ 0x1C00480F8:\n0x1C0048229: call IoGetRelatedDeviceObject\n0x1C0048248: mov [rsi+10h], rax        ; store device object (no comparison)\n0x1C0048255: call AfdIssueDeviceControl\n0x1C0048260: xor eax, eax               ; return SUCCESS\n\nPATCHED WskTdiCreateCO @ 0x1C0048298:\n0x1C00483D1: call IoGetRelatedDeviceObject\n0x1C00483DD: lea rcx, g_Feature_2881162555_60797108_FeatureDescriptorDetails\n0x1C00483E4: mov [rdi+10h], rax\n0x1C00483E8: call EvaluateCurrentState\n0x1C00483EF: jz  loc_1C004847F          ; FEATURE OFF -> unchanged old path\n0x1C00483F9: call IoGetDeviceAttachmentBaseRef\n0x1C0048408: cmp [rsi+28h], rax\n0x1C004840C: jz  loc_1C0048473          ; match -> proceed\n0x1C004841A: mov ebx, 0C0000184h        ; STATUS_INVALID_DEVICE_STATE (mismatch)\n0x1C004849B: call AfdIssueDeviceControl ; loc_1C004847F: issue path\n\nSame construct in AfdTdiCreateAO (EvaluateCurrentState @ 0x1C003E0A3, jz 0x1C003E0FA, IoGetDeviceAttachmentBaseRef @ 0x1C003E0C1, cmp [r13+28h]) and AfdGetTransportInfo (EvaluateCurrentState @ 0x1C003B4B7, jz 0x1C003B4E5, IoGetDeviceAttachmentBaseRef @ 0x1C003B4D6, store to [r14]).",
+      "assembly": "See evidence field. The load-bearing detail is the 'jz' after EvaluateCurrentState in each function, which routes the feature-off case to the unchanged pre-patch path, and the fact that the cached expected-device field (offset 0x28) is only written when the feature is on.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!WskTdiCreateCO (patched @ 0x1C0048298)",
+            "address": "0x1C00483E8",
+            "why": "Call to EvaluateCurrentState. eax==0 (jz 0x1C004847F) routes to the unchanged AfdIssueDeviceControl path; eax!=0 runs IoGetDeviceAttachmentBaseRef and the cmp [rsi+28h] identity comparison at 0x1C0048408."
+          },
+          {
+            "symbol": "afd!WskTdiCreateCO (unpatched @ 0x1C00480F8)",
+            "address": "0x1C0048229",
+            "why": "IoGetRelatedDeviceObject call; the returned device is stored at [rsi+10h] (0x1C0048248) and the request proceeds at 0x1C0048255 with no comparison."
+          },
+          {
+            "symbol": "afd!AfdTdiCreateAO (@ 0x1C003D750)",
+            "address": "0x1C003E0A3",
+            "why": "EvaluateCurrentState in the main transport-create handler; jz 0x1C003E0FA skips the IoGetDeviceAttachmentBaseRef / cmp [r13+28h] check when the feature is off."
+          }
+        ],
+        "watch": [
+          "eax after EvaluateCurrentState at 0x1C00483E8 (patched) = feature state; zero means the identity check is skipped and behavior equals unpatched",
+          "[rsi+0x28] (patched) = cached expected base device; only populated when the feature is on",
+          "[rsi+0x10] / [rdi+0x10] = DEVICE_OBJECT* from IoGetRelatedDeviceObject",
+          "rax after IoGetDeviceAttachmentBaseRef = attachment base compared against the cached device"
+        ],
+        "key_offsets": [
+          "0x1C00483E8 (patched): call EvaluateCurrentState — feature-staging gate",
+          "0x1C00483EF (patched): jz 0x1C004847F — feature-off routes to the unchanged old path",
+          "0x1C0048408 (patched): cmp [rsi+28h], rax — the feature-gated device identity comparison",
+          "0x1C0048229 (unpatched): call IoGetRelatedDeviceObject — device obtained, no comparison follows",
+          "0x1C003B4BE (patched AfdGetTransportInfo): jz 0x1C003B4E5 — cached device stored only when the feature is on"
+        ],
+        "trigger_setup": "Open an AFD socket (WSASocket or NtCreateFile on \\Device\\Afd) and issue connect/bind to drive AfdTdiCreateAO -> WskTdiCreateCO/WskTdiCreateAO. For an unprivileged caller the opened device is the fixed transport device for the requested protocol; when the feature is on the comparison matches and behavior equals the unpatched build. There is no unprivileged way to make the opened device differ from the expected one.",
+        "expected_observation": "For a normal unprivileged connect/bind, execution with the feature on reaches the match path (cmp [rsi+28h] equal) and proceeds identically to the unpatched build; with the feature off it takes the jz to the unchanged path. No fault or corruption is produced.",
+        "notes": "This is a Windows feature-staging (Velocity) rollout: g_Feature_2881162555_60797108 gates the new device-identity check across the transport-create and transport-cache functions, and the pre-patch code path is retained in every feature-off branch. Prior framing as CWE-843 type confusion / CWE-1235 with arbitrary read/write and local privilege escalation is not supported by either build: it required administrative preconditions (filter-driver attach or namespace redirection of a transport device) and a memory-corruption consequence that neither build demonstrates."
+      }
+    }
+  ],
+  "summary": "The patch does not deliver a reachable security fix. It stages a new device-identity check in the AFD transport-create path (WskTdiCreateCO, WskTdiCreateAO, AfdTdiCreateAO) and the supporting transport-cache helpers (AfdGetTransportInfo, AfdQueryProviderInfo, AfdFreeTransportInfo). Every new check is guarded by a Windows feature-staging flag, EvaluateCurrentState(g_Feature_2881162555_60797108...), with the exact pre-patch code path retained in the feature-disabled branch (verified at WskTdiCreateCO jz 0x1C004847F, AfdTdiCreateAO jz 0x1C003E0FA, AfdGetTransportInfo jz 0x1C003B4E5). The check verifies the opened transport device's attachment base against a device cached at offset 0x28. Producing a mismatch requires attaching a filter driver to, or redirecting the namespace name of, the transport device stack, which are administrative operations not available to an unprivileged Winsock caller. IoGetDeviceAttachmentBaseRef is not a new import (already present at five sites unpatched). No memory-corruption, type-confusion, or privilege-escalation impact is demonstrable from the binaries. The remaining changed functions are feature-staging finalizations, IRP-handler reorganizations, and relocations/renames. The AfdSanAcceptCore change makes a 12-byte minimum size gate unconditional on the SAN accept path (feature-staging finalization), with no demonstrable impact."
+}

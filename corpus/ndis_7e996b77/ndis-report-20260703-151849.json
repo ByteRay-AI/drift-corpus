@@ -1,0 +1,227 @@
+{
+  "binaries": {
+    "title": "ndis.sys - No security-relevant change (WIL feature-staged miniport/interface synchronization, old path retained)",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9858,
+    "matched": 3697,
+    "changed": 29,
+    "identical": 3668,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "verdict": "No security-relevant change is delivered unconditionally by this build. The patched binary adds two WIL feature-staging gates (Feature_CFHCancelTimerFix at 0x140092D98, Feature_NDPQualitySummer26 at 0x1400A4B60) and, behind them, stages new synchronization behavior in the miniport check-for-hang/wake-up DPC path and the NDIS interface-block create/delete lifecycle. In every affected function the pre-existing code path is fully retained and runs unchanged when the feature resolves disabled. This is a staged rollout, not a delivered fix.",
+  "changed_functions": [
+    {
+      "name": "ndisMWakeUpDpcX",
+      "address_unpatched": "0x14007CA70",
+      "address_patched": "0x14007ABE0",
+      "similarity": 0.776,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Added Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline() gate at 0x14007ACF9",
+        "Feature-ON branch (0x14007AD10): acquires the +0x60 spinlock, then calls KeSetEvent(block+0x778) while holding it (0x14007AD41), releasing after (0x14007ADB9)",
+        "Feature-OFF branch (0x14007AD54): retains the original behavior, byte-equivalent to unpatched (KeSetEvent at 0x14007AD65 with lock released, re-acquired at 0x14007AD7A)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Unpatched calls KeSetEvent(block+0x778) after KeReleaseSpinLockFromDpcLevel (early-exit path 0x14007CBE9->0x14007CC01; deferred path releases at 0x14007CAFB, signals at 0x14007CB79). The patch stages an alternative that signals under the +0x60 spinlock, but only when Feature_CFHCancelTimerFix resolves enabled; otherwise the original path runs. Not a delivered change.",
+      "assembly_diff": "UNPATCHED (ndisMWakeUpDpcX @ 0x14007CA70):\n0x14007CBE9: call KeReleaseSpinLockFromDpcLevel\n0x14007CBF5: lea rcx,[rbx+778h]\n0x14007CC01: call KeSetEvent            ; lock not held\n0x14007CB79: call KeSetEvent            ; deferred path, lock not held\n0x14007CB89: call KeAcquireSpinLockAtDpcLevel ; re-acquire afterward\n\nPATCHED (ndisMWakeUpDpcX @ 0x14007ABE0):\n0x14007ACF9: call Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline\n0x14007AD00: jz loc_14007AD54           ; feature OFF -> original path\n0x14007AD14: call KeAcquireSpinLockAtDpcLevel ; ON: acquire first\n0x14007AD41: call KeSetEvent            ; ON: under spinlock\n0x14007ADB9: call KeReleaseSpinLockFromDpcLevel\n0x14007AD65: call KeSetEvent            ; OFF: lock not held (== unpatched)\n0x14007AD7A: call KeAcquireSpinLockAtDpcLevel"
+    },
+    {
+      "name": "ndisQueuedCheckForHang",
+      "address_unpatched": "0x14007CC60",
+      "address_patched": "0x14007AE20",
+      "similarity": 0.9285,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Added Feature_CFHCancelTimerFix gate at 0x14007B0B5",
+        "Feature-ON branch (0x14007B197): acquires +0x60 spinlock, calls KeSetEvent(rdi+0x778) under it (0x14007B1C6), releases after (0x14007B207)",
+        "Feature-OFF branch (0x14007B0C2): original behavior retained, matches unpatched KeSetEvent at 0x14007CF01 with lock not held"
+      ],
+      "security_relevant": false,
+      "security_notes": "Unpatched signals rdi+0x778 at 0x14007CF01 with the +0x60 spinlock not held (released earlier in the loop). The patch stages a signal-under-spinlock variant behind Feature_CFHCancelTimerFix; the original path is retained when the feature is disabled. Not a delivered change.",
+      "assembly_diff": "UNPATCHED (ndisQueuedCheckForHang @ 0x14007CC60):\n0x14007CEF5: lea rcx,[rdi+778h]\n0x14007CF01: call KeSetEvent            ; lock not held\n\nPATCHED (ndisQueuedCheckForHang @ 0x14007AE20):\n0x14007B0B5: call Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline\n0x14007B0BC: jnz loc_14007B197          ; feature ON -> signal under spinlock\n0x14007B0CE: call KeSetEvent            ; OFF: lock not held (== unpatched)\n0x14007B197: call KeAcquireSpinLockRaiseToDpc ; ON: acquire first\n0x14007B1C6: call KeSetEvent            ; ON: under spinlock\n0x14007B207: call KeReleaseSpinLock"
+    },
+    {
+      "name": "ndisIfRegisterInterfaceEx",
+      "address_unpatched": "0x14007AF90",
+      "similarity": 0.7076,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Feature_NDPQualitySummer26 gate added",
+        "Feature-ON branch adds the PendingDeletionComplete KEVENT wait handshake so registration waits for a still-pending interface deletion before proceeding",
+        "Feature-OFF branch retains the original interface-list lookup under the existing spinlock (WPP_MAIN_CB.Reserved)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Interface registration path. The new event-based wait-for-deletion handshake is gated by Feature_NDPQualitySummer26 with the original path retained. Not a delivered change.",
+      "assembly_diff": "Function is large; the delivered delta is the Feature_NDPQualitySummer26 gate plus the PendingDeletionComplete wait, with the original lookup path retained when the feature is off."
+    },
+    {
+      "name": "ndisIfCreateInterfaceFromPersistentStore",
+      "address_unpatched": "0x14006C070",
+      "address_patched": "0x140089D40",
+      "similarity": 0.4679,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Added Feature_NDPQualitySummer26__private_IsEnabledDeviceUsageNoInline() gate (feature==0 runs the original path)",
+        "Feature-ON branch: KeInitializeEvent(&Event, NotificationEvent, 0); if the matching block is pending deletion, parks &Event in block->PendingDeletionComplete and waits via ndisWaitForKernelObject, then re-verifies (block->PendingDeletionComplete == &Event) before proceeding",
+        "Interface list is protected by the same spinlock (WPP_MAIN_CB.Reserved) in both branches; a secondary pending-deletion list is used only on the gated path"
+      ],
+      "security_relevant": false,
+      "security_notes": "Reached from ndisLoadNetworkInterfaceFromPersistedState (reconstructing interface state from persisted/registry data during interface initialization), not from an OID/IOCTL request. It looks up NDIS interface blocks by NetLuid/GUID (ndisIfFindInterfaceByNetLuid / ndisIfFindNetworkBlock) and creates them via ndisIfCreateInterface (0x1401676D0). The staged handshake serializes creation against a pending deletion of the same interface. Old path retained when the feature is off. Not a delivered change.",
+      "assembly_diff": "PATCHED entry (0x140089D40): if (Feature_NDPQualitySummer26__private_IsEnabledDeviceUsageNoInline() == 0) { original lookup under WPP_MAIN_CB.Reserved } else { KeInitializeEvent + park &Event in block->PendingDeletionComplete + ndisWaitForKernelObject + re-verify }."
+    },
+    {
+      "name": "IFBLOCK_DECREMENT_REF",
+      "address_unpatched": "0x140011220",
+      "similarity": 0.421,
+      "change_type": "feature_staged",
+      "key_changes": [
+        "Feature_NDPQualitySummer26 gate added around a new event signal",
+        "Feature-ON: signals block->PendingDeletionComplete before ExFreePoolWithTag(block, 0)",
+        "Feature-OFF: no new event signal; the free path is otherwise unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Interface-block reference decrementer that frees the block at refcount zero. The patch adds signalling of the new PendingDeletionComplete handshake event before the free, gated by Feature_NDPQualitySummer26. Not a delivered change.",
+      "assembly_diff": "PATCHED: if (block->AsyncEvent) KeSetEvent(block->AsyncEvent,0,0); if (Feature_NDPQualitySummer26...()) { if (block->PendingDeletionComplete) KeSetEvent(block->PendingDeletionComplete,0,0); } ExFreePoolWithTag(block,0);"
+    },
+    {
+      "name": "ndisNsiEnumerateAllInterfaceInformation",
+      "address_unpatched": "0x140011840",
+      "similarity": 0.8263,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Interface-list traversal adjusted alongside the same interface-lifecycle work",
+        "No delivered behavior change with the feature off"
+      ],
+      "security_relevant": false,
+      "security_notes": "NSI (Network Store Interface) enumerate-all query path. Not the 'bind/unbind handler' or reference-counting fix; the changes track the staged interface-lifecycle reorganization.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisNsiGetInterfaceInformation",
+      "address_unpatched": "0x140013A20",
+      "similarity": 0.7916,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Variable renaming and control-flow reshaping alongside the interface-lifecycle work",
+        "Interface-list access paths adjusted"
+      ],
+      "security_relevant": false,
+      "security_notes": "NSI get-interface-information query path. Not impersonation-token handling. Tracks the same interface-lifecycle reorganization; no delivered security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisNsiGetAllInterfaceInformation",
+      "address_unpatched": "0x140016110",
+      "similarity": 0.8081,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Interface-list access paths adjusted alongside the interface-lifecycle work"
+      ],
+      "security_relevant": false,
+      "security_notes": "NSI get-all-interface-information query path. Tracks the same reorganization; no delivered security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisIfInitializePhase1",
+      "address_unpatched": "0x140193604",
+      "similarity": 0.2356,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Initialization of the additional interface list used by the gated PendingDeletionComplete handshake",
+        "Reordered initialization sequence"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization support for the staged interface-lifecycle handshake.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline",
+      "address_patched": "0x140092D98",
+      "change_type": "cosmetic",
+      "key_changes": [
+        "New WIL feature helper: returns featureState&1 when featureState&0x10, else the compiled fallback"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging gate for the DPC/check-for-hang change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_NDPQualitySummer26__private_IsEnabledDeviceUsageNoInline",
+      "address_patched": "0x1400A4B60",
+      "change_type": "cosmetic",
+      "key_changes": [
+        "New WIL feature helper gating the interface-block create/delete handshake"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging gate for the interface-lifecycle change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisWdfRegisterCx",
+      "similarity": 0.9781,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Expected structure size 0x78->0x80",
+        "IoAllocateDriverObjectExtension size 0xA0->0xA8, matching memset 0xA0->0xA8"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structure-size increase for new fields, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisWdfNotifyStuckOperation",
+      "change_type": "cosmetic",
+      "key_changes": [
+        "New telemetry/notification helper (_NDIS_CX_STUCK_OPERATION_TYPE)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Watchdog/telemetry notification, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_RECORDER_SF_* tracing helpers and init reordering",
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP/ETW tracing thunks, telemetry IDs, and initialization reordering supporting the staged features"
+      ],
+      "security_relevant": false,
+      "security_notes": "Tracing/telemetry and staging-support churn.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": ["Feature_2332236090__private_IsEnabled* and folded interface-index/lambda helpers"],
+    "added": ["Feature_CFHCancelTimerFix__private_IsEnabled*", "Feature_NDPQualitySummer26__private_IsEnabled*", "ndisWdfNotifyStuckOperation", "WPP_RECORDER_SF_* tracing thunks"]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "delivered": false,
+      "function": "ndisMWakeUpDpcX / ndisQueuedCheckForHang",
+      "address_unpatched": ["0x14007CA70", "0x14007CC60"],
+      "address_patched": ["0x14007ABE0", "0x14007AE20"],
+      "entry_point": "Internal miniport check-for-hang timer / wake-up DPC and adapter halt/reset sequencing (not an unprivileged user-mode request)",
+      "vulnerability_class": "Race/ordering hardening (adjacent to CWE-362); no demonstrable use-after-free primitive in these binaries",
+      "description": "In the unpatched build, ndisMWakeUpDpcX and ndisQueuedCheckForHang signal the miniport block's embedded event at +0x778 (KeSetEvent) after releasing the +0x60 spinlock, and re-acquire it afterward (ndisMWakeUpDpcX early-exit 0x14007CBE9->0x14007CC01 and deferred 0x14007CB79->0x14007CB89; ndisQueuedCheckForHang 0x14007CF01). The patched build adds a Feature_CFHCancelTimerFix gate (0x14007ACF9 / 0x14007B0B5); when enabled it signals the event while holding the +0x60 spinlock. When disabled, the original lock-released-then-signal path runs unchanged. No behavior change is delivered unconditionally.",
+      "reachability": "These callbacks are internal to the miniport lifecycle (check-for-hang timer, wake-up DPC, reset). No attacker-controlled user-mode trigger for the teardown race is evidenced in this corpus. The miniport block is reference-counted (ndisReferenceMiniport/ndisDereferenceMiniport) around the work.",
+      "primitive": "None demonstrable. The embedded event at +0x778 is real; no pool tag, allocation size, or object-replacement path is evidenced. Whether the original ordering is an exploitable use-after-free or a benign timing hardening is not determinable from these binaries.",
+      "evidence": "UNPATCHED ndisMWakeUpDpcX @ 0x14007CA70:\n0x14007CBE9 call KeReleaseSpinLockFromDpcLevel\n0x14007CC01 call KeSetEvent            ; [rbx+778h], lock not held\n0x14007CB79 call KeSetEvent            ; deferred path, lock not held\n0x14007CB89 call KeAcquireSpinLockAtDpcLevel\n\nPATCHED ndisMWakeUpDpcX @ 0x14007ABE0:\n0x14007ACF9 call Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline\n0x14007AD00 jz loc_14007AD54           ; OFF -> original path\n0x14007AD14 call KeAcquireSpinLockAtDpcLevel ; ON: acquire first\n0x14007AD41 call KeSetEvent            ; ON: under spinlock\n0x14007ADB9 call KeReleaseSpinLockFromDpcLevel\n0x14007AD65 call KeSetEvent            ; OFF: lock not held (== unpatched)\n\nUNPATCHED ndisQueuedCheckForHang @ 0x14007CC60:\n0x14007CEF5 lea rcx,[rdi+778h]\n0x14007CF01 call KeSetEvent            ; lock not held\n\nPATCHED ndisQueuedCheckForHang @ 0x14007AE20:\n0x14007B0B5 call Feature_CFHCancelTimerFix__private_IsEnabledDeviceUsageNoInline\n0x14007B0BC jnz loc_14007B197          ; ON -> under spinlock\n0x14007B0CE call KeSetEvent            ; OFF: lock not held (== unpatched)\n0x14007B1C6 call KeSetEvent            ; ON: under spinlock (0x14007B197 block)"
+    },
+    {
+      "severity": "informational",
+      "delivered": false,
+      "function": "ndisIfCreateInterfaceFromPersistentStore / ndisIfRegisterInterfaceEx / IFBLOCK_DECREMENT_REF",
+      "address_unpatched": ["0x14006C070", "0x14007AF90", "0x140011220"],
+      "address_patched": ["0x140089D40", "0x14007AF90", "0x140011220"],
+      "entry_point": "Interface initialization from persisted (registry) state via ndisLoadNetworkInterfaceFromPersistedState, and interface registration; not an unprivileged user-mode OID/IOCTL request",
+      "vulnerability_class": "Create/delete serialization hardening (adjacent to CWE-362); no demonstrable primitive in these binaries",
+      "description": "The patched build adds a Feature_NDPQualitySummer26 gate around a new PendingDeletionComplete KEVENT handshake in the interface-block (_NDIS_IF_BLOCK) lifecycle: interface-create paths park a local event in block->PendingDeletionComplete and wait (ndisWaitForKernelObject) when a matching block is still pending deletion, and IFBLOCK_DECREMENT_REF signals that event before ExFreePoolWithTag. When the feature is disabled, the original list lookup and free run unchanged. No behavior change is delivered unconditionally.",
+      "reachability": "ndisIfCreateInterfaceFromPersistentStore is reached from ndisLoadNetworkInterfaceFromPersistedState (interface init from registry). The interface list is protected by the same spinlock (WPP_MAIN_CB.Reserved) in both builds and branches.",
+      "primitive": "None demonstrable. sub_1401676D0 is ndisIfCreateInterface (interface creation), not OID processing. No pool tag or allocation size for a use-after-free is evidenced.",
+      "evidence": "PATCHED ndisIfCreateInterfaceFromPersistentStore @ 0x140089D40:\nif (Feature_NDPQualitySummer26__private_IsEnabledDeviceUsageNoInline() == 0) { original lookup under WPP_MAIN_CB.Reserved }\nelse { KeInitializeEvent(&Event,NotificationEvent,0); ... block->PendingDeletionComplete = &Event; ndisWaitForKernelObject(&Event, ...); re-verify InterfaceByNetLuid->PendingDeletionComplete == &Event }\n\nPATCHED IFBLOCK_DECREMENT_REF @ 0x140011220:\nif (block->AsyncEvent) KeSetEvent(block->AsyncEvent,0,0);\nif (Feature_NDPQualitySummer26...()) { if (block->PendingDeletionComplete) KeSetEvent(block->PendingDeletionComplete,0,0); }\nExFreePoolWithTag(block,0);"
+    }
+  ],
+  "summary": "This ndis.sys diff delivers no unconditional security-relevant change. The patched build introduces two WIL feature-staging gates (Feature_CFHCancelTimerFix at 0x140092D98; Feature_NDPQualitySummer26 at 0x1400A4B60) and stages behind them: (1) signalling the miniport block's embedded event at +0x778 under the +0x60 spinlock in ndisMWakeUpDpcX / ndisQueuedCheckForHang instead of after releasing it, and (2) a PendingDeletionComplete KEVENT handshake serializing NDIS interface-block creation against pending deletion in ndisIfCreateInterfaceFromPersistentStore / ndisIfRegisterInterfaceEx / IFBLOCK_DECREMENT_REF. In every case the original path is fully retained and runs when the feature resolves disabled, so the change is a staged rollout rather than a delivered fix. The remaining changed functions are NSI query paths, initialization support for the new list, WIL feature helpers, telemetry/tracing (WPP), a NdisWdfRegisterCx structure-size bump, and a new watchdog notification helper. The earlier characterization of these as delivered unprivileged-user-mode OID use-after-free vulnerabilities with pool-spray/code-execution primitives is not supported by the binaries: the affected functions are internal miniport and interface-lifecycle routines, the entry points are timer/DPC and registry-persisted interface init rather than IOCTL/OID, sub_1401676D0 is ndisIfCreateInterface (not OID processing), and no pool tag, allocation size, or use-after-free primitive is present in the disassembly."
+}

@@ -1,0 +1,122 @@
+{
+  "binaries": {
+    "title": "msseccore.sys (Microsoft Security Core / VBS) - No security-relevant change (recompile with a redundant field zero in the APC context allocator and an opaque integrity-check flag-constant tweak)",
+    "id_unpatched": "msseccore_unpatched.sys",
+    "id_patched": "msseccore_patched.sys",
+    "overall_similarity": 0.897
+  },
+  "changed_functions": [
+    {
+      "name": "SecAllocateKernelApcObject (0x1C0001884 -> 0x1C0001878)",
+      "change_type": "non_security_constant",
+      "key_changes": [
+        "Patched build adds 'mov byte [rbx+0x70], 0' at 0x1C0001946, immediately after a memset(ctx, 0, 0xB0)",
+        "Offset 0x70 (byte 112) is already zeroed by the preceding memset (176-byte clear) in both builds, so the added store is redundant and has no runtime effect"
+      ],
+      "security_relevant": false,
+      "security_notes": "The allocator zeroes the whole 0xB0-byte context with memset in both builds and then writes the type tag (+0x00), refcount (+0x60) and parent pointer (+0x68). The patched build additionally writes 0 to byte +0x70. Because the memset (an external call) already cleared bytes 0x00..0xAF, +0x70 is already 0, so this is a redundant defensive store. The +0x70 rundown flag is set to 1 only in SecInsertQueueKernelApcObject (0x1C0001AEB) after ExAcquireRundownProtection succeeds, consumed in SecFreeKernelApcObject, and re-cleared by memset on the next allocation; the acquire/release pair is matched and identical in both builds, so there is no stale-value or use-after-free condition.",
+      "assembly_diff": "Unpatched SecAllocateKernelApcObject @ 0x1C0001884:\n00000001C000193C  call    memset                    ; zero 0xB0 bytes (incl. +0x70)\n00000001C0001944  mov     dword ptr [rbx], 0B0DF03h  ; +0x00 type tag\n00000001C000194A  mov     [rbx+60h], rbp             ; +0x60 refcount = 1\n00000001C000194E  mov     [rbx+68h], rdi             ; +0x68 parent pointer\n00000001C0001952  lock xadd [rdi+10h], rcx          ; no store to +0x70\n\nPatched SecAllocateKernelApcObject @ 0x1C0001878:\n00000001C0001930  call    memset                    ; same 0xB0-byte zero\n00000001C0001938  mov     dword ptr [rbx], 0B0DF03h  ; +0x00 type tag\n00000001C000193E  mov     [rbx+60h], rbp             ; +0x60 refcount = 1\n00000001C0001942  mov     [rbx+68h], rdi             ; +0x68 parent pointer\n00000001C0001946  mov     byte ptr [rbx+70h], 0     ; ADDED (redundant, already 0)\n00000001C000194A  lock xadd [rdi+10h], rcx"
+    },
+    {
+      "name": "SecKernelIntegrityCheck (0x1C0008178 -> 0x1C00081B8)",
+      "change_type": "non_security_constant",
+      "key_changes": [
+        "Request-structure flags word at struct offset +0x08 changes 0xA000008 -> 0xA000006",
+        "Field-by-field stack zeroing in the unpatched build is replaced by two memset calls in the patched build (codegen)",
+        "The changed value is passed to the registered code-integrity verification callback (qword_1C0007008), NOT to MmProtectDriverSection; it is not a page-protection value and does not involve PAGE_WRITECOPY"
+      ],
+      "security_relevant": false,
+      "security_notes": "SecKernelIntegrityCheck builds a 0x40-byte request on the stack and passes it (with an output buffer) to qword_1C0007008, which is the code-integrity verification callback populated by SecKernelIntegrityCallback (SecIsKernelIntegrityEnabled just tests it for non-null). The only behavioural difference is the flags word at struct +0x08 changing 0xA000008 -> 0xA000006. The caller-supplied signing level (arg a1, validated < 6) is written to a different field (struct +0x30) and is unchanged. The bit-level meaning of this flags word cannot be determined from these two binaries, so no security direction (tightening, relaxation, or neutral) is asserted.",
+      "assembly_diff": "Unpatched SecKernelIntegrityCheck @ 0x1C0008178:\n00000001C0008231  mov     [rbp+57h+var_70], 40h        ; req size 0x40\n00000001C0008239  mov     [rbp+57h+var_68], 0A000008h  ; flags word (changed)\n00000001C0008260  mov     rax, cs:qword_1C0007008      ; CI verification callback\n00000001C000826F  call    cs:__guard_dispatch_icall_fptr\n\nPatched SecKernelIntegrityCheck @ 0x1C00081B8:\n00000001C000826F  mov     [rbp+57h+var_70], 40h\n00000001C0008277  mov     [rbp+57h+var_68], 0A000006h  ; flags word (changed)\n00000001C000829E  mov     rax, cs:qword_1C0007008      ; same callback pointer\n00000001C00082AD  call    cs:__guard_dispatch_icall_fptr"
+    },
+    {
+      "name": "SecAllocatePoolWithTag (0x1C0001050 -> 0x1C0001008)",
+      "change_type": "non_security_constant",
+      "key_changes": [
+        "Fallback ExAllocatePoolWithTag pool-type argument changes 0x600 -> 0x200",
+        "Both values keep the non-executable bit (0x200 = NonPagedPoolNx); only the raise-on-failure flag (0x400) is dropped"
+      ],
+      "security_relevant": false,
+      "security_notes": "This constant only affects the fallback path taken when the resolved allocation routine (qword_1C0007000) is null. The non-executable pool bit is preserved in both builds, so no pool-executability weakening occurs; the change only alters allocation-failure handling.",
+      "assembly_diff": "Unpatched: 00000001C000106D  mov  ecx, 600h   ; PoolType\nPatched:   00000001C0001025  mov  ecx, 200h   ; PoolType"
+    },
+    {
+      "name": "memmove (0x1C0001C80)",
+      "change_type": "cosmetic",
+      "key_changes": ["Different instruction sequence for the same block move; identical semantics"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon (0x1C0001BCC)",
+      "change_type": "cosmetic",
+      "key_changes": ["'movzx edx' replaced with 'mov dl' + 'movzx eax, dl'; identical byte semantics, different register allocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecCreateKernelClient (0x1C0008378)",
+      "change_type": "cosmetic",
+      "key_changes": ["Inline xorps/movups zeroing replaced with a memset call; identical behaviour"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecRegisterKernelExtension (0x1C0008304 -> 0x1C00082F0)",
+      "change_type": "cosmetic",
+      "key_changes": ["Inline 'and ...,0' zeroing replaced with a memset call; identical behaviour"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecCreateDriverValidationKernelEcp (0x1C0008560 -> 0x1C00085FC)",
+      "change_type": "cosmetic",
+      "key_changes": ["Inline zeroing replaced with a memset call; symbol/layout addresses shifted; identical behaviour"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecValidateDriverFileSignatureLevel (0x1C000169C -> 0x1C00014C0)",
+      "change_type": "cosmetic",
+      "key_changes": ["Inline zeroing replaced with memset; same IoQueryFullDriverPath / SecCreateDriverValidationKernelEcp / IoCreateFileEx (flags 0x89, 0x80, 0x160) / SecIsWindowsSigned logic and status codes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecBindHost (0x1C00010E0 -> 0x1C00010B0)",
+      "change_type": "cosmetic",
+      "key_changes": ["Register allocation differences (immediate 1 materialised via a register vs inline); no behavioural change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry (0x1C000A078 -> 0x1C000A008)",
+      "change_type": "cosmetic",
+      "key_changes": ["Stack-frame layout shift and inline-vs-memset version-info zeroing; same version check and lookaside setup"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverUnload / SecUninitializeKernelInterface",
+      "change_type": "cosmetic",
+      "key_changes": ["Relocated call/branch targets only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "This patch is a recompilation of msseccore.sys with no security-relevant change. Two deliberate non-cosmetic differences exist but neither fixes nor introduces a reachable vulnerability. (1) SecAllocateKernelApcObject (0x1C0001884 -> 0x1C0001878) adds 'mov byte [rbx+0x70], 0' at 0x1C0001946, but this immediately follows a memset(ctx, 0, 0xB0) that already zeroes offset +0x70 in both builds, so the store is redundant. The rundown-flag producer (SecInsertQueueKernelApcObject, 0x1C0001AEB) and consumer (SecFreeKernelApcObject) are byte-identical in both builds and the acquire/release pair is matched, so there is no stale-value or use-after-free condition. (2) SecKernelIntegrityCheck (0x1C0008178 -> 0x1C00081B8) changes one flags constant in the code-integrity verification request from 0xA000008 to 0xA000006; that value is passed to the registered code-integrity callback at qword_1C0007008 (not MmProtectDriverSection, and not a page-protection/PAGE_WRITECOPY value), and the caller-supplied signing level is unchanged. The exact bit meaning of that flags word is not recoverable from the binaries, so no security direction is asserted. All remaining changed functions are compiler codegen churn (inline zeroing replaced with memset calls, register allocation, and stack-frame/symbol-layout shifts); one further constant, the SecAllocatePoolWithTag fallback pool type (0x600 -> 0x200), keeps the non-executable bit and only drops the raise-on-failure flag."
+}

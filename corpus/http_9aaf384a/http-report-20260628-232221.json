@@ -1,0 +1,163 @@
+{
+  "binaries": {
+    "title": "http.sys - Double-fetch (TOCTOU) on user-supplied IOCTL pointer fields enabling arbitrary kernel memory read",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9918,
+    "matched": 3910,
+    "changed": 6,
+    "identical": 3904,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlGenerateTrailers (sub_1400755C0)",
+      "similarity": 0.684,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched code reads each embedded data pointer (*(entry+0x8) and *(entry+0x10)) from user-mode memory twice: once for UlProbeAnsiString validation (sub_1400640f0), then re-reads the same field for the memmove copy (sub_14014de80) — a source-pointer double-fetch / TOCTOU",
+        "Patched code captures each pointer once into register r12 (r12 = *(entry+8)) and uses that captured value for both the probe and the copy",
+        "The copy source in the patched build is gated on the Known-Issue-Rollback flag UxKirHttpReadingTrailersFromUm: when set, the memmove source is the captured r12; when clear, it re-reads *(entry+8) from user memory (rollback path). The flag is set in UxStartEnvironmentModule from a Feature-staging query.",
+        "sub_1400640f0 is UlProbeAnsiString (not ProbeForRead); the whole entry array is separately validated once via UlProbeForRead. sub_14014de80 (unpatched) and sub_14014e300 (patched) are the same memmove routine at a relocated address."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is a CWE-367 (Time-of-Check Time-of-Use) source-pointer double-fetch. UlGenerateTrailers builds the trailer section of an outbound HTTP response from a user-supplied descriptor (a2): count at offset 0x8, entry-array pointer at offset 0x10. Each 0x18-byte entry has a length (offset 0x0), a secondary length (offset 0x2), and two user-mode data pointers (offsets 0x8 and 0x10). The unpatched code probes each data pointer with UlProbeAnsiString, then re-reads the same field for memmove. A concurrent user-mode thread can swap the field between probe and copy to a kernel address, so the copy sources from kernel memory into the response trailer buffer — a kernel information disclosure. The entry count must be non-zero and < 0x2710 (10000).",
+      "assembly_diff": "UNPATCHED (UlGenerateTrailers sub_1400755C0, loop cold chunk) — double-fetch of *(entry+0x8):\n0x14015f4cb: mov rcx, qword [rax+0x8]      ; FIRST read: pointer for probe\n0x14015f4cf: call UlProbeAnsiString (0x1400640f0)\n...\n0x14015f504: mov rdx, qword [rsp+0x50]\n0x14015f509: mov rdx, qword [rdx+0x8]      ; SECOND read: pointer for memmove (re-read from user memory)\n0x14015f50d: mov rcx, r13\n0x14015f510: call memmove (0x14014de80)    ; copies from attacker-swappable pointer\n\nSame double-fetch of *(entry+0x10):\n0x14015f546: mov rcx, qword [rax+0x10]     ; FIRST read: pointer for probe\n0x14015f54a: call UlProbeAnsiString (0x1400640f0)\n...\n0x14015f56b: mov rdx, qword [rsp+0x50]\n0x14015f570: mov rdx, qword [rdx+0x10]     ; SECOND read: pointer for memmove (re-read)\n0x14015f577: call memmove (0x14014de80)\n\nPATCHED (UlGenerateTrailers sub_14009DE00) — single-capture, KIR-gated:\n0x14009df66: mov r12, qword [rax+8]        ; CAPTURE pointer once into r12\n0x14009df77: mov rcx, r12                  ; probe uses captured r12\n0x14009df7a: cmp cs:UxKirHttpReadingTrailersFromUm, 0\n0x14009df81: jz 0x14009dfa5                ; flag==0 -> rollback (re-read) path\n0x14009df83: call UlProbeAnsiString (0x1400640f0)\n0x14009dfa0: mov rdx, r12                  ; FIX: copy source is the captured r12\n0x14009dfa3: jmp 0x14009dfc6\n0x14009dfc2: mov rdx, qword [r13+8]        ; rollback path: re-read *(entry+8)\n0x14009dfcf: call memmove (0x14014e300)"
+    },
+    {
+      "name": "UxQuicConnectionCopyBindings (sub_1400E1AB4)",
+      "similarity": 0.8581,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Copies ALPN/binding data from an in-kernel QUIC connection object (*(a1+1712)) into a caller output buffer under an exclusive push lock (a1+0x28). The copy source is kernel data read once, so this is not a source double-fetch.",
+        "Unpatched code truncates the destination pointer a3+8 to 32 bits: memmove((unsigned int)(a3+8), *(v10+16), *(v10+8)). Patched code preserves the full 64-bit destination pointer when UxKirWritingAndReadingUm is set, and only truncates in the rollback path (if UxKirWritingAndReadingUm == 0).",
+        "sub_14014de80 (unpatched) and sub_14014e300 (patched) are the same memmove routine at a relocated address, not a security wrapper substitution."
+      ],
+      "security_relevant": false,
+      "security_notes": "Handles a QUIC binding query that copies data out of an in-kernel connection object into a caller-supplied buffer under a push lock. The change concerns 64-bit user-mode destination-pointer handling (avoiding a 32-bit truncation of the output pointer for 64-bit callers), gated on the Known-Issue-Rollback flag UxKirWritingAndReadingUm. There is no probe-then-re-read of a user source pointer here.",
+      "assembly_diff": "UNPATCHED (sub_1400E1AB4):\n*(_DWORD *)(a3 + 4) = a3 + 8;                                  ; destination stored as 32-bit\nmemmove((void *)(unsigned int)(a3 + 8), *(v10+16), *(v10+8)); ; dest truncated to 32 bits\n\nPATCHED (sub_1400E1EA4):\nv14 = (unsigned __int64)(a3 + 2);\nv17 = *(const void **)(v11 + 16);\nif ( UxKirWritingAndReadingUm == 0 )\n    v14 = (unsigned int)v14;                                  ; truncate only in rollback path\nmemmove((void *)v14, v17, *(v11+8));                          ; full 64-bit dest when flag set"
+    },
+    {
+      "name": "UxQuicConnectionGetPeerIssuerListClient (sub_1400E28A8)",
+      "similarity": 0.8985,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Copies the peer certificate issuer list out of an in-kernel QUIC connection object (*(a1+1680)) into a caller buffer under a shared push lock (a1+0x28). Source list entries are kernel data.",
+        "Patched adds two loop variants gated on UxKirWritingAndReadingUmCertList. When set, the output base a3+16 is captured once into a register and used for the per-entry header writes; when clear, the loop re-reads *(a3) (the pointer it just stored into the caller buffer) as the base — a destination-pointer re-read that the fix removes.",
+        "The memmove source (issuer entry bytes) comes from the kernel list *(v9)+16*i, unchanged between builds; only the destination-base handling changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "QUIC issuer-list query that copies kernel-held certificate issuer data into a caller buffer. The fix captures the output base once rather than re-reading the just-written *(a3) pointer while placing per-entry header pointers, gated on UxKirWritingAndReadingUmCertList. This concerns the destination (write) pointer of a caller output buffer, not a user source double-fetch, and does not correspond to a distinct IOCTL constant in this function.",
+      "assembly_diff": "UNPATCHED (sub_1400E28A8) loop body:\n*(_QWORD *)a3 = a3 + 16;                                       ; store output base into caller buffer\n*(_QWORD *)(*(_QWORD *)a3 + 8*v17 + 8) = v16;                 ; base re-read from *(a3)\nmemmove(v16, *(*(v9)+16*v10+8), *(*(v9)+16*v10));             ; source = kernel issuer list\n\nPATCHED (sub_1400E2CB8) loop body (UxKirWritingAndReadingUmCertList != 0):\nv16 = a3 + 16;                                                 ; capture output base once\n*(_QWORD *)(v16 + 8*v18 + 8) = v17;                          ; uses captured base, no re-read of *(a3)\nmemmove(v17, *(*(v9)+16*v10+8), *(*(v9)+16*v10));"
+    },
+    {
+      "name": "UxpQuicConnectionCopyCertBlob (sub_1400E9D8C)",
+      "similarity": 0.8643,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Copies a certificate blob from an in-kernel structure (Src) into a caller buffer. The source is kernel data; the copy length comes from the kernel blob header *Src.",
+        "Unpatched a2 != 0 branch truncates the destination pointer to 32 bits: memmove((unsigned int)((_DWORD)a3 + 8), Src[1], *Src). Patched build moves this branch into the helper UxpQuicConnectionCopyCertBlob32 (sub_1400ea280), which preserves the full 64-bit destination when UxKirWritingAndReadingUm is set and truncates only in the rollback path.",
+        "UxpQuicConnectionCopyCertBlob32 (sub_1400ea280) exists in both builds; the patch routes the a2 != 0 case through it rather than adding a new function."
+      ],
+      "security_relevant": false,
+      "security_notes": "QUIC certificate-blob query that copies kernel-held data into a caller buffer. The change concerns 64-bit user-mode destination-pointer handling (avoiding a 32-bit truncation of the output pointer), gated on UxKirWritingAndReadingUm and factored into the UxpQuicConnectionCopyCertBlob32 helper. There is no probe-then-re-read of a user source pointer.",
+      "assembly_diff": "UNPATCHED (sub_1400E9D8C, a2 != 0 branch):\n*((_DWORD *)a3 + 1) = (_DWORD)a3 + 8;\nmemmove((void *)(unsigned int)((_DWORD)a3 + 8), Src[1], *(unsigned int *)Src); ; dest truncated to 32 bits\n\nPATCHED (sub_1400EA1EC dispatches to UxpQuicConnectionCopyCertBlob32 sub_1400ea280):\nif ( UxKirWritingAndReadingUm == 0 )\n    v7 = (unsigned int)(a2 + 8);          ; truncate only in rollback path\n*(_DWORD *)(a2 + 4) = v7;\nmemmove((void *)v7, a1[1], *(unsigned int *)a1); ; full 64-bit dest when flag set"
+    },
+    {
+      "name": "UxStartEnvironmentModule (sub_1400B6AF0)",
+      "similarity": 0.9427,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Sets three Known-Issue-Rollback flags from Windows Feature-staging queries: UxKirHttpReadingTrailersFromUm = Feature_2280337722__private_IsEnabledDeviceUsageNoInline(), UxKirWritingAndReadingUm = Feature_1255102777__private_IsEnabledDeviceUsageNoInline(), UxKirWritingAndReadingUmCertList = Feature_1282877755__private_IsEnabledDeviceUsageNoInline()",
+        "These three flags are new in the patched build (absent from the unpatched decompilation) and gate the corrected paths in UlGenerateTrailers, UxQuicConnectionCopyBindings/UxpQuicConnectionCopyCertBlob, and UxQuicConnectionGetPeerIssuerListClient respectively"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization routine (patched at 0x1400B6E60) that stages the Known-Issue-Rollback flags controlling the user-mode pointer-handling changes. The flags come from Feature-staging APIs, not registry double-fetch toggles. Not directly reachable by an attacker but explains how the fixes are gated and can be rolled back.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14015F5C7",
+      "similarity": 0.969,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address 0x14015F5C7 lies inside the UlGenerateTrailers cold chunk rather than a standalone function; the rdi-vs-rbx register-allocation difference is a recompile byproduct with no independent behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "UlGenerateTrailers (sub_1400755C0)",
+      "entry_point": "HTTP response-send path reachable from the HTTP Server API: a caller submits a response whose trailer descriptor points to an array of user-mode entries. Dispatched via UlSendEntityBodyIoctl (sub_140098b80) / UlSendEntityBodyFastIo (sub_14004b3e0) against \\Device\\Http\\*.",
+      "call_chain": [
+        "\\Device\\Http\\* response-send request",
+        "UlSendEntityBodyIoctl (sub_140098b80) / UlSendEntityBodyFastIo (sub_14004b3e0)",
+        "UlFastSendHttpResponse (sub_1400978b8)",
+        "UlCaptureHttpResponse (sub_14009ab5c)",
+        "UlpPrepareHttpResponse (sub_14009b744)",
+        "UlGenerateTrailers (sub_1400755C0) — source-pointer double-fetch on the trailer entry pointer fields"
+      ],
+      "vulnerability_class": "Double-fetch / TOCTOU (CWE-367) on a user-supplied source pointer in the HTTP trailer descriptor",
+      "description": "UlGenerateTrailers (sub_1400755C0) builds the trailer section of an outbound HTTP response from a user-supplied descriptor (arg2): count at offset +0x8, entry-array pointer at offset +0x10. Each 0x18-byte entry holds two user-mode data pointers at offsets +0x8 and +0x10. The whole array is validated once with UlProbeForRead; each embedded pointer is then validated with UlProbeAnsiString before its bytes are copied with memmove. The unpatched code reads each embedded pointer from user memory twice: once at 0x14015f4cb (mov rcx, [rax+8]) for the UlProbeAnsiString call at 0x14015f4cf, and again at 0x14015f509 (mov rdx, [rdx+8]) for the memmove at 0x14015f510. Between those reads a concurrent user-mode thread can overwrite the pointer field, swapping the probed user-mode address for a kernel address; the copy then sources from kernel memory into the response trailer buffer (r13). The same pattern exists for the +0x10 pointer (probe at 0x14015f546, copy at 0x14015f570). The patched build captures each pointer once into r12 (mov r12, [rax+8] at 0x14009df66) and, when the Known-Issue-Rollback flag UxKirHttpReadingTrailersFromUm is set, uses that captured value for the copy, closing the window.",
+      "trigger_conditions": "1. Open a handle to an HTTP device object (\\Device\\Http\\ReqQueue, \\Device\\Http\\Communication, or \\Device\\Http\\ClientSession) via the HTTP Server API (Win32 HttpCreateHttpHandle / HttpCreateRequestQueue or native NtDeviceIoControlFile). 2. Send an IOCTL whose input buffer (arg2) points to a structure containing: at offset +0x8 a uint16 entry count (must be non-zero and < 0x2710/10000), at offset +0x10 a pointer to an array of 0x18-byte entries. Each entry must have non-zero length fields at offsets +0x0 and +0x2, and data pointers at offsets +0x8 and +0x10. 3. From a second racing thread, continuously overwrite the pointer at entry+0x8 (or entry+0x10) — alternating between a valid user-mode address (to pass the probe) and a target kernel address (to redirect the copy). 4. Win the race: the probe sees the user-mode pointer (passes validation), but the copy reads the kernel pointer (copies kernel memory to output buffer). The entry array is iterated up to count times, and the loop continues as long as the accumulated data fits within arg5 (output buffer size), so larger output buffers increase the number of race attempts per IOCTL call.",
+      "primitive": "Arbitrary kernel memory read (information disclosure). The attacker controls the source address (kernel VA swapped in via race) and the destination is the IOCTL output buffer (arg4/r13) which is copied back to user mode. This leaks kernel memory contents — useful for KASLR bypass, token structure harvesting, or reading sensitive kernel data. With repeated races, arbitrary amounts of kernel memory can be read incrementally.",
+      "evidence": "UNPATCHED UlGenerateTrailers (sub_1400755C0) — double-fetch on entry+0x8 pointer:\n\n// FIRST READ — pointer for UlProbeAnsiString validation:\n0x14015f4cb: mov rcx, qword [rax+0x8]       ; read pointer from user memory (entry+8)\n0x14015f4cf: call UlProbeAnsiString (0x1400640f0)\n\n// SECOND READ — pointer re-fetched from SAME user memory for memmove:\n0x14015f504: mov rdx, qword [rsp+0x50]      ; reload entry base\n0x14015f509: mov rdx, qword [rdx+0x8]       ; RE-READ pointer from user memory — TOCTOU WINDOW\n0x14015f50d: mov rcx, r13                   ; destination = trailer buffer\n0x14015f510: call memmove (0x14014de80)     ; copies from attacker-swappable pointer\n\n// Same pattern for entry+0x10:\n0x14015f546: mov rcx, qword [rax+0x10]      ; FIRST read for probe\n0x14015f54a: call UlProbeAnsiString (0x1400640f0)\n0x14015f570: mov rdx, qword [rdx+0x10]      ; SECOND read for memmove — TOCTOU\n0x14015f577: call memmove (0x14014de80)\n\nPATCHED UlGenerateTrailers (sub_14009DE00) — single-capture, KIR-gated:\n0x14009df66: mov r12, qword [rax+8]         ; CAPTURE pointer once\n0x14009df77: mov rcx, r12                   ; probe uses captured value\n0x14009df7a: cmp cs:UxKirHttpReadingTrailersFromUm, 0\n0x14009df81: jz 0x14009dfa5                 ; flag==0 -> rollback (re-read) path\n0x14009df83: call UlProbeAnsiString (0x1400640f0)\n0x14009dfa0: mov rdx, r12                   ; FIX: copy source is the captured value\n0x14009dfc2: mov rdx, qword [r13+8]         ; rollback path re-reads entry+8\n0x14009dfcf: call memmove (0x14014e300)",
+      "assembly": "UlGenerateTrailers (sub_1400755C0) unpatched assembly (key double-fetch blocks, loop cold chunk):\n\n; Entry processing loop — iterate over user-supplied array\n0x14015f49a: movzx   eax, ax                        ; loop index\n0x14015f49d: lea     rcx, [rax+rax*2]               ; index * 3\n0x14015f4a1: mov     rax, qword [rsp+0x58]          ; array base\n0x14015f4a6: lea     rax, [rax+rcx*8]               ; entry = base + index*0x18\n0x14015f4aa: mov     qword [rsp+0x50], rax          ; save entry pointer\n0x14015f4af: movzx   ecx, word [rax]               ; length field (entry+0x0)\n0x14015f4b2: mov     word [rsp+0xc8], cx\n0x14015f4ba: test    cx, cx\n0x14015f4bd: jne     0x14015f4c4\n\n; === DOUBLE-FETCH #1: entry+0x8 pointer ===\n0x14015f4c4: movzx   r8d, sil                       ; probe mode\n0x14015f4c8: movzx   edx, cx                        ; length\n0x14015f4cb: mov     rcx, qword [rax+0x8]          ; *** FIRST READ: pointer for probe ***\n0x14015f4cf: call    0x1400640f0                    ; UlProbeAnsiString(pointer, length, mode)\n0x14015f4d4: movzx   eax, word [rsp+0xc8]\n0x14015f4dc: mov     dword [rsp+0xc8], eax\n0x14015f4e3: cmp     eax, r15d                      ; length vs remaining buffer\n0x14015f4e6: jbe     0x14015f4f6\n0x14015f4f6: mov     dword [rsp+0x44], 0x0\n0x14015f4fe: mov     rdi, rax                       ; length\n0x14015f501: mov     r8, rax                        ; size arg\n0x14015f504: mov     rdx, qword [rsp+0x50]          ; reload entry pointer\n0x14015f509: mov     rdx, qword [rdx+0x8]          ; *** SECOND READ: pointer for memmove ***\n0x14015f50d: mov     rcx, r13                       ; dest = trailer buffer\n0x14015f510: call    0x14014de80                    ; memmove(dest, attacker_ptr, len)\n0x14015f515: mov     qword [rsp+0x68], r13\n0x14015f51a: add     r13, rdi                        ; advance dest\n0x14015f51d: mov     qword [rsp+0x60], r13\n0x14015f522: sub     r15d, edi                       ; decrease remaining\n\n; === DOUBLE-FETCH #2: entry+0x10 pointer ===\n0x14015f53f: movzx   r8d, sil\n0x14015f543: movzx   edx, di                         ; secondary length\n0x14015f546: mov     rcx, qword [rax+0x10]         ; *** FIRST READ: pointer for probe ***\n0x14015f54a: call    0x1400640f0                    ; UlProbeAnsiString\n0x14015f54f: cmp     edi, r15d\n0x14015f552: jbe     0x14015f562\n0x14015f562: xor     eax, eax\n0x14015f564: mov     dword [rsp+0x44], eax\n0x14015f568: mov     r8, rdi                         ; size\n0x14015f56b: mov     rdx, qword [rsp+0x50]          ; reload entry pointer\n0x14015f570: mov     rdx, qword [rdx+0x10]         ; *** SECOND READ: pointer for memmove ***\n0x14015f574: mov     rcx, r13                        ; dest\n0x14015f577: call    0x14014de80                    ; memmove(dest, attacker_ptr, len)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http+0x15f4cb (UlGenerateTrailers cold chunk)",
+            "address": "0x14015f4cb",
+            "why": "First read of the entry+0x8 pointer for UlProbeAnsiString. At this point rax = entry base address (in user memory). rcx will be loaded with *(entry+0x8) — the pointer to be probed. This is the 'time of check' — the value here is the benign user-mode pointer. Verify rcx is a user-mode address (< 0x00008000_00000000)."
+          },
+          {
+            "symbol": "http+0x15f509 (UlGenerateTrailers cold chunk)",
+            "address": "0x14015f509",
+            "why": "Second read of entry+0x8 pointer for memmove. This is the 'time of use' — rdx is loaded with *(entry+0x8) re-read from user memory. If the race was won, rdx now holds the attacker-swapped kernel address. Compare rdx here against the rcx value from the probe breakpoint — if different, the TOCTOU race succeeded. The memmove at 0x14015f510 will then copy from this kernel address into the trailer buffer (r13)."
+          },
+          {
+            "symbol": "http!UlProbeAnsiString (sub_1400640f0)",
+            "address": "0x1400640f0",
+            "why": "UlProbeAnsiString. arg1 (rcx) = pointer being probed, arg2 (rdx) = length, arg3 (r8) = probe mode. Set a conditional breakpoint here to log the pointer value, then compare against the pointer used in the subsequent memmove call to detect the race."
+          },
+          {
+            "symbol": "http!memmove (sub_14014de80)",
+            "address": "0x14014de80",
+            "why": "The memmove routine. arg1 (rcx) = destination (trailer buffer r13), arg2 (rdx) = source pointer, arg3 (r8) = length. If rdx is a kernel address (> 0xFFFF800000000000), the double-fetch race was won and kernel memory is being copied into the caller-visible trailer buffer."
+          }
+        ],
+        "watch": [
+          "rax at 0x14015f4cb = entry base pointer (user-mode address of the 0x18-byte entry struct)",
+          "rcx at 0x14015f4cf = pointer being probed (should be user-mode, < MmUserProbeAddress)",
+          "rdx at 0x14015f509 = pointer being copied (if != rcx from probe, race was won; if kernel address, arbitrary read achieved)",
+          "r13 = destination output buffer (kernel pool, contents returned to user via IOCTL output)",
+          "r15d = remaining output buffer capacity; when this reaches 0, loop stops copying",
+          "word [rax] at entry = element length (int16_t), controls how many bytes are copied per entry",
+          "word at [rsi+0x8] = entry count (must be 1-9999, i.e., < 0x2710)"
+        ],
+        "key_offsets": [
+          "0x14015f4cb: mov rcx, [rax+8] — FIRST fetch of entry+0x8 pointer (for probe)",
+          "0x14015f4cf: call 0x1400640f0 — UlProbeAnsiString on first-fetched pointer",
+          "0x14015f509: mov rdx, [rdx+8] — SECOND fetch of entry+0x8 pointer (for copy) — THE BUG",
+          "0x14015f510: call 0x14014de80 — memmove with potentially swapped pointer",
+          "0x14015f546: mov rcx, [rax+0x10] — FIRST fetch of entry+0x10 pointer (for probe)",
+          "0x14015f570: mov rdx, [rdx+0x10] — SECOND fetch of entry+0x10 pointer (for copy) — THE BUG",
+          "0x14015f577: call 0x14014de80 — second memmove with potentially swapped pointer",
+          "0x14015f487: loop increment and bounds check (cmp ax with entry count at [rsp+0xb8])"
+        ],
+        "trigger_setup": "1. Use the HTTP Server API (httpapi.dll) or direct NtDeviceIoControlFile to open a handle to \\Device\\Http\\ReqQueue or \\Device\\Http\\Communication. The HTTP Server API typically uses HttpCreateRequestQueue / HttpCreateServerSession. 2. Construct an IOCTL input buffer (Type3InputBuffer or SystemBuffer depending on method) containing: a header structure with entry count at offset +0x8 (uint16, value 1-N where N<10000) and an array pointer at offset +0x10 pointing to an array of 0x18-byte entries. 3. Each entry: offset+0x0 = uint16 data_length, offset+0x2 = uint16 secondary_length, offset+0x8 = pointer to data buffer, offset+0x10 = pointer to secondary data buffer. 4. Initially set entry+0x8 to a valid user-mode buffer. 5. From a second thread on the same process, use InterlockedExchange64 to atomically swap the qword at entry+0x8 between the valid user-mode address and a target kernel address (e.g., a known kernel structure address for info leak). 6. Loop the IOCTL call until the race is won — detect success by checking if the output buffer contains kernel data patterns (non-zero high bytes, pool tags, etc.).",
+        "expected_observation": "When the race is won: at breakpoint 0x14015f509, rdx will contain a kernel-mode address (e.g., 0xFFFFF80xxxxx) while rcx at the earlier probe breakpoint 0x14015f4cb held a user-mode address. The memmove at 0x14015f510 will copy from the kernel address into r13 (trailer buffer). The request completes with kernel memory contents in the trailer buffer. If UlProbeAnsiString catches the swapped pointer, an exception (STATUS_ACCESS_VIOLATION) is raised and caught internally — the request may fail but the system remains stable. In the patched binary with UxKirHttpReadingTrailersFromUm set, the probe pointer and the copy source are always identical because the pointer is captured once in r12.",
+        "notes": "The race window is between the probe call return at 0x14015f4cf and the second pointer read at 0x14015f509. The entry array iteration provides multiple attempts per request (up to entry_count iterations). To improve race reliability: (1) use many entries (up to 9999) to maximize attempts, (2) place the entry struct on its own page/cache line, (3) pin the racing thread to a separate core. The genuine source-pointer double-fetch is in UlGenerateTrailers (sub_1400755C0), gated in the patched build by UxKirHttpReadingTrailersFromUm. The three UxQuicConnection* functions (sub_1400E1AB4, sub_1400E28A8, sub_1400E9D8C) copy from in-kernel QUIC objects into caller buffers; their patched changes concern 64-bit user-mode destination-pointer handling (gated by UxKirWritingAndReadingUm and UxKirWritingAndReadingUmCertList), not a user source double-fetch. All three KIR flags are staged in UxStartEnvironmentModule (sub_1400B6AF0) from Feature-staging queries; when a flag is clear the corresponding pre-patch behavior is retained."
+      }
+    }
+  ],
+  "summary": "The patch addresses a double-fetch (TOCTOU / CWE-367) in UlGenerateTrailers (sub_1400755C0) of the Windows HTTP kernel driver (http.sys). When building the trailer section of an outbound HTTP response, the unpatched function reads each user-supplied trailer data pointer from user-mode memory twice — once for UlProbeAnsiString validation and once for the memmove copy — without capturing it in between. A local process can race a second thread to swap the pointer from a user-mode to a kernel-mode address between the probe and the copy, causing the kernel to copy kernel memory into the response trailer buffer (a kernel information disclosure). The patched build captures each pointer once into r12 and uses that captured value for the copy when the Known-Issue-Rollback flag UxKirHttpReadingTrailersFromUm is set. The three related UxQuicConnection* functions (sub_1400E1AB4, sub_1400E28A8, sub_1400E9D8C) copy data out of in-kernel QUIC connection objects into caller buffers; their patched changes concern correct 64-bit user-mode destination-pointer handling (gated by UxKirWritingAndReadingUm and UxKirWritingAndReadingUmCertList) rather than a user source double-fetch. All three flags are staged in UxStartEnvironmentModule (sub_1400B6AF0) via Windows Feature-staging queries. The copy helper is the same memmove routine in both builds (sub_14014de80 relocated to sub_14014e300)."
+}

@@ -1,0 +1,227 @@
+{
+  "binaries": {
+    "title": "cng.sys - Defense-in-depth iteration cap added to ML-DSA sponge-driven rejection sampling (no attacker-reachable DoS)",
+    "id_unpatched": "cng_unpatched.sys",
+    "id_patched": "cng_patched.sys",
+    "overall_similarity": 0.9674,
+    "matched": 1578,
+    "changed": 68,
+    "identical": 1510,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (unpatched 0x18009767C, patched 0x18009A8C0)",
+      "similarity": 0.9187,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "Added a raw iteration counter (esi) that increments once per squeezed sponge byte and forces the loop to exit with error 0x8008 when it reaches 0x1e1 (481). See patched 0x18009A93E (cmp esi, 1E1h), 0x18009A9E7 (inc esi), 0x18009AA41 (mov edi, 8008h).",
+        "In the unpatched build the loop's sole exit condition is the output counter edi reaching 0x100 (cmp edi, 0x100; jb 0x1800976FB at 0x1800977DC). The output counter advances only when a nibble is accepted, so a sponge stream that rejected both nibbles indefinitely would keep the loop running. The patched build separates the raw iteration count (esi, capped at 0x1e1) from the output count (ebx, capped at 0x100), guaranteeing termination.",
+        "The bytes consumed are SHAKE/Keccak sponge output from SymCryptKeccakExtract (the sponge is seeded by SymCryptKeccakAppend inside the function), not attacker-supplied bytes. The rejection bound (mode 2 rejects nibble >= 0xF; mode 4 rejects nibble >= 9) is a static per-parameter-set constant."
+      ],
+      "security_relevant": false,
+      "security_notes": "Defense-in-depth robustness change in the ML-DSA (FIPS 204) bounded rejection-sampling routine. The unpatched loop can only be prevented from terminating by a sponge output that rejects nearly every nibble across 481 draws. That output is produced by a SHAKE/Keccak sponge (SymCryptKeccakExtract), and an attacker controls at most the absorbed seed, not the squeezed bytes; during key generation the seed is not even caller-chosen. Steering SHAKE output through seed choice is a computationally infeasible preimage-style problem, and the rejection bound is a compile-time constant, so the non-termination condition is not attacker-reachable. The change adds a termination guarantee (iteration cap returning 0x8008) and the caller SymCryptMlDsaExpandS now propagates that status; it does not fix a demonstrable attacker-reachable denial of service.",
+      "assembly_diff": "UNPATCHED SymCryptMlDsaRejBoundedPoly @ 0x18009767C (loop exits only on output counter):\n000000018009767C  mov     [rsp-8+arg_0], rbx\n0000000180097696  mov     rax, cs:__security_cookie\n00000001800976BA  call    memset\n00000001800976D4  call    SymCryptWipeAsm\n00000001800976D9  xor     edi, edi                 ; edi = 0 (output counter)\n00000001800976EE  call    SymCryptKeccakAppend     ; absorb seed into sponge\n; === LOOP START (0x1800976FB) - no iteration counter ===\n00000001800976FB  xor     r9d, r9d\n000000018009770C  call    SymCryptKeccakExtract    ; squeeze one sponge byte\n0000000180097711  mov     cl, [rsp+140h+var_11F]   ; cl = squeezed byte\n0000000180097715  mov     al, [r14+16h]            ; al = mode (2 or 4)\n000000018009771B  and     dl, 0Fh                  ; dl = low nibble\n000000018009775E  mov     r8b, 80h                 ; low nibble REJECTED marker\n0000000180097790  mov     dl, 80h                  ; high nibble REJECTED marker\n0000000180097792  cmp     r8b, 80h\n0000000180097796  jz      short loc_1800977B1      ; low rejected -> skip write/inc\n00000001800977AF  inc     edi                      ; advance output counter\n00000001800977B1  cmp     dl, 80h\n00000001800977B4  jz      short loc_1800977D6\n00000001800977BC  jnb     short loc_1800977E2      ; output full -> exit\n00000001800977D4  inc     edi\n00000001800977D6  cmp     edi, 100h                ; SOLE LOOP CONDITION\n00000001800977DC  jb      loc_1800976FB            ; loop back on output counter only\n00000001800977E2  mov     edx, 0F0h                ; fall through -> wipe + return\n\nPATCHED SymCryptMlDsaRejBoundedPoly @ 0x18009A8C0 (adds iteration cap + error return):\n000000018009A8FC  xor     edi, edi                 ; edi = 0 (return status)\n000000018009A930  call    SymCryptKeccakAppend     ; absorb seed into sponge\n000000018009A93A  mov     ebx, edi                 ; ebx = 0 (output counter)\n000000018009A93C  mov     esi, edi                 ; esi = 0 (NEW iteration counter)\n000000018009A93E  cmp     esi, 1E1h                ; NEW: iteration cap (481)\n000000018009A944  jnb     loc_18009AA41            ; NEW: exit to error path\n000000018009A95B  call    SymCryptKeccakExtract    ; squeeze one sponge byte\n000000018009A9E7  inc     esi                      ; NEW: count this iteration\n000000018009AA05  inc     ebx                      ; advance output counter\n000000018009AA33  cmp     ebx, 100h                ; output-counter exit\n000000018009AA39  jb      loc_18009A93E            ; loop back\n000000018009AA41  mov     edi, 8008h               ; NEW: error status on cap hit\n000000018009AA55  mov     eax, edi                 ; return status to caller"
+    },
+    {
+      "name": "SymCryptMlDsaExpandS (unpatched 0x180096AA8, patched 0x180099CBC)",
+      "similarity": 0.7159,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Wrapper that calls SymCryptMlDsaRejBoundedPoly in a loop for each polynomial (k and l vectors in ML-DSA). The unpatched build ignores the return value (0x180096B29: call, then 0x180096B2E: inc di). The patched build captures and propagates it: 0x180099D4C mov edi, eax; 0x180099D4E test eax, eax; 0x180099D50 jnz (bail out on 0x8008). Same at the second call site (0x180099D85)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Error-propagation update paired with the SymCryptMlDsaRejBoundedPoly iteration cap. Not attacker-reachable on its own.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaSignEx (unpatched 0x18008A340, patched 0x18008C66C)",
+      "similarity": 0.6171,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "The unpatched signing rejection loop is `while (1)` with a success `break` and no explicit iteration bound. The patched build guards loop entry with a computed 16-bit bound: `v54 = 814 * (_DWORD)v30; if (814 * (_WORD)v30 != 0)` where v30 = *(ctx+0x15) (0x32E = 814).",
+        "Adds error propagation from the polynomial sampling routine with early exit."
+      ],
+      "security_relevant": false,
+      "security_notes": "Defense-in-depth on the ML-DSA signing (Fiat-Shamir-with-aborts) rejection loop, in the same family as the SymCryptMlDsaRejBoundedPoly change. The loop is driven by SHAKE/Keccak sponge output, not attacker-controlled bytes, so it is not a demonstrable attacker-reachable integer overflow or DoS.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (sub_18008A8BC)",
+      "similarity": 0.9221,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored error handling: the unpatched version checked `arg9 == *(rsi + 0x34)` (context parameter match) and returned 0x8003 on mismatch. The patched version restructures this to call SymCryptMlDsaSigDecode (sub_18009acd8) unconditionally and check its return value.",
+        "Added explicit length validation: `SymCryptMlDsaVectorInfinityNorm (sub_18009b850)(rdi_1) < ((rbx_1 + 1) << *(rsi + 0x1a)) - r12_1` check before polynomial expansion."
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of ML-DSA verification path with improved error handling and bounds checking. Not a standalone vulnerability but hardening in the same code area.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaKeyGenerateEx (sub_180089FD8)",
+      "similarity": 0.8329,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ML-DSA key generation function that orchestrates polynomial generation. Minor changes to hash/sponge context handling and seed parameter passing."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaPkDecode (sub_180096E5C)",
+      "similarity": 0.938,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ML-DSA public key export function. Added handling for the case where the polynomial count (*rcx_6) is zero (directly calls the hash finalization instead of looping). Restructured the polynomial export loop."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaImportKeyPair (sub_1800744B0)",
+      "similarity": 0.5627,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major refactor of the CNG property dispatch function. The unpatched version used integer overflow checks (`rcx_3 >= 0xc`, `rdx_1 < rcx_3`) for buffer size validation. The patched version uses a different validation approach with explicit algorithm type dispatch (0x3000c vs 0x3000d).",
+        "Added algorithm-specific code paths for different ML-DSA parameter sets."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a dispatch refactoring for the new ML-DSA algorithm support, not a security fix itself.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaSignHash (sub_180074900)",
+      "similarity": 0.6644,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major refactor of BCryptSignHash/BCryptVerifySignature dispatch for ML-DSA. Reorganized algorithm dispatch by type code (0x3000c/0x3000d)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetSignatureInterface (sub_180070110)",
+      "similarity": 0.9346,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added 'Composite-ML-DSA' algorithm name string matching. New feature addition for hybrid post-quantum signatures."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptEckeyGetValue (sub_180084FC0)",
+      "similarity": 0.9538,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new arg7 parameter passed through to SymCryptEcpointGetValue (sub_180027cc8) (signing function). Added FIPS validation check: if FIPS mode is enabled and the algorithm is not approved, calls SymCryptFatal (sub_180048a44)(0x46495053) which is a FIPS violation handler ('FIPS' = 0x46495053)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature work: FIPS enforcement for post-quantum algorithms, not a security vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields (sub_18002CB54)",
+      "similarity": 0.7495,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new arg7 parameter with flag validation: `if (arg7 & 0xfffffdff)` returns error, and `if (!(arg7 & 0x200))` controls whether final verification is performed.",
+        "Added final signature verification step: `SymCryptFdefIntMulMixedSize (sub_18002d0d4)` and `SymCryptFdefIntIsEqual (sub_18002c1f0)` for comparing generated signature components."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for ML-DSA signature verification flag handling.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaCloseProvider (sub_180073E00)",
+      "similarity": 0.1618,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete rewrite of key object cleanup function. Added registry-based 'EnableTlsExternalAlgorithms' configuration check and TLS external algorithm initialization. Added proper BCryptDestroyKey calls and zeroing of key material."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature work and refactoring, not a security vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptEcurveInitialize (sub_180029370)",
+      "similarity": 0.9509,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address relocations and call target changes due to binary layout differences. No behavioral changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "SymCryptMlDsaRejBoundedPoly (unpatched 0x18009767C, patched 0x18009A8C0)",
+      "entry_point": "BCryptGenerateKeyPair / BCryptFinalizeKeyPair / BCryptSignHash (exported CNG kernel API). Reachable code path, but the hardened condition is not attacker-inducible.",
+      "call_chain": [
+        "BCryptFinalizeKeyPair (0x1800557C0) or BCryptSignHash (0x180056140)",
+        "ML-DSA finalize / sign dispatch",
+        "ML-DSA key generation / signing core",
+        "SymCryptMlDsaExpandS (unpatched 0x180096AA8, patched 0x180099CBC) (polynomial vector generation loop - iterates over k+l polynomials)",
+        "SymCryptMlDsaRejBoundedPoly (unpatched 0x18009767C, patched 0x18009A8C0) (rejection-sampling loop that received the iteration cap)"
+      ],
+      "vulnerability_class": "Defense-in-depth: termination guarantee added to a sponge-driven rejection-sampling loop. Code pattern maps to CWE-835 (loop with unreachable exit condition), but the exit is only unreachable under a sponge output that is not attacker-inducible, so no reachable weakness is established.",
+      "description": "SymCryptMlDsaRejBoundedPoly implements bounded rejection sampling for ML-DSA (FIPS 204) polynomial coefficient generation. It squeezes bytes from a SHAKE/Keccak sponge (SymCryptKeccakExtract; the sponge is seeded via SymCryptKeccakAppend inside the function) and converts each byte's two nibbles into coefficients, rejecting values outside the valid range (mode 2: reject nibble >= 0xF; mode 4: reject nibble >= 9). Rejected nibbles are set to 0x80. In the unpatched build the loop's only exit condition is the output counter edi reaching 0x100 (cmp edi, 0x100; jb at 0x1800977DC); the output counter advances only when a nibble is accepted. There is no separate cap on raw iterations, so in principle a sponge stream that rejected both nibbles indefinitely would keep the loop running. The patched build adds a raw iteration counter (esi) that forces an exit with error 0x8008 after 0x1e1 (481) iterations, and the caller SymCryptMlDsaExpandS now propagates that status. This is a robustness / termination guarantee: the bytes are SHAKE sponge output, not attacker-supplied data, and the rejection bound is a static per-parameter-set constant, so the non-terminating condition cannot be induced by an attacker.",
+      "trigger_conditions": "The code path is reached from user mode by opening an ML-DSA provider (BCryptOpenAlgorithmProvider, 'ML-DSA') and calling BCryptGenerateKeyPair / BCryptFinalizeKeyPair or BCryptSignHash, which run SymCryptMlDsaExpandS -> SymCryptMlDsaRejBoundedPoly. To exceed 481 iterations the sponge would have to emit a stream in which fewer than 256 coefficients are accepted across 481 squeezed bytes. The per-nibble rejection probability is 1/16 (mode 2) or 7/16 (mode 4); the expected number of accepted coefficients over 481 iterations is far above 256 in both modes. Producing a below-threshold stream would require choosing a seed whose SHAKE output has a specific pathological structure, i.e. a preimage-style manipulation of SHAKE that is computationally infeasible. During key generation the seed is not even caller-chosen. The rejection bound (eta) is a compile-time constant. Therefore the condition is not attacker-reachable and the change fixes no demonstrable exploitable trigger.",
+      "primitive": "None demonstrable. The change adds a bounded exit to a loop whose byte source is cryptographic sponge output an attacker cannot steer.",
+      "evidence": "UNPATCHED SymCryptMlDsaRejBoundedPoly (0x18009767C) pseudocode (loop exits only on output counter):\n    do\n    {\n        SymCryptKeccakExtract(&sponge, &byte, 1, 0);   // squeeze one sponge byte\n        uint8_t low  = byte & 0xf;                  // low nibble\n        uint8_t high = byte >> 4;                    // high nibble\n        \n        // nibble bounds check: rejected nibbles set to 0x80\n        \n        if (low != 0x80)\n        {\n            output_buf[rdi] = map_coefficient(low);\n            rdi = rdi + 1;                           // advances only when accepted\n        }\n        \n        if (high != 0x80)\n        {\n            if (rdi >= 0x100) break;\n            output_buf[rdi] = map_coefficient(high);\n            rdi = rdi + 1;                           // advances only when accepted\n        }\n    } while (rdi < 0x100);                           // sole exit condition\n\nPATCHED SymCryptMlDsaRejBoundedPoly (0x18009A8C0) pseudocode (adds iteration cap):\n    int32_t iter = 0;                                // NEW raw iteration counter (esi)\n    int32_t status = 0;                              // edi, returned to caller\n    do\n    {\n        if (iter >= 0x1e1) {                          // NEW: cap at 481 squeezed bytes\n            status = 0x8008;                          // return error\n            break;\n        }\n        SymCryptKeccakExtract(&sponge, &byte, 1, 0);\n        // ... same nibble bounds check ...\n        iter += 1;                                    // increment iteration counter\n        // ... same output-counter increment logic ...\n    } while (out < 0x100);\n    return status;                                    // caller (ExpandS) now checks this",
+      "assembly": "UNPATCHED SymCryptMlDsaRejBoundedPoly (sub_18009767c) full assembly (cng_unpatched.sys) - loop exits only on the output counter:\n0x18009767c  mov     qword [rsp+0x8], rbx\n0x180097681  mov     qword [rsp+0x18], rsi\n0x180097686  push    rbp\n0x180097687  push    rdi\n0x180097688  push    r14\n0x18009768a  lea     rbp, [rsp-0x30]\n0x18009768f  sub     rsp, 0x130\n0x180097696  mov     rax, qword [rel 0x1800ca100]\n0x18009769d  xor     rax, rsp\n0x1800976a0  mov     qword [rbp+0x20], rax\n0x1800976a4  mov     rbx, rdx\n0x1800976a7  mov     r14, rcx\n0x1800976aa  xor     edx, edx\n0x1800976ac  lea     rcx, [rsp+0x30]\n0x1800976b1  mov     r8d, 0xf0\n0x1800976b7  mov     rsi, r9\n0x1800976ba  call    0x18009d0c0\n0x1800976bf  mov     edx, 0xc8\n0x1800976c4  mov     dword [rbp-0x8], 0x88\n0x1800976cb  lea     rcx, [rsp+0x30]\n0x1800976d0  mov     byte [rbp], 0x1f\n0x1800976d4  call    0x1800488c0\n0x1800976d9  xor     edi, edi                          ; edi = 0 (output coefficient counter)\n0x1800976db  lea     rcx, [rsp+0x30]\n0x1800976e0  mov     rdx, rbx\n0x1800976e3  mov     dword [rbp-0x4], edi\n0x1800976e6  mov     byte [rbp+0x1], dil\n0x1800976ea  lea     r8d, [rdi+0x42]\n0x1800976ee  call    0x180031c80\n0x1800976f3  mov     byte [rsp+0x21], dil\n0x1800976f8  lea     ebx, [rdi+0x4]\n; === LOOP START ===\n0x1800976fb  xor     r9d, r9d\n0x1800976fe  lea     rdx, [rsp+0x21]\n0x180097703  lea     rcx, [rsp+0x30]\n0x180097708  lea     r8d, [r9+0x1]\n0x18009770c  call    0x180094b44                       ; squeeze one sponge byte into [rsp+0x21]\n0x180097711  mov     cl, byte [rsp+0x21]              ; cl = squeezed sponge byte\n0x180097715  mov     al, byte [r14+0x16]             ; al = mode (2 or 4)\n0x180097719  mov     dl, cl\n0x18009771b  and     dl, 0xf                           ; dl = low nibble\n0x18009771e  cmp     al, 0x2\n0x180097720  jne     0x180097747\n0x180097722  cmp     dl, 0xf\n0x180097725  jae     0x18009775b                       ; low nibble >= 0xf -> reject\n0x180097727  movzx   eax, dl\n0x18009772a  imul    r8d, eax, 0xd\n0x18009772e  shr     r8b, 0x6\n0x180097732  mov     al, r8b\n0x180097735  shl     al, 0x2\n0x180097738  add     r8b, al\n0x18009773b  sub     r8b, dl\n0x18009773e  add     r8b, 0x2\n0x180097742  shr     cl, 0x4                           ; high nibble\n0x180097745  jmp     0x180097765\n0x180097747  cmp     al, bl                            ; mode == 4?\n0x180097749  jne     0x18009775b\n0x18009774b  cmp     dl, 0x9\n0x18009774e  jae     0x18009775b                       ; low nibble >= 9 -> reject\n0x180097750  mov     r8d, ebx\n0x180097753  sub     r8b, dl\n0x180097756  shr     cl, 0x4\n0x180097759  jmp     0x180097785\n0x18009775b  shr     cl, 0x4                           ; high nibble\n0x18009775e  mov     r8b, 0x80                         ; r8 = REJECTED (0x80)\n0x180097761  cmp     al, 0x2\n0x180097763  jne     0x180097781\n0x180097765  cmp     cl, 0xf\n0x180097768  jae     0x180097790                       ; high nibble >= 0xf -> reject\n0x18009776a  movzx   eax, cl\n0x18009776d  imul    edx, eax, 0xd\n0x180097770  shr     dl, 0x6\n0x180097773  mov     al, dl\n0x180097775  shl     al, 0x2\n0x180097778  add     dl, al\n0x18009777a  sub     dl, cl\n0x18009777c  add     dl, 0x2\n0x18009777f  jmp     0x180097792\n0x180097781  cmp     al, bl\n0x180097783  jne     0x180097790\n0x180097785  cmp     cl, 0x9\n0x180097788  jae     0x180097790                       ; high nibble >= 9 -> reject\n0x18009778a  mov     edx, ebx\n0x18009778c  sub     dl, cl\n0x18009778e  jmp     0x180097792\n0x180097790  mov     dl, 0x80                          ; rdx_2 = REJECTED (0x80)\n0x180097792  cmp     r8b, 0x80                         ; is r8 rejected?\n0x180097796  je      0x1800977b1                       ; yes -> skip rdi increment\n0x180097798  movsx   rcx, r8b                          ; write coefficient\n0x18009779c  shr     rcx, 0x20\n0x1800977a0  and     ecx, 0x7fe001\n0x1800977a6  movsx   eax, r8b\n0x1800977aa  add     ecx, eax\n0x1800977ac  mov     dword [rsi+rdi*4], ecx            ; store coefficient\n0x1800977af  inc     edi                               ; rdi++ (coefficient written)\n0x1800977b1  cmp     dl, 0x80                          ; is rdx_2 rejected?\n0x1800977b4  je      0x1800977d6                       ; yes -> skip to loop check\n0x1800977b6  cmp     edi, 0x100                        ; rdi >= 256?\n0x1800977bc  jae     0x1800977e2                       ; yes -> exit loop\n0x1800977be  movsx   rcx, dl                           ; write coefficient\n0x1800977c2  shr     rcx, 0x20\n0x1800977c6  and     ecx, 0x7fe001\n0x1800977cc  movsx   eax, dl\n0x1800977cf  add     ecx, eax\n0x1800977d1  mov     dword [rsi+rdi*4], ecx            ; store coefficient\n0x1800977d4  inc     edi                               ; rdi++ (coefficient written)\n0x1800977d6  cmp     edi, 0x100                        ; LOOP CONDITION: rdi < 256?\n0x1800977dc  jb      0x1800976fb                       ; LOOP BACK (sole exit is the output counter)\n0x1800977e2  mov     edx, 0xf0\n0x1800977e7  lea     rcx, [rsp+0x30]\n0x1800977ec  call    0x1800488c0\n0x1800977f1  mov     rcx, qword [rbp+0x20]\n0x1800977f5  xor     rcx, rsp\n0x1800977f8  call    0x18009cbb0                       ; __security_cookie_check\n0x1800977fd  lea     r11, [rsp+0x130]\n0x180097805  mov     rbx, qword [r11+0x20]\n0x180097809  mov     rsi, qword [r11+0x30]\n0x18009780d  mov     rsp, r11\n0x180097810  pop     r14\n0x180097812  pop     rdi\n0x180097813  pop     rbp\n0x180097814  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly (sub_18009767C)",
+            "address": "0x18009767C",
+            "why": "The bounded rejection-sampling function. Break here to observe the sponge output and coefficient generation loop. Register r14 holds arg1 (algorithm context with mode at +0x16), rbx holds the seed data, rsi holds arg4 (output polynomial buffer)."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly (sub_18009767C)+0x6FB",
+            "address": "0x1800976FB",
+            "why": "The loop entry point. Break here to watch each iteration. edi is the coefficient output counter; under real sponge output it climbs steadily to 0x100 and the loop exits. The unpatched build has no separate iteration cap here."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly (sub_18009767C)+0x11C",
+            "address": "0x1800977DC",
+            "why": "The loop-back branch (jb 0x1800976FB). Its only condition is the output counter. Watch edi to confirm it advances to 0x100 under real sponge output."
+          }
+        ],
+        "watch": [
+          "edi (low 32 bits) = coefficient output counter. Under real sponge output it advances to 0x100=256 and the loop exits.",
+          "byte [rsp+0x21] = the sponge byte squeezed each iteration by SymCryptKeccakExtract.",
+          "byte [r14+0x16] = mode value. 2 = ML-DSA mode with 0-14 coefficient range (reject nibble >= 0xF), 4 = mode with 0-8 coefficient range (reject nibble >= 9).",
+          "r8b = low nibble rejection result (0x80 = rejected).",
+          "dl = high nibble rejection result (0x80 = rejected). When both r8b==0x80 AND dl==0x80, edi does not advance for that iteration."
+        ],
+        "key_offsets": [
+          "0x1800976FB: loop entry point (start of rejection-sampling loop)",
+          "0x18009770C: call to SymCryptKeccakExtract (squeeze one sponge byte - called every iteration)",
+          "0x18009775E: mov r8b, 0x80 (low nibble rejected marker)",
+          "0x180097790: mov dl, 0x80 (high nibble rejected marker)",
+          "0x1800977DC: jb 0x1800976FB (the loop-back branch - sole exit is the output counter)",
+          "0x1800977E2: loop exit (reached when edi reaches 0x100)",
+          "ADDED in patched (0x18009A93E): 'cmp esi, 0x1E1; jnb <error_exit>' at the loop top, absent in the unpatched build"
+        ],
+        "trigger_setup": "1. Open an ML-DSA algorithm provider: call BCryptOpenAlgorithmProvider with algorithm name 'ML-DSA'. 2. Generate a key pair: call BCryptGenerateKeyPair then BCryptFinalizeKeyPair, or call BCryptSignHash with an ML-DSA key. 3. SymCryptMlDsaRejBoundedPoly is reached during key generation (secret key polynomials s1, s2) and signing. This confirms the code path is live from user mode (Bcrypt.dll thunk -> ksecdd.sys -> cng.sys). 4. The hardened non-termination condition cannot be induced: it would require the SHAKE/Keccak sponge to emit a stream that rejects nearly every nibble across 481 draws, and an attacker cannot steer sponge output by choosing the seed (a computationally infeasible preimage problem). During key generation the seed is derived from system randomness, not caller input.",
+        "expected_observation": "On every real invocation the loop terminates normally: in a kernel debugger edi climbs to 0x100 and control reaches the exit at 0x1800977E2. The patched build additionally returns status 0x8008 if 481 iterations are reached; that cap is not observed under real sponge output and cannot be forced by manipulating the seed. No hang, CPU spin, or watchdog violation is reachable from user-mode input.",
+        "notes": "The change is in the ML-DSA (FIPS 204) post-quantum signature support in cng.sys. The bounded rejection sampling uses a SHAKE/Keccak sponge to produce a byte stream and converts nibbles to small coefficients, rejecting out-of-range values. Per-nibble rejection is 1/16 for mode 2 (only nibble 0xF is rejected; both nibbles rejected in one byte = (1/16)^2 = ~0.39%) and 7/16 for mode 4 (both nibbles rejected = (7/16)^2 = ~19%). Exceeding the loop bound requires sustained rejection far beyond these per-byte odds across 481 draws, which the sponge output distribution does not produce and an attacker cannot induce. The patch caps iterations at 0x1E1=481. Key context struct offsets: [r14+0x16] = mode (2 or 4), [r14+0x15] = number of polynomials in first vector (k), [r14+0x14] = number of polynomials in second vector (l)."
+      }
+    }
+  ],
+  "summary": "The patch adds a defense-in-depth termination guarantee to cng.sys's ML-DSA (FIPS 204) bounded rejection-sampling routine SymCryptMlDsaRejBoundedPoly (unpatched 0x18009767C, patched 0x18009A8C0). The unpatched loop's only exit condition is the output coefficient counter reaching 0x100; the output counter advances only when a nibble is accepted, so a byte stream that rejected both nibbles indefinitely would keep the loop running. The patch adds a raw iteration counter (esi) that forces an exit with error 0x8008 after 481 iterations, and the caller SymCryptMlDsaExpandS now propagates that status. The mechanical change is real and the direction is correct, but the byte stream is SHAKE/Keccak sponge output from SymCryptKeccakExtract, not attacker-supplied data; an attacker controls at most the absorbed seed, and steering SHAKE output by seed choice is computationally infeasible. The rejection bound (eta) is a static per-parameter-set constant. The non-termination condition is therefore not attacker-reachable, so this is a robustness hardening rather than a fix for an exploitable denial of service. Downgraded from the earlier High DoS rating to informational/defense-in-depth."
+}

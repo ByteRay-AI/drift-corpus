@@ -1,0 +1,432 @@
+{
+  "binaries": {
+    "id_unpatched": "b57nd60a_unpatched.sys",
+    "id_patched": "b57nd60a_patched.sys",
+    "overall_similarity": 0.9893,
+    "matched": 457,
+    "changed": 21,
+    "identical": 436,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SaveMsiCaps",
+      "similarity": 0.6786,
+      "change_type": "hardening",
+      "key_changes": [
+        "Replaced raw PCI config space pointer dereference (FindPciCapMem + offset arithmetic) with safe MM_ReadConfig32 API calls in patched version",
+        "Unpatched uses FindPciCapMem(arg1, 5) to get a byte offset, then dereferences memory at arg1->config_base + offset without bounds validation",
+        "Patched version uses MM_ReadConfig32 with fixed register offsets (0x58, 0x5c, 0x60, 0x64) instead of computing offsets from the capability pointer"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version reads PCI MSI capability registers via direct pointer arithmetic from a byte capability offset returned by FindPciCapMem walking the device's own capability list. If a malicious or emulated PCI device returns an out-of-range offset, the arithmetic (r8+2, r8+8, r8+4, r8+0xc added to config base) can read a few bytes past a legacy 256-byte config window (bounded by the 4KB extended config mapping). The patched version uses the safe MM_ReadConfig32 wrapper with hardcoded offsets. This is a low-severity hardening change: exploitation requires an attacker who already controls the PCI device (and therefore already has bus-master DMA). CWE-125 (OOB Read). Severity: low.",
+      "assembly_diff": "UNPATCHED:\nmov edx, 0x5\nlea r8, [rsp+0x30]      ; NOT PRESENT\nmov edx, 0x58            ; NOT PRESENT\ncall 0x1400017c8         ; FindPciCapMem\nmovzx r8d, al            ; capability offset\nlea edx, [r8+0x2]        ; offset+2\nadd rdx, qword [rbx+0x20]; config_base + offset+2\nmovzx eax, word [rdx]    ; RAW DEREF\nlea ecx, [r8+0x8]\nadd rcx, qword [rbx+0x20]\nmov word [rbx+0x59ee4], ax\nmov eax, dword [rcx]     ; RAW DEREF\nlea ecx, [r8+0x4]\nadd rcx, qword [rbx+0x20]\nmov dword [rbx+0x59ee8], eax\nmov eax, dword [rcx]     ; RAW DEREF\nlea ecx, [r8+0xc]\nadd rcx, qword [rbx+0x20]\nmov dword [rbx+0x59eec], eax\nmovzx eax, word [rcx]    ; RAW DEREF\nmov word [rbx+0x59ef0], ax\n\nPATCHED:\nlea r8, [rsp+0x30]\nmov edx, 0x58\nmov rcx, rbx\ncall 0x140013dd4         ; MM_ReadConfig32\nmov eax, dword [rsp+0x30]\n... (uses fixed offsets 0x58, 0x5c, 0x60, 0x64)"
+    },
+    {
+      "name": "CoalescingSendPacketIfNecessary",
+      "similarity": 0.9786,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched version adds a chip-family-9-gated guard: if (chip_id >> 12) == 9 AND the per-fragment 32-bit field at [r14+index*12+0x10] (ebx) >= 0x100, force the non-coalescing decision (var_28 = 2, path 0x140042ffa)",
+        "The coalescing flag check at [rsi+0x568ec] is present in both binaries (unpatched at [rsi+0x568bc]); the structure layout shift moved the offset, so it is not a new guard",
+        "The function computes a coalescing decision; the downstream TX ring bookkeeping is byte-identical between builds and is indexed by the queue number [rdi+0x1c], not by the fragment field"
+      ],
+      "security_relevant": false,
+      "security_notes": "CoalescingSendPacketIfNecessary decides whether to coalesce the outgoing packet: its loop sets a decision local (var_28 = 1 or 2) and returns a boolean; it does not write the TX descriptor ring based on the fragment fields. The patch adds a chip-family-9-gated guard that forces the non-coalescing decision when a per-fragment 32-bit field (third field of each 12-byte fragment entry, [r14+index*12+0x10], held in ebx) is >= 0x100. That field is only consumed inside the decision loop and in a stack qword (var_20) that is zeroed (and [rbp+var_20], 0) before the coalescing path runs, so it never reaches ring-index arithmetic. The downstream ring bookkeeping (writes to [r15+rsi+0x57bb8], inc [r15+rsi+0x57b84], shifted by the struct-offset delta in the patched build) is logically identical in both builds and is indexed by the queue number, not the fragment field. This is a chip-family-specific coalescing correctness guard / defense-in-depth, not an out-of-bounds write fix. CWE-20 (Improper Input Validation). Severity: low.",
+      "assembly_diff": "KEY ASSEMBLY CHANGE IN PATCHED (not present in unpatched):\n; At 0x140042f87 (patched) — new chip-family-9-gated guard added:\ncmp ecx, 0x9                   ; ecx = chip_id >> 12 ; chip family == 9 ?\njnz 0x140042f94                ; if not family 9, skip the guard\ncmp ebx, 0x100                 ; fragment field [r14+index*12+0x10]\njnb 0x140042ffa                ; force non-coalescing decision (var_28 = 2) if >= 256\n; Fragment field loaded in the patched loop head:\nmov ebx, [r14+rcx*4+0x10]      ; 0x140042ed7\n; The surrounding chip-family range checks and the coalescing flag check are present in both:\nlea eax, [rcx-0x5717]          ; chip-family range check\ncmp eax, 0x9\nja 0x140042f87\ncmp byte [rsi+0x568ec], r12b    ; coalescing flag (unpatched: [rsi+0x568bc])\njnz 0x140042faa\n\nUNPATCHED EQUIVALENT (0x140042c24 -> 0x140042c49):\n; After the identical chip-family range checks, control falls straight through\n; to the coalescing flag test with NO cmp ..,9 / cmp ..,0x100 block in between:\nmov eax, 0x205\nbt eax, ecx\njb 0x140042cad                 ; chip-range fail -> var_28 = 2\ncmp byte [rsi+0x568bc], r12b    ; coalescing flag\njnz 0x140042c5f"
+    },
+    {
+      "name": "ClearActiveSqAndMapping",
+      "similarity": 0.9157,
+      "change_type": "hardening",
+      "key_changes": [
+        "Patched version removes two instances of REG_RD_TBT register reads that write to context fields ([r13+8] and [r13+0xc]) during send queue cleanup",
+        "Unpatched code checks flag at [rdi+0x57160], loads a context pointer ([r13]), validates magic value 0xbcea7765, and writes two TBT register values into [r13+8] and [r13+0xc]",
+        "No free of the target context is visible in the binaries; the 0xbcea7765 magic check is a deliberate type gate"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched ClearActiveSqAndMapping loads a context pointer (r13), validates magic 0xbcea7765, then reads two Thunderbolt registers (REG_RD_TBT at config_base+0x5c0 and +0x5c4) and writes them into [r13+8] and [r13+0xc] during send-queue teardown. The patched version removes both identical blocks. The binaries do not show r13 being freed before this runs, and the explicit magic-value validation is a deliberate type gate rather than a naive use-after-free. This is best read as removal of a register-readback/writeback path during teardown (hardening/behavioral removal), not a confirmed use-after-free. CWE-1164 (Irrelevant/removed code). Severity: low.",
+      "assembly_diff": "UNPATCHED CODE REMOVED IN PATCHED:\n; At 0x140042807 and 0x1400429e6 (two instances):\nif (*(arg1 + 0x57160))\n{\n    int32_t* r13_2 = s_2[0xd];           ; get context pointer\n    if (r13_2 && *r13_2 == 0xbcea7765 && !r13_2[1])\n    {\n        r13_2[2] = REG_RD_TBT(arg1, *(arg1 + 0x20) + 0x5c0);\n        r13_2[3] = REG_RD_TBT(arg1, *(arg1 + 0x20) + 0x5c4);\n    }\n}\n; PATCHED: This entire block is deleted — s_2[0xd] is never dereferenced for register writes during cleanup"
+    },
+    {
+      "name": "UM_Dpc",
+      "similarity": 0.9181,
+      "change_type": "refactor",
+      "key_changes": [
+        "Patched version moves the mm_get_current_cpu_idx() capture to function entry (second of two entry calls saved to ebp) and adds explicit index-validity guards before per-CPU array accesses",
+        "Unpatched version captures the CPU index fresh immediately before use (call mm_get_current_cpu_idx; mov ebp, eax at 0x140002fc2, then [rbx+rbp*4+0x56a38] at 0x140002fe3) — the index is not stale",
+        "Patched adds guards such as `cmp ebp, [rbx+off]; jnz skip` and a slot check before the per-CPU accesses, plus an RSS-servicing refactor using lock cmpxchg"
+      ],
+      "security_relevant": false,
+      "security_notes": "In both builds the CPU index used to index the per-CPU arrays ([rbx+(cpu<<2)+0x56a38], [rbx+(idx<<3)+0x61f8]) is captured from mm_get_current_cpu_idx() into the non-volatile ebp. In the unpatched build the index is captured fresh right before use (at 0x140002fc2), so it is not stale. The patch relocates the capture to entry and adds explicit validity guards (`cmp ebp, [rbx+off]; jnz skip` and a slot check) around the per-CPU accesses, together with an RSS-servicing refactor using lock cmpxchg. This is a defensive/synchronization refactor that adds bounds-style guards; no stale-index out-of-bounds access is demonstrable in the unpatched code. CWE-20 (Improper Input Validation). Severity: low.",
+      "assembly_diff": "UNPATCHED (0x140002e28):\ncall mm_get_current_cpu_idx   ; entry call (0x140002e53)\n; ... later, fresh capture immediately before array use:\ncall mm_get_current_cpu_idx   ; 0x140002fc2\nmov ebp, eax                  ; 0x140002fd0\nmov esi, [rbx+rbp*4+0x56a38]  ; 0x140002fe3 — fresh index\n\nPATCHED (0x140002e78):\ncall mm_get_current_cpu_idx   ; 0x140002ea3\ncall mm_get_current_cpu_idx   ; 0x140002ea8 — capture moved to entry\nmov ebp, eax                  ; 0x140002ead\n; ... added validity guards before each per-CPU access, e.g.:\n;   cmp ebp, [rbx+off]  /  jnz skip\n;   cmp [rbx+rbp*4+off], r12d  /  jz skip\n; plus RSS servicing refactored with lock cmpxchg"
+    },
+    {
+      "name": "UM_GenTimerFunction",
+      "similarity": 0.8622,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds additional stack frame setup (rdi saved on stack) and restructures security cookie handling",
+        "Timer function logic is functionally equivalent — processes send events, checks for hang conditions, manages power state"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "setup_msix",
+      "similarity": 0.8828,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version corrects MSI-X CPU affinity assignment: adds precomputation of total processor count (rdi_1 = data_140069028 * data_140069030) and a minimum-clamp check (if single group and total < active count, use active count)",
+        "Modular arithmetic for group/processor assignment corrected: unpatched uses rbp_1 directly for modulo, patched applies modulo with rdi_1 first then divides"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UM_CheckForHang",
+      "similarity": 0.9175,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds nd6x_check_for_rx_hang check when device is in specific state (52b5c == 4 and 57af4 == 0)",
+        "Patched version adds guard: *(arg1 + 0x57af4) != 5 in entry condition",
+        "Chip-ID based hang detection thresholds updated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MP_ProcessSGList",
+      "similarity": 0.9284,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Calls CoalescingSendPacketIfNecessary which contains the primary vulnerability fix",
+        "Register allocation changes from structure layout shift"
+      ],
+      "security_relevant": false,
+      "security_notes": "Direct caller of CoalescingSendPacketIfNecessary (call at 0x140043b21). Processes the outgoing send-path fragment list. Differs from the unpatched build only by register allocation and adapter-context structure-offset shifts; no security-relevant logic change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RestoreMsiCaps",
+      "similarity": 0.9468,
+      "change_type": "hardening",
+      "key_changes": [
+        "Companion to SaveMsiCaps: unpatched reads and writes config space at config_base + FindPciCapMem_offset (movzx eax, word [rdx+rax]; mov [rdx+rax], cx); patched uses MM_ReadConfig32(0x58) / MM_WriteConfig32",
+        "Gated on chip family 8/9 ((chip_id >> 12) - 8 <= 1)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Companion to SaveMsiCaps. Same hardening: raw config-space read AND write via a device-supplied capability offset replaced with the HAL config API (MM_ReadConfig32 / MM_WriteConfig32). Low severity; the out-of-bounds access requires a malformed/emulated PCI device. CWE-125 (OOB Read).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "nd6_LM_HandleTxInterrupts",
+      "similarity": 0.9566,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Calls CoalescingSendPacketIfNecessary — affected by the coalescing vulnerability fix",
+        "TX completion interrupt processing logic with offset shifts"
+      ],
+      "security_relevant": false,
+      "security_notes": "TX completion interrupt handler that also calls CoalescingSendPacketIfNecessary (call at 0x140045a2d). Offset shifts only; no security-relevant logic change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "nd6_ProcessSendEvents",
+      "similarity": 0.9735,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Send event processing with register allocation and offset shifts from structure layout change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "syncReenableIntr",
+      "similarity": 0.9766,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UM_Isr",
+      "similarity": 0.9766,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SetVmqParam",
+      "similarity": 0.9837,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds guard condition (!*(arg1 + 0x571a4)) before RSS register configuration",
+        "Variable reuse optimization: patched saves rbp value in var_58 for later restoration instead of recomputing"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UM_DpcMsi",
+      "similarity": 0.985,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RestoreDefaultVmqFilter",
+      "similarity": 0.992,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset and variable name shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UM_Initialize",
+      "similarity": 0.9922,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UM_QueryInformation",
+      "similarity": 0.9924,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts and register allocation changes only — 1472 diff lines but no meaningful logic changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SetDefaultVmqFilter",
+      "similarity": 0.9929,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renaming (rax_9→rax_11, rax_12→rax_14) and offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LM_ResetAdapter",
+      "similarity": 0.993,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LM_SetPowerState",
+      "similarity": 0.9786,
+      "change_type": "cosmetic",
+      "key_changes": ["Offset shifts only — power state management logic unchanged"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "CoalescingSendPacketIfNecessary",
+      "entry_point": "NDIS send path → MP_ProcessSGList → CoalescingSendPacketIfNecessary",
+      "call_chain": [
+        "NDIS send path (OS network stack)",
+        "MP_ProcessSGList (0x14004374c) — call to CoalescingSendPacketIfNecessary at 0x140043b21",
+        "CoalescingSendPacketIfNecessary (0x140042b18) — computes a coalescing decision (returns a boolean)"
+      ],
+      "vulnerability_class": "Improper input validation (CWE-20) — chip-family-specific coalescing guard / defense-in-depth",
+      "description": "CoalescingSendPacketIfNecessary decides whether to coalesce the outgoing packet. Its loop sets a decision local (var_28 = 1 or 2) and returns a boolean; it does not write the TX descriptor ring based on the fragment fields. The loop reads a per-fragment 32-bit field ([r14+index*12+0x10], held in ebx in the patched build). The patch adds a chip-family-9-gated guard: when (chip_id >> 12) == 9 and this field >= 0x100, it forces the non-coalescing decision (var_28 = 2). That field is only consumed inside the decision loop and in a stack qword (var_20) that is zeroed (and [rbp+var_20], 0 at 0x140042d55) before the coalescing path runs, so it never reaches ring-index arithmetic. The downstream TX ring bookkeeping (writes to [r15+rsi+0x57bb8], inc [r15+rsi+0x57b84], shifted by the struct-offset delta in the patched build) is logically identical between builds and is indexed by the queue number [rdi+0x1c], not by the fragment field. The coalescing flag at [rsi+0x568ec] (unpatched [rsi+0x568bc]) is present in both binaries. This is a chip-family-specific coalescing correctness guard, not an out-of-bounds write fix.",
+      "trigger_conditions": "1. The chip-family identifier (chip_id >> 12, from [adapter+0x52960]) must equal 9 (a device family distinct from the 0x57xx NetXtreme models compared elsewhere in the same function). 2. Coalescing must be reached. 3. A fragment entry must have its third 32-bit field ([r14+index*12+0x10]) >= 0x100, with loop preconditions [r14+8] >= 0xe and fragment count < 0x18. Effect of the patch on such a packet: the driver takes the non-coalescing send path instead of coalescing. This changes a send-path decision on one chip family; no crash or memory corruption is demonstrable from the fragment field in either build.",
+      "primitive": "None. The added guard only alters a coalescing decision on chip family 9. The bound-checked fragment field is zeroed (and [rbp+var_20], 0) before the coalescing path uses it, and the ring bookkeeping is identical between builds, so there is no attacker-controlled write index and no memory-corruption primitive.",
+      "evidence": "CoalescingSendPacketIfNecessary is a decision function (var_28 = 1 or 2), not a copy loop.\n\nPatched loop head loads the fragment field (0x140042ec9):\n    rcx = index * 3;\n    edx = r14[index*12 + 0xc];\n    r9d = r14[index*12 + 0x8];\n    ebx = r14[index*12 + 0x10];        // the field the guard bounds\n    if ((r9d + edx + 8) < edx) -> non-coalesce;   // overflow check (both builds)\n\nPatched-only guard (0x140042f87):\n    if ((chip_id >> 12) == 9 && ebx >= 0x100)\n        -> non-coalesce (var_28 = 2);\n\nThe field is stored to a stack qword (var_20) that is zeroed before the coalescing path:\n    and [rbp+var_20], 0;               // 0x140042d55\n\nThe downstream ring bookkeeping is byte-identical between builds and indexed by\nthe queue number [rdi+0x1c], not by the fragment field.",
+      "assembly": "UNPATCHED loop head (0x140042b88):\nlea rcx, [rdx+rdx*2]              ; rcx = index * 3\nmov r9d, [r14+rcx*4+0xc]          ; fragment field @ +0xc\nmov eax, [r14+rcx*4+0x10]         ; fragment field @ +0x10 (stored, NOT bound-checked)\nmov r8d, [r14+rcx*4+0x8]          ; fragment field @ +0x8\nlea r11d, [r8+r9]\nmov [rbp+var_20+4], eax           ; save to stack qword var_20\nlea eax, [r11+8]\ncmp eax, r9d                      ; overflow check\njb 0x140042cad                    ; non-coalesce (var_28 = 2)\n; UNPATCHED: coalescing-flag test follows the chip-family range checks directly,\n; with NO cmp ..,9 / cmp ..,0x100 block (0x140042c49):\ncmp byte [rsi+0x568bc], r12b\n\nPATCHED loop head (0x140042ec9): same fields, with ebx = [r14+rcx*4+0x10].\nPATCHED-only guard (0x140042f87):\ncmp ecx, 0x9                      ; ecx = chip_id >> 12 ; family == 9 ?\njnz 0x140042f94\ncmp ebx, 0x100                    ; fragment field @ +0x10 >= 256 ?\njnb 0x140042ffa                   ; force non-coalescing decision (var_28 = 2)\ncmp byte [rsi+0x568ec], r12b      ; coalescing flag (unpatched: [rsi+0x568bc])\njnz 0x140042faa",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "b57nd60a!CoalescingSendPacketIfNecessary",
+            "address": "0x140042b18",
+            "why": "Function entry — set breakpoint to catch when the coalescing path is entered during packet send. Inspect r14 (SG list pointer), r10d (SG element count), and the SG element fields r14[rcx*4+0x10] (var_54) for values >= 0x100."
+          },
+          {
+            "symbol": "b57nd60a!CoalescingSendPacketIfNecessary+0x26f (patched)",
+            "address": "0x140042f87",
+            "why": "The patched-only guard `cmp ecx,9 / jnz / cmp ebx,0x100 / jnb`. ecx = chip_id >> 12; ebx = the fragment field [r14+index*12+0x10]. Reached only on chip family 9. When taken, the driver takes the non-coalescing decision instead of coalescing."
+          },
+          {
+            "symbol": "b57nd60a!MP_ProcessSGList",
+            "address": "0x14004374c",
+            "why": "Caller of CoalescingSendPacketIfNecessary (call at 0x140043b21). Inspect the fragment array passed in r14 to see the incoming packet layout."
+          }
+        ],
+        "watch": [
+          "ebx (patched) / [rbp+var_20+4] — the fragment field [r14+index*12+0x10] the patched guard bounds against 0x100; it is only used in the decision loop and is zeroed in the stack qword before the coalescing path",
+          "r14 — pointer to the fragment array; r14[index*12+0x10] at each iteration is the value the guard checks",
+          "r10d — fragment count (must be < 0x18 to enter the loop)",
+          "dword [rsi+0x52960] >> 0xc — chip-family identifier (guard applies only when == 9)",
+          "dword [r15+rsi+0x57bb0] — ring size used in the (unchanged) ring bookkeeping, indexed by queue number [rdi+0x1c]",
+          "dword [r15+rsi+0x57b84] — TX ring counter, incremented by the ring bookkeeping identical in both builds"
+        ],
+        "key_offsets": [
+          "0x140042b18 — CoalescingSendPacketIfNecessary entry (unpatched)",
+          "0x140042b88 — fragment loop head (unpatched); field loaded from r14[rcx*4+0x10]",
+          "0x140042c49 — coalescing-flag test (unpatched); no cmp ..,9 / cmp ..,0x100 block precedes it",
+          "0x140042cad — non-coalesce decision (var_28 = 2, unpatched) / 0x140042ffa — same (patched)",
+          "0x140042d55 — and [rbp+var_20], 0 — the stack qword holding the +0x10 field is zeroed before the coalescing path (unpatched)",
+          "0x140042e58 — CoalescingSendPacketIfNecessary entry (patched)",
+          "0x140042f87 — patched-only chip-family-9 guard",
+          "0x14004374c — MP_ProcessSGList",
+          "0x140045318 — nd6_LM_HandleTxInterrupts (also calls the function)"
+        ],
+        "trigger_setup": "1. Target a system whose Broadcom adapter reports chip family 9 (chip_id >> 12 == 9 at adapter+0x52960). 2. Cause the adapter to transmit packets whose send-path fragment list contains an entry with its third 32-bit field >= 0x100, satisfying the loop preconditions ([r14+8] >= 0xe, fragment count < 0x18). 3. On the patched build the driver takes the non-coalescing send path for such packets; on the unpatched build it may coalesce. This is a behavioral difference in a send-path decision, not a crash trigger.",
+        "expected_observation": "No crash is expected from either build on the basis of the fragment field. On chip family 9 with a fragment field >= 0x100 the patched driver declines to coalesce (var_28 = 2) where the unpatched driver may coalesce; the observable difference is the send path taken, verifiable by breaking at 0x140042f87 (patched) and observing the branch.",
+        "notes": "The chip-family identifier is chip_id >> 12 = [adapter+0x52960] >> 12. In this function the surrounding comparisons use NetXtreme model values (0x5717, 0x5761, 0x5762, 0x5784, 0x57766); the new guard uses family 9, a distinct device family (the same family gated by RestoreMsiCaps via (chip>>12)-8<=1). A given device presents one value. The bound-checked fragment field is stored to a stack qword that is zeroed (and [rbp+var_20], 0) before the coalescing path, so it does not feed ring-index arithmetic; the ring bookkeeping is byte-identical between builds. The driver is not position-independent; the analyzed base is 0x140000000 and it is relocated at runtime."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SaveMsiCaps",
+      "entry_point": "Driver initialization (UM_Initialize / LM_ResetAdapter) → SaveMsiCaps",
+      "call_chain": [
+        "DriverEntry / UM_Initialize (0x14006b958)",
+        "SaveMsiCaps (0x1400021e0) — reads PCI MSI capability registers via raw pointer arithmetic"
+      ],
+      "vulnerability_class": "Out-of-bounds read (CWE-125) via unvalidated PCI capability offset — low-severity hardening",
+      "description": "The unpatched SaveMsiCaps calls FindPciCapMem(arg1, 5) to locate the MSI capability in PCI config space, then uses the returned byte offset (r8) to compute addresses: config_base + r8+2, config_base + r8+8, config_base + r8+4, config_base + r8+0xc, dereferenced without validating r8. The offset is a byte (0-255) read from the device's own capability list; if a malicious or emulated PCI device returns an out-of-range offset, the read can land a few bytes past a legacy 256-byte config window (bounded by the 4KB extended config mapping). The patched version replaces this with MM_ReadConfig32 using fixed offsets (0x58, 0x5c, 0x60, 0x64) via the HAL. This is a low-severity hardening change; a well-formed device returns a valid offset.",
+      "trigger_conditions": "1. A malicious or emulated PCI device that returns an out-of-range MSI capability offset (capability ID 5). A well-formed NetXtreme device returns a valid in-range offset and the code behaves correctly. 2. Triggered during driver initialization / adapter reset when SaveMsiCaps is called.",
+      "primitive": "Bounded out-of-bounds kernel memory read near the PCI config-space mapping, reachable only via a malformed/emulated capability offset. Requires an attacker who already controls the PCI device (and therefore already has bus-master DMA), so the marginal impact is small.",
+      "evidence": "UNPATCHED SaveMsiCaps (0x1400021e0):\n\n    uint32_t r8 = FindPciCapMem(arg1, 5);  // returns capability offset\n    int32_t* rcx_1 = r8 + 8 + *(arg1 + 0x20);  // config_base + r8 + 8\n    *(arg1 + 0x59ee4) = *(r8 + 2 + *(arg1 + 0x20));  // RAW DEREF\n    int32_t* rcx_3 = r8 + 4 + *(arg1 + 0x20);\n    *(arg1 + 0x59ee8) = *rcx_1;   // RAW DEREF\n    int16_t* rcx_5 = r8 + 0xc + *(arg1 + 0x20);\n    *(arg1 + 0x59eec) = *rcx_3;   // RAW DEREF\n    int16_t result = *rcx_5;      // RAW DEREF\n    *(arg1 + 0x59ef0) = result;\n\nPATCHED SaveMsiCaps (0x1400021ec):\n\n    MM_ReadConfig32(arg1, 0x58, &arg_8);  // safe API, fixed offset\n    *(arg1 + 0x59f2c) = arg_8 >> 0x10;\n    MM_ReadConfig32(arg1, 0x60, &arg_8);\n    *(arg1 + 0x59f30) = arg_8;\n    MM_ReadConfig32(arg1, 0x5c, &arg_8);\n    *(arg1 + 0x59f34) = arg_8;\n    MM_ReadConfig32(arg1, 0x64, &arg_8);\n    int16_t result = arg_8;",
+      "assembly": "UNPATCHED SaveMsiCaps (0x1400021e0):\npush    rbx\nsub     rsp, 0x20\nmov     edx, 0x5\nmov     rbx, rcx\ncall    0x1400017c8              ; FindPciCapMem\nmovzx   r8d, al                  ; capability offset from return value\nlea     edx, [r8+0x2]            ; offset+2\nadd     rdx, qword [rbx+0x20]    ; config_base + offset+2\nmovzx   eax, word [rdx]          ; RAW DEREF - OOB if r8 invalid\nlea     ecx, [r8+0x8]\nadd     rcx, qword [rbx+0x20]    ; config_base + offset+8\nmov     word [rbx+0x59ee4], ax\nmov     eax, dword [rcx]         ; RAW DEREF\nlea     ecx, [r8+0x4]\nadd     rcx, qword [rbx+0x20]\nmov     dword [rbx+0x59ee8], eax\nmov     eax, dword [rcx]         ; RAW DEREF\nlea     ecx, [r8+0xc]\nadd     rcx, qword [rbx+0x20]\nmov     dword [rbx+0x59eec], eax\nmovzx   eax, word [rcx]          ; RAW DEREF\nmov     word [rbx+0x59ef0], ax\nadd     rsp, 0x20\npop     rbx\nretn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "b57nd60a!SaveMsiCaps",
+            "address": "0x1400021e0",
+            "why": "Function entry during adapter initialization. Inspect rcx (arg1 = adapter context), [rcx+0x20] (config_base virtual address), and al (return from FindPciCapMem) to see if the capability offset is valid."
+          },
+          {
+            "symbol": "b57nd60a!SaveMsiCaps+0x14",
+            "address": "0x1400021f4",
+            "why": "After FindPciCapMem returns — inspect r8d (al = capability offset). If this value is unexpected (e.g., > 0xFF or pointing outside config space), the subsequent dereferences will be OOB."
+          }
+        ],
+        "watch": [
+          "al/r8d — capability offset returned by FindPciCapMem. Valid MSI capability offsets are typically 0x40-0xFF and aligned to 4 bytes.",
+          "qword [rbx+0x20] — config_base: the virtual address mapping of PCI config space. All dereferences are relative to this base.",
+          "rdx after `add rdx, qword [rbx+0x20]` — the actual kernel virtual address being read. Compare to config space range."
+        ],
+        "key_offsets": [
+          "0x1400021e0 — SaveMsiCaps entry (unpatched)",
+          "0x1400021ea — call to FindPciCapMem (capability search)",
+          "0x1400021ef — movzx r8d, al (capability offset captured)",
+          "0x1400021f2 — lea edx, [r8+0x2]; add rdx, [rbx+0x20] — first OOB-vulnerable pointer computation",
+          "0x1400021fc — movzx eax, word [rdx] — first RAW DEREF",
+          "0x1400021ec — SaveMsiCaps entry (patched) — uses MM_ReadConfig32 with fixed offsets"
+        ],
+        "trigger_setup": "This requires a malicious or malformed PCI device. In a virtualized environment (Hyper-V, VMware), the PCI config space of the virtual NIC can potentially be manipulated. In a physical attack scenario, a malicious PCIe card with a Broadcom-compatible device ID could supply a malformed capability chain. To test: (1) Use a PCIe fault injection tool or a custom FPGA-based PCIe device. (2) In a VM with PCI passthrough, modify the config space of the passed-through device. (3) Trigger driver reload: disable and re-enable the network adapter in Device Manager, or use 'pnputil /restart-device'.",
+        "expected_observation": "If the capability offset is invalid, the raw dereferences at config_base + offset will either: (1) Read garbage data from adjacent kernel memory (silent information leak), (2) Trigger a page fault if the address is unmapped (BSOD PAGE_FAULT_IN_NONPAGED_AREA), or (3) Read from a valid but wrong PCI register, causing incorrect MSI configuration. With Driver Verifier special pool, an OOB read may trigger immediate detection.",
+        "notes": "This vulnerability is primarily exploitable via hardware attacks (malicious PCIe device) or virtualization escapes, not remotely. However, it demonstrates an unsafe pattern that exists in the driver's PCI config handling. The fixed offsets in the patched version (0x58-0x64) correspond to standard MSI-X capability register locations in PCI config space."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "UM_Dpc",
+      "entry_point": "NDIS interrupt DPC dispatch → UM_Dpc",
+      "call_chain": [
+        "Hardware interrupt → NDIS DPC scheduling",
+        "UM_Dpc (0x140002e28) — processes RX/TX completions, RSS queue management",
+        "CPU-indexed array access ([rbx+(cpu<<2)+0x56a38], [rbx+(idx<<3)+0x61f8])"
+      ],
+      "vulnerability_class": "Improper input validation (CWE-20) — added CPU-index validity guards / defensive refactor",
+      "description": "In both builds the CPU index used to index the per-CPU arrays is captured from mm_get_current_cpu_idx() into the non-volatile ebp. In the unpatched build the index is captured fresh immediately before use (call mm_get_current_cpu_idx; mov ebp, eax at 0x140002fc2, then [rbx+rbp*4+0x56a38] at 0x140002fe3), so it is not stale. The patch relocates the capture to function entry (second of two entry calls, saved at 0x140002ead) and adds explicit validity guards before the per-CPU accesses (cmp ebp, [rbx+off]; jnz skip and a slot check), together with an RSS-servicing refactor using lock cmpxchg. This is a defensive/synchronization refactor that adds bounds-style guards; no stale-index out-of-bounds access is demonstrable in the unpatched code.",
+      "trigger_conditions": "1. RSS enabled and network traffic flowing to drive interrupt DPCs. 2. The patch adds validity guards around the per-CPU array accesses; in the unpatched build the CPU index is captured fresh before those accesses, so the guards are defensive rather than a fix for an observed out-of-bounds access.",
+      "primitive": "None demonstrable. The change adds index-validity guards and refactors RSS servicing; the unpatched index is captured fresh before use.",
+      "evidence": "UNPATCHED UM_Dpc (0x140002e28) — index captured fresh before use:\n\n    mm_get_current_cpu_idx();              // entry call (0x140002e53)\n    // ...\n    cpu = mm_get_current_cpu_idx();        // fresh capture (0x140002fc2), saved in ebp\n    x = *(arg1 + (cpu << 2) + 0x56a38);    // per-CPU RSS mask (0x140002fe3), fresh index\n\nPATCHED UM_Dpc (0x140002e78):\n\n    mm_get_current_cpu_idx();              // 0x140002ea3\n    cpu = mm_get_current_cpu_idx();        // 0x140002ea8 — capture moved to entry, saved in ebp\n    // added guards before each per-CPU access:\n    if (flag && cpu == *(arg1 + off) && *(arg1 + (cpu<<2) + 0x56a38) != 0)\n        x = *(arg1 + (cpu << 2) + 0x56a38);\n    // RSS servicing refactored to use lock cmpxchg",
+      "assembly": "UNPATCHED UM_Dpc (0x140002e28):\nmov rbx, rcx\ncall mm_get_current_cpu_idx   ; entry call (0x140002e53)\ncmp dword [rbx+0x57170], r12d\n; ... later, fresh capture immediately before array use:\ncall mm_get_current_cpu_idx   ; 0x140002fc2\nmov ebp, eax                  ; 0x140002fd0\nmov esi, [rbx+rbp*4+0x56a38]  ; 0x140002fe3 — fresh index\n\nPATCHED UM_Dpc (0x140002e78):\nmov rbx, rcx\ncall mm_get_current_cpu_idx   ; 0x140002ea3\ncall mm_get_current_cpu_idx   ; 0x140002ea8 — capture moved to entry\nmov ebp, eax                  ; 0x140002ead\n; ... added validity guards before each per-CPU access:\n;   cmp ebp, [rbx+off]  /  jnz skip\n;   cmp [rbx+rbp*4+off], r12d  /  jz skip\n; plus RSS servicing refactored with lock cmpxchg",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "b57nd60a!UM_Dpc",
+            "address": "0x140002e28",
+            "why": "DPC entry point. In the patched build, ebp is captured at entry (0x140002ead) and validated against an adapter field before each per-CPU access; in the unpatched build it is captured fresh at 0x140002fc2 right before use. Compare the two to see the relocated capture and the added guards."
+          }
+        ],
+        "watch": [
+          "ebp after mm_get_current_cpu_idx — the CPU index used for the per-CPU accesses",
+          "cmp ebp, [rbx+off] (patched only) — added validity guard before the array access",
+          "arg1 + (ebp << 2) + 0x56a38 — RSS mask array",
+          "arg1 + (idx << 3) + 0x61f8 — DPC context array (slot check `< 4` in both builds)"
+        ],
+        "key_offsets": [
+          "0x140002e53 — call to mm_get_current_cpu_idx (unpatched, single call)",
+          "0x140002ea3 — call to mm_get_current_cpu_idx (patched, first of two calls)",
+          "0x140002ea8 — second call; 0x140002ead — mov ebp, eax (patched, save to non-volatile)",
+          "0x1400030c3 — array access *(arg1 + (result << 3) + 0x61f8) using potentially stale index"
+        ],
+        "trigger_setup": "1. Enable RSS on the Broadcom adapter. 2. Generate network traffic to drive interrupt DPCs. 3. Break at UM_Dpc entry and step through to observe the relocated CPU-index capture (patched: 0x140002ea8/0x140002ead) and the added validity guards before the per-CPU accesses; compare to the unpatched fresh capture at 0x140002fc2.",
+        "expected_observation": "No crash is expected from either build on this basis. The difference is structural: the patched build captures the CPU index at entry and adds validity guards (cmp ebp, [rbx+off]; jnz skip and a slot check) before the per-CPU array accesses; the unpatched build captures the index fresh right before use.",
+        "notes": "The DPC context array at offset 0x61f8 is slot-checked (`< 4`) in both builds, and the RSS mask array at 0x56a38 is indexed by CPU number. The unpatched build captures the CPU index fresh immediately before use, so it is not stale; the patch adds explicit index-validity guards and an RSS lock cmpxchg refactor."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "ClearActiveSqAndMapping",
+      "entry_point": "Adapter reset / send queue cleanup → ClearActiveSqAndMapping",
+      "call_chain": [
+        "UM_CheckForHang → ResetAdapter → ClearActiveSqAndMapping",
+        "Or: LM_ResetAdapter → ClearActiveSqAndMapping",
+        "ClearActiveSqAndMapping (0x1400426ac) — writes TBT register values into a context structure during cleanup (unpatched only)"
+      ],
+      "vulnerability_class": "Removed register-writeback code path (CWE-1164) — hardening/behavioral removal",
+      "description": "In the unpatched ClearActiveSqAndMapping, when the flag at [rdi+0x57160] is set, the code loads a context pointer (r13), validates magic 0xbcea7765 at [r13], then reads two Thunderbolt registers (REG_RD_TBT at config_base+0x5c0 and +0x5c4) and writes them into [r13+8] and [r13+0xc], during send-queue teardown. The patched version removes both identical blocks. The binaries do not show r13 being freed before this runs, and the 0xbcea7765 magic check is a deliberate type gate, so a use-after-free is not established. This is best read as removal of a register-readback/writeback path during teardown (hardening/behavioral removal), not a confirmed use-after-free.",
+      "trigger_conditions": "1. The adapter must support TBT (Thunderbolt) register reads (flag at arg1+0x57160 set). 2. A send-queue cleanup must occur (adapter reset, hang detection, or power state change). 3. A context structure (magic 0xbcea7765) must be in the cleanup path. Effect of the patch: the two TBT register-writeback blocks that would write into the context (ctx+0x8, ctx+0xc) are removed.",
+      "primitive": "None established. The removed code writes 8 bytes (two 32-bit register values) into a context validated by a type magic; the binaries do not show that context being freed before the write, so a freed-memory write is not demonstrable.",
+      "evidence": "UNPATCHED ClearActiveSqAndMapping — code REMOVED in patched:\n\n    // During send queue cleanup, for each completed NBL:\n    *(s_2 + 0x8c) = 0;\n    \n    if (*(arg1 + 0x57160))   // TBT support flag\n    {\n        int32_t* r13_2 = s_2[0xd];   // get context pointer from NBL\n        if (r13_2 && *r13_2 == 0xbcea7765 && !r13_2[1])  // validate magic\n        {\n            r13_2[2] = REG_RD_TBT(arg1, *(arg1 + 0x20) + 0x5c0);  // WRITE to context\n            r13_2[3] = REG_RD_TBT(arg1, *(arg1 + 0x20) + 0x5c4);  // WRITE to context\n        }\n    }\n    \n    // This code appears TWICE in unpatched (two loops), removed entirely in patched.",
+      "assembly": "UNPATCHED ClearActiveSqAndMapping (0x1400426ac) — section at 0x140042807:\n; if (*(arg1 + 0x57160)):\ncmp dword [arg1+0x57160], 0   ; TBT support flag check\nje skip_tbt_write\n; r13_2 = s_2[0xd]:\nmov r13_2, [s_2+0x68]         ; load context pointer\ntest r13_2, r13_2\nje skip_tbt_write\n; *r13_2 == 0xbcea7765:\ncmp dword [r13_2], 0xbcea7765 ; magic validation\njne skip_tbt_write\n; !r13_2[1]:\ncmp dword [r13_2+4], 0\njne skip_tbt_write\n; r13_2[2] = REG_RD_TBT(...):\nmov rdx, [arg1+0x20]\nadd rdx, 0x5c0\ncall REG_RD_TBT               ; read TBT register\nmov [r13_2+8], eax            ; WRITE to potentially-freed context\n; r13_2[3] = REG_RD_TBT(...):\nmov rdx, [arg1+0x20]\nadd rdx, 0x5c4\ncall REG_RD_TBT\nmov [r13_2+0xc], eax          ; WRITE to potentially-freed context\n; PATCHED: This entire block is deleted",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "b57nd60a!ClearActiveSqAndMapping",
+            "address": "0x1400426ac",
+            "why": "Entry point for send queue cleanup. Set breakpoint to catch when cleanup is triggered. The TBT register write occurs at offset +0x15b (0x140042807) in the first loop and at a similar offset in the second loop."
+          }
+        ],
+        "watch": [
+          "r13_2 — the context pointer loaded from s_2[0xd]. Check if this memory has been freed using !pool r13_2 in WinDbg.",
+          "dword [arg1+0x57160] — TBT support flag; must be non-zero for the vulnerable path",
+          "dword [r13_2] — magic value; must be 0xbcea7765 to reach the write",
+          "r13_2[2] and r13_2[3] — the target write locations; use ba w4 r13_2+8 and ba w4 r13_2+0xc to detect the write"
+        ],
+        "key_offsets": [
+          "0x1400426ac — ClearActiveSqAndMapping entry (unpatched)",
+          "0x140042807 — First TBT register write block (unpatched)",
+          "0x1400429e6 — Second TBT register write block (unpatched)",
+          "0xbcea7765 — magic value that gates the write"
+        ],
+        "trigger_setup": "1. Target a system with TBT-capable Broadcom NIC (flag at adapter+0x57160 set). 2. Generate network traffic to populate send queues. 3. Trigger adapter reset: (a) Flood the adapter to trigger hang detection in UM_CheckForHang, (b) Use Device Manager to disable/re-enable the adapter, (c) Use 'pnputil /restart-device' on the network adapter. 4. The race window is between send completion and context free — must be timed to catch the cleanup path while contexts are being recycled.",
+        "expected_observation": "No crash is established from the binaries. To assess the removed block, break at 0x140042807 (unpatched) and inspect r13 with !pool to determine whether the context is a live allocation at that point; the binaries alone do not show it being freed before the write.",
+        "notes": "The removed TBT register-writeback to a context during cleanup is gated by the type magic 0xbcea7765. Whether the target context could ever be freed before this runs is not determinable from these two functions alone; the change is treated as a hardening/behavioral removal rather than a confirmed use-after-free."
+      }
+    }
+  ],
+  "summary": "The patch makes low-severity hardening and behavioral changes to the Broadcom b57nd60a.sys NetXtreme Gigabit Ethernet NDIS miniport driver; none is a demonstrable high-severity, exploitable memory-corruption bug in the binaries. The clearest security-relevant change moves PCI MSI capability config-space reads/writes off raw pointer arithmetic using a device-supplied capability offset onto the HAL config API (SaveMsiCaps 0x1400021e0 and RestoreMsiCaps 0x140002134 -> MM_ReadConfig32/MM_WriteConfig32 at fixed offsets 0x58/0x5c/0x60/0x64); the out-of-bounds read this removes is bounded and requires a malicious/emulated PCI device (CWE-125, low). CoalescingSendPacketIfNecessary (0x140042b18) adds a chip-family-9-gated guard (cmp ecx,9 / cmp ebx,0x100 / jnb) that forces the non-coalescing decision for a large fragment field; the function computes a coalescing decision (var_28) and the downstream TX ring bookkeeping is byte-identical between builds, so this is a coalescing correctness guard, not an out-of-bounds-write fix. UM_Dpc (0x140002e28) relocates the CPU-index capture to entry and adds index-validity guards before per-CPU array accesses (the unpatched build already captured the index fresh before use). ClearActiveSqAndMapping (0x1400426ac) removes two Thunderbolt register-writeback blocks during send-queue teardown; no freed-memory access is demonstrable. The remaining changed functions differ by adapter-context structure-offset shifts and register allocation."
+}

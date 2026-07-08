@@ -1,0 +1,451 @@
+{
+  "binaries": {
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9895,
+    "matched": 3911,
+    "changed": 31,
+    "identical": 3880,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "QkIsOrdinalUseable",
+      "similarity": 0.772,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the UxKirHttpBugFix25Q2 gate that selected between an OLD routine (flag == 0) and QkIsOrdinalUseableNew (flag != 0); the patched QkIsOrdinalUseable (0x14013C4E0) is the corrected routine inline",
+        "OLD routine merges the arg2 and non-arg2 lookups into one table path: after a reject filter it returns 1 (usable) whenever the table is not full (0x2038 < 0x2030) OR the cached result at 0x2020 has result->0x18 != 0, and only otherwise bound-checks (arg2 -> <= 0x2010, non-arg2 -> <= 0x2018)",
+        "For the non-arg2 path (a2 == 0) the OLD routine therefore accepts an ordinal greater than 0x2018 as usable whenever the table has spare capacity or the result marker is set, skipping the 0x2018 bound check",
+        "Corrected routine splits on a2 first and, for the non-arg2 case, always evaluates arg3 <= *(a1 + 0x2018) after a 0x48 / 0x2008 pre-filter; it never returns usable on that path without the comparison",
+        "The arg2 branch (bound 0x2010 plus the not-full / result-marker shortcuts) is identical in both routines; the change is confined to the non-arg2 path"
+      ],
+      "security_relevant": true,
+      "security_notes": "QPACK (HTTP/3 header compression) dynamic table ordinal validation change. When UxKirHttpBugFix25Q2 is 0, the OLD routine runs; on the non-arg2 lookup path it returns 'usable' for a dynamic-table ordinal without comparing it to the valid bound at 0x2018 whenever the dynamic table is not full (0x2038 < 0x2030) or the cached result marker at 0x2020 (result->0x18) is non-zero. An out-of-range ordinal accepted here can feed an out-of-bounds access when the ordinal is used to index the QPACK dynamic table. The routine is called from QkEncodePairControl and QkEncodePairData and via the recursive self-call QkIsOrdinalUseable(ctx, 0, ordinal), which processes attacker-influenced HTTP/3 request headers. UxKirHttpBugFix25Q2 is a Known Issue Rollback flag; whether the OLD routine is live depends on the feature default/rollback state and should be confirmed at runtime.",
+      "assembly_diff": "UNPATCHED QkIsOrdinalUseable (0x14013CA40):\nsub     rsp, 28h\ncmp     cs:UxKirHttpBugFix25Q2, 0\njz      0x14013CA54                      ; flag == 0: OLD routine\ncall    QkIsOrdinalUseableNew            ; flag != 0: corrected routine\njmp     0x14013CAC2\n; --- OLD routine ---\nmov     eax, [rcx+1FECh]\ncmp     [rcx+1FE8h], eax\njnz     0x14013CA68\ncmp     r8, 62h\nja      0x14013CA81\n0x14013CA68: test dl, dl\njnz     0x14013CA85\ncmp     r8, 62h\njbe     0x14013CA85\ncmp     r8, [rcx+48h]\nja      0x14013CA85\ncmp     r8, [rcx+2008h]\nja      0x14013CA85\n0x14013CA81: xor al, al                 ; return 0\njmp     0x14013CAC2\n0x14013CA85: mov rax, [rcx+2030h]        ; max_entries\ncmp     [rcx+2038h], rax                 ; insert_count < max ?\njb      0x14013CAC0                      ; not full -> mov al,1 (no bound check)\nmov     rax, [rcx+2020h]                 ; result ptr\ntest    rax, rax\njz      0x14013CAA7\ncmp     dword ptr [rax+18h], 0\njnz     0x14013CAC0                      ; marker set -> mov al,1 (no bound check)\n0x14013CAA7: test dl, dl\njz      0x14013CAB7\ncmp     r8, [rcx+2010h]                  ; arg2 bound (unchanged in fix)\nsetbe   al\njmp     0x14013CAC2\n0x14013CAB7: cmp r8, [rcx+2018h]         ; non-arg2 bound (skipped on not-full/marker edges)\njmp     0x14013CAB2\n0x14013CAC0: mov al, 1\n0x14013CAC2: add rsp, 28h ; retn\n\nPATCHED QkIsOrdinalUseable (0x14013C4E0): the UxKirHttpBugFix25Q2 test is gone; body is QkIsOrdinalUseableNew, whose non-arg2 branch always runs 'cmp r8, [rbx+2018h]; setbe al'."
+    },
+    {
+      "name": "sub_1400D2029",
+      "similarity": 0.8512,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address 0x1400D2029 is an instruction offset inside UlCaptureWideString (0x1400D1F58 - 0x1400D20D4), not a distinct function",
+        "The string-capture logic at this location is behaviorally identical between the two builds",
+        "Differences are limited to an updated WPP trace GUID and register/stack codegen"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. This address falls within UlCaptureWideString, whose allocate/probe/copy logic is equivalent in both builds. No pool free is added or removed and no leak is introduced or fixed. See the UlCaptureWideString entry.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1400D5439",
+      "similarity": 0.8726,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Simplified redundant double-check (rbx >= 0 && rbx >= 0) to single check",
+        "Removed r8 variable tracking for WPP trace; uses arg11 directly"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140133E9F",
+      "similarity": 0.8726,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same simplification pattern as sub_1400D5439 - removed redundant r8 variable"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCaptureWideString",
+      "similarity": 0.8008,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Both builds are functionally equivalent: zero the two output params, and when length != 0 allocate via ExAllocatePool3(66, len, ...), then probe/memmove/store on success or set status 0xC0000096 on allocation failure",
+        "No deferred-free variable, no ExFreePoolWithTag, and no cleanup-on-exit path exists in either build",
+        "Differences are a WPP trace GUID update and codegen (the constant 1 passed to ExAllocatePool3 is materialized via a stack slot in the patched build)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The allocate/probe/copy logic is identical between builds; the buffer is handed to the caller on success and no leak path exists in either version.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpMdlSendCompleteWorker",
+      "similarity": 0.3435,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major restructure: success path no longer calls UxpTpFreeChunkTracker; instead inlines the full teardown sequence (UxFreeMdlChain, MmUnlockPages, IoFreeMdl, IoFreeIrp, ExFreePoolWithTag, PsReturnPoolQuota, lookaside free, refcount decrement, worker scheduling)",
+        "Error path still calls UxpTpFreeChunkTracker",
+        "Added __security_cookie stack guard (larger stack frame 0xb8 vs 0x20)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of transmit packet completion worker. The MDL chain freeing logic that was previously in UxpTpFreeChunkTracker is now inlined directly into the success path of UxpTpMdlSendCompleteWorker. This is part of the UxKirSeEndConnectionStats feature-flag consolidation - the success path now uses UxFreeMdlChain helper instead of inline loops. The behavioral outcome is equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpFreeChunkTracker",
+      "similarity": 0.6688,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced inline MDL chain iteration loops with calls to UxFreeMdlChain() helper",
+        "Replaced inline lookaside list management with PplFreeToLookasideListProcessor/PnlFreeToLookasideList",
+        "Added explicit NULL-setting after frees (e.g., *(arg1 + 0x130) = 0)",
+        "Replaced UlThreadPoolEnqueueWorkItem with direct ExpInterlockedPushEntrySList + IoQueueWorkItemEx pattern"
+      ],
+      "security_relevant": false,
+      "security_notes": "Code refactoring/dedup. The MDL chain freeing and lookaside list management are extracted into helper functions. The explicit NULL-setting after frees is a hardening improvement but the function is now only called from error paths in the patched version.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpEnqueueTransmitPacket",
+      "similarity": 0.7693,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced inline MDL chain byte-count iteration with UxGetMdlChainByteCountEx() helper call",
+        "Restructured main control flow from if/else to while(true) with break",
+        "Replaced UlThreadPoolEnqueueWorkItem with UxPodAttachThread/UxPodDetachThread wrapper"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring with helper function extraction. The MDL byte counting logic is extracted into UxGetMdlChainByteCountEx(). The overflow check (r14 < rax_23) is preserved. The control flow is restructured but behaviorally equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpBufferSendCompleteWorker",
+      "similarity": 0.3626,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirSeEndConnectionStats feature-flag branch that selected between UlEventDataTransmissionStats_Old and UlEventDataTransmissionStats",
+        "Now always calls UlEventDataTransmissionStats"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal. The unpatched version has a runtime branch on UxKirSeEndConnectionStats that selects between old and new stats functions; patched always uses the new one.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpGenerateAuthHeaders",
+      "similarity": 0.7766,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirHttpBugFix25Q2 feature-flag branches that duplicated auth scheme bit-mapping logic",
+        "Register reallocation and variable renaming (rsi -> r14, var offsets shifted)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal. Both branches of UxKirHttpBugFix25Q2 had identical bit-mapping logic (scheme index to bitmask: 1->1, 2->2, 3->4, 4->8, 5->0x10). The patch removes the duplicated code paths. No behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpGenerateAuthHeadersOld",
+      "similarity": 0.7688,
+      "change_type": "cosmetic",
+      "key_changes": ["Same feature-flag dedup pattern as UlpGenerateAuthHeaders"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpComputeAuthHeaderSize",
+      "similarity": 0.8472,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirHttpBugFix25Q2 feature-flag branches with duplicated bit-mapping",
+        "Register reallocation (rsi -> r14, var_60 -> var_64)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal. Identical bit-mapping in both flag branches.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpComputeAuthHeaderSizeOld",
+      "similarity": 0.8472,
+      "change_type": "cosmetic",
+      "key_changes": ["Same feature-flag dedup as UlpComputeAuthHeaderSize"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpParseAuthHeader",
+      "similarity": 0.8906,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirHttpBugFix25Q2 branch with duplicated scheme bitmask logic",
+        "Register renamed: rsi -> rbp, r14_1 -> rsi_1"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal. Both branches had identical bitmask mapping.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlVerifyInitializedAuthSchemes",
+      "similarity": 0.8379,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirHttpBugFix25Q2 branch with duplicated scheme validation bitmask logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlVerifyAuthConfigOld",
+      "similarity": 0.897,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirHttpBugFix25Q2 branch with duplicated auth config bitmask logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag dead-code removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlEventRequestDataTransmissionStats",
+      "similarity": 0.8909,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirSeEndConnectionStats from IRQL enforcement check condition",
+        "Simplified conditional structure for ETW stats writing"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag removal in stats path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpEventRequestConnectionStats",
+      "similarity": 0.9677,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirSeEndConnectionStats gate that controlled entire function body",
+        "Reordered IRQL enforcement check"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag removal. The entire function body was previously gated behind UxKirSeEndConnectionStats; now always executes.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlEgressDisconnectCompletion",
+      "similarity": 0.9345,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirSeEndConnectionStats branch selecting between UlEventDataTransmissionStats_Old and UlpWriteStatsOnEgressDisconnect",
+        "Now always calls UlpWriteStatsOnEgressDisconnect"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpAllocateTransmitPacket",
+      "similarity": 0.98,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Both builds clear the whole packet with memset(pkt, 0, 0x150) right after allocation, which already zeroes 0x120/0x130/0x140",
+        "Unpatched re-zeroes those three fields inside an 'if (UxKirSeEndConnectionStats != 0)' block; patched drops the flag test and re-zeroes them unconditionally - the removed block was redundant given the earlier memset",
+        "The refcount debug check reads 'if (UxDebugCheckRefcount != 0 && v <= -1) UlBugCheckEx(...)' in both builds; the logical operator is unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "No uninitialized-memory issue. Fields 0x120/0x130/0x140 are cleared by memset(pkt,0,0x150) on every path in both builds; the flag-gated re-zero the patch removes was redundant. This is dead-code cleanup tied to removing the UxKirSeEndConnectionStats flag.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpFreeTransmitPacket",
+      "similarity": 0.9734,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed UxKirSeEndConnectionStats branch selecting between UlEventDataTransmissionStats_Old and UlEventDataTransmissionStats"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlHttpAttachConnection",
+      "similarity": 0.9847,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Connection object is cleared with memset(conn, 0, 0x4A0) right after allocation in both builds, which zeroes 0x100/0x110/0x120/0x130",
+        "Unpatched re-zeroes those fields inside an 'if (UxKirSeEndConnectionStats != 0)' block; patched removes the flag test and zeroes them inline unconditionally - redundant given the earlier memset",
+        "Minor reordering of SLIST head init relative to the field stores"
+      ],
+      "security_relevant": false,
+      "security_notes": "No uninitialized-memory issue. Fields 0x100/0x110/0x120/0x130 are cleared by memset(conn,0,0x4A0) on every path in both builds; the flag-gated re-zero the patch removes was redundant. No uninitialized data reaches UlpEventRequestConnectionStats or ETW. Dead-code cleanup tied to removing UxKirSeEndConnectionStats.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCopyServiceBindings",
+      "similarity": 0.9577,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable renaming and stack offset changes (var_30 -> var_28, etc.)",
+        "Minor reordering of WPP trace calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "Cosmetic register/variable allocation changes.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule",
+      "similarity": 0.9614,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed initialization of UxKirSeEndConnectionStats global flag",
+        "Removed initialization of UxKirHttpBugFix25Q2 global flag",
+        "Removed corresponding WPP trace logging for these flags"
+      ],
+      "security_relevant": true,
+      "security_notes": "Root-cause context. In the unpatched binary this function initializes UxKirHttpBugFix25Q2 (via Feature_HttpBugFix25Q2__private_IsEnabledDeviceUsageNoInline) and UxKirSeEndConnectionStats (via Feature_SeHttpEndConnectionStats__private_IsEnabledDeviceUsageNoInline) using WIL feature staging. The patched binary no longer initializes either flag, and neither has remaining references in the module. Removing UxKirHttpBugFix25Q2 makes the per-function branch that selected the OLD QkIsOrdinalUseable routine disappear; removing UxKirSeEndConnectionStats removes the redundant stats re-zeroing branches. These are Known Issue Rollback flags, so the live state in a given deployment depends on the feature default/rollback rather than the binary alone.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCopyServiceBindings$filt$0",
+      "similarity": 0.9889,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor address/offset adjustments"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlEventDataTransmissionStats",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_SF_lllDli",
+      "similarity": 0.6957,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP tracing function with updated GUIDs"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxTpCleanupTransmitQueue",
+      "similarity": 0.8772,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactoring aligned with UxpTpMdlSendCompleteWorker changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of the transmit packet refactor cluster.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpTpDequeueTransmitPacket",
+      "similarity": 0.8658,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactoring aligned with transmit packet lifecycle changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of the transmit packet refactor cluster.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "QkIsOrdinalUseable",
+      "entry_point": "HTTP/3 (QUIC) request with QPACK-encoded headers containing attacker-controlled dynamic table ordinals",
+      "call_chain": ["HTTP/3 QUIC connection", "QPACK header decoding/encoding", "QkEncodePairControl / QkEncodePairData", "QkIsOrdinalUseable", "QkSearchTableByNameValue / QkUpdateLargestReference"],
+      "vulnerability_class": "Out-of-bounds access via missing bounds check (CWE-787/CWE-125)",
+      "description": "QkIsOrdinalUseable validates whether a QPACK dynamic table ordinal can be used. It is called from QkEncodePairControl (0x14013B020) and QkEncodePairData (0x14013B260) and via the recursive self-call QkIsOrdinalUseable(ctx, 0, ordinal) during HTTP/3 header processing. When UxKirHttpBugFix25Q2 is 0 the OLD routine runs. That routine merges the arg2 and non-arg2 lookups into one table path: after a reject filter it returns 1 (usable) whenever the table is not full (insert_count at 0x2038 < max_entries at 0x2030) OR the cached result at 0x2020 has result->0x18 != 0, and only otherwise compares the ordinal against a bound (0x2010 for arg2, 0x2018 for non-arg2). For the non-arg2 path (a2 == 0) this skips the mandatory arg3 <= *(a1 + 0x2018) check, so an ordinal above 0x2018 is accepted as usable while the table has spare capacity or the marker is set. The corrected routine (QkIsOrdinalUseableNew at 0x14013CAD0; unconditional in the patched build at 0x14013C4E0) gives the non-arg2 case its own branch that always evaluates arg3 <= *(a1 + 0x2018). The arg2 branch (0x2010, plus the not-full/marker shortcuts) is identical in both. An out-of-range non-arg2 ordinal accepted by the OLD routine can then feed an out-of-bounds access when used to index the QPACK dynamic table.",
+      "trigger_conditions": "Reachable only when UxKirHttpBugFix25Q2 == 0. 1. Establish an HTTP/3 (QUIC) connection to a server using http.sys. 2. Put the QPACK dynamic table in a state that skips the non-arg2 bound check: keep it non-full (insert_count < max_entries, i.e. 0x2038 < 0x2030), or prime the cached result entry at 0x2020 so result->0x18 != 0. 3. On the non-arg2 lookup, reference a dynamic table ordinal (arg3) that is > 0x62, that is > *(a1 + 0x48) or > *(a1 + 0x2008) (so the routine reaches the shared table path rather than the reject filter), and that is > *(a1 + 0x2018) (the non-arg2 bound the corrected routine enforces). Under these conditions the OLD routine returns 1 (usable) without the 0x2018 comparison. Note: filling the table to capacity with the marker clear is the state that DOES enforce the check, so it is not the trigger.",
+      "primitive": "Out-of-bounds read or write in the QPACK dynamic table. Depending on how the accepted ordinal is subsequently used to index dynamic-table entries, this could yield an out-of-bounds read (kernel pool information disclosure) or an out-of-bounds write (memory corruption).",
+      "evidence": "OLD routine, selected when UxKirHttpBugFix25Q2 == 0 (offsets: 8168=0x1FE8, 8172=0x1FEC, 8200=0x2008, 8208=0x2010, 8216=0x2018, 8224=0x2020, 8240=0x2030, 8248=0x2038, 72=0x48):\n```\nif ((*(a1+0x1FE8) == *(a1+0x1FEC) && a3 > 0x62)\n    || (a2 == 0 && a3 > 0x62 && a3 <= *(a1+0x48) && a3 <= *(a1+0x2008)))\n    return 0;\nif (*(a1+0x2038) < *(a1+0x2030))\n    return 1;                      // table not full -> usable, NO bound check\nr = *(a1+0x2020);\nif (r != 0 && *(r+0x18) != 0)\n    return 1;                      // result marker set -> usable, NO bound check\nif (a2 != 0) return a3 <= *(a1+0x2010);   // arg2 bound\nelse         return a3 <= *(a1+0x2018);   // non-arg2 bound (only reached when full AND marker clear)\n```\n\nCorrected routine (QkIsOrdinalUseableNew; unconditional in patched):\n```\nif (a3 <= 0x62) return 1;\nif (*(a1+0x1FE8) == *(a1+0x1FEC)) return 0;\nif (a2 == 0) {                              // NON-ARG2: always bound-checked\n    if (a3 > *(a1+0x48) || a3 > *(a1+0x2008))\n        return a3 <= *(a1+0x2018);\n    return 0;\n}\nif (*(a1+0x2038) < *(a1+0x2030)) return 1;  // ARG2 path: unchanged\nr = *(a1+0x2020);\nif (r != 0 && *(r+0x18) != 0) return 1;\nreturn a3 <= *(a1+0x2010);\n```\n\nThe difference is confined to the non-arg2 path: the OLD routine routes it through the shared table path and returns 1 on the not-full / marker edges without checking 0x2018; the corrected routine always compares a3 <= *(a1+0x2018) there. The arg2 path is identical in both.",
+      "assembly": "UNPATCHED QkIsOrdinalUseable @ 0x14013CA40:\n0x14013CA40 sub rsp, 28h\n0x14013CA44 cmp cs:UxKirHttpBugFix25Q2, 0\n0x14013CA4B jz 0x14013CA54                ; flag == 0 -> OLD routine\n0x14013CA4D call QkIsOrdinalUseableNew    ; flag != 0 -> corrected routine\n0x14013CA52 jmp 0x14013CAC2\n0x14013CA54 mov eax, [rcx+1FECh]\n0x14013CA5A cmp [rcx+1FE8h], eax\n0x14013CA60 jnz 0x14013CA68\n0x14013CA62 cmp r8, 62h\n0x14013CA66 ja 0x14013CA81\n0x14013CA68 test dl, dl                    ; a2 == 0?\n0x14013CA6A jnz 0x14013CA85               ; arg2 -> shared table path\n0x14013CA6C cmp r8, 62h\n0x14013CA70 jbe 0x14013CA85\n0x14013CA72 cmp r8, [rcx+48h]\n0x14013CA76 ja 0x14013CA85\n0x14013CA78 cmp r8, [rcx+2008h]\n0x14013CA7F ja 0x14013CA85\n0x14013CA81 xor al, al                     ; return 0\n0x14013CA83 jmp 0x14013CAC2\n0x14013CA85 mov rax, [rcx+2030h]           ; max_entries\n0x14013CA8C cmp [rcx+2038h], rax           ; insert_count < max ?\n0x14013CA93 jb 0x14013CAC0                 ; not full -> mov al,1 (no bound check)\n0x14013CA95 mov rax, [rcx+2020h]           ; result ptr\n0x14013CA9C test rax, rax\n0x14013CA9F jz 0x14013CAA7\n0x14013CAA1 cmp dword ptr [rax+18h], 0     ; result->0x18\n0x14013CAA5 jnz 0x14013CAC0               ; marker set -> mov al,1 (no bound check)\n0x14013CAA7 test dl, dl\n0x14013CAA9 jz 0x14013CAB7\n0x14013CAAB cmp r8, [rcx+2010h]            ; arg2 bound (unchanged in fix)\n0x14013CAB2 setbe al\n0x14013CAB5 jmp 0x14013CAC2\n0x14013CAB7 cmp r8, [rcx+2018h]            ; non-arg2 bound (skipped on not-full/marker edges)\n0x14013CABE jmp 0x14013CAB2\n0x14013CAC0 mov al, 1                      ; return usable\n0x14013CAC2 add rsp, 28h ; retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!QkIsOrdinalUseable",
+            "address": "0x14013CA40",
+            "why": "Break at function entry to observe the KIR flag check. rcx = arg1 (QPACK context), dl = arg2 (0 selects the vulnerable non-arg2 path), r8 = arg3 (ordinal). UxKirHttpBugFix25Q2 == 0 routes to the OLD routine below."
+          },
+          {
+            "symbol": "http!QkIsOrdinalUseableNew",
+            "address": "0x14013CAD0",
+            "why": "The corrected routine, reached when the flag is non-zero. Its non-arg2 branch always runs 'cmp r8, [rbx+2018h]; setbe al'. Compare its result with the OLD routine for the same inputs."
+          },
+          {
+            "symbol": "http!QkEncodePairControl",
+            "address": "0x14013B020",
+            "why": "Caller of QkIsOrdinalUseable during QPACK encoding. Trace the ordinal passed in r8 and the a2 value; the recursive self-call with a2 == 0 is the path that reaches the vulnerable non-arg2 branch."
+          }
+        ],
+        "watch": [
+          "rcx (arg1) = QPACK context struct; key fields: [rcx+0x1FE8]/[rcx+0x1FEC]=state counters, [rcx+0x2030]=max_entries, [rcx+0x2038]=insert_count, [rcx+0x2020]=result entry pointer, [rcx+0x2010]=arg2 bound, [rcx+0x2018]=non-arg2 bound",
+          "dl (arg2) = 0 exercises the vulnerable non-arg2 path",
+          "r8 (arg3) = the QPACK dynamic table ordinal being validated",
+          "http!UxKirHttpBugFix25Q2 = KIR flag byte; 0 selects the OLD routine",
+          "At 0x14013CAC0: al set to 1; if reached with dl==0 and r8 > [rcx+0x2018] the non-arg2 bypass has fired"
+        ],
+        "key_offsets": [
+          "0x14013CA44: cmp cs:UxKirHttpBugFix25Q2, 0 - selects OLD vs corrected routine",
+          "0x14013CA4D: call QkIsOrdinalUseableNew - corrected routine (flag != 0)",
+          "0x14013CA4B: jz 0x14013CA54 - enters OLD routine (flag == 0)",
+          "0x14013CA93: jb 0x14013CAC0 - table not full -> returns usable, skipping the bound check",
+          "0x14013CAA5: jnz 0x14013CAC0 - result->0x18 != 0 -> returns usable, skipping the bound check",
+          "0x14013CAAB: cmp r8, [rcx+0x2010] - arg2 bound (only when full and marker clear; unchanged by patch)",
+          "0x14013CAB7: cmp r8, [rcx+0x2018] - non-arg2 bound (the check skipped on the not-full/marker edges)",
+          "0x14013CAC0: mov al, 1 - usable return reached without a non-arg2 bound check"
+        ],
+        "trigger_setup": "1. Target a Windows server running HTTP Server API (http.sys) with HTTP/3/QUIC enabled, with UxKirHttpBugFix25Q2 == 0. 2. Establish a QUIC connection. 3. Drive QPACK so the dynamic table is populated but NOT full (insert_count < max_entries), or prime the cached result at ctx+0x2020 so result->0x18 != 0. 4. On the non-arg2 lookup, reference an ordinal > 0x62 that is also > ctx+0x48 or > ctx+0x2008 and > ctx+0x2018. The OLD routine returns usable without the 0x2018 comparison.",
+        "expected_observation": "QkIsOrdinalUseable returns al=1 at 0x14013CAC0 with dl==0 for an ordinal exceeding [rcx+0x2018]. The subsequent dynamic-table lookup uses this ordinal, causing an out-of-bounds access. May manifest as kernel pool corruption or a BSOD (BugCheck 0x50 PAGE_FAULT_IN_NONPAGED_AREA). The corrected routine returns 0 for the same non-arg2 ordinal.",
+        "notes": "QkIsOrdinalUseableNew (0x14013CAD0) is the corrected routine present in the unpatched binary and reached whenever UxKirHttpBugFix25Q2 != 0; the patched QkIsOrdinalUseable (0x14013C4E0) is this routine inline. To confirm reachability, read http!UxKirHttpBugFix25Q2 at runtime. The arg2 path (bound 0x2010, plus the not-full/marker shortcuts) is identical in both routines; only the non-arg2 path (bound 0x2018) gains a mandatory check."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "UlCaptureWideString",
+      "entry_point": "HTTP Server API config path that captures a wide string",
+      "call_chain": ["HTTP Server API config", "UlCaptureWideString", "ExAllocatePool3"],
+      "vulnerability_class": "None (no security-relevant change)",
+      "description": "UlCaptureWideString is functionally equivalent in both builds. When the length is non-zero it allocates via ExAllocatePool3(66, len, ...), then on success probes with UlProbeWideString, copies with memmove, and stores the buffer to the output parameter; on allocation failure it sets status 0xC0000096. There is no deferred-free variable, no ExFreePoolWithTag, and no cleanup-on-exit path in either build - the allocated buffer is handed to the caller on success and there is no leak path. The differences between builds are a WPP trace GUID update and codegen (the constant 1 passed to ExAllocatePool3 is materialized through a stack slot in the patched build). Address 0x1400D2029 cited elsewhere is an instruction offset within this same function.",
+      "trigger_conditions": "N/A - no security-relevant behavioral difference between builds.",
+      "primitive": "None.",
+      "evidence": "Both builds:\n```\n*a5 = 0; *a6 = 0;\nif ((uint16)len != 0) {\n    Pool3 = ExAllocatePool3(66, len, a4, &UxLowPriorityPool, 1);\n    if (Pool3 != nullptr) {\n        UlProbeWideString(a3, (uint16)len, ...);\n        memmove(Pool3, a3, len);\n        *a6 = Pool3;   // handed to caller\n        *a5 = len;\n    } else {\n        status = 0xC0000096;\n    }\n}\nreturn status;\n```\nNo ExFreePoolWithTag and no cleanup variable appear in either build.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [{"symbol": "http!UlCaptureWideString", "address": "0x1400D1F58", "why": "Unpatched entry. Observe that the allocated buffer is stored to the output parameter on success; there is no free-on-error path in either build."}],
+        "watch": ["rax after ExAllocatePool3 = allocated buffer, stored to the output parameter on success"],
+        "key_offsets": ["0x1400D1F58: function entry (unpatched); 0x1400D1E58 (patched)"],
+        "trigger_setup": "N/A - behavior is equivalent between builds.",
+        "expected_observation": "Identical allocate/probe/copy/store behavior in both builds; no leak.",
+        "notes": "Reviewed and found to make no security-relevant change."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "UxpTpAllocateTransmitPacket",
+      "entry_point": "HTTP response transmission (packet allocation)",
+      "call_chain": ["HTTP response send", "UxpTpAllocateTransmitPacket"],
+      "vulnerability_class": "None (no security-relevant change)",
+      "description": "Both builds clear the entire transmit packet with memset(pkt, 0, 0x150) immediately after allocation, which already zeroes the fields at 0x120, 0x130, and 0x140. The unpatched build additionally re-zeroes those three fields inside an 'if (UxKirSeEndConnectionStats != 0)' block; the patched build drops the flag test and re-zeroes them unconditionally. Because the earlier memset covers the same offsets in both builds, the fields are zero on every path regardless of the flag, so no uninitialized memory is exposed. The removed block was redundant dead code tied to the UxKirSeEndConnectionStats flag. The refcount debug check uses 'if (UxDebugCheckRefcount != 0 && v <= -1) UlBugCheckEx(...)' in both builds - the logical operator is unchanged.",
+      "trigger_conditions": "N/A - the fields are initialized on every path in both builds.",
+      "primitive": "None.",
+      "evidence": "Both builds, right after allocation:\n```\nmemset(pkt, 0, 0x150);   // zeroes 0x120, 0x130, 0x140 among others\n```\nUnpatched, later:\n```\nif (UxKirSeEndConnectionStats != 0) {\n    *(pkt + 0x120) = 0; *(pkt + 0x130) = 0; *(pkt + 0x140) = 0;  // redundant re-zero\n}\n```\nPatched, later:\n```\n*(pkt + 0x120) = 0; *(pkt + 0x130) = 0; *(pkt + 0x140) = 0;      // redundant re-zero, unconditional\n```",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [{"symbol": "http!UxpTpAllocateTransmitPacket", "address": "0x14009BE70", "why": "Unpatched entry. Confirm memset(pkt,0,0x150) runs before any field stores, so 0x120/0x130/0x140 are already zero regardless of the UxKirSeEndConnectionStats block."}],
+        "watch": ["pkt+0x120, pkt+0x130, pkt+0x140 - zero on every path in both builds after the memset"],
+        "key_offsets": ["memset(pkt,0,0x150) after allocation; the UxKirSeEndConnectionStats-gated re-zero is redundant"],
+        "trigger_setup": "N/A - no behavioral difference in field initialization.",
+        "expected_observation": "Fields at +0x120/+0x130/+0x140 are zero in both builds.",
+        "notes": "Reviewed and found to make no security-relevant change; the removed conditional re-zero was redundant given the allocation-time memset."
+      }
+    }
+  ],
+  "summary": "The security-relevant change is in the QPACK dynamic table ordinal validator QkIsOrdinalUseable (HTTP/3 header compression). The unpatched binary uses the Known Issue Rollback flag UxKirHttpBugFix25Q2 to select between an OLD routine (flag == 0) and QkIsOrdinalUseableNew (flag != 0). On the non-arg2 lookup path, the OLD routine returns 'usable' for a dynamic-table ordinal without comparing it to the valid bound at 0x2018 whenever the table is not full (0x2038 < 0x2030) or the cached result marker at 0x2020 (result->0x18) is non-zero; the corrected routine always applies that comparison. An out-of-range non-arg2 ordinal accepted here can feed an out-of-bounds access in the QPACK dynamic table via crafted HTTP/3 request headers. The patched binary removes the flag and makes the corrected routine unconditional; UxStartEnvironmentModule no longer initializes it. Reachability of the OLD routine depends on the KIR default/rollback state. The other reviewed functions - UlCaptureWideString (and the sub_1400D2029 offset within it), UxpTpAllocateTransmitPacket, and UlHttpAttachConnection - make no security-relevant change: the string capture is equivalent between builds with no leak path, and the transmit-packet and connection fields are already cleared by an allocation-time memset in both builds, so the removed UxKirSeEndConnectionStats-gated re-zeroing was redundant dead code."
+}

@@ -1,0 +1,120 @@
+{
+  "binaries": {
+    "id_unpatched": "agrsm64_unpatched.sys",
+    "id_patched": "agrsm64_patched.sys",
+    "overall_similarity": 0.0026,
+    "matched": 7,
+    "changed": 5,
+    "identical": 2,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "_start",
+      "similarity": 0.2452,
+      "change_type": "cosmetic",
+      "key_changes": ["Entry point relocation only; the patched binary is a stub with different image base. No behavioral change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_EC8CC",
+      "similarity": 0.4046,
+      "change_type": "cosmetic",
+      "key_changes": ["Address-sequence false match between unrelated functions. No security relevance."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_EF3B0",
+      "similarity": 0.4046,
+      "change_type": "cosmetic",
+      "key_changes": ["Address-sequence false match. Likely a CRT/security-cookie routine in both binaries."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CSV92EXIntEnter (sub_843EC)",
+      "similarity": 0.8756,
+      "change_type": "cosmetic",
+      "key_changes": ["False match: unpatched CSV92EXIntEnter (0x843EC) is a modem state setter; the patched match at 0x1C0006054 is __security_init_cookie. Different functions matched by structural similarity."],
+      "security_relevant": false,
+      "security_notes": "The unpatched CSV92EXIntEnter is normal hardware control code, not the vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__security_check_cookie (sub_E6FB0)",
+      "similarity": 0.9654,
+      "change_type": "cosmetic",
+      "key_changes": ["Both are __security_check_cookie routines (stack canary validation). Nearly identical structure with only address relocations differing."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "DriverEntry (0x12E008) + SerialIoControl (0x1297F8) (IRP_MJ_DEVICE_CONTROL dispatch)",
+      "entry_point": "\\\\DosDevices\\\\LSISM_xface (world-accessible via IoCreateUnprotectedSymbolicLink) -> IRP_MJ_DEVICE_CONTROL handler SerialIoControl (0x1297F8) -- IOCTL_SERIAL_* codes 0x1B0004-0x1B006C",
+      "call_chain": [
+        "CreateFile(\"\\\\\\\\.\\\\LSISM_xface\") -- resolves through the world-accessible symbolic link (IoCreateUnprotectedSymbolicLink); device created with no FILE_DEVICE_SECURE_OPEN and no explicit SDDL",
+        "DeviceIoControl -> IRP_MJ_DEVICE_CONTROL -> SerialIoControl (0x1297F8) (MajorFunction[0xe] dispatch)",
+        "SerialIoControl reads IoControlCode from the IRP stack location (0x12985A) and dispatches IOCTL_SERIAL_* codes 0x1B0004 through 0x1B006C with NO authorization check",
+        "IOCTL 0x1B0008 (IOCTL_SERIAL_SET_QUEUE_SIZE) allocates NonPagedPool of caller-controlled size via ExAllocatePoolWithTag (0x129B35), bounded only by requiring the size to exceed the current queue size",
+        "IOCTL 0x1B001C (SET_TIMEOUTS) copies 0x14 bytes of user data into the device extension (offsets 0x184-0x194)"
+      ],
+      "vulnerability_class": "Missing Authorization (CWE-862) -- world-reachable serial/modem control device whose IRP_MJ_DEVICE_CONTROL handler services IOCTL_SERIAL_* codes without any caller-privilege check",
+      "description": "The Agere SoftModem driver (agrsm64.sys) creates a control device '\\Device\\LSISM_xface' via IoCreateDevice (DeviceType 0x1B = FILE_DEVICE_SERIAL_PORT, Exclusive=FALSE, DeviceExtensionSize=0, DeviceCharacteristics=0 so no FILE_DEVICE_SECURE_OPEN, no explicit security descriptor) and exposes it via IoCreateUnprotectedSymbolicLink at '\\DosDevices\\LSISM_xface' (0x12E301). The IRP_MJ_DEVICE_CONTROL handler SerialIoControl (0x1297F8, registered at MajorFunction[0xe]) reads the IOCTL code directly from the IRP stack location (0x12985A) and dispatches roughly two dozen IOCTL_SERIAL_* codes (0x1B0004-0x1B006C, METHOD_BUFFERED) with no caller authorization check -- no SeAccessCheck, no privilege check, no PreviousMode validation. The most security-relevant reachable side effect is a nonpaged pool allocation of caller-controlled size (IOCTL 0x1B0008 / IOCTL_SERIAL_SET_QUEUE_SIZE at 0x129B35) and unauthenticated writes into the driver's serial-configuration state in the device extension. The driver does call MmMapIoSpace (CSV92EXInit, 0x8406D) and perform raw port I/O (CAmrALiStop_0, 0x183E1), but both operate only on the modem's own assigned hardware resources during device initialization -- the physical address comes from the assigned hardware resource descriptor and the port base is the device's assigned I/O base at [ext+0x198]; neither is reachable from, or influenced by, the user-mode IOCTL surface, so neither provides an attacker-controlled memory or port primitive. The patch neutralizes the driver entirely: the patched binary (agrsm64_patched.sys) contains only 7 CRT/security-cookie functions with ZERO imports, and its DriverEntry (0x1C0006008) immediately returns 0xC0000424 without creating any device or symbolic link.",
+      "trigger_conditions": "1) The driver must be loaded (a signed kernel driver for Agere/LSI SoftModem hardware). 2) Open a handle to '\\\\.\\LSISM_xface' from a user-mode process (resolves through the world-accessible symbolic link; the device has no FILE_DEVICE_SECURE_OPEN and no explicit SDDL). 3) Send DeviceIoControl with an IOCTL_SERIAL_* code in the range 0x1B0004-0x1B006C (METHOD_BUFFERED). 4) For the pool allocation: IOCTL 0x1B0008 with an input buffer whose first DWORD (greater than the current queue size at [ext+0x140]) becomes NumberOfBytes to ExAllocatePoolWithTag(NonPagedPool, size, 'AGSM').",
+      "primitive": "Verified reachable primitives from the user-mode IOCTL surface: (a) nonpaged pool allocation of caller-controlled size (IOCTL 0x1B0008, size only bounded to exceed the current queue size -- suitable for pool-exhaustion DoS and pool grooming); (b) unauthenticated writes into serial device-extension configuration fields (timeouts, wait mask, line-control). No arbitrary kernel read/write primitive is exposed on the reachable path: MmMapIoSpace and port-I/O act only on the device's assigned hardware resources during initialization and are not attacker-controlled. A reliable local privilege escalation is not demonstrated by the code.",
+      "evidence": "// DriverEntry (0x12E008) -- creates world-reachable device:\n0x12E298: RtlInitUnicodeString(&var_208, u\"\\\\Device\\\\LSISM_xface\")\n0x12E2C3: IoCreateDevice(DriverObject, 0, &var_208, 0x1b, 0, FALSE, &DeviceObject)  // DeviceType 0x1B, Exclusive=FALSE, DeviceCharacteristics=0 (no FILE_DEVICE_SECURE_OPEN), no SDDL\n0x12E2ED: DeviceObject->Flags |= DO_BUFFERED_IO\n0x12E2F1: RtlInitUnicodeString(&var_1f8, u\"\\\\DosDevices\\\\LSISM_xface\")\n0x12E301: IoCreateUnprotectedSymbolicLink(&var_1f8, &var_208)  // world-accessible symbolic link\n\n// MajorFunction registration:\n0x12E1D0: DriverObject->MajorFunction[9]   = SerialFlush        // IRP_MJ_FLUSH_BUFFERS\n0x12E1FA: DriverObject->MajorFunction[0xe] = SerialIoControl     // IRP_MJ_DEVICE_CONTROL (no auth check)\n\n// IOCTL handler SerialIoControl (0x1297F8) -- no privilege check before dispatch:\n0x12980C: rsi = *(DeviceObject + 0x40)      // device extension\n0x12985A: eax = *([Irp+0xB8] + 0x18)         // IoControlCode from IRP stack location\n0x129862: cmp eax, 0x1B0048 ; range dispatch, no SeAccessCheck / PreviousMode check\n\n// IOCTL 0x1B0008 -- caller-controlled pool allocation:\n0x129B11: cmp dword [StackLoc+0x10], 8       // InputBufferLength >= 8\n0x129B1C: eax = *(SystemBuffer)              // caller-supplied size\n0x129B1E: cmp eax, *(ext + 0x140)            // only bound: must exceed current queue size\n0x129B35: ExAllocatePoolWithTag(NonPagedPool, size, 0x4D534741)  // 'AGSM'\n\n// Init-only, NOT attacker-reachable:\n0x8406D: MmMapIoSpace(PhysicalAddress=*(resource+8), NumberOfBytes=*(resource+0x28), MmNonCached) in CSV92EXInit -- physical address from assigned hardware resource descriptor\n0x183E1: in/out on port base *(ext+0x198)+fixed offsets in CAmrALiStop_0 -- device's assigned I/O ports\n\n// PATCHED binary: DriverEntry (0x1C0006008) returns 0xC0000424; 7 functions total, 0 imports",
+      "assembly": "// IoCreateUnprotectedSymbolicLink call site in DriverEntry (unpatched, 0x12E2F1-0x12E301):\n// 000000000012E2F1  call    __imp_RtlInitUnicodeString        ; SymbolicLinkName = \"\\DosDevices\\LSISM_xface\"\n// 000000000012E2F7  lea     rdx, aDeviceLsismXfa               ; DeviceName = \"\\Device\\LSISM_xface\"\n// 000000000012E2FC  lea     rcx, [rsp+248h+SymbolicLinkName]    ; SymbolicLinkName\n// 000000000012E301  call    __imp_IoCreateUnprotectedSymbolicLink\n\n// IOCTL dispatch without auth in SerialIoControl (unpatched, 0x1297F8):\n// 000000000012980C  mov     rsi, [rcx+40h]      ; device extension\n// 000000000012985A  mov     eax, [rbx+18h]      ; IoControlCode from IRP stack location\n// 000000000012985D  mov     ecx, 1B0048h\n// 0000000000129862  cmp     eax, ecx            ; range dispatch, no privilege gate\n\n// Caller-controlled pool allocation, IOCTL 0x1B0008 (unpatched, 0x129B11):\n// 0000000000129B1C  mov     eax, [rax]          ; caller-supplied size (SystemBuffer[0])\n// 0000000000129B1E  cmp     eax, [rsi+140h]     ; only bound: > current queue size\n// 0000000000129B35  call    __imp_ExAllocatePoolWithTag ; NonPagedPool, tag 'AGSM'\n\n// PATCHED binary: DriverEntry is an inert stub -- 0 imports, 7 functions total\n// 00000001C0006008  mov     eax, 0C0000424h\n// 00000001C000600D  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "agrsm64_unpatched!SerialIoControl",
+            "address": "0x1297f8",
+            "why": "IRP_MJ_DEVICE_CONTROL dispatch entry. RCX = device object, RDX = IRP. At entry, [RCX+0x40] is the device extension (rsi). Check RDX->Tail.Overlay.CurrentStackLocation->Parameters.DeviceIoControl.IoControlCode (via [Irp+0xB8]+0x18) for the IOCTL code, and the SystemBuffer for user-controlled data. No authorization check runs before dispatch."
+          },
+          {
+            "symbol": "agrsm64_unpatched+0x129b35",
+            "address": "0x129b35",
+            "why": "ExAllocatePoolWithTag inside IOCTL 0x1B0008. RDX = NumberOfBytes = first DWORD of the input buffer (caller-controlled, required to exceed [ext+0x140]). Confirms the caller-sized nonpaged pool allocation."
+          },
+          {
+            "symbol": "agrsm64_unpatched!DriverEntry",
+            "address": "0x12e008",
+            "why": "DriverEntry. Set a breakpoint at 0x12E301 (IoCreateUnprotectedSymbolicLink) to confirm the world-accessible device creation, and inspect the MajorFunction registration at 0x12E1D0-0x12E275 (MajorFunction[0xe] = SerialIoControl)."
+          }
+        ],
+        "watch": [
+          "At SerialIoControl entry: RDX+0xB8 (Irp->Tail.Overlay.CurrentStackLocation) -> +0x18 for IoControlCode, +0x8 for OutputBufferLength, +0x10 for InputBufferLength",
+          "At IOCTL 0x1B0008 handler (0x129B1C): RAX = first DWORD of SystemBuffer = caller-controlled allocation size (NumberOfBytes)",
+          "Device extension at [device_object+0x40]: the rsi pointer used throughout the IOCTL handlers"
+        ],
+        "key_offsets": [
+          "0x12E301: IoCreateUnprotectedSymbolicLink -- world-accessible symbolic link",
+          "0x12E2C3: IoCreateDevice with Exclusive=0, DeviceCharacteristics=0 (no FILE_DEVICE_SECURE_OPEN), no explicit SDDL",
+          "0x1297F8: IRP_MJ_DEVICE_CONTROL handler entry -- no auth check before IOCTL dispatch",
+          "0x12985A: IOCTL code read from IRP stack location -- dispatch with no privilege gate",
+          "0x129B35: ExAllocatePoolWithTag in IOCTL 0x1B0008 -- caller-controlled pool size",
+          "0x8406D: MmMapIoSpace in CSV92EXInit -- init-only, maps assigned hardware resource (not attacker-reachable)",
+          "0x183E1: in/out port I/O in CAmrALiStop_0 -- init-only, on device's assigned I/O base (not attacker-reachable)"
+        ],
+        "trigger_setup": "1) Load the unpatched agrsm64.sys driver (a legitimately signed kernel driver). 2) From a user-mode process, open a handle: HANDLE h = CreateFileW(L\"\\\\\\\\.\\\\LSISM_xface\", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL). This resolves through the world-accessible symbolic link. 3) Send IOCTLs via DeviceIoControl(h, IOCTL, inputBuf, inputSize, outputBuf, outputSize, &bytesReturned, NULL) with codes in 0x1B0004-0x1B006C. 4) For the pool allocation, send IOCTL 0x1B0008 with a DWORD size value (greater than the current queue size) in the input buffer.",
+        "expected_observation": "IOCTL dispatch at SerialIoControl (0x1297F8) is reached with no privilege check before the dispatch. For IOCTL 0x1B0008, ExAllocatePoolWithTag allocates NonPagedPool of caller-specified size. No BSOD during normal operation -- the flaw is an authorization bypass, with verified impact limited to DoS-class pool allocation and unauthenticated modem-configuration writes. The patched binary (7 functions, 0 imports, DriverEntry returning 0xC0000424) confirms the fix is complete driver neutralization.",
+        "notes": "The driver is signed and loadable where vulnerable-driver blocking is not enforced. The patch replaced the entire ~2,880-function driver (92 unique imports) with a 7-function stub containing only CRT/security-cookie routines and zero imports -- a complete functionality removal. The root issue is a missing authorization check: the control device is created with a world-accessible symbolic link, no FILE_DEVICE_SECURE_OPEN and no explicit SDDL, and the IOCTL handlers perform no caller-privilege check. No symbols are present; function names are auto-generated addresses. The IOCTL codes use DeviceType 0x1B (FILE_DEVICE_SERIAL_PORT) with function numbers spanning 0x0004-0x006C, METHOD_BUFFERED. The MmMapIoSpace and port-I/O routines in the driver operate only on the device's assigned hardware resources during initialization and are not reachable from the IOCTL surface."
+      }
+    }
+  ],
+  "summary": "The Agere SoftModem driver (agrsm64.sys) was neutralized by the patch: the patched binary is a 7-function stub with zero imports whose DriverEntry (0x1C0006008) immediately returns 0xC0000424, removing the ~2,880-function unpatched driver's device and IOCTL attack surface. The pre-patch issue is a missing authorization (CWE-862): the driver creates a control device '\\Device\\LSISM_xface' with a world-accessible symbolic link (IoCreateUnprotectedSymbolicLink at 0x12E301), no FILE_DEVICE_SECURE_OPEN and no explicit SDDL, and its IRP_MJ_DEVICE_CONTROL handler SerialIoControl (0x1297F8) services roughly two dozen IOCTL_SERIAL_* codes (0x1B0004-0x1B006C) with no caller-privilege check. The verified reachable impact is a caller-sized nonpaged pool allocation (IOCTL 0x1B0008 at 0x129B35, DoS-class) and unauthenticated writes into serial device-extension configuration state. The driver's MmMapIoSpace (0x8406D) and port-I/O (0x183E1) operations run only during device initialization on the modem's assigned hardware resources and are not reachable from the user-mode IOCTL surface, so no arbitrary kernel read/write primitive is exposed; a reliable privilege escalation is not demonstrated. Severity: Medium."
+}

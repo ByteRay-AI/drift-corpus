@@ -1,0 +1,82 @@
+{
+  "binaries": {
+    "title": "irenum.sys (IR Bus Enumerator) - No security-relevant change (redundant zero-init of registry-path pool buffer)",
+    "id_unpatched": "irenum_unpatched.sys",
+    "id_patched": "irenum_patched.sys",
+    "overall_similarity": 0.9927,
+    "matched": 36,
+    "changed": 1,
+    "identical": 35,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DriverEntry",
+      "address": "0x1C0008008",
+      "similarity": 0.9798,
+      "change_type": "defensive_hardening",
+      "key_changes": [
+        "Added memset(Path, 0, NumberOfBytes) at 0x1C00080A4 to zero the full ExAllocatePoolWithTag allocation before the registry path is copied in",
+        "In the unpatched build the same buffer is already fully written for the inputs that occur: memmove writes Length bytes and the wide null-terminator write stores a 2-byte zero at offset 2*(Length/2), which for even Length equals Length and covers the remaining [Length, Length+2) bytes",
+        "RegistryPath->Length is a UNICODE_STRING byte count supplied by the OS and is always even, so no uninitialized tail bytes exist on the path that runs",
+        "The buffer (global P at 0x1C0003028) is consumed only as a null-terminated absolute registry path by RtlQueryRegistryValues and is never returned to user mode"
+      ],
+      "security_relevant": false,
+      "security_notes": "DriverEntry (0x1C0008008) is the driver initialization routine, invoked once at load by the entry stub GsDriverEntry (0x1C0008260). It receives the driver RegistryPath (UNICODE_STRING*) in rdx, rejects Length >= 0xFFFD, allocates NumberOfBytes = Length + 2 bytes of PagedPool via ExAllocatePoolWithTag (tag 'IrEn' = 0x6E457249), stores the pointer in global P (0x1C0003028) and the size in global word_1C0003022, then copies Length bytes with memmove and writes a wide null terminator. The patched build adds memset(Path, 0, NumberOfBytes) before the copy. This is redundant defensive hardening, not a security fix: for the even RegistryPath->Length that always occurs, the copy plus the wide null-terminator (mov [rdi+rax*2], r14w with rax = Length>>1) together initialize the entire Length+2 allocation, so no uninitialized bytes are present in the unpatched build. The buffer is used only as the null-terminated absolute path for RtlQueryRegistryValues (reading BreakOnEntry, DebugFlags, EnumStaticDevice) and is never surfaced to user mode. DriverEntry runs once at PASSIVE_LEVEL in system-thread context and is not reachable from an untrusted request surface.",
+      "assembly_diff": "--- UNPATCHED DriverEntry (0x1C0008084-0x1C00080BF)\n0x1C0008084: mov  cs:P, rax                 ; global P = Path\n0x1C000808B: mov  rdi, rax                   ; rdi = Path\n0x1C000808E: test rax, rax\n0x1C0008091: jz   loc_1C0008231             ; null check\n0x1C0008097: movzx r8d, word ptr [rsi]      ; Size = RegistryPath->Length\n0x1C000809B: mov  rcx, rax                   ; dst = Path\n0x1C000809E: mov  rdx, [rsi+8]              ; src = RegistryPath->Buffer\n0x1C00080A2: call memmove                    ; copy Length bytes\n0x1C00080A7: movzx eax, word ptr [rsi]       ; eax = Length\n0x1C00080AF: shr  rax, 1                      ; rax = Length/2\n0x1C00080BA: mov  [rdi+rax*2], r14w          ; Path[2*(Length/2)] = 0 (wide null-term)\n0x1C00080BF: call memset                     ; memset(&QueryTable, 0, 0xE0) -- local table, not Path\n\n+++ PATCHED DriverEntry (0x1C0008084-0x1C00080D1)\n0x1C0008084: mov  cs:P, rax                 ; global P = Path\n0x1C000808B: mov  rdi, rax                   ; rdi = Path\n0x1C000808E: test rax, rax\n0x1C0008091: jz   loc_1C0008243             ; null check\n0x1C0008097: movzx r8d, cs:word_1C0003022   ; Size = NumberOfBytes (Length+2)\n0x1C000809F: xor  edx, edx                   ; Val = 0\n0x1C00080A1: mov  rcx, rax                   ; dst = Path\n0x1C00080A4: call memset                     ; memset(Path, 0, Length+2) -- ADDED (redundant)\n0x1C00080A9: movzx r8d, word ptr [rsi]       ; Size = RegistryPath->Length\n0x1C00080AD: mov  rcx, rdi                   ; dst = Path\n0x1C00080B0: mov  rdx, [rsi+8]              ; src = RegistryPath->Buffer\n0x1C00080B4: call memmove                    ; copy Length bytes\n0x1C00080B9: movzx eax, word ptr [rsi]\n0x1C00080C1: shr  rax, 1\n0x1C00080CC: mov  [rdi+rax*2], r14w          ; wide null-term\n0x1C00080D1: call memset                     ; memset(&QueryTable, 0, 0xE0) -- local table"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "DriverEntry (0x1C0008008)",
+      "entry_point": "DriverEntry (0x1C0008008), called once at load by the entry stub GsDriverEntry (0x1C0008260)",
+      "call_chain": [
+        "GsDriverEntry (0x1C0008260) -> __security_init_cookie -> DriverEntry (0x1C0008008)",
+        "DriverEntry: ExAllocatePoolWithTag(PagedPool, Length+2, 'IrEn') -> global P (0x1C0003028)",
+        "memmove (0x1C0001B00) copies Length bytes; wide null-terminator write completes the buffer",
+        "RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE, P, ...) consumes P as a null-terminated path"
+      ],
+      "vulnerability_class": "No security-relevant change (redundant zero-init / defense-in-depth)",
+      "description": "The patched build adds memset(Path, 0, NumberOfBytes) at 0x1C00080A4 in DriverEntry, zeroing the full ExAllocatePoolWithTag allocation before the registry path is copied. This is not a security fix. The allocation is Length+2 bytes; the memmove writes bytes [0, Length) and the wide null-terminator write (mov [rdi+rax*2], r14w, rax = Length>>1) writes a 2-byte zero at offset 2*(Length/2). For the even RegistryPath->Length that a valid UNICODE_STRING always has, that offset equals Length and covers [Length, Length+2), so the copy plus terminator initialize the entire allocation in the unpatched build as well. There are therefore no uninitialized pool bytes on the path that runs. Additionally the buffer (global P at 0x1C0003028) is used only as the null-terminated absolute registry path argument to RtlQueryRegistryValues and is never returned to user mode; DriverEntry is init-only, running once at PASSIVE_LEVEL in system-thread context, and is not reachable from an untrusted request surface. The added memset is redundant zero-on-allocate hardening with no reachable behavioral effect.",
+      "trigger_conditions": "None. RegistryPath is supplied by the OS at driver load with an even Length; it is not attacker-controllable to an odd length, and the buffer is never surfaced to user mode. No IOCTL, dispatch, WMI, or PnP path in either build reads back the buffer.",
+      "primitive": "None. No information-disclosure or other primitive is demonstrable. For the inputs that occur the unpatched buffer is fully initialized, and it is never exposed to user mode.",
+      "evidence": "// UNPATCHED DriverEntry (@ 0x1C0008008):\nuint16_t Length = RegistryPath->Length;   // byte count, always even\nif (Length < 0xFFFD) {\n    DriverEntryRegPath = Length;           // global 0x1C0003020\n    word_1C0003022 = Length + 2;           // global NumberOfBytes\n    P = ExAllocatePoolWithTag(PagedPool, Length + 2, 0x6E457249);\n}\nif (Length >= 0xFFFD || !P)\n    return 0xC000009A;\nelse {\n    memmove(P, RegistryPath->Buffer, Length);\n    *((_WORD *)P + (Length >> 1)) = 0;     // for even Length, completes the buffer\n    // memset(&QueryTable, 0, 0xE0); RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE, P, ...)\n}\n\n// PATCHED DriverEntry: adds memset(P, 0, (uint16_t)word_1C0003022) before the memmove.",
+      "assembly": "DriverEntry (UNPATCHED) key block:\n0x1C0008030: movzx eax, word ptr [rdx]      ; eax = RegistryPath->Length\n0x1C0008050: cmp   ax, cx                    ; Length < 0xFFFD ?\n0x1C0008053: jnb   loc_1C0008231            ; if >= 0xFFFD, error\n0x1C0008059: mov   cs:DriverEntryRegPath, ax ; global 0x1C0003020 = Length\n0x1C0008064: add   ax, 2                     ; NumberOfBytes = Length + 2\n0x1C0008071: mov   cs:word_1C0003022, dx     ; global 0x1C0003022 = NumberOfBytes\n0x1C0008078: call  cs:__imp_ExAllocatePoolWithTag\n0x1C0008084: mov   cs:P, rax                 ; global 0x1C0003028 = Path\n0x1C000808B: mov   rdi, rax\n0x1C000808E: test  rax, rax\n0x1C0008091: jz    loc_1C0008231            ; null check\n0x1C0008097: movzx r8d, word ptr [rsi]       ; Size = Length\n0x1C000809B: mov   rcx, rax\n0x1C000809E: mov   rdx, [rsi+8]             ; src = RegistryPath->Buffer\n0x1C00080A2: call  memmove                   ; copy Length bytes\n0x1C00080A7: movzx eax, word ptr [rsi]\n0x1C00080AF: shr   rax, 1\n0x1C00080BA: mov   [rdi+rax*2], r14w         ; wide null-term completes the buffer for even Length\n0x1C00080BF: call  memset                    ; memset(&QueryTable, 0, 0xE0) -- local RTL_QUERY_REGISTRY_TABLE\n0x1C0008188: mov   ecx, 80000000h            ; RTL_REGISTRY_ABSOLUTE\n0x1C0008198: call  cs:__guard_dispatch_icall_fptr ; -> RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE, P, ...)\n0x1C0008231: mov   eax, 0C000009Ah           ; STATUS_UNRECOGNIZED_VOLUME (error path)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "irenum!DriverEntry",
+            "address": "0x1C0008008",
+            "why": "Driver initialization routine. Entry with rcx = DriverObject, rdx = RegistryPath (UNICODE_STRING*). At 0x1C0008030, eax = RegistryPath->Length. After ExAllocatePoolWithTag returns at 0x1C0008084, rax = Path. Observe that the unpatched build fully initializes the buffer via memmove (0x1C00080A2) plus the wide null-terminator (0x1C00080BA) for the even Length that occurs."
+          }
+        ],
+        "watch": [
+          "rax after 0x1C0008078 = Path buffer pointer",
+          "word_1C0003022 (0x1C0003022) = NumberOfBytes = RegistryPath->Length + 2",
+          "rsi (preserved from rdx) = RegistryPath UNICODE_STRING*; word [rsi] = Length (even), qword [rsi+8] = Buffer",
+          "P (0x1C0003028) = global storing the Path pointer after 0x1C0008084",
+          "At 0x1C00080BA: rdi + 2*(Length/2) = null-terminator write position; for even Length this equals Length and covers the last 2 bytes of the allocation"
+        ],
+        "key_offsets": [
+          "0x1C0008078: call ExAllocatePoolWithTag (PagedPool, Length+2, 'IrEn')",
+          "0x1C0008084: mov cs:P, rax (store buffer pointer in global 0x1C0003028)",
+          "0x1C00080A2: memmove copies Length bytes",
+          "0x1C00080BA: wide null-terminator write completes the buffer for even Length",
+          "0x1C00080BF: memset(&QueryTable, 0, 0xE0) zeroes the local query table, not Path",
+          "0x1C00080A4: added memset(Path, 0, NumberOfBytes) in the PATCHED build (redundant)",
+          "0x1C0008198: RtlQueryRegistryValues consumes P as a null-terminated path"
+        ],
+        "trigger_setup": "This code runs once during driver initialization (DriverEntry) at load. RegistryPath is provided by the OS with an even Length and is not attacker-controllable; the buffer is not exposed to user mode. There is no attacker-reachable trigger.",
+        "expected_observation": "In both builds the registry-path buffer is fully initialized for the even RegistryPath->Length that occurs: unpatched via memmove plus the wide null-terminator, patched additionally via the redundant memset. The buffer is consumed only by RtlQueryRegistryValues as a null-terminated path.",
+        "notes": "The buffer is allocated with ExAllocatePoolWithTag (non-zeroing allocator). The added memset is a zero-on-allocate hardening pattern. It has no reachable behavioral effect here because the copy plus wide null-terminator already cover the full allocation for even lengths and the buffer is never returned to user mode. Globals: DriverEntryRegPath (0x1C0003020) = Length, word_1C0003022 (0x1C0003022) = NumberOfBytes, P (0x1C0003028) = Path pointer. Image base is 0x1C0000000."
+      }
+    }
+  ],
+  "summary": "The only code change between the two irenum.sys builds is in DriverEntry (0x1C0008008): the patched build adds memset(Path, 0, NumberOfBytes) at 0x1C00080A4 to zero the registry-path pool allocation before the path is copied in. This is redundant defensive hardening, not a security fix. For the even RegistryPath->Length that a valid UNICODE_STRING always has, the unpatched build already fully initializes the Length+2 allocation via the memmove (Length bytes) plus the wide null-terminator write at offset Length, leaving no uninitialized bytes. The buffer (global P at 0x1C0003028) is used only as the null-terminated absolute path for RtlQueryRegistryValues and is never returned to user mode, and DriverEntry is init-only and not reachable from an untrusted surface. An independent content-level diff confirms DriverEntry is the only changed function; no security-relevant change was omitted."
+}

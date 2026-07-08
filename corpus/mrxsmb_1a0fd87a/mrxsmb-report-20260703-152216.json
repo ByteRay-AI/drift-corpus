@@ -1,0 +1,99 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - Use-after-free read of VNetRoot context in tree-connect completion (CWE-416), mitigated behind a feature flag",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9912,
+    "matched": 1254,
+    "changed": 1,
+    "identical": 1253,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "changed_functions": [
+    {
+      "name": "SmbCeCompleteVNetRootConstruction",
+      "unpatched_address": "0x140001840",
+      "patched_address": "0x14002d130",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "The patched build calls Feature_1116195130__private_IsEnabledDeviceUsageNoInline (0x14004c884) at function entry (0x14002d16b) and, when it returns nonzero, pre-captures *(arg1+0x18) into a stack slot (0x14002d174/0x14002d178) before any reference is dropped.",
+        "At the tail, the patched build calls the same feature check again (0x14002d4d9); when enabled it uses the pre-captured stack value (0x14002d4fd), otherwise it re-reads *(arg1+0x18) from the object (0x14002d4f7) which is the same operation as the unpatched code.",
+        "The mitigation is therefore gated: with the feature disabled, the patched function behaves identically to the unpatched function (staged rollout).",
+        "The inline ActiveVNetRoots decrement on the error path was reorganized to call the pre-existing helper SmbCeDecrementActiveVNetRootsOnVNetRootContext (unpatched 0x140001e00 / patched 0x140001810, identical in both builds). No new helper was created; this reorganization is not the security change.",
+        "Unpatched sequence: SmbCeDereferenceVNetRootContext(rbp) at 0x14000197d, then lea rcx,[rbp+0x18] at 0x140001989, then mov rcx,[rcx] at 0x140001ace reading *(rbp+0x18), then RxPostToWorkerThread at 0x140001ad6."
+      ],
+      "security_relevant": true,
+      "security_notes": "USE-AFTER-FREE READ (CWE-416): In the unpatched build, SmbCeCompleteVNetRootConstruction completes SMB VNetRoot (tree-connect) construction. arg1 (rcx, kept in rbp) is the VNetRoot context. On a negative completion status, or when the ShareType at *(config+0xbc) is not a recognized value, the error-cleanup path runs. It calls SmbCeDereferenceVNetRootContext(rbp) at 0x14000197d which drops one reference. The code then computes lea rcx,[rbp+0x18] (0x140001989) and at the tail executes mov rcx,[rcx] (0x140001ace), reading *(rbp+0x18) (the mini-redirector device object pointer) and passing it to RxPostToWorkerThread (0x140001ad6). The free is not synchronous: SmbCeDereferenceVNetRootContext (0x140001c10) decrements the reference count at *(context+0x8) and, only when it reaches zero, posts SmbCepTearDownVNetRootContext to a worker thread via RxPostToWorkerThread (0x140001d48); the actual free happens in that deferred teardown. The tail read is therefore a use-after-free only if the teardown worker frees the object during the short window before the read. The patched build pre-captures *(arg1+0x18) at entry under Feature_1116195130__private_IsEnabledDeviceUsageNoInline and uses the captured value at the tail; with the feature disabled it re-reads *(arg1+0x18) as before.",
+      "assembly_evidence": "UNPATCHED SmbCeCompleteVNetRootConstruction @ 0x140001840:\n0x14000197a: mov     rcx, rbp\n0x14000197d: call    SmbCeDereferenceVNetRootContext   ; drops a ref (async teardown on last ref)\n0x140001982: mov     [rbx+0x118], r14d\n0x140001989: lea     rcx, [rbp+0x18]                   ; address into possibly-freed object\n0x14000198d: test    r13b, r13b\n0x140001990: jnz     0x140001ab7\n0x140001996: jmp     0x140001ab4\n0x140001ab4: xor     r14d, r14d\n0x140001ab7: mov     r9, [rbx+0x110]\n0x140001abe: lea     r8, [rbx+0xc8]\n0x140001ac5: mov     [rbx+0x11c], r14d\n0x140001acc: xor     edx, edx\n0x140001ace: mov     rcx, [rcx]                        ; reads *(rbp+0x18): potential UAF read\n0x140001ad6: call    cs:__imp_RxPostToWorkerThread\n\nDEFERRED FREE inside SmbCeDereferenceVNetRootContext @ 0x140001c10:\n0x140001c2b: lock xadd [rcx+0x8], esi                  ; decrement ref count at +0x8\n0x140001c50: test    esi, esi\n0x140001c52: jnz     0x140001d59                        ; nonzero -> return, no teardown\n0x140001d36: lea     r9, SmbCepTearDownVNetRootContext  ; last ref: post teardown to a worker thread\n0x140001d48: call    cs:__imp_RxPostToWorkerThread\n\nPATCHED SmbCeCompleteVNetRootConstruction @ 0x14002d130:\n0x14002d156: mov     [rsp+pMRxDeviceObject], 0\n0x14002d16b: call    Feature_1116195130__private_IsEnabledDeviceUsageNoInline\n0x14002d170: test    eax, eax\n0x14002d172: jz      0x14002d180\n0x14002d174: mov     rax, [r14+0x18]                    ; pre-capture *(arg1+0x18)\n0x14002d178: mov     [rsp+pMRxDeviceObject], rax\n0x14002d4c2: call    SmbCeDereferenceVNetRootContext\n0x14002d4d9: call    Feature_1116195130__private_IsEnabledDeviceUsageNoInline\n0x14002d4f3: test    eax, eax\n0x14002d4f5: jnz     0x14002d4fd\n0x14002d4f7: mov     rcx, [r14+0x18]                    ; feature OFF: re-read (same as unpatched)\n0x14002d4fb: jmp     0x14002d505\n0x14002d4fd: mov     rcx, [rsp+pMRxDeviceObject]        ; feature ON: use pre-captured value\n0x14002d505: call    cs:__imp_RxPostToWorkerThread"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_1116195130__private_IsEnabledDeviceUsageNoInline @ 0x14004c884 (WIL feature-staging helper backing the gate)",
+      "Feature_1116195130__private_IsEnabledFallback (WIL feature-staging helper)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-416",
+      "function": "SmbCeCompleteVNetRootConstruction",
+      "unpatched_address": "0x140001840",
+      "patched_address": "0x14002d130",
+      "entry_point": "MRxSmbCreateVNetRoot @ 0x140035ab0 (RDBSS mini-redirector VNetRoot creation, triggered by UNC path access / tree connect to an SMB share)",
+      "call_chain": [
+        "MRxSmbCreateVNetRoot @ 0x140035ab0",
+        "SmbCeCompleteVNetRootConstruction @ 0x140001840 (VNetRoot construction completion; call sites 0x140001823 and 0x1400360aa)",
+        "Error-cleanup path -> SmbCeDereferenceVNetRootContext @ 0x140001c10 (drops ref; last ref posts SmbCepTearDownVNetRootContext to a worker thread)",
+        "Tail reads *(rbp+0x18) at 0x140001ace and passes it to RxPostToWorkerThread at 0x140001ad6 (UAF read if teardown freed the object first)"
+      ],
+      "vulnerability_class": "Use-After-Free read (CWE-416) - race read of a freed VNetRoot context field",
+      "description": "In the unpatched mrxsmb.sys, SmbCeCompleteVNetRootConstruction completes SMB VNetRoot (tree-connect) construction. arg1 (rbp) is the VNetRoot context, arg2 (rbx) the RX context, arg3 (r8d) the completion status. On a negative status, or when the ShareType byte at *(config+0xbc) is not a recognized value (setting internal status 0xc00000cb, STATUS_INVALID_NETWORK_RESPONSE), the error-cleanup path runs. It decrements the inline ActiveVNetRoots count at *(rbp+0x1b0), then calls SmbCeDereferenceVNetRootContext(rbp) at 0x14000197d. After that call the code computes rbp+0x18 (0x140001989) and at the tail reads *(rbp+0x18) via mov rcx,[rcx] (0x140001ace), passing it to RxPostToWorkerThread (0x140001ad6). SmbCeDereferenceVNetRootContext does not free synchronously: it decrements *(context+0x8) and, on reaching zero, posts SmbCepTearDownVNetRootContext to a worker thread (0x140001d48) that performs the actual teardown/free. The tail read is a use-after-free only when that deferred teardown frees the object before the read executes. The patched build pre-captures *(arg1+0x18) at entry under Feature_1116195130__private_IsEnabledDeviceUsageNoInline and uses the captured value at the tail; with the feature disabled the tail re-reads *(arg1+0x18), identical to the unpatched code.",
+      "trigger_conditions": "1. An application accesses a UNC path (\\\\server\\share) served by an attacker-controlled SMB endpoint, driving MRxSmbCreateVNetRoot and then SmbCeCompleteVNetRootConstruction. 2. The endpoint returns a negative NTSTATUS for the tree connect, or a ShareType byte at *(config+0xbc) that is not a recognized value (0/1/3 are recognized), which forces the error-cleanup path. 3. SmbCeDereferenceVNetRootContext must drop the last reference (*(context+0x8) reaches zero) so SmbCepTearDownVNetRootContext is posted to a worker thread. 4. The posted teardown must free the VNetRoot allocation before the tail mov rcx,[rcx] reads *(rbp+0x18). There is no in-thread reclamation window between the dereference and the read; touching freed memory requires losing this timing race against the asynchronous teardown worker.",
+      "primitive": "Use-after-free read of a single pointer field (*(VNetRoot+0x18), the mini-redirector device object pointer) that is passed as the first argument to RxPostToWorkerThread. Reaching a freed object requires losing a race against the deferred teardown worker; no synchronous free occurs at the read site. This report does not establish any controlled-write, arbitrary-read, or code-execution primitive from the bug.",
+      "evidence": "UNPATCHED SmbCeCompleteVNetRootConstruction @ 0x140001840 (error-cleanup and tail):\n0x14000197a: mov  rcx, rbp\n0x14000197d: call SmbCeDereferenceVNetRootContext   ; drops a ref (async teardown on last ref)\n0x140001982: mov  [rbx+0x118], r14d\n0x140001989: lea  rcx, [rbp+0x18]                    ; address into possibly-freed object\n0x140001ace: mov  rcx, [rcx]                         ; reads *(rbp+0x18): potential UAF read\n0x140001ad6: call cs:__imp_RxPostToWorkerThread\n\nSmbCeDereferenceVNetRootContext @ 0x140001c10 (deferred free):\n0x140001c2b: lock xadd [rcx+0x8], esi                ; decrement ref count at +0x8\n0x140001c50: test esi, esi\n0x140001c52: jnz  0x140001d59                          ; nonzero -> no teardown\n0x140001d36: lea  r9, SmbCepTearDownVNetRootContext    ; last ref: post teardown to worker\n0x140001d48: call cs:__imp_RxPostToWorkerThread\n\nPATCHED SmbCeCompleteVNetRootConstruction @ 0x14002d130:\n0x14002d16b: call Feature_1116195130__private_IsEnabledDeviceUsageNoInline\n0x14002d174: mov  rax, [r14+0x18]                     ; pre-capture *(arg1+0x18)\n0x14002d178: mov  [rsp+pMRxDeviceObject], rax\n0x14002d4d9: call Feature_1116195130__private_IsEnabledDeviceUsageNoInline\n0x14002d4f7: mov  rcx, [r14+0x18]                     ; feature OFF: re-read (same as unpatched)\n0x14002d4fd: mov  rcx, [rsp+pMRxDeviceObject]         ; feature ON: use pre-captured value\n0x14002d505: call cs:__imp_RxPostToWorkerThread",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxsmb!SmbCeCompleteVNetRootConstruction",
+            "address": "0x140001840",
+            "why": "Function entry. rcx = arg1 = VNetRoot context pointer (kept in rbp). r8d = arg3 = completion status; if negative, the error-cleanup path is selected."
+          },
+          {
+            "symbol": "call SmbCeDereferenceVNetRootContext",
+            "address": "0x14000197d",
+            "why": "Drops a reference on the VNetRoot. Inspect *(rcx+0x8): if it is 1, this call drops the last reference and posts SmbCepTearDownVNetRootContext to a worker thread for asynchronous teardown/free."
+          },
+          {
+            "symbol": "mov rcx, [rcx] (read of *(rbp+0x18))",
+            "address": "0x140001ace",
+            "why": "Reads *(rbp+0x18) for RxPostToWorkerThread. Use !pool rbp here to see whether the deferred teardown has already freed the block; if it has, this read is a use-after-free."
+          }
+        ],
+        "watch": [
+          "rbp (arg1) = VNetRoot context pointer; the object whose reference is dropped",
+          "*(rbp+0x8) = reference count decremented by SmbCeDereferenceVNetRootContext; zero triggers deferred teardown",
+          "*(rbp+0x1b0) = ActiveVNetRoots count decremented inline on the error path",
+          "r8d (arg3) = completion status; negative selects the error path",
+          "*(rbp+0x18) = mini-redirector device object pointer; the value read at the tail and passed to RxPostToWorkerThread",
+          "rcx at 0x140001ace = the value read from *(rbp+0x18)"
+        ],
+        "key_offsets": [
+          "0x14000188e: test r8d, r8d / 0x140001891 jns 0x14000199b - branch to success path; fall-through is the error path",
+          "0x1400018e2: lock xadd [rbp+0x1b0], esi - inline ActiveVNetRoots decrement",
+          "0x14000197d: call SmbCeDereferenceVNetRootContext - drops a ref; last ref posts async teardown",
+          "0x140001989: lea rcx, [rbp+0x18] - address into possibly-freed object",
+          "0x140001ace: mov rcx, [rcx] - reads *(rbp+0x18) (potential UAF read)",
+          "0x140001ad6: call RxPostToWorkerThread - uses the read value as first argument",
+          "0x140001c10: SmbCeDereferenceVNetRootContext - decrements *(ctx+0x8), posts SmbCepTearDownVNetRootContext on zero"
+        ],
+        "trigger_setup": "1. Point a UNC path at an SMB server you control. 2. Configure it to reject the tree connect with a negative NTSTATUS, or to return a ShareType byte at *(config+0xbc) that is not a recognized value (0/1/3). 3. Access the path (e.g. dir \\\\server\\share). MRxSmbCreateVNetRoot then drives SmbCeCompleteVNetRootConstruction down the error path.",
+        "expected_observation": "Because teardown is asynchronous, the tail read at 0x140001ace normally returns a still-valid device object pointer in a single-threaded observation. Driver Verifier special pool on mrxsmb.sys is the reliable way to catch the read against a freed block if the teardown worker frees it first. Without the race being won, the read completes normally.",
+        "notes": "VNetRoot context offsets: +0x08 reference count (decremented by SmbCeDereferenceVNetRootContext); +0x18 mini-redirector device object pointer (the UAF-read target, also carries a spinlock at +0x780 and OwnerThread at +0x930); +0x1a0 associated NET_ROOT; +0x1a8 connect configuration (*(config+0xbc)=ShareType, *(config+0xb0)=flags); +0x1b0 ActiveVNetRoots count; +0x1e0 current exchange/context pointer. The patched fix is gated by Feature_1116195130__private_IsEnabledDeviceUsageNoInline (a WIL feature-staging check); when disabled, the patched build re-reads *(arg1+0x18) and is behaviorally identical to the unpatched build (staged rollout)."
+      }
+    }
+  ],
+  "summary": "The patched build adds a mitigation for a use-after-free read (CWE-416) in mrxsmb.sys's VNetRoot construction-completion handler SmbCeCompleteVNetRootConstruction (unpatched 0x140001840, patched 0x14002d130). On the SMB tree-connect error path the handler calls SmbCeDereferenceVNetRootContext(rbp), which drops a reference and, on the last reference, posts SmbCepTearDownVNetRootContext to a worker thread for asynchronous teardown/free. The handler then reads *(rbp+0x18) (the device object pointer) and passes it to RxPostToWorkerThread; this is a use-after-free read only when the deferred teardown frees the object first (a race, not a synchronous post-free read). The mitigation pre-captures *(arg1+0x18) at entry but is gated behind the WIL feature flag Feature_1116195130__private_IsEnabledDeviceUsageNoInline, with the original re-read retained on the disabled branch, so the fix is a staged rollout. No controlled-write or code-execution primitive is established. Severity Medium, CWE-416."
+}

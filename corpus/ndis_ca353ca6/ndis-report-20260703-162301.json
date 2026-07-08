@@ -1,0 +1,569 @@
+{
+  "binaries": {
+    "title": "ndis.sys (Windows NDIS Kernel Driver) - Out-of-bounds read in two receive-path Ethernet/SNAP parsers (ndisSortNetBufferLists on the ordinary receive path and ndisParseReceivedNBL on the datapath-verifier path) and a minimum-offset hardening check in embedded-descriptor validation",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9866,
+    "matched": 3451,
+    "changed": 42,
+    "identical": 3409,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ndisSortNetBufferLists (0x1C0012960 → 0x1C0012B00)",
+      "similarity": 0.62,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL check on CurrentMdl before dereference — unpatched does `mov rcx, [rax+0x8]` then reads `[rcx+0x28]` (MDL->ByteCount) with no NULL guard; patched adds `test rcx, rcx` / `jz reject` at 0x1c0012bcc",
+        "Added `cmp ebp, 0x16` (remaining mapped length >= 22) before the LLC/SNAP offset-0x14 read at 0x1c0012ca8 — unpatched only guaranteed remaining >= 0xe (14) and then read the 16-bit field at data offset 0x14 (bytes 20-21) at 0x1c0012c7d",
+        "Same out-of-bounds read as ndisParseReceivedNBL, but this parser is reached from the ordinary miniport receive-indication dispatch (not the datapath verifier)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds read (CWE-125) in the receive NBL-sort/classification Ethernet/SNAP parser. Same defect and same fix as ndisParseReceivedNBL, in a separately compiled function. On the LLC/SNAP branch it reads a 16-bit field at data offset 0x14 (bytes 20-21) without requiring the remaining mapped length (ByteCount - CurrentMdlOffset) >= 0x16 (22), so a truncated SNAP frame (remaining 14-21 bytes) reads up to ~8 bytes past the valid MDL data. The value becomes the NBL's internal protocol classification and is not returned to the frame sender. REACHABILITY: called from ndisMTopReceiveNetBufferLists (0x1C0011EA0), ndisMDispatchReceiveNetBufferLists (0x1C009DD90), ndisMDispatchReceiveNetBufferListsWithLock (0x1C00322D0), ndisDoPeriodicReceivesIndication (0x1C00A99D4), and ndisMIndicateSplitNblChain (0x1C00AA6B0) — the standard receive-indication path, not gated behind the datapath verifier. On a typical DMA receive buffer larger than the frame the read stays inside the buffer; it crosses an allocation boundary only with a frame-sized MDL. The patched build adds the NULL guard and the remaining>=0x16 check. Severity Low.",
+      "assembly_diff": "UNPATCHED (ndisSortNetBufferLists @ 0x1c0012960):\n0x1c0012a24: mov rcx, [rax+0x8]       ; NET_BUFFER->CurrentMdl -- no NULL check\n0x1c0012a2b: mov esi, [rcx+0x28]      ; MDL->ByteCount\n0x1c0012a2e: cmp esi, 0xe             ; ByteCount >= 14\n0x1c0012a41: sub ebp, edi             ; remaining = ByteCount - CurrentMdlOffset\n0x1c0012a43: cmp ebp, 0xe             ; remaining >= 14 (only 14, not 22)\n...\n0x1c0012c7d: movzx r14d, word [r8+0x14]     ; OOB read of SNAP field at data offset 0x14\n\nPATCHED (ndisSortNetBufferLists @ 0x1c0012b00):\n0x1c0012bc8: mov rcx, [rax+0x8]\n0x1c0012bcc: test rcx, rcx            ; ADDED: NULL check on CurrentMdl\n0x1c0012bcf: jz  0x1c0012e0f\n0x1c0012bd5: mov r14d, [rcx+0x28]\n0x1c0012bf3: sub ebp, r15d            ; remaining\n...\n0x1c0012ca8: cmp ebp, 0x16            ; ADDED: require remaining >= 22\n0x1c0012cab: jb  0x1c0012e0f\n0x1c0012cc8: movzx edi, word [r8+0x14]      ; reached only when remaining >= 22"
+    },
+    {
+      "name": "ndisParseReceivedNBL (0x1C006E370 → 0x1C00141EC)",
+      "similarity": 0.6815,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL check on CurrentMdl before dereference — unpatched does `mov rcx, [rax+0x8]` then immediately reads `[rcx+0x28]` (MDL->ByteCount) with no NULL guard",
+        "Added `cmp edi, 0x16` (remaining mapped length >= 22) before the LLC/SNAP offset-0x14 read — unpatched only guaranteed the remaining length >= 0xe (14) and then read the 16-bit field at data offset 0x14 (bytes 20-21)",
+        "Fixes an out-of-bounds read on truncated SNAP frames; reachable only through the NDIS datapath receive verifier"
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds read (CWE-125) in the datapath receive-verifier's Ethernet/SNAP parser. On the 802.3 path the routine reads CurrentMdl->ByteCount with no NULL check on CurrentMdl, then checks the remaining mapped length (ByteCount - CurrentMdlOffset) >= 0xe. On the LLC/SNAP branch it reads a 16-bit field at data offset 0x14 (bytes 20-21) without requiring the remaining length >= 0x16 (22), so a truncated SNAP frame (remaining 14-21 bytes) reads up to ~8 bytes past the valid MDL data. The value is stored only into the verifier's internal EtherType output and is not returned to the frame sender. REACHABILITY: ndisParseReceivedNBL has a single caller, ndisNblVerifyRxIndication (the datapath receive verifier); NdisFIndicateReceiveNetBufferLists and NdisMIndicateReceiveNetBufferLists call it only when the adapter's datapath-verification flag is set (filter handle +0x38 bit 0x200, miniport handle +0xE68 bit 0x800). That verifier is a non-default diagnostic mode (ndisDatapathVerifierMode / MmIsVerifierEnabled), so the flaw is not reachable on the default receive path. The patched build adds the NULL guard and the remaining>=0x16 check. Severity Low.",
+      "assembly_diff": "UNPATCHED (ndisParseReceivedNBL @ 0x1c006e370):\n0x1c006e3a7: mov rax, [rdx+0x8]       ; NET_BUFFER_LIST->FirstNetBuffer\n0x1c006e3ab: mov rcx, [rax+0x8]       ; NET_BUFFER->CurrentMdl -- no NULL check\n0x1c006e3af: mov edi, [rcx+0x28]      ; MDL->ByteCount\n0x1c006e3b2: cmp edi, 0xe             ; ByteCount >= 14\n0x1c006e3b5: jnb 0x1c006e3be\n...\n0x1c006e3c7: sub esi, ebp             ; remaining = ByteCount - CurrentMdlOffset\n0x1c006e3c9: cmp esi, 0xe             ; remaining >= 14 (only 14, not 22)\n0x1c006e3cc: jb  0x1c006e3b7\n...\n0x1c006e453: movzx eax, word [rdx+0x14]     ; OOB read of SNAP field at data offset 0x14\n\nPATCHED (ndisParseReceivedNBL @ 0x1c00141ec):\n0x1c0014223: mov rax, [rdx+0x8]\n0x1c0014227: mov rcx, [rax+0x8]\n0x1c001422b: test rcx, rcx            ; ADDED: NULL check on CurrentMdl\n0x1c001422e: jnz 0x1c0014237\n...\n0x1c00142c3: cmp edi, 0x16            ; ADDED: require remaining >= 22 (edi = remaining)\n0x1c00142c6: jnb 0x1c00142cc\n0x1c00142c8: xor al, al               ; too small -> return 0"
+    },
+    {
+      "name": "ndisValidateEmbeddedBufferBounds (0x1C0116760 → 0x1C010C3CC)",
+      "similarity": 0.7231,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added one parameter (a minimum) and a `Offset < minimum` rejection to the embedded-descriptor validator",
+        "The NDIS_VAR_DATA_DESC wrappers now pass that minimum: ndisValidateNdisVarDataDescInputString passes 0x48, ndisValidateNdisVarDataDesc32InputString passes 0x28, ndisValidateNdisOffsetAndLengthInputBufferBounds passes 0x0",
+        "Both builds already enforce that the sub-buffer [Offset, Offset+Length) is contained within the parent input buffer; the new check additionally requires the descriptor's Offset to be at or beyond the fixed request header"
+      ],
+      "security_relevant": true,
+      "security_notes": "Input-validation hardening (CWE-20), not an out-of-bounds read. In both builds the validator rejects a sub-buffer whose end exceeds the parent input buffer (containment), so reads never leave the parent allocation. The patch adds a minimum-offset argument and rejects the request when the descriptor's Offset is below that minimum (0x28 for the 32-bit thunk NDIS_VAR_DATA_DESC variant, 0x48 for the native variant). This forces the descriptor's variable data to begin beyond the fixed request header instead of overlapping it. Reached via ndisHandlePnPRequest and the NDIS_VAR_DATA_DESC wrappers on the NDIS user-mode PnP/IOCTL path. No out-of-bounds primitive is demonstrable. Severity Low.",
+      "assembly_diff": "UNPATCHED (ndisValidateEmbeddedBufferBounds @ 0x1c0116760) — containment only, no minimum:\n0x1c0116760: mov r10d, [rsp+0x30]   ; Length\n0x1c0116767: mov edx, [rsp+0x28]    ; Offset\n0x1c011676b: add rax, rcx           ; parent_end = base + parent_len\n0x1c011676e: add rdx, rcx           ; sub_start = base + Offset\n0x1c0116774: add r10, rdx           ; sub_end = sub_start + Length\n0x1c0116789: cmp r10, rax           ; sub_end <= parent_end (containment)\n; no minimum-offset comparison\n\nPATCHED (ndisValidateEmbeddedBufferBounds @ 0x1c010c3cc) — adds the minimum-offset check:\n0x1c010c3f3: mov eax, [rsp+arg_20]  ; new minimum argument\n0x1c010c3f7: test eax, eax\n0x1c010c3f9: jz  0x1c010c401        ; minimum == 0 -> skip\n0x1c010c3fb: cmp [rsp+arg_28], eax  ; Offset vs minimum\n0x1c010c3ff: jb  0x1c010c447        ; Offset < minimum -> reject\n; the parent-buffer containment check is unchanged and present in both builds"
+    },
+    {
+      "name": "sub_1C0033984 → sub_1C003627C",
+      "similarity": 0.0732,
+      "change_type": "behavioral",
+      "key_changes": ["Complete rewrite of function — feature flag/telemetry configuration change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0035D0C → sub_1C00367C0",
+      "similarity": 0.1071,
+      "change_type": "behavioral",
+      "key_changes": ["Complete rewrite — atomic operations for per-adapter feature flag checking"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C012BE3C → sub_1C00366D0",
+      "similarity": 0.1071,
+      "change_type": "behavioral",
+      "key_changes": ["Complete rewrite — RtlQueryConfiguration/feature configuration path change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0032C00",
+      "similarity": 0.4286,
+      "change_type": "behavioral",
+      "key_changes": ["Allocation size changed from 0x6d0 to 0x6e8, linked list manipulation changes — feature/refactor"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C002E8A0 → sub_1C002CF10",
+      "similarity": 0.5114,
+      "change_type": "behavioral",
+      "key_changes": ["Heavily rewritten — lock acquisition changes and feature flag integration"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00751E0",
+      "similarity": 0.5556,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag check changed from global RtlQueryFeatureConfiguration to per-adapter atomic field at offset 0x1148"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0160A30",
+      "similarity": 0.6136,
+      "change_type": "behavioral",
+      "key_changes": ["Driver dispatch table changes — IRP dispatch routing modification"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0134C10",
+      "similarity": 0.6263,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag replacement — sub_1C0035CA4() replaced with sub_1C0061368() per-adapter check"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007F214",
+      "similarity": 0.6757,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag replacement from global config to per-adapter atomic check"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0162288",
+      "similarity": 0.6786,
+      "change_type": "behavioral",
+      "key_changes": ["Feature configuration rewrite — dispatch path changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0160750",
+      "similarity": 0.6786,
+      "change_type": "behavioral",
+      "key_changes": ["Feature configuration rewrite"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0152E1C",
+      "similarity": 0.6842,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag replacement from global to per-adapter"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C012BC54 → sub_1C010C124",
+      "similarity": 0.6889,
+      "change_type": "behavioral",
+      "key_changes": ["Changed condition from signed comparison (rax < 0) to bit test TEST_BITD(rax, 9)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C015F62C",
+      "similarity": 0.7222,
+      "change_type": "behavioral",
+      "key_changes": ["Init function with conditional paths changed — feature flag integration"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisHandlePnPRequest (0x1C0144008 → 0x1C0145008)",
+      "similarity": 0.7229,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function was relocated and recompiled (WPP tracing metadata and basic-block reordering)",
+        "The wrapper calls now supply the new minimum argument to ndisValidateEmbeddedBufferBounds",
+        "The input-buffer minimum-size (0x48), integer-overflow (offset+size wrap), and IoIs32bitProcess thunk checks are present in BOTH builds and were not added by the patch"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the NDIS user-mode PnP/IOCTL handler that invokes the NDIS_VAR_DATA_DESC validators. Comparison of the decompilation shows the minimum-size check (Options < 0x48 -> STATUS_BUFFER_TOO_SMALL), the offset/size overflow rejections, and the IoIs32bitProcess thunk handling all exist identically in the unpatched and patched builds. The only delivered change in this cluster is the minimum-offset check inside ndisValidateEmbeddedBufferBounds; the handler itself only changed by relocation, tracing, and the wrappers now passing the new minimum.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C01445F8",
+      "similarity": 0.7561,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag replacement from global to per-adapter check"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0036858",
+      "similarity": 0.7857,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag replacement"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisValidateNdisVarDataDescInputString (0x1C01166DC → 0x1C010C4E0)",
+      "similarity": 0.8173,
+      "change_type": "behavioral",
+      "key_changes": ["Native NDIS_VAR_DATA_DESC wrapper now passes minimum 0x48 to ndisValidateEmbeddedBufferBounds"],
+      "security_relevant": false,
+      "security_notes": "Caller of ndisValidateEmbeddedBufferBounds — now passes 0x48 as the minimum offset. Part of the Finding 2 hardening.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisValidateNdisVarDataDesc32InputString (0x1C012DF58 → 0x1C010C458)",
+      "similarity": 0.8246,
+      "change_type": "behavioral",
+      "key_changes": ["32-bit thunk NDIS_VAR_DATA_DESC wrapper now passes minimum 0x28 to ndisValidateEmbeddedBufferBounds"],
+      "security_relevant": false,
+      "security_notes": "Caller of ndisValidateEmbeddedBufferBounds — now passes 0x28 as the minimum offset.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisValidateNdisOffsetAndLengthInputBufferBounds (0x1C012DEA8 → 0x1C012EEF8)",
+      "similarity": 0.8333,
+      "change_type": "behavioral",
+      "key_changes": ["Wrapper now passes minimum 0x0 (no minimum) to ndisValidateEmbeddedBufferBounds"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00B7CBC",
+      "similarity": 0.8378,
+      "change_type": "cosmetic",
+      "key_changes": ["Register recompilation noise — no semantic changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00B8068",
+      "similarity": 0.8561,
+      "change_type": "cosmetic",
+      "key_changes": ["Register recompilation noise — no semantic changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00A4060",
+      "similarity": 0.8667,
+      "change_type": "behavioral",
+      "key_changes": ["OPM/handler changes with additional sub_1C00A76FC call — feature enhancement"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0061368",
+      "similarity": 0.8788,
+      "change_type": "behavioral",
+      "key_changes": ["New per-adapter feature flag check function replacing global RtlQueryFeatureConfiguration"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ndisNblVerifyRxIndication (0x1C00722BC)",
+      "similarity": 0.8955,
+      "change_type": "cosmetic",
+      "key_changes": ["Register allocation changes following the ndisParseReceivedNBL recompilation"],
+      "security_relevant": false,
+      "security_notes": "The NDIS datapath receive verifier and the sole caller of ndisParseReceivedNBL. Register-allocation change only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002B08",
+      "similarity": 0.9015,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor register changes in IRP dispatch handler"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002AE0",
+      "similarity": 0.9130,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes in IRP major function dispatch"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0160A20",
+      "similarity": 0.9143,
+      "change_type": "cosmetic",
+      "key_changes": ["Driver unload path minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0152A80",
+      "similarity": 0.9189,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C015F57C",
+      "similarity": 0.9231,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C01609D0",
+      "similarity": 0.9259,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0035CA4",
+      "similarity": 0.9286,
+      "change_type": "behavioral",
+      "key_changes": ["Old global feature flag check — modified to delegate to new per-adapter mechanism"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0060C58",
+      "similarity": 0.9310,
+      "change_type": "behavioral",
+      "key_changes": ["Feature configuration helper modified"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00367C0",
+      "similarity": 0.9333,
+      "change_type": "behavioral",
+      "key_changes": ["Feature flag infrastructure changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0160A10",
+      "similarity": 0.9355,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor register changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0160A00",
+      "similarity": 0.9375,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0152DC0",
+      "similarity": 0.9412,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C01609E0",
+      "similarity": 0.9444,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C012BC44",
+      "similarity": 0.9474,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "ndisSortNetBufferLists",
+      "entry_point": "Standard miniport receive-indication dispatch (ndisMTopReceiveNetBufferLists / ndisMDispatchReceiveNetBufferLists / ndisMDispatchReceiveNetBufferListsWithLock / ndisDoPeriodicReceivesIndication / ndisMIndicateSplitNblChain); not gated behind the datapath verifier",
+      "call_chain": [
+        "Miniport receive indication (ndisMTopReceiveNetBufferLists 0x1C0011EA0 / ndisMDispatchReceiveNetBufferLists 0x1C009DD90 / ndisMDispatchReceiveNetBufferListsWithLock 0x1C00322D0 / ndisDoPeriodicReceivesIndication 0x1C00A99D4 / ndisMIndicateSplitNblChain 0x1C00AA6B0)",
+        "ndisSortNetBufferLists (0x1C0012960)"
+      ],
+      "vulnerability_class": "out-of-bounds read (CWE-125); added NULL-pointer guard (defense in depth)",
+      "description": "ndisSortNetBufferLists at 0x1c0012960 parses the L2 (Ethernet/VLAN/LLC-SNAP) header of received NBLs to classify/sort them. It loads CurrentMdl (0x1c0012a24: mov rcx,[rax+0x8]) and reads MDL->ByteCount (0x1c0012a2b: mov esi,[rcx+0x28]) with no NULL check on CurrentMdl, then checks the remaining mapped length (ByteCount - CurrentMdlOffset) >= 0xe. On the LLC/SNAP branch it reads a 16-bit value at 0x1c0012c7d (movzx r14d, word [r8+0x14], data offset 0x14, bytes 20-21) without requiring the remaining length >= 0x16 (22). A truncated SNAP frame whose remaining length is 14-21 bytes therefore causes a read of up to ~8 bytes past the valid MDL data. The value becomes the NBL's internal protocol classification and is not returned to the frame sender. This is the same defect and same fix as ndisParseReceivedNBL, but in a separately compiled function reached from the ordinary receive path rather than the datapath verifier. The patched build adds `if (CurrentMdl == NULL) reject` (0x1c0012bcc: test rcx,rcx / jz) and `cmp ebp, 0x16` (remaining >= 22, where ebp holds the remaining length; 0x1c0012ca8) before the SNAP read. The 802.1Q VLAN branch already re-validated ByteCount and remaining >= 0x12 in both builds. Severity Low.",
+      "trigger_conditions": "A miniport indicates a received NET_BUFFER_LIST up the stack (no datapath-verification flag required). A NET_BUFFER whose remaining mapped length (ByteCount - CurrentMdlOffset) is in [14, 21], presenting an 802.3 length field <= 0x600 at data offset 0xc and the SNAP markers 0xAA/0xAA/0x03 at offsets 0xe/0xf/0x10, reaches the offset-0x14 read. On a typical DMA receive buffer larger than the frame the read stays within the buffer (a stale-byte misread); it crosses the allocation boundary only when the MDL is sized to the frame with no following mapped page, where a boundary-crossing read under Special Pool bugchecks.",
+      "primitive": "A bounded out-of-bounds read (up to ~8 bytes) immediately following the packet data in the MDL-mapped region, on the ordinary receive path. The value influences only the NBL's internal protocol classification and is not disclosed to the frame sender. Practical worst case is a bugcheck under Special Pool with a frame-sized MDL; otherwise a benign misread within the receive buffer. The added NULL guard is defense in depth (a NULL CurrentMdl would be a miniport defect, not attacker input).",
+      "evidence": "Unpatched (ndisSortNetBufferLists @ 0x1C0012960):\n  CurrentMdl = FirstNetBuffer->CurrentMdl;       // no NULL check\n  ByteCount = CurrentMdl->ByteCount;\n  if ( ByteCount < 0xE || ByteCount <= CurrentMdlOffset || ByteCount - CurrentMdlOffset < 0xE ) { ... }\n  if ( data[14] == 0xAA && data[15] == 0xAA && data[16] == 3 )\n    protocol = *((_WORD *)data + 10);   // OOB: reads data offset 0x14 with only remaining >= 0xE guaranteed\n\nPatched (ndisSortNetBufferLists @ 0x1C0012B00):\n  CurrentMdl = FirstNetBuffer->CurrentMdl;\n  if ( CurrentMdl == nullptr ) goto reject;       // ADDED NULL guard\n  ByteCount = CurrentMdl->ByteCount;\n  remaining = ByteCount - CurrentMdlOffset;\n  if ( remaining < 0x16 ) goto reject;            // ADDED: remaining >= 22\n  if ( data[14] == 0xAA && data[15] == 0xAA && data[16] == 3 )\n    protocol = *((_WORD *)data + 10);             // data offset 0x14, reached only when safe",
+      "assembly": "UNPATCHED (ndisSortNetBufferLists @ 0x1c0012960):\n0x1c0012a18: mov rax, [r15+0x8]        ; NET_BUFFER\n0x1c0012a24: mov rcx, [rax+0x8]        ; NET_BUFFER->CurrentMdl -- NO NULL CHECK\n0x1c0012a28: mov edi, [rax+0x10]       ; CurrentMdlOffset\n0x1c0012a2b: mov esi, [rcx+0x28]       ; MDL->ByteCount -- deref of possibly-NULL rcx\n0x1c0012a2e: cmp esi, 0xe              ; ByteCount >= 14\n0x1c0012a41: sub ebp, edi              ; remaining = ByteCount - CurrentMdlOffset (ebp=esi)\n0x1c0012a43: cmp ebp, 0xe              ; remaining >= 14 (only 14, not 22)\n0x1c0012a90: cmp cx, ax                ; ax=0x600, length field <= 0x600 -> SNAP path\n0x1c0012c5c: cmp byte [r8+0xe], 0xaa   ; SNAP DSAP\n0x1c0012c67: cmp byte [r8+0xf], 0xaa   ; SNAP SSAP\n0x1c0012c72: cmp byte [r8+0x10], 0x3   ; SNAP Control\n0x1c0012c7d: movzx r14d, word [r8+0x14]      ; OOB READ at data offset 0x14, NO CHECK FOR remaining >= 0x16\n\nPATCHED (ndisSortNetBufferLists @ 0x1c0012b00):\n0x1c0012bbc: mov rax, [rsi+0x8]        ; NET_BUFFER\n0x1c0012bc8: mov rcx, [rax+0x8]        ; CurrentMdl\n0x1c0012bcc: test rcx, rcx             ; ADDED: NULL check on CurrentMdl\n0x1c0012bcf: jz  0x1c0012e0f           ; NULL -> reject\n0x1c0012bd5: mov r14d, [rcx+0x28]      ; ByteCount\n0x1c0012bf3: sub ebp, r15d             ; remaining (ebp=ByteCount, r15d=CurrentMdlOffset)\n0x1c0012ca8: cmp ebp, 0x16             ; ADDED: require remaining >= 22\n0x1c0012cab: jb  0x1c0012e0f           ; too small -> reject\n0x1c0012cb3: cmp byte [r8+0xe], 0xaa\n0x1c0012cc8: movzx edi, word [r8+0x14]       ; reached only when remaining >= 22",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisSortNetBufferLists",
+            "address": "0x1c0012960",
+            "why": "Entry to the receive NBL-sort/classification parser. rcx = NDIS_NBL_RCV_TRACKER. The L2 header parse runs unless a precomputed protocol value is already set (checked at 0x1c0012a0b: cmp dword [rax+0x1d0], 0)."
+          },
+          {
+            "symbol": "ndis!ndisSortNetBufferLists+0xcb",
+            "address": "0x1c0012a2b",
+            "why": "mov esi, [rcx+0x28] dereferences CurrentMdl (rcx) with no NULL check in the unpatched build; a NULL rcx faults here. Patched adds test rcx,rcx / jz at 0x1c0012bcc."
+          },
+          {
+            "symbol": "ndis!ndisSortNetBufferLists+0x31d",
+            "address": "0x1c0012c7d",
+            "why": "THE OOB READ: movzx r14d, word [r8+0x14] reads 2 bytes at data offset 0x14. r8 = mapped data + CurrentMdlOffset. If remaining (ByteCount - CurrentMdlOffset) < 0x16 the read can exceed the valid data. Patched adds cmp ebp,0x16 / jb at 0x1c0012ca8 before this."
+          }
+        ],
+        "watch": [
+          "esi at 0x1c0012a2b (unpatched) / r14d at 0x1c0012bd5 (patched) — MDL->ByteCount",
+          "ebp at 0x1c0012a43 (unpatched) / 0x1c0012ca8 (patched) — remaining mapped length; values 14-21 trigger the OOB read in the unpatched build",
+          "rcx at 0x1c0012a24 — CurrentMdl pointer; NULL faults at the following ByteCount read in the unpatched build",
+          "r8 at 0x1c0012c7d — base pointer for packet data reads; r8+0x14 is the OOB read target"
+        ],
+        "key_offsets": [
+          "0x1c0012a24: mov rcx,[rax+0x8] — CurrentMdl load, missing NULL check (patched adds test rcx,rcx at 0x1c0012bcc)",
+          "0x1c0012a43: cmp ebp,0xe — remaining-length check (only >= 14)",
+          "0x1c0012c7d: movzx r14d, word [r8+0x14] — OOB read at offset 0x14 (patched adds cmp ebp,0x16 at 0x1c0012ca8)"
+        ],
+        "trigger_setup": "Indicate a received 802.3 + LLC/SNAP frame on an adapter: 6-byte dst MAC, 6-byte src MAC, length field (bytes 12-13) <= 0x0600, DSAP=0xAA at offset 14, SSAP=0xAA at offset 15, Control=0x03 at offset 16, with the NET_BUFFER's remaining mapped length (ByteCount - CurrentMdlOffset) between 14 and 21 bytes. No datapath-verification flag is required.",
+        "expected_observation": "The read at r8+0x14 returns whatever follows the packet data in the MDL-mapped region; the value is stored as the NBL's internal protocol classification. On a typical DMA receive buffer larger than the frame this stays inside the buffer (benign misread). Under Special Pool with a frame-sized MDL a boundary-crossing read bugchecks (PAGE_FAULT_IN_NONPAGED_AREA)."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "ndisParseReceivedNBL",
+      "entry_point": "NDIS datapath receive verifier (ndisNblVerifyRxIndication), reached from NdisMIndicateReceiveNetBufferLists / NdisFIndicateReceiveNetBufferLists only when the adapter's datapath-verification flag is set",
+      "call_chain": [
+        "NdisMIndicateReceiveNetBufferLists / NdisFIndicateReceiveNetBufferLists (only when datapath verification is enabled: filter handle +0x38 bit 0x200 / miniport handle +0xE68 bit 0x800)",
+        "ndisNblVerifyRxIndication (0x1C00722BC)",
+        "ndisParseReceivedNBL (0x1C006E370)"
+      ],
+      "vulnerability_class": "out-of-bounds read (CWE-125); added NULL-pointer guard (defense in depth)",
+      "description": "ndisParseReceivedNBL at 0x1c006e370 parses Ethernet/SNAP headers for the NDIS datapath receive verifier. On the 802.3 path it loads CurrentMdl (0x1c006e3ab: mov rcx,[rax+0x8]) and reads MDL->ByteCount (0x1c006e3af: mov edi,[rcx+0x28]) with no NULL check on CurrentMdl, then checks that the remaining mapped length (ByteCount - CurrentMdlOffset) is >= 0xe. On the LLC/SNAP branch it reads a 16-bit value at 0x1c006e453 (movzx eax, word [rdx+0x14], data offset 0x14, bytes 20-21) without requiring the remaining length >= 0x16 (22). A truncated SNAP frame whose remaining length is 14-21 bytes therefore causes a read of up to ~8 bytes past the valid MDL data. The value is written only to the verifier's internal EtherType output; it is not returned to the frame sender. The patched build adds `if (CurrentMdl == NULL) fail` and `cmp edi, 0x16` (remaining >= 22, where edi holds the remaining length) before the SNAP read. The 802.1Q VLAN branch already re-validated ByteCount and remaining >= 0x12 in both builds.",
+      "trigger_conditions": "NDIS datapath verification must be enabled for the adapter (a non-default diagnostic mode; ndisNblVerifyRxIndication and thus this parser are otherwise never called). Then a frame whose NET_BUFFER has a remaining mapped length (ByteCount - CurrentMdlOffset) in [14, 21] and that presents an 802.3 length field <= 0x600 at data offset 0xc plus the SNAP markers 0xAA/0xAA/0x03 at offsets 0xe/0xf/0x10 reaches the offset-0x14 read. The read exceeds the valid MDL data; under Special Pool a boundary-crossing read bugchecks.",
+      "primitive": "A bounded out-of-bounds read (up to ~8 bytes) immediately following the packet data in the MDL-mapped region, gated behind a non-default diagnostic mode. The value influences only the verifier's internal EtherType classification and is not disclosed to the frame sender. Practical effect is a possible bugcheck under Special Pool, otherwise a benign misread. The added NULL guard is defense in depth (a NULL CurrentMdl would be a miniport defect, not attacker input).",
+      "evidence": "Unpatched decompilation (ndisParseReceivedNBL, 0x1C006E370):\n  CurrentMdl = FirstNetBuffer->CurrentMdl;       // no NULL check\n  ByteCount = CurrentMdl->ByteCount;\n  if ( ByteCount < 0xE\n    || (CurrentMdlOffset = FirstNetBuffer->CurrentMdlOffset, ByteCount <= (unsigned int)CurrentMdlOffset)\n    || ByteCount - (unsigned int)CurrentMdlOffset < 0xE )   // remaining only checked >= 0xE\n  { return 0; }\n  ...\n  v14 = &MappedSystemVa[CurrentMdlOffset];\n  if ( v14[14] == 0xAA && v14[15] == 0xAA && v14[16] == 3 )\n    v7 = *((_WORD *)v14 + 10);   // OOB: reads data offset 0x14 with only remaining >= 0xE guaranteed\n\nPatched decompilation (ndisParseReceivedNBL, 0x1C00141EC):\n  CurrentMdl = FirstNetBuffer->CurrentMdl;\n  if ( CurrentMdl == nullptr ) goto fail;         // ADDED NULL guard\n  ByteCount = CurrentMdl->ByteCount;\n  ...\n  v13 = ByteCount - CurrentMdlOffset;\n  if ( v13 >= 0x16 ) {                            // ADDED: remaining >= 22\n    if ( v15[14] != 0xAA || v15[15] != 0xAA || v15[16] != 3 ) goto done;\n    v7 = *((_WORD *)v15 + 10);                    // data offset 0x14, reached only when safe\n  } else { result = 0; }",
+      "assembly": "sub_1c006e370 @ 0x1c006e370 (UNPATCHED, ndis_unpatched.sys):\n0x1c006e370: mov qword [rsp+0x10], rbx\n0x1c006e375: mov qword [rsp+0x18], rbp\n0x1c006e37a: push rsi\n0x1c006e37b: push rdi\n0x1c006e37c: push r12\n0x1c006e37e: push r14\n0x1c006e380: push r15\n0x1c006e382: sub rsp, 0x20\n0x1c006e386: xor ebx, ebx\n0x1c006e388: mov r12, r9\n0x1c006e38b: mov word [rsp+0x50], bx\n0x1c006e390: mov r15, r8\n0x1c006e393: test ecx, ecx\n0x1c006e395: je 0x1c006e3a7\n0x1c006e397: movzx eax, word [rdx+0xc8]\n0x1c006e39e: mov bl, 0x1\n0x1c006e3a0: mov cl, bl\n0x1c006e3a2: jmp 0x1c006e459\n0x1c006e3a7: mov rax, qword [rdx+0x8]        ; NET_BUFFER_LIST->FirstNetBuffer\n0x1c006e3ab: mov rcx, qword [rax+0x8]        ; NET_BUFFER->CurrentMdl -- NO NULL CHECK\n0x1c006e3af: mov edi, dword [rcx+0x28]       ; MDL->ByteCount -- NULL DEREF HERE\n0x1c006e3b2: cmp edi, 0xe                     ; check ByteCount >= 14\n0x1c006e3b5: jae 0x1c006e3be\n0x1c006e3b7: mov cl, bl\n0x1c006e3b9: jmp 0x1c006e45d\n0x1c006e3be: mov ebp, dword [rax+0x10]       ; CurrentMdlOffset\n0x1c006e3c1: cmp edi, ebp\n0x1c006e3c3: jbe 0x1c006e3b7\n0x1c006e3c5: mov esi, edi\n0x1c006e3c7: sub esi, ebp                     ; remaining = ByteCount - offset\n0x1c006e3c9: cmp esi, 0xe                    ; check remaining >= 14\n0x1c006e3cc: jb 0x1c006e3b7\n0x1c006e3ce: test byte [rcx+0xa], 0x5         ; MdlFlags check\n0x1c006e3d2: je 0x1c006e3da\n0x1c006e3d4: mov rdx, qword [rcx+0x18]       ; MappedSystemVa\n0x1c006e3d8: jmp 0x1c006e3eb\n0x1c006e3da: xor edx, edx\n0x1c006e3dc: call qword [rel 0x1c0105350]    ; MmMapLockedPages\n0x1c006e3e3: nop dword [rax+rax]\n0x1c006e3e8: mov rdx, rax\n0x1c006e3eb: add rdx, rbp                     ; rdx = mapped_data + offset\n0x1c006e3ee: mov al, byte [rdx+0xd]          ; read at offset 13\n0x1c006e3f1: mov cl, byte [rdx+0xc]          ; read at offset 12\n0x1c006e3f4: mov byte [rsp+0x68], al\n0x1c006e3f8: mov byte [rsp+0x51], al\n0x1c006e3fc: mov eax, 0x600\n0x1c006e401: mov byte [rsp+0x69], cl\n0x1c006e405: mov byte [rsp+0x50], cl\n0x1c006e409: cmp word [rsp+0x68], ax          ; check EtherType <= 0x600\n0x1c006e40e: jbe 0x1c006e43f                  ; SNAP path\n0x1c006e410: mov eax, 0x8100                  ; check for 802.1Q VLAN\n0x1c006e415: cmp word [rsp+0x68], ax\n0x1c006e41a: jne 0x1c006e434\n0x1c006e41c: cmp edi, 0x12                    ; ByteCount >= 18 for VLAN\n0x1c006e41f: jb 0x1c006e3b7\n0x1c006e421: cmp esi, 0x12                    ; remaining >= 18 for VLAN\n0x1c006e424: jb 0x1c006e3b7\n0x1c006e426: mov al, byte [rdx+0x10]\n0x1c006e429: mov byte [rsp+0x50], al\n0x1c006e42d: mov al, byte [rdx+0x11]\n0x1c006e430: mov byte [rsp+0x51], al\n0x1c006e434: movzx eax, word [rsp+0x50]\n0x1c006e439: mov bl, 0x1\n0x1c006e43b: mov cl, bl\n0x1c006e43d: jmp 0x1c006e459\n0x1c006e43f: cmp byte [rdx+0xe], 0xaa        ; SNAP DSAP\n0x1c006e443: mov cl, 0x1\n0x1c006e445: jne 0x1c006e45d\n0x1c006e447: cmp byte [rdx+0xf], 0xaa        ; SNAP SSAP\n0x1c006e44b: jne 0x1c006e45d\n0x1c006e44d: cmp byte [rdx+0x10], 0x3        ; SNAP Control\n0x1c006e451: jne 0x1c006e45d\n0x1c006e453: movzx eax, word [rdx+0x14]      ; OOB READ: EtherType at offset 20, NO CHECK FOR >= 0x16\n0x1c006e457: mov bl, cl\n0x1c006e459: mov word [r15], ax              ; store result\n0x1c006e45d: mov rbp, qword [rsp+0x60]\n0x1c006e462: mov al, cl\n0x1c006e464: mov byte [r12], bl\n0x1c006e468: mov rbx, qword [rsp+0x58]\n0x1c006e46d: add rsp, 0x20\n0x1c006e471: pop r15\n0x1c006e473: pop r14\n0x1c006e475: pop r12\n0x1c006e477: pop rdi\n0x1c006e478: pop rsi\n0x1c006e479: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!sub_1c006e370",
+            "address": "0x1c006e370",
+            "why": "Entry to the vulnerable Ethernet/SNAP header parser. Set breakpoint here to inspect the MDL pointer, ByteCount, and packet data. ecx (arg1) = 0 for the normal NBL path; rdx (arg2) = pointer to NET_BUFFER_LIST structure."
+          },
+          {
+            "symbol": "ndis!sub_1c006e370+0x42",
+            "address": "0x1c006e3b2",
+            "why": "The ByteCount >= 0xe check. edi holds ByteCount from MDL->ByteCount. If edi is between 0xe (14) and 0x15 (21), execution will proceed to the OOB read path. Watch edi register."
+          },
+          {
+            "symbol": "ndis!sub_1c006e370+0xe3",
+            "address": "0x1c006e453",
+            "why": "THE VULNERABLE INSTRUCTION: movzx eax, word [rdx+0x14]. This reads 2 bytes at offset 0x14 (20) from the mapped packet data. rdx points to MappedSystemVa + CurrentMdlOffset. If ByteCount-CurrentMdlOffset < 0x16, this reads past the valid data. Watch rdx and verify rdx+0x14 is within the MDL-mapped buffer bounds."
+          },
+          {
+            "symbol": "ndis!sub_1c006e370+0x3b",
+            "address": "0x1c006e3ab",
+            "why": "The NULL-deref instruction: mov rcx, qword [rax+0x8]. rax points to NET_BUFFER structure. If CurrentMdl (at rax+0x8) is NULL, the subsequent mov edi, dword [rcx+0x28] at 0x1c006e3af will BSOD."
+          }
+        ],
+        "watch": [
+          "edi register at 0x1c006e3b2 — holds ByteCount (MDL->ByteCount). Values 14-21 trigger the OOB read.",
+          "rcx register at 0x1c006e3ab — holds CurrentMdl pointer. NULL causes BSOD at 0x1c006e3af.",
+          "rdx register at 0x1c006e453 — base pointer for packet data reads. rdx+0x14 is the OOB read target.",
+          "esi register at 0x1c006e3c9 — remaining bytes = ByteCount - CurrentMdlOffset. Must be >= 0xe to reach SNAP path but < 0x16 to trigger OOB.",
+          "Byte [rdx+0xe] and [rdx+0xf] must both be 0xAA, and [rdx+0x10] must be 0x03 to reach the vulnerable movzx at 0x1c006e453."
+        ],
+        "key_offsets": [
+          "0x1c006e3ab: mov rcx, [rax+0x8] — MDL pointer load, missing NULL check (patched adds test rcx,rcx at 0x1c001422b)",
+          "0x1c006e3b2: cmp edi, 0xe — initial size check (only checks >= 14 bytes)",
+          "0x1c006e453: movzx eax, word [rdx+0x14] — VULNERABLE OOB READ at offset 20, patched adds cmp edi,0x16 at 0x1c00142c3",
+          "0x1c006e3ce: test byte [rcx+0xa], 0x5 — MdlFlags check before MmMapLockedPages"
+        ],
+        "trigger_setup": "Send a crafted Ethernet frame to a network interface handled by the NDIS driver. The frame must be a valid 802.3 + LLC/SNAP frame with: (1) 6-byte dst MAC, 6-byte src MAC, (2) Length field (bytes 12-13) <= 0x0600 (to take LLC/SNAP path, not EtherType path), (3) DSAP=0xAA at offset 14, SSAP=0xAA at offset 15, Control=0x03 at offset 16, (4) Total frame length (ByteCount) between 14 and 21 bytes — e.g., a 20-byte frame (0x14) will cause the read at offset 0x14 to access the last byte and one byte beyond the buffer. The simplest approach: use raw socket (AF_PACKET on Linux) or NDISUIO/Packet.dll on Windows to inject a short SNAP frame. Ensure the frame is exactly 14-21 bytes in the MDL data. For the NULL deref variant: this requires constructing a NET_BUFFER_LIST with a NULL CurrentMdl, which is harder to trigger remotely.",
+        "expected_observation": "For OOB read: no crash will occur immediately — the read at rdx+0x14 will return whatever data follows in kernel pool. The value gets stored in the EtherType output (*arg3/r15), influencing packet classification. Under a debugger with Special Pool enabled, this will be caught as an out-of-bounds pool access. For NULL deref: BSOD with bugcheck 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) at instruction 0x1c006e3af (mov edi, dword [rcx+0x28]) with rcx=0.",
+        "notes": "The call chain is: NdisMIndicateReceiveNetBufferLists (0x1c0013640) or NdisFIndicateReceiveNetBufferLists (0x1c0004680) -> ndisNblVerifyRxIndication (0x1c00722bc) -> ndisParseReceivedNBL (0x1c006e370). The verifier call is NOT unconditional: NdisMIndicateReceiveNetBufferLists reaches it only when the miniport handle flag `[rdi+0xE68] & 0x800` is set (0x1c00136a6), and NdisFIndicateReceiveNetBufferLists only when the filter handle flag `[rcx+0x38] & 0x200` is set (0x1c0004694). Those bits are the per-adapter datapath-verification flag, a non-default diagnostic mode, so this instance is not reachable on the default receive path. The same out-of-bounds read on the ordinary receive path is in ndisSortNetBufferLists (see its own finding)."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "ndisValidateEmbeddedBufferBounds (sub_1C0116760)",
+      "entry_point": "IRP_MJ_DEVICE_CONTROL dispatch reaching ndisHandlePnPRequest and the NDIS_VAR_DATA_DESC validation wrappers",
+      "call_chain": [
+        "IRP_MJ_DEVICE_CONTROL (NtDeviceIoControlFile / DeviceIoControl)",
+        "ndisHandlePnPRequest (0x1C0144008)",
+        "ndisValidateNdisVarDataDescInputString (0x1C01166DC, passes minimum 0x48) / ndisValidateNdisVarDataDesc32InputString (0x1C012DF58, passes minimum 0x28)",
+        "ndisValidateEmbeddedBufferBounds (0x1C0116760)"
+      ],
+      "vulnerability_class": "improper input validation (CWE-20); minimum-offset hardening, no demonstrated out-of-bounds access",
+      "description": "ndisValidateEmbeddedBufferBounds validates that an embedded sub-buffer [base+Offset, base+Offset+Length) is contained within a parent input buffer [base, base+parent_len). Both builds already enforce that containment (0x1c0116789: cmp r10, rax / ja fail = sub_end <= parent_end), so downstream reads bounded by Length never leave the parent allocation. The patch adds one parameter (a minimum) and rejects the request when the descriptor's Offset field is below that minimum: patched 0x1c010c3fb `cmp [rsp+arg_28], eax` (Offset vs minimum) / `jb fail`. Note the compared value is the Offset (the field added to base to form sub_start), not the Length — this is a minimum-OFFSET check, not a minimum-size check. The NDIS_VAR_DATA_DESC wrappers pass the minimum so the descriptor's variable data must begin at or beyond the fixed request header (0x48 for the native variant, 0x28 for the 32-bit thunk variant) instead of overlapping it. This is input-validation hardening that prevents an attacker-supplied descriptor from aliasing the fixed structure fields; it is not an out-of-bounds read, because containment was and remains enforced in both builds.",
+      "trigger_conditions": "Open a handle to the NDIS device and issue an IRP_MJ_DEVICE_CONTROL request that reaches ndisHandlePnPRequest with an input buffer containing an NDIS_VAR_DATA_DESC whose Offset field points before the fixed request header (Offset < 0x48 for the native variant, < 0x28 for the 32-bit thunk variant) while the sub-buffer still lies inside the parent buffer. In the unpatched build the validator accepts this, so the resulting UNICODE_STRING buffer overlaps the fixed structure fields; all reads still remain inside the parent input buffer (containment enforced). The patched build rejects it.",
+      "primitive": "No out-of-bounds primitive is demonstrable. The parent-buffer containment check bounds every access in both builds. The added minimum-offset check prevents an embedded descriptor's variable data from overlapping (aliasing) the fixed request header; it is a structural/aliasing hardening change, not a memory-safety fix.",
+      "evidence": "Both builds enforce containment; the patch adds a minimum-offset rejection. The real disassembly of both builds is in the `assembly` field below and in the report's Assembly Analysis section. In the unpatched build the containment sequence at 0x1c011677a-0x1c011678c (parent_end >= base, sub_start >= base, sub_end >= sub_start, sub_end <= parent_end) is the only bounds gate; there is no comparison of Offset against any minimum. In the patched build the identical containment sequence is preceded by 0x1c010c3f3-0x1c010c3ff (load minimum arg5; if nonzero and Offset < minimum, reject).",
+      "assembly": "sub_1c0116760 @ 0x1c0116760 (UNPATCHED, ndis_unpatched.sys):\n0x1c0116760: mov r10d, dword [rsp+0x30]      ; arg6 (sub-buffer length)\n0x1c0116765: mov eax, edx                    ; arg2 (parent buffer length)\n0x1c0116767: mov edx, dword [rsp+0x28]       ; arg5 (sub-buffer offset within parent)\n0x1c011676b: add rax, rcx                    ; rax = base + parent_len (parent_end)\n0x1c011676e: add rdx, rcx                    ; rdx = base + offset (sub_start)\n0x1c0116771: mov r11d, r9d                   ; r11 = arg4\n0x1c0116774: add r10, rdx                    ; r10 = sub_start + sub_len (sub_end)\n0x1c0116777: add r11, r8                     ; r11 = arg3 + arg4 (alt boundary end)\n0x1c011677a: cmp rax, rcx                    ; parent_end >= base?\n0x1c011677d: jb 0x1c01167c3                  ; fail if not\n0x1c011677f: cmp rdx, rcx                    ; sub_start >= base?\n0x1c0116782: jb 0x1c01167c3                  ; fail if not\n0x1c0116784: cmp r10, rdx                    ; sub_end >= sub_start?\n0x1c0116787: jb 0x1c01167c3                  ; fail if not\n0x1c0116789: cmp r10, rax                    ; sub_end <= parent_end?\n0x1c011678c: ja 0x1c01167c3                  ; fail if not — THIS IS THE LAST CHECK\n0x1c011678e: mov eax, dword [rsp+0x38]       ; arg7 (alignment)\n0x1c0116792: test eax, eax\n0x1c0116794: je 0x1c01167a5\n0x1c0116796: cmp dword [rsp+0x30], 0x0       ; check arg6 != 0\n0x1c011679b: je 0x1c01167a5\n0x1c011679d: lea ecx, [rax-0x1]\n0x1c01167a0: test rdx, rcx                   ; alignment check\n0x1c01167a3: jne 0x1c01167c3\n0x1c01167a5: cmp rdx, r8                     ; boundary check vs arg3\n0x1c01167a8: jbe 0x1c01263f0\n0x1c01167ae: cmp rdx, r11                    ; boundary check vs r11\n0x1c01167b1: jbe 0x1c01263fe\n0x1c01167b7: mov rax, qword [rsp+0x40]       ; arg8 (output pointer)\n0x1c01167bc: mov qword [rax], rdx           ; *arg8 = sub_start\n0x1c01167bf: mov al, 0x1                    ; return TRUE (valid)\n0x1c01167c1: retn\n0x1c01167c3: xor al, al                     ; return FALSE (invalid)\n0x1c01167c5: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!sub_1c0116760",
+            "address": "0x1c0116760",
+            "why": "Entry to the buffer validation function. rcx (arg1) = parent buffer base address, edx (arg2) = parent buffer total length, r8 (arg3) and r9d (arg4) = alternate boundary range, [rsp+0x28] (arg5) = sub-buffer offset, [rsp+0x30] (arg6) = sub-buffer length. Watch these to see what sizes are passed."
+          },
+          {
+            "symbol": "ndis!sub_1c0116760+0x2e",
+            "address": "0x1c011678e",
+            "why": "Reached after the containment checks pass. In the unpatched build there is no minimum-offset comparison before this point; in the patched build the descriptor Offset was already required to be at or beyond the wrapper's minimum. Watch rdx (returned sub_start pointer) and r10 (sub_end); both remain within the parent buffer in either build."
+          },
+          {
+            "symbol": "ndis!sub_1c0144008",
+            "address": "0x1c0144008",
+            "why": "The IOCTL handler that calls validation wrappers. Set breakpoint here to see IOCTL codes and input buffer layout. r15_1 holds the total input buffer length."
+          }
+        ],
+        "watch": [
+          "edx (arg2) at 0x1c0116760 — parent buffer total length",
+          "[rsp+0x28] (arg5, Offset) at 0x1c0116760 — the descriptor Offset added to the base to form sub_start. The patched build rejects when this is below the minimum passed by the wrapper (0x48 native / 0x28 thunk).",
+          "[rsp+0x30] (arg6, Length) at 0x1c0116760 — sub-buffer declared length; used to form sub_end for the containment check (present in both builds).",
+          "rdx at 0x1c011678e — if execution reaches here, containment passed; rdx is the returned sub_start pointer."
+        ],
+        "key_offsets": [
+          "0x1c011678c: cmp r10, rax / ja fail — containment check (sub_end <= parent_end), present and identical in both builds",
+          "0x1c01167bf: mov al, 0x1 — returns TRUE (validation passed)",
+          "In patched ndisValidateEmbeddedBufferBounds (0x1c010c3cc): the new check at 0x1c010c3fb `cmp [rsp+arg_28], eax` / `jb fail` rejects when the descriptor Offset is below the minimum; this is a minimum-OFFSET check, not a minimum-size check"
+        ],
+        "trigger_setup": "Open a handle to the NDIS device and send an IRP_MJ_DEVICE_CONTROL request reaching ndisHandlePnPRequest, with an input buffer containing an NDIS_VAR_DATA_DESC whose Offset field is below the fixed request header (< 0x48 native / < 0x28 thunk) while the sub-buffer still lies inside the parent buffer. The unpatched validator accepts it (containment passes); the patched validator rejects it via the minimum-offset check.",
+        "expected_observation": "No out-of-bounds access occurs in either build: the containment check bounds every read to the parent input buffer. In the unpatched build the accepted descriptor's variable data can overlap (alias) the fixed request header; the patched build rejects such a descriptor. This is a structural/aliasing hardening difference, not a memory-safety difference.",
+        "notes": "Wrappers and the minimum they pass (verified from the patched call sites): ndisValidateNdisVarDataDescInputString (0x1C01166DC -> 0x1C010C4E0) passes 0x48 at 0x1c010c528; ndisValidateNdisVarDataDesc32InputString (0x1C012DF58 -> 0x1C010C458) passes 0x28 at 0x1c010c4a0; ndisValidateNdisOffsetAndLengthInputBufferBounds (0x1C012DEA8 -> 0x1C012EEF8) passes 0x0. The validator has out-of-line boundary-check paths at 0x1c01263f0 and 0x1c01263fe in the unpatched build. ndisHandlePnPRequest's own input-buffer minimum-size, integer-overflow, and IoIs32bitProcess thunk checks are present in BOTH builds and were not added by the patch."
+      }
+    }
+  ],
+  "summary": "The patch fixes the same low-severity out-of-bounds read (CWE-125) in two NDIS receive-path Ethernet/SNAP parsers, adding a NULL guard on the MDL pointer and a `remaining >= 0x16` (22-byte) check before a 16-bit read at data offset 0x14 in the LLC/SNAP branch. ndisSortNetBufferLists (0x1C0012960 -> 0x1C0012B00) classifies/sorts received NBLs and is reached from the ordinary miniport receive-indication dispatch (ndisMDispatchReceiveNetBufferLists and related), so its instance is on the default receive path. ndisParseReceivedNBL (0x1C006E370 -> 0x1C00141EC) is the same parser reached only from the datapath receive verifier (ndisNblVerifyRxIndication), which is gated by a per-adapter datapath-verification flag (miniport handle +0xE68 bit 0x800 / filter handle +0x38 bit 0x200), a non-default diagnostic mode, so that instance is not on the default path. In both, the out-of-bounds value (up to ~8 bytes past the packet data) is used only for the driver's internal EtherType/protocol classification and is not returned to the frame sender; on typical DMA receive buffers it stays inside the buffer, with a boundary-crossing bugcheck only under Special Pool with a frame-sized MDL. The patch also adds a minimum-offset check to the embedded-descriptor validator ndisValidateEmbeddedBufferBounds (0x1C0116760 -> 0x1C010C3CC); that is input-validation hardening (CWE-20), not a memory-safety fix, because parent-buffer containment is enforced in both builds. All remaining changed functions are WIL feature-staging, tracing, or register-allocation churn."
+}

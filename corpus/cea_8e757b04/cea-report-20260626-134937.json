@@ -1,0 +1,292 @@
+{
+  "binaries": {
+    "id_unpatched": "cea_unpatched.sys",
+    "id_patched": "cea_patched.sys",
+    "overall_similarity": 0.9,
+    "matched": 84,
+    "changed": 84,
+    "identical": 0,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "WnfEventCallback (sub_1C00018C8)",
+      "similarity": 0.594,
+      "change_type": "refactor",
+      "key_changes": [
+        "Unpatched: inline parsing of packed WNF event structure with bitfield extraction AND complete bounds validation for the fields it processes",
+        "Patched: moved that inline parsing/validation into new helper EapSignalMessageReadFromBuffer (sub_140008A98)",
+        "Unpatched already enforces a5 >= 8, a5 >= 16*((bit23!=0)+(bit24!=0))+8, count >= 16*((bit23!=0)+(bit24!=0)) when count!=0, and a5 >= count+8; it never references header bit 0x19 (bit25)",
+        "Patched adds one NEW optional 8-byte field gated by header bit 0x19 (0x2000000) with matching validation count >= (bit24?0x10:0)+(bit23?0x10:0)+(bit25?8:0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched WNF data parser (WnfEventCallback) already validates the packed event structure for the fields it reads: a5 >= 8, a5 >= 16*nfields+8 (nfields = number of set flags among bit23/bit24), count >= 16*nfields when the count field is non-zero, and a5 >= count+8. The only payload read on this path is a memmove of count bytes from buffer+8 inside EaiResetTriggerPayload, which is covered by a5 >= count+8. Header bit 0x19 (0x2000000) is not referenced anywhere in the unpatched build, so no field gated by it is read. The patch (a) moves the inline parsing into EapSignalMessageReadFromBuffer (sub_140008A98) and (b) adds support plus validation for a new optional 8-byte field gated by bit 0x19. There is no attacker-reachable out-of-bounds read in the unpatched build for this path; this is a refactor plus a new, validated field, not a security fix.",
+      "assembly_diff": "Unpatched WnfEventCallback at 0x1c00018c8: parses the packed structure inline and bounds-checks it. The optional-field check is present at 0x1C00019FA (shl rdx,4 -> 16*nfields) and 0x1C0001A02 (cmp r9, rcx enforcing a5 >= 16*nfields+8), plus 0x1C0001A41 (cmp r9, count+8). Patched WnfEventCallback at 0x140004404 delegates to EapSignalMessageReadFromBuffer (sub_140008A98) at 0x140008a98, which performs the same checks and additionally accounts for the new bit-0x19 8-byte field (add eax,8 at 0x140008B5A) before comparing count >= fieldbytes at 0x140008B5D."
+    },
+    {
+      "name": "EaSignalAggregatedEvent",
+      "similarity": 0.853,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched: computes allocation size inline into a 32-bit unsigned int as v20 = Size + (a5 ? 0x10 : 0) + (a6 ? 0x10 : 0) with NO integer overflow check",
+        "Patched: delegates to new function EapSignalContentPrepareEventForPublishing (sub_140008B90) which computes base_size then total = base + variable_length with explicit overflow check: if (total < base) return STATUS_INTEGER_OVERFLOW (0xC0000095)",
+        "Unpatched uses ExAllocatePoolWithTag(PagedPool, v20, 'EtvA'); patched uses ExAllocatePool2(POOL_FLAG_PAGED, total, 'EtvA')",
+        "Patched also zeroes the allocated buffer via memset before copying data"
+      ],
+      "security_relevant": true,
+      "security_notes": "EaSignalAggregatedEvent is a directly exported kernel function. The unpatched version computes the allocation size into a 32-bit unsigned int (v20) as Size + 0x10 for each optional 16-byte field present (a5/a6 non-NULL pointers) with no overflow check. Because the sum is 32-bit, a Size whose low 32 bits are near 0xFFFFFFFF (e.g. 0xFFFFFFF0 with both fields, 0xFFFFFFF0 + 0x20) wraps to a small value (0x10). ExAllocatePoolWithTag then allocates that small buffer, but the subsequent memmove copies (unsigned int)Size (the low 32 bits, up to ~0xFFFFFFF0 = ~4 GiB) of data into it, causing a large kernel pool buffer overflow. The patched version uses EapSignalContentPrepareEventForPublishing (sub_140008B90) which explicitly checks if (total < base) and returns STATUS_INTEGER_OVERFLOW (0xC0000095) before any allocation or copy occurs.",
+      "assembly_diff": "Unpatched EaSignalAggregatedEvent at 0x1c00034b0: loads Size as a 32-bit dword (mov r15d, [Size] at 0x1C0003545), computes v20 = Size + optional field sizes via lea eax,[r15+rcx] (0x1C00035DB) and add ebx,eax (0x1C00035DF) in 32 bits, calls ExAllocatePoolWithTag with the wrapped size (0x1C00035F0), then memmove copies r15 = (unsigned int)Size bytes (mov r8,r15 at 0x1C0003642). Patched delegates to EapSignalContentPrepareEventForPublishing (sub_140008B90): the overflow check is lea eax,[rdi+r8] / cmp eax,edi / jb (0x140008C0A-0x140008C10) returning 0xC0000095 at 0x140008C26, followed by ExAllocatePool2, memset zero-fill, and a bounded copy."
+    },
+    {
+      "name": "BripCreateBrokeredEvent (sub_1C0005340)",
+      "similarity": 0.745,
+      "change_type": "behavioral",
+      "key_changes": [
+        "RPC parameter marshaling for brokered event creation via NdrClientCall3",
+        "SID validation via RtlValidSid and RtlLengthSid is present in both unpatched and patched versions",
+        "Change restructures the NdrClientCall3 invocation and reduces the BripCreateEventContext parameter list; the callee BripCreateEventContext migrates its allocation from ExAllocatePoolWithTag(NonPagedPoolNx, 0x40) to ExAllocatePool2(0x40)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function marshals RPC parameters for brokered event creation. Both versions validate the SID argument up front via RtlValidSid and use RtlLengthSid for the marshaled length; no integer overflow was introduced or removed here. The differences are a refactor of the NdrClientCall3 call and a reduced BripCreateEventContext signature, whose pool allocation was modernized to ExAllocatePool2 (non-executable). This is a behavioral/hardening change rather than a distinct vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaiDuplicateConditionsVisitNode (sub_1C0003840)",
+      "similarity": 0.842,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed ExAllocatePoolWithTag(PagedPool, size, 'EtvA') to ExAllocatePool2(POOL_FLAG_PAGED, size, 'EtvA')",
+        "Pool flag hardening: PagedPool to POOL_FLAG_PAGED (0x100)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Pool type changed from PagedPool to ExAllocatePool2 with flag 0x100 (POOL_FLAG_PAGED, non-executable). This is a defense-in-depth hardening measure, not a fix for a distinct vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760)",
+      "similarity": 0.905,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Array growth function: changed ExAllocatePoolWithTag to ExAllocatePool2(0x100,...)",
+        "Allocation size is 48 * (count + 5) where count is a 16-bit field, so the multiply cannot overflow"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function grows a dynamic array. The allocation size is 48 * (count + 5) where count = *((unsigned __int16 *)a1 + 4), a 16-bit field bounded by 0xFFFF, so 48*(count+5) tops out near 3 MiB and cannot overflow. No integer overflow is possible here. The only change is the ExAllocatePoolWithTag -> ExAllocatePool2 pool-API migration.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EapTreeTraverse (sub_1C00062D0)",
+      "similarity": 0.944,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Stack-based parsing with dynamic growth using ExAllocatePoolWithTag(PagedPool, 16 * v7 + 0x50,...) where v7 is a 16-bit counter",
+        "Changed to ExAllocatePool2 — pool-API migration"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function allocates a buffer of size 16 * v7 + 0x50 (computed as 16LL * v7 in 64 bits). v7 is a 16-bit counter starting at 5 and incremented by 5 (max 0xFFFF), so the size tops out near 1 MiB and cannot overflow. No shift/multiply overflow exists. The only change is the ExAllocatePool2 migration.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EACreateAggregateEvent",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed ExAllocatePoolWithTag(PagedPool, 0xa0, 'EtvA') to ExAllocatePool2(0x100, 0xa0, 'EtvA')",
+        "Pool flag hardening: fixed-size 0xa0 allocation, low risk"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BripCreateBindingContext (sub_1C0005680)",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed ExAllocatePoolWithTag(NonPagedPoolNx, 0x40, 'EtvA') to ExAllocatePool2(0x40, 'EtvA')",
+        "GUID-to-broker mapping allocation, pool API modernization"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaiProcessNotification (sub_1C0001BC4)",
+      "similarity": 0.942,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Core event condition evaluation logic restructured",
+        "Patched adds more robust state management with proper condition tracking",
+        "Calls allocation helper EaiResetTriggerPayload (sub_140003B64) instead of EaiHandleTimeLimitReached (sub_1C00045A0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Condition evaluation logic changes appear to be behavioral improvements to state tracking, not directly security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaiEnableAggregateEvent (sub_1C00027BC)",
+      "similarity": 0.93,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Initialization function: allocates 0x1000 byte buffer, queries WNF state",
+        "Changed ExAllocatePoolWithTag to ExAllocatePool2 — pool API modernization"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BripCleanupEventTable (sub_1C00050B0)",
+      "similarity": 0.88,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cleanup/destructor function for broker hash table enumeration",
+        "Simplified loop variable management (removed redundant P_3 tracking variable)",
+        "Changed call from BripCreateRpcBindingHandle (sub_1c00058c0)/EapSystemBriDeleteEvent (sub_1c0008a58) to BripCreateRpcBindingHandle (sub_140005ab4)/EapSystemBriDeleteEvent (sub_140008984)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Teardown function changes are cosmetic register allocation improvements. The ExFreePoolWithTag calls remain structurally identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EapFreeSimpleEventParameters (sub_1C00071BC)",
+      "similarity": 0.9,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Cleanup loop: eliminated redundant P_3 variable and repeated re-read of *(arg1+0x18)",
+        "Functionally identical free-loop logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "EaSignalAggregatedEvent",
+      "entry_point": "Exported function EaSignalAggregatedEvent (directly callable from user mode via the driver's exported API table)",
+      "call_chain": ["EaSignalAggregatedEvent (exported)", "ExAllocatePoolWithTag(PagedPool, wrapped_32bit_size, 'EtvA')", "memmove(small_buffer, Src, (unsigned int)Size)"],
+      "vulnerability_class": "integer overflow leading to pool buffer overflow",
+      "description": "The exported function EaSignalAggregatedEvent computes a kernel pool allocation size by adding the caller-supplied variable-length data size (Size, the 8th parameter) to fixed field sizes (0x10 for each of two optional 16-byte fields, present when the pointer arguments a5/a6 are non-NULL). The computation v20 = Size + (a5?0x10:0) + (a6?0x10:0) is stored in a 32-bit unsigned int WITHOUT an integer overflow check, so only the low 32 bits of Size participate, and the allocation is only taken when the truncated size is nonzero. When Size's low 32 bits are near 0xFFFFFFFF (e.g. 0xFFFFFFF0 with both optional fields, 0xFFFFFFF0 + 0x20), the 32-bit sum wraps to a small nonzero value (e.g. 0x10). ExAllocatePoolWithTag allocates this undersized buffer. The function then copies (unsigned int)Size bytes (the low 32 bits of Size, up to ~0xFFFFFFF0 = ~4 GiB) of caller-controlled data into the buffer via memmove, causing a large heap overflow in kernel paged pool. The patched version delegates to EapSignalContentPrepareEventForPublishing (sub_140008B90) which explicitly checks if (base + variable_length < base) and returns STATUS_INTEGER_OVERFLOW (0xC0000095), preventing the wraparound.",
+      "trigger_conditions": "Call EaSignalAggregatedEvent with the low 32 bits of Size set so that adding the optional-field size (0, 0x10, or 0x20) wraps past 2^32 to a small nonzero value. For example: low 32 bits of Size = 0xFFFFFFF0 with both optional-field pointers (a5, a6) non-NULL -> 32-bit v20 = 0x10. The wrapped allocation size is small but the memmove uses (unsigned int)Size = 0xFFFFFFF0. A value wrapping to exactly 0 is skipped by the nonzero-size guard, so the low 32 bits must wrap to a small nonzero result. The function must be reachable from an attacker's context (it is an exported kernel API).",
+      "primitive": "Kernel pool buffer overflow (paged pool). A caller gains a linear kernel memory overwrite relative to the allocated pool block. With controlled overflow data this can corrupt adjacent pool metadata or objects, potentially leading to privilege escalation. Because the copy length is the low 32 bits of Size (up to ~4 GiB), the overflow runs off the end of valid memory quickly unless arranged to stop within a groomed region.",
+      "evidence": "Unpatched decompilation (cea_unpatched.c, EaSignalAggregatedEvent):\n  v20 = Size + (v27 != nullptr ? 0x10 : 0) + (a6 != nullptr ? 0x10 : 0);   // v20 is unsigned int, no overflow check\n  if (v20 != 0) {\n      PoolWithTag = ExAllocatePoolWithTag(PagedPool, v20, 0x41747645u);\n      // ... optional 16-byte fields copied ...\n      memmove(v21, Src, (unsigned int)Size);   // copies low 32 bits of Size\n  }\n\nPatched (EapSignalContentPrepareEventForPublishing (sub_140008B90)):\n  base = 8 + (a5 ? 0x10 : 0) + (a6 ? 0x10 : 0) + (a7 ? 8 : 0);\n  total = base + variable_length;\n  if (total < base)  // OVERFLOW CHECK\n      return STATUS_INTEGER_OVERFLOW;   // 0xC0000095\n  buf = ExAllocatePool2(POOL_FLAG_PAGED, total, 'EtvA');\n  memset(buf, 0, total);\n  // bounded copy",
+      "assembly": "; EaSignalAggregatedEvent @ 0x1c00034b0 in cea_unpatched.sys\n; Size is loaded as a 32-bit dword, so only its low 32 bits participate:\n;   0x1C0003545  mov  r15d, dword ptr [rbp+3Fh+Size]   ; r15 = (32-bit) Size\n;   0x1C00035DB  lea  eax, [r15+rcx]                    ; Size + (field1?0x10:0)\n;   0x1C00035DF  add  ebx, eax                          ; + (field2?0x10:0)  -- 32-bit, NO OVERFLOW CHECK\n;   0x1C00035E3  mov  edx, ebx                          ; NumberOfBytes = wrapped 32-bit size\n;   0x1C00035E5  mov  ecx, 1                            ; PoolType = PagedPool\n;   0x1C00035EA  mov  r8d, 41747645h                    ; Tag 'EtvA'\n;   0x1C00035F0  call cs:__imp_ExAllocatePoolWithTag\n;   0x1C0003642  mov  r8, r15                           ; Size arg = low 32 bits of Size\n;   0x1C0003645  call memmove\n;\n; Patched EapSignalContentPrepareEventForPublishing (sub_140008B90) overflow check @ 0x140008b90:\n;   0x140008C0A  lea  eax, [rdi+r8]                     ; total = base + variable_length\n;   0x140008C0E  cmp  eax, edi                          ; total vs base\n;   0x140008C10  jb   loc_140008C26                     ; wrapped -> overflow\n;   0x140008C26  mov  ebx, 0C0000095h                   ; STATUS_INTEGER_OVERFLOW",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cea_unpatched!EaSignalAggregatedEvent",
+            "address": "0x1c00034b0",
+            "why": "Break at the entry of the exported vulnerable function. Inspect RCX (arg1=context). The two optional-field pointers and the variable-length Size value are passed on the stack; confirm both optional-field pointers are non-NULL and the low 32 bits of Size are 0xFFFFFFF0 so the size computation wraps."
+          }
+        ],
+        "watch": [
+          "Size (variable-length data size) = a value whose low 32 bits are near 0xFFFFFFFF, e.g. 0xFFFFFFF0",
+          "EBX after the 32-bit size computation (0x1C00035DF) = a SMALL nonzero value (wrapped), e.g. 0x10",
+          "Pool allocation result pointer = valid pointer to undersized buffer",
+          "memmove size argument (R8, loaded from r15 at 0x1C0003642) = (unsigned int)Size = 0xFFFFFFF0"
+        ],
+        "key_offsets": [
+          "0x1C00035DF (add ebx, eax): the 32-bit size computation with no overflow check, before the ExAllocatePoolWithTag call at 0x1C00035F0",
+          "0x1C0003642 (mov r8, r15) / 0x1C0003645 (call memmove): the copy uses (unsigned int)Size, not the wrapped allocation size",
+          "Patched overflow check in EapSignalContentPrepareEventForPublishing (sub_140008B90): 0x140008C0A (lea eax,[rdi+r8]) / 0x140008C0E (cmp eax, edi) / 0x140008C10 (jb) returning 0xC0000095 is the added protection"
+        ],
+        "trigger_setup": "1. Load/attach to the kernel driver cea_unpatched.sys. 2. Obtain a context able to invoke the exported EaSignalAggregatedEvent. 3. Call it with: low 32 bits of Size = 0xFFFFFFF0, both optional-field pointers (a5, a6) non-NULL, and a valid Src data pointer. The 32-bit allocation size wraps to 0x10, causing a small pool allocation followed by a memmove of (unsigned int)Size = 0xFFFFFFF0 bytes.",
+        "expected_observation": "Kernel pool corruption / BSOD with bugcheck 0x19 (BAD_POOL_HEADER) or 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) when memmove writes past the allocated buffer. In a controlled exploit, the pool overflow corrupts adjacent pool blocks.",
+        "notes": "The function is exported directly. The unpatched version uses PagedPool (ExAllocatePoolWithTag) while the patched uses ExAllocatePool2 with POOL_FLAG_PAGED. Pool tag 'EtvA' (0x41747645) identifies the allocation in pool debugging output."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "WnfEventCallback (sub_1C00018C8)",
+      "entry_point": "WNF state notification callback path: WNF state data change -> EaLibSubscribeWnfStateChangeNotification (sub_1C0011848) (WNF callback) -> AggregateEventWnfCallback (sub_1C00116A0) (calls ExQueryWnfStateData) -> WnfEventCallback (sub_1C00018C8) (parser)",
+      "call_chain": ["WNF state change notification", "EaLibSubscribeWnfStateChangeNotification (sub_1C0011848) (WNF callback dispatcher)", "AggregateEventWnfCallback (sub_1C00116A0) (queries ExQueryWnfStateData)", "WnfEventCallback (sub_1C00018C8) (packed structure parser - already bounds-checked)"],
+      "vulnerability_class": "no security-relevant change (parser refactor plus a new, validated optional field)",
+      "description": "There is no out-of-bounds read on this path. The unpatched WnfEventCallback already validates the packed event structure for the fields it parses: it enforces a5 >= 8, a5 >= 16*nfields+8 (nfields = number of set flags among header bit 0x17/bit23 and bit24), count >= 16*nfields when the count field is non-zero, and a5 >= count+8. The single payload read on this path (a memmove of count bytes from buffer+8 inside EaiResetTriggerPayload) is covered by a5 >= count+8. Header bit 0x19 (0x2000000) is never referenced in the unpatched build, so no field gated by it is read. The patched version (a) moves the inline parsing/validation into the new helper EapSignalMessageReadFromBuffer (sub_140008A98) and (b) adds support and validation for a NEW optional 8-byte field gated by header bit 0x19. This is a refactor plus a new validated field, not a fix for a reachable out-of-bounds read.",
+      "trigger_conditions": "None. A crafted short buffer with flag bits set is rejected by the unpatched bounds checks (error paths ecx=0x14 / 0x28) rather than read out of bounds. The bit 0x19 field the patch validates does not exist in the unpatched code, so there is nothing to trigger.",
+      "primitive": "None. No out-of-bounds read is reachable in the unpatched build on this path.",
+      "evidence": "Unpatched decompilation (cea_unpatched.c, WnfEventCallback) already contains the optional-field bounds check:\n  if (a5 < 8) return error;\n  nfields = ((header & 0x800000) != 0) + ((header & 0x1000000) != 0);\n  if (nfields != 0) {\n      if (a5 < 16*nfields + 8) return error;                 // optional fields must fit\n      if ((header & 0x3FFC) != 0 && count < 16*nfields) return error;\n  }\n  if (a5 < count + 8) return error;                          // payload region must fit\n\nPatched (EapSignalMessageReadFromBuffer (sub_140008A98)) performs the same checks and adds the new bit-0x19 accounting:\n  fieldbytes = (header & 0x1000000 ? 0x10 : 0) + (header & 0x800000 ? 0x10 : 0) + (header & 0x2000000 ? 8 : 0);\n  if (count < fieldbytes) return STATUS_INVALID_BUFFER_SIZE;  // 0xC000003E",
+      "assembly": "; WnfEventCallback @ 0x1c00018c8 in cea_unpatched.sys\n; The optional-field bounds check is already present:\n;   0x1C00019F6  test edx, edx           ; edx = (bit23!=0)+(bit24!=0)\n;   0x1C00019FA  shl  rdx, 4              ; rdx = 16 * nfields\n;   0x1C00019FE  lea  rcx, [rdx+8]        ; 16*nfields + 8\n;   0x1C0001A02  cmp  r9, rcx             ; r9 = buffer size a5\n;   0x1C0001A05  jnb  loc_1C0001A14       ; require a5 >= 16*nfields + 8\n;   0x1C0001A41  cmp  r9, rcx             ; later: require a5 >= count + 8\n;\n; Patched EapSignalMessageReadFromBuffer (sub_140008A98) @ 0x140008a98:\n;   same size/count checks, plus the new bit-0x19 field:\n;   0x140008B4A  bt   r11d, 19h          ; test header bit 0x19\n;   0x140008B5A  add  eax, 8             ; account 8 bytes for that new field\n;   0x140008B5D  cmp  r9d, eax           ; require count >= fieldbytes\n;   0x140008B69  mov  edx, 0C000003Eh    ; STATUS_INVALID_BUFFER_SIZE otherwise",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cea_unpatched!WnfEventCallback (sub_1C00018C8)",
+            "address": "0x1c00018c8",
+            "why": "Break at the WNF data parser entry. RCX = arg1 (context), RDX = arg2, R8 = arg3, R9 = arg4 (pointer to WNF data buffer). Check [RSP+0x28] or [RSP+0x20] for arg5 (buffer size). Inspect the buffer at arg4 to see the crafted packed header and verify count/flag fields."
+          },
+          {
+            "symbol": "cea_unpatched!AggregateEventWnfCallback (sub_1C00116A0)",
+            "address": "0x1c00116a0",
+            "why": "Break at the WNF callback handler that calls ExQueryWnfStateData and passes the result to WnfEventCallback (sub_1C00018C8). Inspect the buffer returned from ExQueryWnfStateData to see the attacker-controlled WNF data."
+          }
+        ],
+        "watch": [
+          "arg4 (R9) = pointer to WNF data buffer containing the packed structure",
+          "arg5 (buffer size) = the reported size of the WNF data buffer (loaded into r9d at 0x1C00019B2)",
+          "Packed header at [arg4] = count field in bits 2-13 and flag bits at 0x17/bit-24",
+          "0x1C0001A02 (cmp r9, rcx) and 0x1C0001A41 (cmp r9, count+8) = the bounds checks that reject a short buffer"
+        ],
+        "key_offsets": [
+          "In WnfEventCallback: the optional-field check at 0x1C00019FA (shl rdx,4) / 0x1C0001A02 (cmp r9, 16*nfields+8) and the payload check at 0x1C0001A41 (cmp r9, count+8) are already present",
+          "In patched EapSignalMessageReadFromBuffer (sub_140008A98) @ 0x140008a98: 0x140008B4A (bt r11d, 19h) / 0x140008B5A (add eax,8) / 0x140008B5D (cmp r9d, eax) is the accounting for the NEW bit-0x19 field"
+        ],
+        "trigger_setup": "There is no exploitable trigger. To confirm the absence of the OOB, write a short buffer (flag bits set, length just past count+8) to the subscribed WNF state name via NtUpdateWnfStateData; the unpatched parser takes an error branch rather than reading past the buffer.",
+        "expected_observation": "The parser returns an error status for the short buffer; no out-of-bounds access occurs.",
+        "notes": "WNF (Windows Notification Facility) state data is a kernel-mediated cross-process communication mechanism. The unpatched parser already validates the fields it reads; the patch adds a new validated field (header bit 0x19) and refactors the parsing into a helper."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760)",
+      "entry_point": "Internal array growth function called during event registration/enumeration paths",
+      "call_chain": ["EACreateAggregateEvent (exported)", "EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760) (array growth)", "ExAllocatePool2(POOL_FLAG_PAGED, 48*(count+5), 'EtvA')"],
+      "vulnerability_class": "no security-relevant change (pool-API migration; no reachable integer overflow)",
+      "description": "The array growth allocation is 48 * (count + 5) where count = *((unsigned __int16 *)a1 + 4), a 16-bit field bounded by 0xFFFF. 48*(0xFFFF+5) is about 3 MiB and cannot overflow a 32-bit or 64-bit size, so no undersized allocation is produced. The unpatched and patched size computations are identical (48*(count+5)); the only change is the ExAllocatePoolWithTag -> ExAllocatePool2 pool-API migration. The function also contains a second allocation of 40*v10 (v10 also a 16-bit count), which likewise cannot overflow.",
+      "trigger_conditions": "None. The count is a 16-bit field, so the multiplication cannot wrap and no undersized allocation is produced.",
+      "primitive": "None.",
+      "evidence": "Unpatched (cea_unpatched.c): v18 = *((unsigned __int16 *)a1 + 4); PoolWithTag = ExAllocatePoolWithTag(PagedPool, 48 * (v18 + 5), 0x41747645u);\nPatched (cea_patched.c): v16 = *((unsigned __int16 *)a1 + 4); Pool2 = ExAllocatePool2(256, 48 * (v16 + 5), 1098151493); -- identical size, only the allocation API changed.",
+      "assembly": "; EapQueryAggregatedEventConditionPostVisitNode @ 0x1c0007760 (unpatched) / 0x1400074e0 (patched)\n; Size is 48*(count+5) with count a 16-bit field; the only change is ExAllocatePoolWithTag -> ExAllocatePool2.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cea_unpatched!EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760)",
+            "address": "0x1c0007760",
+            "why": "Break at the array growth function to observe that count is a 16-bit field and 48*(count+5) cannot overflow."
+          }
+        ],
+        "watch": ["count value (16-bit field at a1+4, max 0xFFFF)", "computed size = 48 * (count + 5), always well within range"],
+        "key_offsets": ["The size computation 48*(count+5) and the ExAllocatePool2 call site (patched) vs ExAllocatePoolWithTag (unpatched)"],
+        "trigger_setup": "N/A - no overflow is possible with a 16-bit count.",
+        "expected_observation": "N/A - the allocation size is bounded and no overflow occurs.",
+        "notes": "No integer overflow is possible because the count is a 16-bit field; the change is limited to the pool-API migration."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "multiple (EaiDuplicateConditionsVisitNode (sub_1C0003840), EACreateAggregateEvent, BripCreateBindingContext (sub_1C0005680), EaiEnableAggregateEvent (sub_1C00027BC), EapTreeTraverse (sub_1C00062D0), and ~10 others)",
+      "entry_point": "Various exported and internal functions",
+      "call_chain": ["Multiple functions", "ExAllocatePoolWithTag(PagedPool/NonPagedPoolNx, ...)", "→ ExAllocatePool2(POOL_FLAG_PAGED/NON_PAGED, ...)"],
+      "vulnerability_class": "pool-API modernization (defense-in-depth)",
+      "description": "Every ExAllocatePoolWithTag call site in the driver (43 of them) was migrated to ExAllocatePool2 with POOL_FLAG_PAGED (0x100) or the non-paged flag. The unpatched build contains 43 ExAllocatePoolWithTag calls and 0 ExAllocatePool2 calls; the patched build contains 0 ExAllocatePoolWithTag calls and 43 ExAllocatePool2 calls. ExAllocatePool2 enforces non-executable allocations by default. This is a systemic hardening measure that reduces exploitability of any memory corruption primitive; it is not itself a vulnerability fix.",
+      "trigger_conditions": "Not independently exploitable - this is a defense-in-depth hardening change.",
+      "primitive": "Reduced exploitability of pool corruption primitives (no code execution from corrupted pool pages).",
+      "evidence": "Unpatched: ExAllocatePoolWithTag(PagedPool, size, 'EtvA')\nPatched: ExAllocatePool2(0x100, size, 'EtvA')\nCounts: unpatched = 43 ExAllocatePoolWithTag / 0 ExAllocatePool2; patched = 0 / 43.",
+      "assembly": "Systemic change across all 43 allocation sites: ExAllocatePoolWithTag replaced with ExAllocatePool2.",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [],
+        "trigger_setup": "N/A - hardening measure, not independently exploitable",
+        "expected_observation": "N/A",
+        "notes": "This change reduces exploitation potential of the integer-overflow finding by ensuring corrupted pool pages are non-executable."
+      }
+    }
+  ],
+  "summary": "Direct binary verification against cea_unpatched and cea_patched found ONE genuine security fix. (1) CONFIRMED: an integer overflow (CWE-190) in the exported function EaSignalAggregatedEvent (0x1c00034b0). The allocation size v20 = Size + optional_field_sizes is computed in a 32-bit unsigned int with no overflow check, so a Size whose low 32 bits are near 0xFFFFFFFF (e.g. 0xFFFFFFF0 with both 16-byte optional fields) wraps to a small value (0x10) while the following memmove copies (unsigned int)Size (~0xFFFFFFF0 = ~4 GiB), overflowing the paged pool. The patched build delegates to EapSignalContentPrepareEventForPublishing (sub_140008B90), which adds an explicit if (total < base) check returning STATUS_INTEGER_OVERFLOW (0xC0000095). Severity High. (2) DOWNGRADED: there is no out-of-bounds read in the WNF parser WnfEventCallback (sub_1C00018C8) - the unpatched build already validates the optional fields (a5 >= 16*nfields+8) and the payload (a5 >= count+8), and never references header bit 0x19; the patch refactors the inline parsing into EapSignalMessageReadFromBuffer (sub_140008A98) and adds a new, fully validated optional field. (3) DOWNGRADED: there is no integer overflow in EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760) - its 48*(count+5) allocation uses a 16-bit count and cannot overflow; only the pool API changed. Additionally, all 43 ExAllocatePoolWithTag call sites were migrated to ExAllocatePool2 (defense-in-depth). A PoC targeting the unpatched version should call EaSignalAggregatedEvent with the low 32 bits of Size = 0xFFFFFFF0 and both optional-field pointers non-NULL, wrapping the 32-bit allocation size to 0x10 while the memmove copies ~4 GiB, producing a kernel pool overflow."
+}

@@ -1,0 +1,205 @@
+{
+  "binaries": {
+    "id_unpatched": "ataport_unpatched.sys",
+    "id_patched": "ataport_patched.sys",
+    "overall_similarity": 0.6819,
+    "matched": 550,
+    "changed": 328,
+    "identical": 222,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ProxyQueueTagInitialize (sub_1c001169c)",
+      "similarity": 0.158,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Reads NumberToClear byte from request structure (arg2+0x14) and passes it directly to RtlClearBits without any bounds validation against the bitmap's declared SizeOfBitMap",
+        "UNPATCHED: Computes a hash from attacker-influenced path/target fields (arg2+0x10, arg2+0x11) to index into a device channel array (arg1+0x58[hash*8]) and derive the bitmap pointer; a crafted hash can select an unintended channel/LUN context",
+        "PATCHED: ProxyQueueTagInitialize is not removed; it is relocated to 0x1c001590c and the inline hash/channel-walk is factored into a GetQueueTag helper (0x1c0015464). The RtlClearBits call at 0x1c0015944 still passes the same unvalidated byte from arg2+0x14 as NumberToClear, so the operation is present in BOTH binaries",
+        "IsReadWriteRequest (sub_1c00117c8) is a distinct opcode-check function that occupies the freed 0x1c00117c8 address in the patched branch; it is not a replacement for this function",
+        "The RtlClearBits call is present in both versions (unpatched 0x1c001171c, patched 0x1c0015944); no bounds validation on NumberToClear was added"
+      ],
+      "security_relevant": false,
+      "security_notes": "Both builds perform RtlClearBits(bitmapHeader, StartingIndex=1, NumberToClear=byte[req+0x14]) with the same operands and no bounds check on the count byte. The request-block fields at offset 0x10/0x11 (tag/path) and 0x14 (count) are supplied by the miniport port-notification path (IdeProcessPortNotification is registered as a callback in ChannelAddDevice at 0x1c00257ab), not by a demonstrated user-controlled buffer. The only difference between builds is structural: the function is relocated to 0x1c001590c and the inline channel lookup / linked-list walk is extracted verbatim into the GetQueueTag helper (0x1c0015464, which calls GenPnpGetPdoExtensionWithLockHeld). The RtlClearBits call and its unchecked count operand are byte-identical in both builds (unpatched 0x1c001171c, patched 0x1c0015944). This diff makes no security-relevant change to this function.",
+      "assembly_diff": "sub_1c001169c (UNPATCHED):\n0x1c001169c: mov     qword [rsp+0x8], rbx\n0x1c00116a1: mov     qword [rsp+0x10], rsi\n0x1c00116a6: push    rdi\n0x1c00116a7: sub     rsp, 0x20\n0x1c00116ab: mov     rsi, rdx\n0x1c00116ae: xor     r8d, r8d\n0x1c00116b1: mov     rdx, rcx\n0x1c00116b4: mov     al, byte [rsi+0x11]     ; read path/target from request\n0x1c00116b7: cmp     al, 0xff\n0x1c00116b9: jne     0x1c00116c4\n0x1c00116c4: movzx   ecx, al\n0x1c00116c7: movzx   eax, byte [rsi+0x10]    ; read tag from request\n0x1c00116cb: shl     ecx, 0x8\n0x1c00116ce: or      ecx, eax\n0x1c00116d0: mov     eax, ecx\n0x1c00116d2: mov     r9d, ecx\n0x1c00116d5: shr     rax, 0x6\n0x1c00116d9: add     rax, r9\n0x1c00116dc: and     eax, 0x7                ; hash to index channel array\n0x1c00116df: mov     rcx, qword [rdx+rax*8+0x58] ; load channel/LUN pointer\n0x1c00116e4: test    rcx, rcx\n0x1c00116e7: je      0x1c0011734\n0x1c00116bb: lea     rdi, [rcx+0x13d0]\n0x1c00116c2: jmp     0x1c0011707\n0x1c00116e9: cmp     dword [rcx+0x54], r9d\n0x1c00116ed: je      0x1c00116fb\n0x1c0011707: test    rdi, rdi\n0x1c001170a: je      0x1c0011734\n0x1c00116fb: test    rcx, rcx\n0x1c00116fe: je      0x1c0011734\n0x1c00116ef: mov     rcx, qword [rcx+0x98]   ; walk linked list\n0x1c00116f6: test    rcx, rcx\n0x1c00116f9: jne     0x1c00116e9\n0x1c001170c: movzx   ebx, byte [rsi+0x14]    ; *** UNVALIDATED NumberToClear ***\n0x1c0011710: lea     rcx, [rdi+0x8]          ; bitmap header\n0x1c0011714: mov     r8d, ebx                ; NumberToClear = unchecked byte\n0x1c0011717: mov     edx, 0x1               ; StartingIndex = 1\n0x1c001171c: call    qword [rel 0x1c001d2a0] ; *** RtlClearBits \u2014 OOB if NumberToClear > bitmap size ***\n0x1c0011723: nop     dword [rax+rax]\n0x1c0011728: mov     r8b, 0x1\n0x1c001172b: mov     byte [rdi], bl          ; store NumberToClear as byte\n0x1c001172d: mov     dword [rdi+0x4], 0x1   ; store count = 1\n0x1c0011700: lea     rdi, [rcx+0x460]\n0x1c0011734: mov     rbx, qword [rsp+0x30]\n0x1c0011739: mov     byte [rsi+0x10], r8b\n0x1c001173d: mov     rsi, qword [rsp+0x38]\n0x1c0011742: add     rsp, 0x20\n0x1c0011746: pop     rdi\n0x1c0011747: retn\n\nProxyQueueTagInitialize (PATCHED @ 0x1c001590c) still calls RtlClearBits with the unvalidated NumberToClear:\n0x1c001591b: mov     r8b, byte [rdx+0x10]   ; tag\n0x1c0015922: mov     dl, byte [rdx+0x11]    ; path/target\n0x1c0015928: call    GetQueueTag            ; hash/channel-walk factored out (0x1c0015464)\n0x1c001592d: mov     rsi, rax\n0x1c0015930: test    rax, rax\n0x1c0015933: je      0x1c001595c\n0x1c0015935: movzx   ebx, byte [rdi+0x14]   ; *** SAME UNVALIDATED NumberToClear ***\n0x1c0015939: lea     rcx, [rax+0x8]         ; bitmap header\n0x1c001593d: mov     r8d, ebx               ; NumberToClear = unchecked byte\n0x1c0015940: lea     edx, [r10+0x1]         ; StartingIndex = 1\n0x1c0015944: call    qword [rel __imp_RtlClearBits] ; *** OOB if NumberToClear > bitmap size, present in BOTH ***\n\nIsReadWriteRequest (sub_1c00117c8, PATCHED-only, distinct opcode-check function, not a replacement):\ncmp     byte [rcx+0x2], 0x0\njne     0x1c00117f8\nxor     eax, eax\nretn\nmovzx   ecx, byte [rcx+0x48]\ncmp     cl, 0x88\nje      0x1c00117f1\nmov     eax, 0x1\nretn\ncmp     cl, 0x2a\nja      0x1c00117ec\ncmp     cl, 0x8a\njne     0x1c00117f8\nmov     rdx, 0x50000000500\nbt      rdx, rcx\njb      0x1c00117f1"
+    },
+    {
+      "name": "ProxyQueueTagAllocate (sub_1c0011750)",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Companion to ProxyQueueTagInitialize (sub_1c001169c); uses RtlFindClearBitsAndSet (call at 0x1c00117cc) with a bitmap pointer derived from the same attacker-influenced hash of path/target fields",
+        "Uses the same hash computation ((path<<8|target) >> 6 + (path<<8|target)) & 7) to index into the device channel array and locate the bitmap",
+        "Calls RtlFindClearBitsAndSet which searches for and sets bits; if the bitmap header's SizeOfBitMap is corrupted or mismatched, this can cause OOB writes",
+        "PATCHED: This function is not eliminated; it corresponds to IdeAllocateQueueTag at 0x1c000f534 in the patched branch, which still calls RtlFindClearBitsAndSet at 0x1c000f550 on a bitmap located via the same GetQueueTag helper. The code path is present in BOTH binaries"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function calls RtlFindClearBitsAndSet (which performs its own internal bounds checking) on a queue-tag bitmap located at offset 0x460/0x13d0 from a channel/LUN extension. The lookup uses the same tag/path fields as ProxyQueueTagInitialize. The patched branch retains this code path as IdeAllocateQueueTag (0x1c000f534) with the RtlFindClearBitsAndSet call at 0x1c000f550; the operation is present and unchanged in both builds. No bounds check was added or removed, so this diff makes no security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IdeProcessPortNotification (sub_1c0011810)",
+      "similarity": 0.2205,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Large dispatch function routing ATA request commands (IDs 0-12) to various handlers including ProxyQueueTagInitialize (sub_1c001169c, cmd 8) and ProxyQueueTagAllocate (sub_1c0011750, cmd 9)",
+        "UNPATCHED: Also directly calls RtlClearBit in its case rcx_13==3 path (cmd 10, RtlClearBit at 0x1c00119dd) with arg2[0x14] as the bit index, another unvalidated bitmap operation",
+        "PATCHED: Not rewritten away; IdeProcessPortNotification is relocated to 0x1c0004ff0 and still dispatches the same command IDs. The RtlClearBit direct call remains (case 10, at 0x1c0008e69) using the same unvalidated byte from arg2+0x14, and it still reaches the queue-tag helpers via GetQueueTag. The dispatch and bitmap operations are present in BOTH binaries"
+      ],
+      "security_relevant": false,
+      "security_notes": "The dispatch function (unpatched 0x1c0011810, patched 0x1c0004ff0) is the central router for ATA port-notification processing. Its command-10 case calls RtlClearBit(bitmap+8, byte[req+0x14]) using the request byte as a bit index with no bounds check. The patched branch retains this dispatch and the RtlClearBit call (unpatched 0x1c00119dd, patched 0x1c0008e69) with the same operands; the channel lookup is routed through the GetQueueTag helper but the bitmap operation is byte-identical in both builds. The dispatch also gains the extracted IsReadWriteRequest/PioOnly opcode helpers, but no validation was added to the bitmap paths, so this diff makes no security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ChannelProcessResourceLists (sub_1c0020ac4)",
+      "similarity": 0.6428,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Manual loop iterating through CM_RESOURCE_LIST descriptors, calling MmMapIoSpaceEx with physical address and size from resource descriptors",
+        "UNPATCHED: Hardcoded page protection 0x204 for MmMapIoSpaceEx mapping",
+        "PATCHED: Relocated to 0x1c002670c; delegates resource processing to GenPopulateAccessRange (sub_1c0027920) and GenAppendMiniportResources (sub_1c0026a30) helper functions",
+        "Both versions ultimately call MmMapIoSpaceEx but the patched version adds intermediate validation via helper functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is resource enumeration during controller initialization. The MmMapIoSpaceEx mapping is based on PnP resource lists which come from the hardware/PnP manager, not directly attacker-controlled. The refactoring to helper functions improves maintainability but the security boundary (PnP resource trust) is the same in both versions.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ProxyGetPhysicalAddress (sub_1c00114d8)",
+      "similarity": 0.0058,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED: Scatter/gather physical-address translation helper, called from IdeProcessPortNotification (sub_1c0011810) dispatch at 0x1c001195c (command 12). Uses buffer/length fields at device-extension offsets 0x1298/0x12a8 to bound the mapped range",
+        "PATCHED: No same-named function; the near-zero similarity is a cross-branch pairing artifact. PioOnly (sub_1c0011804) is a distinct patched-only PIO-capability check reading [rcx+0x3b8]; it occupies the reused 0x1c0011804 address and is NOT a replacement for this function",
+        "The related device-extension range check (cmp [rbx+0x1298], ...) appears refactored into ChannelStartMiniport (0x1c000d800) in the patched branch"
+      ],
+      "security_relevant": false,
+      "security_notes": "This helper performs physical-address range translation for DMA scatter/gather and is called from the request dispatcher (command 12). The unpatched code bounds the target physical address against device-extension fields at 0x1298/0x12a8. The near-zero similarity is a cross-branch pairing artifact: the patched branch does not contain a same-named function, and PioOnly (sub_1c0011804) is a distinct patched-only PIO-capability check that merely reuses the address. No removed or added OOB primitive was confirmed for this function in either binary, so this diff makes no security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtaPortInitialize",
+      "similarity": 0.4404,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation differences (r15 vs rbx/xor)",
+        "ETW registration block removed/simplified in patched version",
+        "Different call targets due to code layout changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "These changes are primarily compilation differences and ETW telemetry changes, not security-relevant. The core initialization logic (IoAllocateDriverObjectExtension, driver object extension setup) is functionally identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtaPortCompleteRequest",
+      "similarity": 0.6834,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler difference: zero-initialization via xorps/xor + memset vs simple assignment",
+        "Same fundamental logic: indirect call through function pointer table"
+      ],
+      "security_relevant": false,
+      "security_notes": "Pure compiler/register allocation difference. The function calls through (arg1-8) with the same parameters in both versions.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ProxyQueueTagInitialize (sub_1c001169c)",
+      "entry_point": "ATA port-notification processing via IdeProcessPortNotification (sub_1c0011810), command ID 8",
+      "call_chain": [
+        "ChannelAddDevice (sub_1c0025580, request processing callback)",
+        "IdeProcessPortNotification (sub_1c0011810, ATA request command dispatcher)",
+        "ProxyQueueTagInitialize (sub_1c001169c, queue tag bitmap release)"
+      ],
+      "vulnerability_class": "No security-relevant change (queue-tag bitmap handling refactored; behavior identical in both builds)",
+      "description": "ProxyQueueTagInitialize (sub_1c001169c) handles queue-tag bitmap release. It reads a byte from offset 0x14 of the port-notification request block and passes it directly as the NumberToClear argument to RtlClearBits(bitmapHeader, StartingIndex=1, NumberToClear) at 0x1c001171c, with no explicit comparison against the RTL_BITMAP SizeOfBitMap. The bitmap is located by combining the tag/path fields (req+0x10, req+0x11) and indexing the channel array. This report entry is retained to document that the diff does NOT change this code: in the patched build the function is relocated to 0x1c001590c, the inline channel lookup / linked-list walk is extracted verbatim into the GetQueueTag helper (0x1c0015464), and RtlClearBits is still called at 0x1c0015944 with the same unchecked req+0x14 byte and the same operands. IsReadWriteRequest (sub_1c00117c8) and PioOnly (sub_1c0011804) are distinct patched-branch functions that merely reuse freed addresses; they are not replacements. The RtlClearBits call and its operands are byte-identical in both binaries, so the diff neither adds nor removes any bounds check here. The request block is produced by the miniport port-notification callback path (IdeProcessPortNotification is installed in ChannelAddDevice at 0x1c00257ab), and no user-controlled, out-of-range value reaching req+0x14 was demonstrated in either build; the reachable-write claim is therefore not established. Severity is set to none because this diff makes no security-relevant change to this function.",
+      "trigger_conditions": "Reaching the RtlClearBits call requires a command-8 port notification whose req+0x14 byte exceeds the selected bitmap's SizeOfBitMap and whose req+0x10/0x11 fields select a valid channel/LUN context. The request block is populated by the miniport port-notification path rather than a directly attacker-supplied buffer, and no path delivering an out-of-range req+0x14 value was demonstrated in either build. These preconditions are identical in both binaries; the diff does not alter them.",
+      "primitive": "None demonstrated. The code performs RtlClearBits with a count byte that is not explicitly range-checked against SizeOfBitMap, but no attacker-controlled out-of-range value reaching this argument was shown, and the call is unchanged between builds. No reachable out-of-bounds write primitive is established.",
+      "evidence": "// UNPATCHED ProxyQueueTagInitialize (sub_1c001169c) pseudocode:\nuint64_t ProxyQueueTagInitialize(void* arg1, void* arg2)\n{\n    char r8 = 0;\n    uint64_t result;\n    result = *(arg2 + 0x11);           // path/target \u2014 attacker influenced\n    char* rdi_1;\n\n    if (result != 0xff) {\n        uint32_t i = result << 8 | *(arg2 + 0x10);  // hash input from request\n        result = ((i >> 6) + i) & 7;                  // hash to channel index\n        void* rcx_2 = *(arg1 + (result << 3) + 0x58); // channel lookup\n        if (rcx_2) {\n            while (*(rcx_2 + 0x54) != i) {            // walk linked list\n                rcx_2 = *(rcx_2 + 0x98);\n                if (!rcx_2) break;\n            }\n            if (rcx_2)\n                rdi_1 = rcx_2 + 0x460;                // bitmap context\n        }\n    } else {\n        rdi_1 = arg1 + 0x13d0;                        // default bitmap context\n    }\n\n    if (rdi_1) {\n        // *** VULNERABILITY: NumberToClear from arg2+0x14 is NOT validated ***\n        uint32_t NumberToClear = *(arg2 + 0x14);       // unvalidated byte (0-255)\n        result = RtlClearBits(&rdi_1[8], 1, NumberToClear); // OOB if > bitmap size\n        r8 = 1;\n        *rdi_1 = NumberToClear;\n        *(rdi_1 + 4) = 1;\n    }\n    *(arg2 + 0x10) = r8;\n    return result;\n}\n\n// PATCHED ProxyQueueTagInitialize @ 0x1c001590c (relocated, RtlClearBits retained):\nuint64_t ProxyQueueTagInitialize(void* arg1, void* arg2)\n{\n    char r10 = 0;\n    void* ctx = GetQueueTag(arg1, *(arg2 + 0x10), *(arg2 + 0x11)); // hash/channel-walk helper\n    if (ctx) {\n        uint32_t NumberToClear = *(arg2 + 0x14);       // STILL unvalidated byte (0-255)\n        RtlClearBits(&ctx[8], 1, NumberToClear);       // OOB if > bitmap size, present in BOTH\n        r10 = 1;\n        *ctx = NumberToClear;\n        *(ctx + 4) = 1;\n    }\n    *(arg2 + 0x10) = r10;\n    return ctx;\n}\n\n// IsReadWriteRequest @ 0x1c00117c8 (PATCHED-only, distinct opcode check, NOT a replacement):\nint64_t IsReadWriteRequest(void* arg1)\n{\n    if (!*(arg1 + 2)) {\n        uint64_t rcx = *(arg1 + 0x48);\n        if (rcx == 0x88) return 1;\n        if (rcx > 0x2a) {\n            if (rcx == 0x8a) return 1;\n        } else if (TEST_BITQ(0x50000000500, rcx) || rcx == 0x8a)\n            return 1;\n    }\n    return 0;\n}",
+      "assembly": "sub_1c001169c (UNPATCHED) full assembly:\n0x1c001169c: mov     qword [rsp+0x8], rbx\n0x1c00116a1: mov     qword [rsp+0x10], rsi\n0x1c00116a6: push    rdi\n0x1c00116a7: sub     rsp, 0x20\n0x1c00116ab: mov     rsi, rdx              ; arg2 = request structure\n0x1c00116ae: xor     r8d, r8d              ; r8 = 0 (default return flag)\n0x1c00116b1: mov     rdx, rcx              ; arg1 = device extension\n0x1c00116b4: mov     al, byte [rsi+0x11]   ; read path/target byte from request\n0x1c00116b7: cmp     al, 0xff\n0x1c00116b9: jne     0x1c00116c4\n0x1c00116c4: movzx   ecx, al               ; ecx = path/target\n0x1c00116c7: movzx   eax, byte [rsi+0x10]  ; read tag byte from request\n0x1c00116cb: shl     ecx, 0x8              ; path << 8\n0x1c00116ce: or      ecx, eax              ; combined hash input\n0x1c00116d0: mov     eax, ecx\n0x1c00116d2: mov     r9d, ecx\n0x1c00116d5: shr     rax, 0x6\n0x1c00116d9: add     rax, r9               ; hash step\n0x1c00116dc: and     eax, 0x7              ; hash to 0-7 bucket index\n0x1c00116df: mov     rcx, qword [rdx+rax*8+0x58] ; load channel from bucket array\n0x1c00116e4: test    rcx, rcx\n0x1c00116e7: je      0x1c0011734           ; no channel found -> exit\n0x1c00116bb: lea     rdi, [rcx+0x13d0]     ; default bitmap context\n0x1c00116c2: jmp     0x1c0011707\n0x1c00116e9: cmp     dword [rcx+0x54], r9d ; match channel ID\n0x1c00116ed: je      0x1c00116fb\n0x1c0011707: test    rdi, rdi\n0x1c001170a: je      0x1c0011734\n0x1c00116fb: test    rcx, rcx\n0x1c00116fe: je      0x1c0011734\n0x1c00116ef: mov     rcx, qword [rcx+0x98] ; next in linked list\n0x1c00116f6: test    rcx, rcx\n0x1c00116f9: jne     0x1c00116e9\n0x1c001170c: movzx   ebx, byte [rsi+0x14]  ; *** UNVALIDATED NumberToClear ***\n0x1c0011710: lea     rcx, [rdi+0x8]        ; RTL_BITMAP_HEADER pointer\n0x1c0011714: mov     r8d, ebx              ; NumberToClear = unchecked byte (0-255)\n0x1c0011717: mov     edx, 0x1              ; StartingIndex = 1\n0x1c001171c: call    qword [rel 0x1c001d2a0] ; *** RtlClearBits \u2014 OOB write ***\n0x1c0011723: nop     dword [rax+rax]\n0x1c0011728: mov     r8b, 0x1\n0x1c001172b: mov     byte [rdi], bl        ; store NumberToClear byte\n0x1c001172d: mov     dword [rdi+0x4], 0x1  ; store count = 1\n0x1c0011700: lea     rdi, [rcx+0x460]\n0x1c0011734: mov     rbx, qword [rsp+0x30]\n0x1c0011739: mov     byte [rsi+0x10], r8b  ; write result to request\n0x1c001173d: mov     rsi, qword [rsp+0x38]\n0x1c0011742: add     rsp, 0x20\n0x1c0011746: pop     rdi\n0x1c0011747: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ataport_unpatched!ProxyQueueTagInitialize (sub_1c001169c)",
+            "address": "0x1c001169c",
+            "why": "Break at function entry. rdx (arg2) points to the request structure. rcx (arg1) is the device extension (arg1-0x1500 from the caller's perspective). Verify rdx is a valid IRB/request structure."
+          },
+          {
+            "symbol": "ataport_unpatched!ProxyQueueTagInitialize (sub_1c001169c)+0x80",
+            "address": "0x1c001171c",
+            "why": "Break at the RtlClearBits call. At this point: rcx = bitmap header pointer (rdi+0x8), edx = 1 (StartingIndex), r8d = NumberToClear from arg2+0x14. Check if r8d exceeds the bitmap's SizeOfBitMap (dword at [rcx], i.e., [rdi+0x8])."
+          },
+          {
+            "symbol": "ataport_unpatched!ProxyQueueTagInitialize (sub_1c001169c)+0x70",
+            "address": "0x1c001170c",
+            "why": "Break at the movzx that loads NumberToClear from arg2+0x14. rsi = arg2 (request structure). Inspect byte at [rsi+0x14] to see the attacker-controlled value."
+          }
+        ],
+        "watch": [
+          "r8d at 0x1c001171c \u2014 holds NumberToClear (attacker-controlled byte 0-255 from request offset 0x14)",
+          "rcx at 0x1c001171c \u2014 points to RTL_BITMAP_HEADER; dword at [rcx] is SizeOfBitMap",
+          "rsi at 0x1c001170c \u2014 arg2, the request structure pointer; byte [rsi+0x14] is the NumberToClear source",
+          "rdi at 0x1c001170c \u2014 bitmap context pointer; bitmap header is at [rdi+0x8], bitmap buffer follows",
+          "al at 0x1c00116b4 \u2014 byte [rsi+0x11], path/target field used for hash computation",
+          "byte [rsi+0x10] at 0x1c00116c7 \u2014 tag field, also used in hash computation"
+        ],
+        "key_offsets": [
+          "0x1c001170c: movzx ebx, byte [rsi+0x14] \u2014 loads the UNVALIDATED NumberToClear value",
+          "0x1c001171c: call qword [rel 0x1c001d2a0] \u2014 the RtlClearBits call with unchecked parameters",
+          "0x1c00116dc: and eax, 0x7 \u2014 hash computation that selects the channel/bitmap bucket (0-7)",
+          "0x1c00116df: mov rcx, qword [rdx+rax*8+0x58] \u2014 channel array dereference using the hash",
+          "0x1c001172b: mov byte [rdi], bl \u2014 stores NumberToClear back into bitmap context (additional corruption if OOB)"
+        ],
+        "trigger_setup": "To observe the call in a debugger: set a breakpoint at the RtlClearBits call site (unpatched 0x1c001171c, patched 0x1c0015944) and inspect r8d (NumberToClear, sourced from req+0x14) against dword [rcx] (SizeOfBitMap). This confirms whether the count ever exceeds the bitmap size in practice; under normal miniport-driven port notifications it does not.",
+        "expected_observation": "At the breakpoint, comparing r8d (NumberToClear from req+0x14) against dword [rcx] (SizeOfBitMap) shows the count relative to the bitmap size. No out-of-range value was observed to reach this argument in either build, and the call is byte-identical across builds.",
+        "notes": "The bitmap context at offset 0x460 (or 0x13d0 for default) from the channel/LUN extension is laid out as [byte: lastTag][dword: count/startHint][RTL_BITMAP_HEADER: SizeOfBitMap(dword) + Buffer(ptr)][bitmap bits...]; SizeOfBitMap for queue tags is small. The unpatched call to RtlClearBits goes through the IAT entry at [0x1c001d2a0]. The function is called from IdeProcessPortNotification (sub_1c0011810) at 0x1c00119f8 with (arg1-0x1500, arg2). In the patched branch the same call chain resolves to ProxyQueueTagInitialize at 0x1c001590c and RtlClearBits at 0x1c0015944, unchanged."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "IdeProcessPortNotification (sub_1c0011810)",
+      "entry_point": "ATA port-notification processing via IdeProcessPortNotification dispatch (command ID 10)",
+      "call_chain": [
+        "ChannelAddDevice (sub_1c0025580, request processing callback)",
+        "IdeProcessPortNotification (sub_1c0011810, ATA request command dispatcher, directly calls RtlClearBit)",
+        "RtlClearBit (unvalidated bit index)"
+      ],
+      "vulnerability_class": "No security-relevant change (dispatch relocated/refactored; bitmap operation identical in both builds)",
+      "description": "In IdeProcessPortNotification (sub_1c0011810) the command-10 dispatch path calls RtlClearBit(bitmap+8, byte[req+0x14]) using the request byte as a bit index with no explicit SizeOfBitMap check. The bitmap is located via the same tag/path fields as ProxyQueueTagInitialize. This report entry is retained to document that the diff does NOT change this code: the dispatch is relocated to 0x1c0004ff0 and the command-10 case still calls RtlClearBit at 0x1c0008e69 with the same unchecked byte from req+0x14, the bitmap now located through the GetQueueTag helper. The RtlClearBit call and operands are byte-identical in both binaries. As with finding 1, the request block is produced by the miniport port-notification path and no out-of-range req+0x14 value reaching this argument was demonstrated. Severity is set to none because this diff makes no security-relevant change.",
+      "trigger_conditions": "Reaching RtlClearBit requires a command-10 port notification whose req+0x14 byte exceeds the bitmap SizeOfBitMap and whose req+0x10/0x11 fields select a valid context. These preconditions are identical in both builds; the diff does not alter them, and no out-of-range value reaching req+0x14 was demonstrated.",
+      "primitive": "None demonstrated. A single-bit clear at an index not explicitly range-checked, unchanged between builds, with no shown attacker-controlled out-of-range index.",
+      "evidence": "// From UNPATCHED IdeProcessPortNotification (sub_1c0011810), command 10 case (present in patched at 0x1c0004ff0, RtlClearBit at 0x1c0008e69):\nchar rax_6 = *(arg2 + 0x11);          // path/target\nvoid* rcx_20;\nif (rax_6 != 0xff) {\n    uint32_t i = rax_6 << 8 | arg2[4];\n    void* rcx_23 = *(arg1 - 0x1500 + (((i >> 6) + i) & 7) * 8 + 0x58);\n    // ... linked list walk to find matching channel ...\n    if (rcx_23)\n        rcx_20 = rcx_23 + 0x460;\n} else {\n    rcx_20 = arg1 - 0x130;             // default bitmap context\n}\nif (rcx_20)\n    RtlClearBit(rcx_20 + 8, arg2[5]); // *** arg2[5] is UNVALIDATED bit index ***",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ataport_unpatched!IdeProcessPortNotification (sub_1c0011810)",
+            "address": "0x1c0011810",
+            "why": "Break at the dispatch function entry. rdx (arg2) points to the request structure. The command ID is at *arg2 (dword). For this vulnerability, *arg2 should be 10 to reach the rcx_13==3 case."
+          }
+        ],
+        "watch": [
+          "dword [rdx] \u2014 command ID (should be 10 for this path)",
+          "byte [rdx+0x14] \u2014 arg2[5], the unvalidated bit index for RtlClearBit",
+          "byte [rdx+0x11] \u2014 path/target field for hash computation",
+          "byte [rdx+0x10] \u2014 tag field for hash computation"
+        ],
+        "key_offsets": [
+          "0x1c00119dd \u2014 RtlClearBit call site in the rcx_13==3 case (call qword [rel 0x1c001d2b0])"
+        ],
+        "trigger_setup": "Set a breakpoint at the RtlClearBit call site (unpatched 0x1c00119dd, patched 0x1c0008e69) and inspect the bit index (edx, from req+0x14) against the bitmap SizeOfBitMap.",
+        "expected_observation": "The bit index (edx from req+0x14) can be compared against the bitmap SizeOfBitMap at the breakpoint. No out-of-range index was observed to reach this call in either build, and the call is unchanged across builds.",
+        "notes": "RtlClearBit is called through the IAT at [0x1c001d2b0] (unpatched, at 0x1c00119dd) and at 0x1c0008e69 (patched). This is a secondary path in the same dispatch function as the ProxyQueueTagInitialize (sub_1c001169c) queue-tag handling, targeting a different command. It is present and unchanged in both binaries."
+      }
+    }
+  ],
+  "summary": "Verdict: no security-relevant change. This diff pairs two widely-separated servicing branches of ataport.sys (Windows ATA/ATAPI port driver): unpatched ~17763 and patched ~20348, so most of the 328 changed functions are compiler/register churn, function relocation, and refactoring. The queue-tag bitmap code that the report examines is present and byte-identical in both builds. ProxyQueueTagInitialize (sub_1c001169c) reads a byte from offset 0x14 of the port-notification request block and passes it as the NumberToClear argument to RtlClearBits (unpatched 0x1c001171c, patched 0x1c0015944); IdeProcessPortNotification (sub_1c0011810) calls RtlClearBit with a bit index from the same request offset (unpatched 0x1c00119dd, patched 0x1c0008e69); and ProxyQueueTagAllocate (sub_1c0011750) calls RtlFindClearBitsAndSet (unpatched 0x1c00117cc, patched as IdeAllocateQueueTag 0x1c000f534 at 0x1c000f550). None of these calls gained or lost a bounds check. The only differences are structural: the functions are relocated, and the inline channel lookup / linked-list walk is extracted verbatim into the GetQueueTag helper (0x1c0015464, calling GenPnpGetPdoExtensionWithLockHeld). IsReadWriteRequest (sub_1c00117c8) and PioOnly (sub_1c0011804) are distinct patched-branch functions that merely reuse freed addresses; they are not replacements for the bitmap handlers. The request block is populated by the miniport port-notification callback path (IdeProcessPortNotification is installed in ChannelAddDevice at 0x1c00257ab), and no path delivering an out-of-range value to offset 0x14 was demonstrated in either build, so the out-of-bounds-write claim is not established as a reachable primitive. Because the examined code is unchanged between builds, this diff delivers no security fix and introduces no regression; the findings are recorded at severity none for completeness."
+}

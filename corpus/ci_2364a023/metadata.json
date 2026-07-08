@@ -1,0 +1,211 @@
+{
+  "binary": "ci.dll",
+  "kb": "KB5079473",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24283",
+      "title": "Multiple UNC Provider Kernel Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 8.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25170",
+      "title": "Windows Hyper-V Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-26132",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24293",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": true,
+  "patched": {
+    "version": "10.0.26100.8737",
+    "sha256": "ac205af767df30ce6e7b6614097c301898d0143863aaaaaa1dce500bc6ab3b70",
+    "file": "ci_patched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "ductName": "\u0010",
+      "efresh": ""
+    }
+  },
+  "prev": {
+    "version": "10.0.26100.8036",
+    "sha256": "2364a023986f13ffcdac0736f96c7c806db8829ebce9522afa18e3dfa9bc6b71",
+    "kb_numbers": [
+      "KB5095093"
+    ],
+    "win_versions": [
+      "11-24H2"
+    ],
+    "file": "ci_unpatched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "\u4f37\u0001": ""
+    },
+    "selection_tier": 1,
+    "selection_tier_description": "same Windows version (e.g. both from '10-1809')"
+  }
+}

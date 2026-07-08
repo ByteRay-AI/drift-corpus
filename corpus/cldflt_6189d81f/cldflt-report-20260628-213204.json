@@ -1,0 +1,286 @@
+{
+  "binaries": {
+    "title": "cldflt.sys - Negative file size / valid-data-length rejection made unconditional in placeholder update (CWE-1284)",
+    "id_unpatched": "cldflt_unpatched.sys",
+    "id_patched": "cldflt_patched.sys",
+    "overall_similarity": 0.9884,
+    "matched": 888,
+    "changed": 9,
+    "identical": 879,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "HsmiOpUpdatePlaceholderFile (sub_1C006BC60) -> HsmiOpUpdatePlaceholderFile (sub_1C006A9B8)",
+      "similarity": 0.8861,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED the staging-feature gate g_Feature_2333116728_58628732 (EvaluateCurrentState call at 0x1C006BD4A) that guarded the negative-size rejection. Unpatched: 'if (EvaluateCurrentState(&g_Feature_2333116728_58628732...) && a9 != nullptr && *a9 < 0) reject(0xC000CF0B)'. Patched: 'if (a9 != nullptr && *a9 < 0) reject(0xC000CF0B)'.",
+        "With the feature disabled in the unpatched build, EvaluateCurrentState returns FALSE and the negative-size rejection is skipped; a negative (large-unsigned) *a9 continues to the placeholder size operations.",
+        "The feature symbol g_Feature_2333116728_58628732 is entirely absent from the patched binary.",
+        "The guarded value *a9 (v45 = a9) is consumed downstream in both builds as a file size / valid-data-length: FltSetInformationFile(..., a9, 8, FileEndOfFileInformation); HsmpUpdateBitmapSizesNoLock(a2, *a9); a store through the placeholder context pointer at a2+0x98; HsmpSetFileVDL(..., FileObject, *a9).",
+        "Changed arg2 parameter type from uint64_t to PFLT_CONTEXT (cosmetic decompiler typing)."
+      ],
+      "security_relevant": true,
+      "security_notes": "Delivered input-validation hardening. The patched build unconditionally rejects a caller-supplied negative file size / valid-data-length (*a9 < 0) that the unpatched build only rejected when the staging feature g_Feature_2333116728_58628732 was enabled. Direction verified: the patched build is the stricter one. No memory-corruption primitive is demonstrated; the rejected quantity feeds FltSetInformationFile(FileEndOfFileInformation) and HsmpSetFileVDL, which the file-system layer further validates. Reachable via the Cloud Files placeholder-update operation (HsmFltProcessUpdatePlaceholder parses the size fields from a caller-supplied buffer). CWE-1284 / CWE-20, severity low.",
+      "assembly_diff": "UNPATCHED (sub_1C006BC60), rejection gated behind the feature:\n  0x1C006BD31  lea  rcx, g_Feature_2333116728_58628732_FeatureDescriptorDetails\n  0x1C006BD4A  call EvaluateCurrentState\n  0x1C006BD4F  test eax, eax\n  0x1C006BD51  jz   0x1C006BDE5     ; feature OFF -> skip rejection\n  0x1C006BD57  test r12, r12        ; a9 != NULL ?\n  0x1C006BD5A  jz   0x1C006BDE5\n  0x1C006BD60  cmp  [r12], r14      ; *a9 vs 0 (r14 = 0)\n  0x1C006BD64  jge  0x1C006BDE5     ; *a9 >= 0 -> skip\n  0x1C006BD66  mov  r15d, 0C000CF0Bh ; reject: STATUS 0xC000CF0B\n\nPATCHED (sub_1C006A9B8), rejection unconditional (no feature gate):\n  0x1C006AA9E  test rdi, rdi        ; a9 != NULL ?\n  0x1C006AAA7  cmp  [rdi], r15      ; *a9 vs 0 (r15 = 0)\n  0x1C006AAAA  jge  0x1C006AB2B     ; *a9 >= 0 -> skip\n  0x1C006AAAC  mov  r14d, 0C000CF0Bh ; reject: STATUS 0xC000CF0B"
+    },
+    {
+      "name": "EvaluateCurrentState (sub_1C0001D74)",
+      "similarity": 0.6686,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature-evaluation helper specialized. Unpatched: takes a feature-descriptor pointer argument (arg1) and dereferences it (**arg1 != 1). Patched at this address resolves the single feature g_Feature_Servicing_PostRelOutlookHangIssue_60816934 directly via EvaluateFeature, with no descriptor argument."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-evaluation helper call-signature change (generic descriptor-pointer argument -> hardcoded PostRelOutlookHangIssue). This feature is still evaluated at runtime in the patched build; only the call form changed. No behavior change on its own.",
+      "assembly_diff": "Unpatched:\n  EvaluateCurrentState(int64_t* arg1)\n  {\n    sub_1c0001cfc(arg1);\n    result = **arg1 != 1;\n    return result;\n  }\nPatched (same address, specialized):\n  EvaluateCurrentState()\n  {\n    EvaluateFeature(&g_Feature_Servicing_PostRelOutlookHangIssue_60816934_FeatureDescriptorDetails);\n    result = *g_Feature_Servicing_PostRelOutlookHangIssue_60816934_FeatureDescriptorDetails != 1;\n    return result;\n  }"
+    },
+    {
+      "name": "CldSyncConnectRoot (sub_1C0033950) -> CldSyncConnectRoot (sub_1C0032880)",
+      "similarity": 0.8192,
+      "change_type": "no_security_impact",
+      "key_changes": [
+        "REMOVED the EvaluateCurrentState(reg_FeatureDescriptors_a -> Feature_Servicing_PostRelOutlookHangIssue_60816934) feature-flag check (call at 0x1C00339BE) that selected between a legacy branch (flag FALSE) and a retained branch (flag TRUE) for an existing AVL sync-root entry.",
+        "UNPATCHED legacy branch (flag FALSE, at 0x1C0033A79): gates on refcount at offset 0x30 FIRST (mov eax,[rsi+30h]; test eax,eax; jle create_new), then does the identity match on connectedId at offset 0x60 (== arg2) and object pointer at offset 0x0 (== arg7). It lacks the connectedId==0 recovery, so a live entry whose connectedId is 0 yields STATUS 0xC000CF09 instead of being recreated.",
+        "UNPATCHED retained branch (flag TRUE, at 0x1C00339CB): checks connectedId==0 first (recreate), then the identity match, then requires refcount at 0x30 > 0 (mov eax,[rax+30h]; test eax,eax; jle create_new) before reuse.",
+        "PATCHED (sub_1C0032880): removes the flag and always executes the retained-branch logic (connectedId==0 recovery, identity match, refcount>0 gate).",
+        "Both the legacy and retained branches require refcount (offset 0x30) > 0 before returning an existing entry, so neither binary returns a refcount-exhausted entry. The two paths are equivalent with respect to the refcount gate."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant difference. Both the legacy (flag FALSE) and retained (flag TRUE) branches gate reuse of an existing sync-root entry on refcount (offset 0x30) > 0 before returning it via *arg8, so an entry with an exhausted refcount is never handed back in either binary; there is no use-after-free. The only behavioral difference is control flow for a disconnected slot: with connectedId (offset 0x60) == 0 the legacy branch returns STATUS 0xC000CF09 whereas the retained/patched path recreates the slot. The patch removes the flag and always takes the retained path.",
+      "assembly_diff": "UNPATCHED legacy branch (flag FALSE), refcount gate is the FIRST check:\n  0x1C0033A79  mov  eax,[rsi+30h]   ; refcount (offset 0x30)\n  0x1C0033A7C  test eax,eax\n  0x1C0033A7E  jle  0x1C0033B05     ; refcount <= 0 -> create new entry\n  0x1C0033A88  mov  rax,[rsi+60h]   ; connectedId (offset 0x60)\n  0x1C0033A8C  cmp  rax,rbx         ; == arg2 ?\n  0x1C0033A8F  jnz  0x1C0033AAB     ; mismatch -> 0xC000CF09\n  0x1C0033A98  cmp  [rcx],rax       ; object ptr (offset 0x0) == arg7 ?\n  0x1C0033A9B  jnz  0x1C0033AAB\n  0x1C0033AA3  mov  [rax],rcx       ; *arg8 = entry (refcount already gated > 0)\n\nUNPATCHED retained branch (flag TRUE) == PATCHED unified path (sub_1C0032880):\n  0x1C00339CB  mov  rax,[rsi+60h]   ; connectedId\n  0x1C00339D2  jz   0x1C0033B05     ; connectedId == 0 -> create new entry\n  0x1C00339DC  cmp  rax,rbx         ; == arg2 ?\n  0x1C00339DF  jnz  0x1C0033A07     ; mismatch -> 0xC000CF09\n  0x1C00339E5  cmp  [rax],r15       ; object ptr == arg7 ?\n  0x1C00339E8  jnz  0x1C0033A07\n  0x1C00339EA  mov  eax,[rax+30h]   ; refcount\n  0x1C00339ED  test eax,eax\n  0x1C00339EF  jle  0x1C0033B05     ; refcount <= 0 -> create new entry\n  0x1C00339FF  mov  [rcx],rax       ; *arg8 = entry"
+    },
+    {
+      "name": "CldiPortProcessServiceCommands (sub_1C002A7E8) -> CldiPortProcessServiceCommands (sub_1C00297E4)",
+      "similarity": 0.9691,
+      "change_type": "no_security_impact",
+      "key_changes": [
+        "REMOVED the EvaluateCurrentState(reg_FeatureDescriptors_a -> Feature_Servicing_PostRelOutlookHangIssue_60816934) feature-flag check (call at 0x1C002B938) that selected how the sync root is inserted into the tracking AVL table after a successful connect.",
+        "UNPATCHED flag TRUE (fall-through at 0x1C002B946): FltAcquirePushLockExclusiveEx then calls the helper CldiPortInsertSyncRootNoLock (0x1C002B962).",
+        "UNPATCHED flag FALSE (branch at 0x1C002B96B): FltAcquirePushLockExclusiveEx then performs an inline RtlInsertElementGenericTableAvl on arg1+0x60 (0x1C002B99A).",
+        "Both flag paths insert the entry; they differ in method (helper vs inline) and in the extra bookkeeping the helper performs.",
+        "PATCHED (sub_1C00297E4): removes the flag and always uses CldiPortInsertSyncRootNoLock."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant difference. Both unpatched flag paths insert the entry into the AVL table: the TRUE path via the helper CldiPortInsertSyncRootNoLock, the FALSE path via an inline RtlInsertElementGenericTableAvl. The patch unifies to always call the helper. This is a method/bookkeeping unification, not a tracking bypass.",
+      "assembly_diff": "UNPATCHED sub_1C002A7E8:\n  0x1C002B938  call EvaluateCurrentState\n  0x1C002B942  test eax,eax\n  0x1C002B944  jz   0x1C002B96B        ; flag FALSE -> inline insert\n  0x1C002B946  call FltAcquirePushLockExclusiveEx\n  0x1C002B962  call CldiPortInsertSyncRootNoLock   ; flag TRUE path\n  0x1C002B96B  ...                     ; FALSE path:\n  0x1C002B97C  call FltAcquirePushLockExclusiveEx\n  0x1C002B99A  call RtlInsertElementGenericTableAvl ; arg1+0x60"
+    },
+    {
+      "name": "CldiPortInsertSyncRootNoLock (sub_1C002A6C8) -> CldiPortInsertSyncRootNoLock (sub_1C00296C8)",
+      "similarity": 0.9019,
+      "change_type": "behavioral",
+      "key_changes": [
+        "REMOVED the HsmLogSystemEvent (sub_1C000D524) call from an error path (present at 0x1C002A775 in unpatched, absent in patched).",
+        "HsmDbgBreakOnStatus relocation (sub_1C0006820 -> sub_1C0006830) and global/address relocations."
+      ],
+      "security_relevant": false,
+      "security_notes": "Removal of a HsmLogSystemEvent telemetry call from an error path plus address relocations. This is now the sole insert path used by CldiPortProcessServiceCommands after the flag removal. No security-relevant behavior change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HsmiGrantLockRequest (sub_1C005DC10) -> HsmiGrantLockRequest (sub_1C005C990)",
+      "similarity": 0.959,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Global data references and address labels shifted between binaries.",
+        "HsmDbgBreakOnStatus relocation (sub_1C0006820 -> sub_1C0006830)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Cosmetic changes - address relocation and HsmDbgBreakOnStatus relocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HsmiOpDehydrateNotificationCallback (sub_1C006ADB0) -> HsmiOpDehydrateNotificationCallback (sub_1C0069B10)",
+      "similarity": 0.9918,
+      "change_type": "behavioral",
+      "key_changes": [
+        "EvaluateCurrentState feature-flag call-signature change (parameterized -> hardcoded global).",
+        "memset wrapper relocation (sub_1C0018440 -> sub_1C0018400).",
+        "HsmDbgBreakOnStatus relocation (sub_1C0006820 -> sub_1C0006830)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-evaluation call-signature change and wrapper/logging relocations. The PostRelOutlookHangIssue gate around the range check (v92 < 0 || v92 > v16) is retained (still evaluated) identically in both builds, so there is no behavioral or security difference.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CldSyncSendHydrationRequest (sub_1C00352F0) -> CldSyncSendHydrationRequest (sub_1C003406C)",
+      "similarity": 0.9927,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address and label changes due to base-address shift.",
+        "HsmDbgBreakOnStatus relocation (sub_1C0006820 -> sub_1C0006830)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Cosmetic changes only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CldiPortProcessTransfer (sub_1C002E5E0) -> CldiPortProcessTransfer (sub_1C002D508)",
+      "similarity": 0.9929,
+      "change_type": "behavioral",
+      "key_changes": [
+        "EvaluateCurrentState feature-flag call-signature change (parameterized -> hardcoded global).",
+        "HsmDbgBreakOnStatus relocation and logging relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-evaluation call-signature change and logging relocation. No security-relevant behavior change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "HsmiOpUpdatePlaceholderFile (sub_1C006BC60, unpatched) -> HsmiOpUpdatePlaceholderFile (sub_1C006A9B8, patched)",
+      "entry_point": "Cloud Files placeholder-update operation. HsmiOpUpdatePlaceholderFile is called by HsmFltProcessUpdatePlaceholder (which parses the size/length fields out of a caller-supplied buffer at v11+0x3C/0x40/0x44/0x48 before passing them down) and by HsmRecallUpdatePlaceholderFile.",
+      "call_chain": [
+        "HsmFltProcessUpdatePlaceholder - parses the placeholder-update request fields from a caller-supplied buffer",
+        "HsmiOpUpdatePlaceholderFile (sub_1C006BC60) - applies the update; validates the file size / valid-data-length pointer arg (a9)"
+      ],
+      "vulnerability_class": "CWE-1284 (Improper Validation of Specified Quantity in Input) / CWE-20 (Improper Input Validation)",
+      "description": "HsmiOpUpdatePlaceholderFile takes a pointer argument (a9) to a signed 64-bit file size / valid-data-length supplied by the caller. In the unpatched binary the guard that rejects a negative value is 'if (EvaluateCurrentState(&g_Feature_2333116728_58628732_FeatureDescriptorDetails) && a9 != nullptr && *a9 < 0)' (feature gate + null check + sign check, call at 0x1C006BD4A). When the staging feature g_Feature_2333116728_58628732 is disabled, EvaluateCurrentState returns FALSE, the guard is skipped, and a negative *a9 proceeds. Downstream the same pointer (v45 = a9) is consumed as a size: FltSetInformationFile(..., a9, 8, FileEndOfFileInformation); HsmpUpdateBitmapSizesNoLock(a2, *a9); a store through the placeholder context pointer at a2+0x98; and HsmpSetFileVDL(..., FileObject, *a9). A negative signed value is a very large unsigned quantity when used as a length. The patch removes the feature gate; the patched guard is 'if (a9 != nullptr && *a9 < 0)' (at 0x1C006AA9E) so the rejection (STATUS 0xC000CF0B) is unconditional. The feature symbol g_Feature_2333116728_58628732 is entirely absent from the patched binary.",
+      "trigger_conditions": "1. cldflt.sys attached to the target volume (e.g. OneDrive / Files On-Demand). 2. The registered user-mode sync provider issues a placeholder-update operation whose file-size / valid-data-length field is negative (signed 64-bit with the sign bit set), reaching HsmFltProcessUpdatePlaceholder then HsmiOpUpdatePlaceholderFile. 3. In the unpatched driver, if the staging feature g_Feature_2333116728_58628732 is disabled, the *a9 < 0 rejection is skipped and the negative size proceeds to FltSetInformationFile(FileEndOfFileInformation) / HsmpSetFileVDL. In the patched driver it is rejected with STATUS 0xC000CF0B unconditionally.",
+      "primitive": "No memory-corruption primitive is demonstrated. The change consistently rejects a caller-supplied negative file size / valid-data-length that would otherwise reach FltSetInformationFile(FileEndOfFileInformation) and HsmpSetFileVDL. Any follow-on impact (for example, exposing uninitialized data by extending valid-data-length) would depend on the file-system layer's own handling of the value and is not demonstrated here. Direction verified: the patched build is the stricter one.",
+      "evidence": "UNPATCHED (feature-gated rejection):\n    if (EvaluateCurrentState(&g_Feature_2333116728_58628732_FeatureDescriptorDetails)\n        && a9 != nullptr\n        && *a9 < 0)\n    {\n        SyncPolicy = 0xC000CF0B;   // reject; skipped when feature OFF\n    }\n\nPATCHED (unconditional rejection):\n    if (a9 != nullptr && *a9 < 0)\n    {\n        SyncPolicy = 0xC000CF0B;   // always reject\n    }\n\nDownstream use of *a9 (v45 = a9), both builds:\n    FltSetInformationFile(..., v45, 8, FileEndOfFileInformation);\n    if (*v45 != old) HsmpUpdateBitmapSizesNoLock(a2, *v45);\n    **(a2 + 0x98) = *v45;                 // placeholder size field\n    HsmpSetFileVDL(..., FileObject, *v45); // valid-data-length",
+      "assembly": "UNPATCHED (sub_1C006BC60), rejection gated behind the feature:\n  0x1C006BD31  lea  rcx, g_Feature_2333116728_58628732_FeatureDescriptorDetails\n  0x1C006BD4A  call EvaluateCurrentState\n  0x1C006BD4F  test eax, eax\n  0x1C006BD51  jz   0x1C006BDE5     ; feature OFF -> skip rejection\n  0x1C006BD57  test r12, r12        ; a9 != NULL ?\n  0x1C006BD5A  jz   0x1C006BDE5\n  0x1C006BD60  cmp  [r12], r14      ; *a9 vs 0 (r14 = 0)\n  0x1C006BD64  jge  0x1C006BDE5     ; *a9 >= 0 -> skip\n  0x1C006BD66  mov  r15d, 0C000CF0Bh ; reject: STATUS 0xC000CF0B\n\nPATCHED (sub_1C006A9B8), rejection unconditional (no feature gate):\n  0x1C006AA9E  test rdi, rdi        ; a9 != NULL ?\n  0x1C006AAA7  cmp  [rdi], r15      ; *a9 vs 0 (r15 = 0)\n  0x1C006AAAA  jge  0x1C006AB2B     ; *a9 >= 0 -> skip\n  0x1C006AAAC  mov  r14d, 0C000CF0Bh ; reject: STATUS 0xC000CF0B",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!HsmiOpUpdatePlaceholderFile",
+            "address": "0x1c006bc60",
+            "why": "Function entry. a9 is the pointer to the caller-supplied file size / valid-data-length."
+          },
+          {
+            "symbol": "cldflt_unpatched!HsmiOpUpdatePlaceholderFile",
+            "address": "0x1c006bd4a",
+            "why": "EvaluateCurrentState(&g_Feature_2333116728_58628732) gate. On return EAX==0 (FALSE, feature off) takes the jz at 0x1C006BD51 and skips the negative-size rejection entirely."
+          },
+          {
+            "symbol": "cldflt_unpatched!HsmiOpUpdatePlaceholderFile",
+            "address": "0x1c006bd60",
+            "why": "[r12] is *a9; the jge at 0x1C006BD64 skips the rejection when *a9 >= 0. In the patched build (0x1C006AA9E) the equivalent check runs with no preceding feature test."
+          }
+        ],
+        "watch": [
+          "EAX after EvaluateCurrentState at 0x1c006bd4a - 0 (FALSE) skips the negative-size rejection in the unpatched build",
+          "[r12] (unpatched) / [rdi] (patched) - *a9, the signed file size / valid-data-length being validated",
+          "STATUS 0xC000CF0B - the rejection code taken when *a9 < 0"
+        ],
+        "key_offsets": [
+          "0x1c006bd31: lea of g_Feature_2333116728_58628732 descriptor (unpatched only)",
+          "0x1c006bd4a: EvaluateCurrentState feature gate (unpatched only)",
+          "0x1c006bd60: *a9 < 0 sign check (unpatched)",
+          "0x1c006aa9e: unconditional a9/*a9 < 0 check (patched)"
+        ],
+        "trigger_setup": "1. Ensure cldflt.sys is loaded (Cloud Files filter active). 2. From the registered user-mode sync provider (or a harness driving the placeholder-update operation), issue an update-placeholder request whose size / valid-data-length field is negative. 3. Compare unpatched (feature off -> rejection skipped) vs patched (always rejected).",
+        "expected_observation": "In the unpatched build with the feature disabled, a negative *a9 passes the guard and reaches FltSetInformationFile(FileEndOfFileInformation) / HsmpSetFileVDL. In the patched build the request is rejected with STATUS 0xC000CF0B before those operations.",
+        "notes": "The guarded value is a file size / valid-data-length. This is an input-validation hardening, not a demonstrated memory-corruption primitive."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "CldSyncConnectRoot (sub_1C0033950, unpatched) -> CldSyncConnectRoot (sub_1C0032880, patched)",
+      "entry_point": "Cloud Files communication-port service command (the user-mode sync provider's CfConnectSyncRoot-style message) delivered to the registered FLT_MESSAGE_NOTIFY callback CldiPortNotifyMessage (sub_1C002F5B0), then service-command dispatch CldiPortProcessServiceCommands (sub_1C002A7E8), then CldSyncConnectRoot (sub_1C0033950). This is a port-message path, not an IRP_MJ_SET_REPARSE_POINT file-system operation.",
+      "call_chain": [
+        "CldHsmInitialize (sub_1C0075010) - driver init, calls CldPortInitialize",
+        "CldPortInitialize (sub_1C00320F8) - registers CldiPortNotifyMessage as the port FLT_MESSAGE_NOTIFY callback",
+        "CldiPortNotifyMessage (sub_1C002F5B0) - runtime port-message callback (attacker-reachable entry)",
+        "CldiPortProcessServiceCommands (sub_1C002A7E8) - service-command dispatch",
+        "CldSyncConnectRoot (sub_1C0033950) - AVL sync-root entry lookup/create with feature-flag path divergence"
+      ],
+      "vulnerability_class": "Not applicable - no CWE condition present. Considered CWE-416 / CWE-672; neither is reachable because both builds gate reuse on refcount.",
+      "description": "In the unpatched cldflt.sys, CldSyncConnectRoot (sub_1C0033950) looks up an existing sync-root context entry in an AVL tree (RtlLookupElementGenericTableAvl on a1+0x10). A feature flag (EvaluateCurrentState(reg_FeatureDescriptors_a), which resolves to Feature_Servicing_PostRelOutlookHangIssue_60816934, call at 0x1C00339BE) selects between two branches. When the flag returns TRUE (retained path, at 0x1C00339CB) the function first treats an entry whose connectedId (offset 0x60) is 0 as a free slot and recreates it, then on an identity match requires refcount (offset 0x30) > 0 before returning the entry. When the flag returns FALSE (legacy path, at 0x1C0033A79) the function instead gates on refcount (offset 0x30) > 0 FIRST, then does the identity match, and lacks the connectedId==0 recovery, so a live entry with a zero connectedId yields STATUS 0xC000CF09 instead of being recreated. Crucially, BOTH branches require refcount > 0 before handing an existing entry back to the caller, so an entry with an exhausted refcount is never returned in either binary. The patch (sub_1C0032880) removes the flag and always takes the retained-branch logic. This is a feature-flag path unification with no security-relevant difference (no use-after-free).",
+      "trigger_conditions": "1. cldflt.sys attached to the target volume. 2. A user-mode component acting as a cloud sync provider sends a connect-sync-root service command over the filter communication port, reaching CldiPortProcessServiceCommands (sub_1C002A7E8) then CldSyncConnectRoot (sub_1C0033950). 3. An existing AVL sync-root entry is present so RtlLookupElementGenericTableAvl returns a match. 4. With the feature flag in the legacy (FALSE) state, an entry whose connectedId (offset 0x60) is 0 returns STATUS 0xC000CF09 instead of being recreated as in the patched path. 5. Both paths still require refcount (offset 0x30) > 0 before returning an existing entry, so no stale/refcount-exhausted entry is returned.",
+      "primitive": "No memory-safety primitive. Both the legacy and retained/unified paths gate reuse on refcount (offset 0x30) > 0, so a released entry is not returned to the caller. The observable difference is a control-flow divergence (error vs recreate) for a disconnected AVL slot (connectedId == 0).",
+      "evidence": "UNPATCHED legacy branch (flag FALSE) - refcount is the FIRST gate:\n    if (!EvaluateCurrentState(reg_FeatureDescriptors_a))  // flag FALSE\n    {\n        if (entry[0x30] <= 0)          // refcount gate FIRST\n            goto create_new_entry;\n        if (entry[0x60] == arg2 && entry[0] == arg7)\n            *arg8 = entry;             // reuse (refcount already gated > 0)\n        else\n            status = 0xC000CF09;\n    }\n\nUNPATCHED retained branch (flag TRUE) == PATCHED unified path (sub_1C0032880):\n    if (entry[0x60] == 0)              // stale/disconnected slot\n        goto create_new_entry;         // recreate (missing in legacy branch)\n    if (entry[0x60] == arg2 && entry[0] == arg7)\n    {\n        if (entry[0x30] <= 0)          // refcount check before reuse\n            goto create_new_entry;\n        *arg8 = entry;                 // reuse\n    }\n    else\n        status = 0xC000CF09;",
+      "assembly": "UNPATCHED legacy branch (sub_1C0033950, flag FALSE) at 0x1C0033A79:\n  0x1C0033A79  mov  eax,[rsi+30h]   ; refcount (offset 0x30)\n  0x1C0033A7C  test eax,eax\n  0x1C0033A7E  jle  0x1C0033B05     ; refcount <= 0 -> create new entry\n  0x1C0033A88  mov  rax,[rsi+60h]   ; connectedId (offset 0x60)\n  0x1C0033A8C  cmp  rax,rbx         ; == arg2 ?\n  0x1C0033A8F  jnz  0x1C0033AAB     ; mismatch -> 0xC000CF09\n  0x1C0033A98  cmp  [rcx],rax       ; object ptr (offset 0x0) == arg7 ?\n  0x1C0033A9B  jnz  0x1C0033AAB\n  0x1C0033AA3  mov  [rax],rcx       ; *arg8 = entry (refcount already gated > 0)\n\nUNPATCHED retained branch (sub_1C0033950, flag TRUE) at 0x1C00339CB / PATCHED sub_1C0032880:\n  0x1C00339CB  mov  rax,[rsi+60h]   ; connectedId\n  0x1C00339D2  jz   0x1C0033B05     ; connectedId == 0 -> recreate\n  0x1C00339DC  cmp  rax,rbx         ; == arg2 ?\n  0x1C00339DF  jnz  0x1C0033A07     ; -> 0xC000CF09\n  0x1C00339E5  cmp  [rax],r15       ; object ptr == arg7 ?\n  0x1C00339E8  jnz  0x1C0033A07\n  0x1C00339EA  mov  eax,[rax+30h]   ; refcount\n  0x1C00339EF  jle  0x1C0033B05     ; refcount <= 0 -> recreate\n  0x1C00339FF  mov  [rcx],rax       ; *arg8 = entry\n\nCreate-new path (present in both binaries), initializing a fresh entry (unpatched 0x1C0033B5C):\n  0x1C0033B5F  mov  [r8+60h],rbx           ; connectedId = arg2\n  0x1C0033B63  mov  [r8+2Ch],eax\n  0x1C0033B6B  mov  [r8],r15               ; object pointer = arg7\n  0x1C0033B6E  mov  dword ptr [r8+30h],1   ; refcount = 1\n  0x1C0033B76  mov  [rax],r8",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!CldSyncConnectRoot",
+            "address": "0x1c0033950",
+            "why": "Function entry. Observe the AVL sync-root lookup. RCX=arg1 (table owner: +0x10 = table root, +0x8 = push lock), RDX=arg2 (connectedId being requested)."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldSyncConnectRoot+0x6e",
+            "address": "0x1c00339be",
+            "why": "EvaluateCurrentState(reg_FeatureDescriptors_a) call that gates the two branches. On return EAX==0 (FALSE) selects the legacy branch (jz to 0x1C0033A79); non-zero selects the retained branch at 0x1C00339CB."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldSyncConnectRoot+0x129",
+            "address": "0x1c0033a79",
+            "why": "Start of the legacy (FALSE) branch. dword [rsi+30h] is the refcount; the jle at 0x1C0033A7E diverts to the create-new path (0x1C0033B05) when refcount <= 0. The entry is returned only when refcount > 0."
+          }
+        ],
+        "watch": [
+          "EAX at 0x1c00339c3 - return value of EvaluateCurrentState; 0 (FALSE) selects the legacy branch",
+          "[rsi+0x30] - refcount of the candidate entry; both branches require > 0 before reuse",
+          "[rsi+0x60] - connectedId field, matched against arg2",
+          "*arg8 (stored at [rbp+arg_38]) - the returned entry pointer the caller will use"
+        ],
+        "key_offsets": [
+          "0x1c00339af: 'existing entry found' branch (rsi = [rax+8])",
+          "0x1c00339be: EvaluateCurrentState(reg_FeatureDescriptors_a) call gating the two paths",
+          "0x1c00339cb: retained branch (flag TRUE) - connectedId==0 recovery, then identity match, then refcount>0 at 0x1c00339ea",
+          "0x1c0033a79: legacy branch (flag FALSE) - refcount (offset 0x30) gate FIRST",
+          "0x1c0033aa3: legacy-branch reuse store *arg8 = entry (reached only after refcount>0 gate at 0x1c0033a79)",
+          "0x1c0033b05 / 0x1c0033b13: create-new-entry path (goto target for both branches)",
+          "Patched 0x1c0032905: refcount>0 gate (mov eax,[rax+30h]; jle create_new) in the unified path"
+        ],
+        "trigger_setup": "1. Ensure cldflt.sys is loaded (Cloud Files filter active). 2. From a user-mode cloud sync provider (or a harness driving the filter communication port), attach a sync root and issue a connect-sync-root service command over the filter port so CldSyncConnectRoot is invoked with an existing AVL entry. 3. Arrange an existing entry with connectedId (offset 0x60) == 0 and compare legacy (FALSE) vs patched behavior.",
+        "expected_observation": "In the legacy branch, an entry with refcount (offset 0x30) <= 0 diverts to create-new (0x1C0033B05); an entry with refcount > 0 and connectedId 0 returns STATUS 0xC000CF09. No freed/refcount-exhausted entry is handed back. The patched path recreates the disconnected slot instead of erroring.",
+        "notes": "Entry structure (observed): offset 0x00 = object pointer (arg7); offset 0x28 = flags dword (bits 0x16/0x17/0x18 set from arg flags); offset 0x2c = arg value; offset 0x30 = refcount; offset 0x60 = connectedId (matched against arg2). This is a feature-flag path unification with no security impact."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "CldiPortProcessServiceCommands (sub_1C002A7E8, unpatched) -> CldiPortProcessServiceCommands (sub_1C00297E4, patched)",
+      "entry_point": "Cloud Files communication-port service command via the FLT_MESSAGE_NOTIFY callback CldiPortNotifyMessage (sub_1C002F5B0), same dispatch path as the CldSyncConnectRoot finding.",
+      "call_chain": [
+        "CldHsmInitialize (sub_1C0075010) - driver init, calls CldPortInitialize",
+        "CldPortInitialize (sub_1C00320F8) - registers CldiPortNotifyMessage as the port FLT_MESSAGE_NOTIFY callback",
+        "CldiPortNotifyMessage (sub_1C002F5B0) - runtime port-message callback",
+        "CldiPortProcessServiceCommands (sub_1C002A7E8) - service-command dispatch with sync-root insert-method feature gate"
+      ],
+      "vulnerability_class": "Not applicable - no CWE condition present. Considered CWE-668 / state inconsistency; both flag paths insert the entry, so there is no tracking bypass.",
+      "description": "In the unpatched CldiPortProcessServiceCommands (sub_1C002A7E8), after a successful connect the feature flag EvaluateCurrentState(reg_FeatureDescriptors_a) (call at 0x1C002B938) selects how the sync root is inserted into the tracking AVL table. When the flag is TRUE it calls the helper CldiPortInsertSyncRootNoLock (sub_1C002A6C8) at 0x1C002B962; when FALSE it performs an inline RtlInsertElementGenericTableAvl on arg1+0x60 at 0x1C002B99A. Both paths insert the entry; they differ only in method (helper vs inline) and in the extra bookkeeping the helper performs. The patch (sub_1C00297E4) removes the flag and always uses CldiPortInsertSyncRootNoLock. This is a method/bookkeeping unification, not a tracking bypass.",
+      "trigger_conditions": "1. cldflt.sys active. 2. A connect-sync-root service command is delivered over the filter communication port, reaching CldiPortProcessServiceCommands (sub_1C002A7E8). 3. The feature flag state selects the inline-insert vs helper-insert path; both insert the entry into the AVL table at arg1+0x60.",
+      "primitive": "No primitive. Both flag paths insert the sync-root entry into the tracking table, so lookups still find it. The change is an insert-method unification.",
+      "evidence": "UNPATCHED (flag TRUE -> helper; flag FALSE -> inline; both insert):\n    if (EvaluateCurrentState(reg_FeatureDescriptors_a))\n    {\n        FltAcquirePushLockExclusiveEx(arg1 + 0x58, 0);\n        CldiPortInsertSyncRootNoLock(...);   // 0x1C002B962\n    }\n    else\n    {\n        FltAcquirePushLockExclusiveEx(arg1 + 0x58, 0);\n        RtlInsertElementGenericTableAvl(arg1 + 0x60, &Buffer, 0x10, &NewElement); // 0x1C002B99A\n    }\n\nPATCHED (always helper):\n    FltAcquirePushLockExclusiveEx(arg1 + 0x58, 0);\n    CldiPortInsertSyncRootNoLock(...);",
+      "assembly": "UNPATCHED sub_1C002A7E8:\n  0x1C002B938  call EvaluateCurrentState\n  0x1C002B942  test eax,eax\n  0x1C002B944  jz   0x1C002B96B        ; flag FALSE -> inline insert\n  0x1C002B946  call FltAcquirePushLockExclusiveEx\n  0x1C002B962  call CldiPortInsertSyncRootNoLock   ; flag TRUE path\n  0x1C002B96B  ...                     ; FALSE path:\n  0x1C002B97C  call FltAcquirePushLockExclusiveEx\n  0x1C002B99A  call RtlInsertElementGenericTableAvl ; arg1+0x60",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!CldiPortProcessServiceCommands",
+            "address": "0x1c002a7e8",
+            "why": "Function entry. Service-command dispatch handler reached from the port notify callback."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldiPortProcessServiceCommands+0x1150",
+            "address": "0x1c002b938",
+            "why": "EvaluateCurrentState(reg_FeatureDescriptors_a) call that selects the insert method. EAX!=0 (TRUE) -> CldiPortInsertSyncRootNoLock at 0x1C002B962; EAX==0 (FALSE) -> inline RtlInsertElementGenericTableAvl at 0x1C002B99A. Both insert."
+          }
+        ],
+        "watch": [
+          "EAX after EvaluateCurrentState at 0x1c002b938 - selects helper vs inline insert method",
+          "arg1 + 0x58 - push lock protecting the AVL table",
+          "arg1 + 0x60 - AVL table root for sync-root entries (target of both insert paths)"
+        ],
+        "key_offsets": [
+          "0x1c002b938: EvaluateCurrentState(reg_FeatureDescriptors_a) insert-method gate",
+          "0x1c002b962: helper insert CldiPortInsertSyncRootNoLock (flag TRUE)",
+          "0x1c002b99a: inline RtlInsertElementGenericTableAvl on arg1+0x60 (flag FALSE)"
+        ],
+        "trigger_setup": "Issue connect-sync-root service commands over the filter communication port on a cloud-synced volume and observe both insert paths populate the AVL table at arg1+0x60.",
+        "expected_observation": "Both flag states insert the entry into the AVL table; they differ only in method (helper vs inline) and helper bookkeeping. The patch always uses the helper.",
+        "notes": "Insert-method unification accompanying the CldSyncConnectRoot flag removal. No security impact."
+      }
+    }
+  ],
+  "summary": "The security-relevant change in this cldflt.sys (Cloud Files MiniFilter) patch is in HsmiOpUpdatePlaceholderFile (unpatched sub_1C006BC60 -> patched sub_1C006A9B8). The unpatched build gates the rejection of a negative file size / valid-data-length (*a9 < 0 -> STATUS 0xC000CF0B) behind the staging feature g_Feature_2333116728_58628732 (EvaluateCurrentState at 0x1C006BD4A); when that feature is disabled the rejection is skipped and a negative (large-unsigned) size proceeds to FltSetInformationFile(FileEndOfFileInformation), HsmpSetFileVDL, HsmpUpdateBitmapSizesNoLock, and the placeholder size field. The patch removes the feature gate entirely (the feature symbol is absent from the patched binary) so the rejection at 0x1C006AA9E is unconditional. Direction verified: the patched build is the stricter one. This is a delivered input-validation hardening (CWE-1284 / CWE-20), severity low, reachable via the Cloud Files placeholder-update operation (HsmFltProcessUpdatePlaceholder parses the size fields from a caller-supplied buffer). No memory-corruption primitive is demonstrated; the value feeds file-system size operations that are further validated by the FS layer. The other eight changed functions are servicing-feature refactoring with no security impact: CldSyncConnectRoot (sub_1C0033950 -> sub_1C0032880) and CldiPortProcessServiceCommands (sub_1C002A7E8 -> sub_1C00297E4) drop a Feature_Servicing_PostRelOutlookHangIssue_60816934 flag that selected between two already-equivalent paths (both gate refcount before sync-root entry reuse; both insert the entry into the tracking table), so there is no use-after-free and no tracking bypass; the remaining changes are feature-evaluation call-signature changes, a removed telemetry call, and address/logging relocations. Note that Feature_Servicing_PostRelOutlookHangIssue_60816934 is still evaluated at runtime in the patched binary (its evaluation helper was only specialized to a no-argument form); it is not fully retired."
+}

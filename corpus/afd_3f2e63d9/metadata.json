@@ -1,0 +1,383 @@
+{
+  "binary": "afd.sys",
+  "kb": "KB5094122",
+  "release_date": "2026-06-09",
+  "relevant_cves": [
+    {
+      "id": "CVE-2026-34335",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45601",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45598",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45596",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45638",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45603",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-42911",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    }
+  ],
+  "cve_attribution": "title component match",
+  "cves": [
+    {
+      "id": "CVE-2026-40409",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-197",
+          "name": "Numeric Truncation Error"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40404",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-197",
+          "name": "Numeric Truncation Error"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34335",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45607",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.4
+    },
+    {
+      "id": "CVE-2026-47291",
+      "title": "HTTP.sys Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 9.8
+    },
+    {
+      "id": "CVE-2026-48583",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45601",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45598",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45636",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45596",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45638",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45603",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45653",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-49160",
+      "title": "HTTP.sys Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-400",
+          "name": "Uncontrolled Resource Consumption"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-42980",
+      "title": "NT OS Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-191",
+          "name": "Integer Underflow (Wrap or Wraparound)"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-42916",
+      "title": "NT OS Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-42911",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-42972",
+      "title": "Windows Hyper-V Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-200",
+          "name": "Exposure of Sensitive Information to an Unauthorized Actor"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.14393.9234",
+    "sha256": "3f2e63d9c84fa8e40a833a0336b3fb874103f2ea2cc7889969dfd840922bcc12",
+    "file": "afd_patched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Ancillary Function Driver for WinSock",
+      "FileVersion": "10.0.14393.9234 (rs1_release.260605-1835)",
+      "InternalName": "afd.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "afd.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.14393.9234"
+    }
+  },
+  "prev": {
+    "version": "10.0.14393.9140",
+    "sha256": "8c7b379224f976b62d8ff1b9c83f5210b46fee683d778671eb9c242987faf519",
+    "kb_numbers": [
+      "KB5087537"
+    ],
+    "win_versions": [],
+    "file": "afd_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Ancillary Function Driver for WinSock",
+      "FileVersion": "10.0.14393.9140 (rs1_release.260506-0518)",
+      "InternalName": "afd.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "afd.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.14393.9140"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

@@ -1,0 +1,539 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9683,
+    "matched": 1093,
+    "changed": 33,
+    "identical": 1060,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdTLListenComplete (sub_1C005AB60)",
+      "similarity": 0.8635,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "New call to AfdDrainListeningIrps (0x1C001687C) added before the spinlock release on the failed-listen (status < 0) branch, gated by EvaluateCurrentState(&g_Feature_2949905720_61057653)",
+        "AfdDrainListeningIrps walks the pending listen-IRP list at conn+0x70 (each list entry lies at IRP+0xA8, so IRP = entry - 0xA8), clears each IRP's cancel routine, completes it with the failing status, and re-acquires the conn+0x30 spinlock",
+        "Only the failed-listen branch is affected; the success branch is unchanged"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the listen completion handler. The abort branch runs only when the completion status a2 < 0. In the unpatched version it clears state flags ([conn+8] &= ~3, conn[0xA8], conn[0xAA], *conn &= ~4) and releases the conn+0x30 spinlock WITHOUT draining the pending listen-IRP list at conn+0x70; AfdDerefTLBaseEndpoint then runs. Any IRPs still queued on conn+0x70 therefore survive across the endpoint dereference and can later reference a freed endpoint. The patched version, when the feature flag is enabled, calls AfdDrainListeningIrps(conn, &LockHandle, status) to drain and complete those IRPs before the lock is released.",
+      "assembly_diff": "; UNPATCHED (failed-listen branch, no drain):\nand     dword ptr [rbx+8], 0FFFFFFFCh\nmovzx   eax, word ptr [rsi+90h]\nmov     [rbx+0A8h], ax\nmovzx   eax, word ptr [rsi+78h]\nmov     [rbx+0AAh], ax\nmov     eax, 0FFFBh\nand     [rbx], ax\ncall    cs:__imp_KeReleaseInStackQueuedSpinLock\n\n; PATCHED (drain added before release):\nand     dword ptr [rbx+8], 0FFFFFFFCh\nlea     rcx, g_Feature_2949905720_61057653_FeatureDescriptorDetails\nmovzx   eax, word ptr [rsi+90h]\nmov     [rbx+0A8h], ax\nmovzx   eax, word ptr [rsi+78h]\nmov     [rbx+0AAh], ax\nmov     eax, 0FFFBh\nand     [rbx], ax\ncall    EvaluateCurrentState\ntest    eax, eax\nje      short loc_1C005995F\nmov     r8d, ebp               ; status\nlea     rdx, [rsp+88h+LockHandle]\nmov     rcx, rbx               ; connection\ncall    AfdDrainListeningIrps  ; NEW: drain conn+0x70 list\ncall    cs:__imp_KeReleaseInStackQueuedSpinLock"
+    },
+    {
+      "name": "AfdSanFastCompleteRequest (sub_1C0078630)",
+      "similarity": 0.9817,
+      "change_type": "hardening",
+      "key_changes": [
+        "The teardown-state check cmp byte [r15+0x91], 0 is made unconditional in the patched version",
+        "Removed the EvaluateCurrentState(&g_Feature_757798200_60363861) call that previously gated whether [r15+0x91] was checked",
+        "Cancel routine is AfdSanCancelRequest in BOTH builds (the earlier claim of two different cancel-routine addresses was an address-rebasing artifact)",
+        "Whole sequence (cancel-routine set, Cancel check, state check, list insertion onto conn+0x70) runs under the conn+0x30 spinlock"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is an AFD receive completion path. The original TOCTOU characterization is NOT supported by the binaries: the cancel-routine set, the Irp->Cancel check, the connection-state check, and the list insertion all execute while the conn+0x30 spinlock is held, and AfdSanCancelRequest also acquires that lock, so no concurrent cancel can interleave. The actual change is narrower and defensive: the unpatched queue condition is Irp->Cancel(Irp+0x44)==0 && (!EvaluateCurrentState(flag) || conn[0x91]==0), so when the feature flag is disabled the teardown-state byte conn[0x91] is not checked and the receive IRP is queued onto conn+0x70 regardless. The patched condition is Irp->Cancel==0 && conn[0x91]==0, making the teardown-state check unconditional. This is a hardening improvement, not a race; severity is low.",
+      "assembly_diff": "; UNPATCHED (state check gated by feature flag):\nlea     rax, AfdSanCancelRequest\nxchg    rax, [rsi+68h]              ; Irp->CancelRoutine\ncmp     byte ptr [rsi+44h], 0      ; Irp->Cancel\njne     short loc_1C00789D2\nlea     rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\ncall    EvaluateCurrentState\ntest    eax, eax\nje      short loc_1C0078995        ; flag off -> SKIP [r15+91h] check, queue IRP\ncmp     byte ptr [r15+91h], 0\njne     short loc_1C00789D2\n; queue IRP onto conn+0x70 list\n\n; PATCHED (state check unconditional):\nlea     rax, AfdSanCancelRequest\nxchg    rax, [rsi+68h]\ncmp     byte ptr [rsi+44h], 0\njne     short loc_1C0077A92\ncmp     byte ptr [r15+91h], 0      ; always checked\njne     short loc_1C0077A92\n; queue IRP onto conn+0x70 list"
+    },
+    {
+      "name": "sub_1C00529A0",
+      "similarity": 0.8387,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Restructured connection cleanup/abort path with added feature-flag-gated state checks around the drain logic"
+      ],
+      "security_relevant": true,
+      "security_notes": "Connection abort/cleanup function with restructured drain logic and added feature-gated state checks. Listed as a security-relevant candidate on the basis of the change; the exact mechanism was not further verified in this pass, so no specific offsets or callee names are asserted.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanAcceptCore (sub_1C007608C)",
+      "similarity": 0.8803,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "In the options-copy block (guarded by options_size >= 6), the branch taken when connection byte [conn+0xAC] == 0 computes the copy length as options_size - 8 in a 16-bit register",
+        "Patched version adds EvaluateCurrentState(&g_Feature_1191968056_61054031); when enabled, it checks options_size < 8 and zero-fills with memset instead of subtracting 8",
+        "The other branch ([conn+0xAC] != 0) subtracts 2 and is unchanged; it cannot underflow because the guard already forces options_size >= 6"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the accept IRP completion routine that copies connection-response options data into the user's MDL-mapped buffer. In the subtract-8 branch, options_size - 8 is a 16-bit operation; because the only guard is options_size >= 6, the values 6 and 7 pass and wrap to 0xFFFE/0xFFFF, driving an oversized memmove (up to ~65534 bytes) into the mapped output buffer. The overflow is bounded to a 16-bit length (<= ~64 KB), not an unbounded copy. The patched version, when the feature flag is enabled, checks options_size < 8 and zero-fills with memset instead of subtracting 8.",
+      "assembly_diff": "; UNPATCHED (subtract-8 branch, [conn+0xAC]==0):\nmovzx   eax, r14w                   ; options size\nsub     eax, 8                      ; size - 8\ncmp     ecx, eax\njge     short loc_1C00764BD\nlea     r14d, [r9+r8]\njmp     short loc_1C00764C6\nloc_1C00764BD:\nmov     eax, 0FFF8h\nadd     r14w, ax                    ; 16-bit size - 8 -> 0FFFEh/0FFFFh for size 6/7\nloc_1C00764C6:\nmovzx   r8d, r14w                   ; Size (underflowed)\nlea     rcx, [r15+8]\ncall    memmove                     ; OVERSIZED copy\n\n; PATCHED (feature-gated < 8 zero-fill):\nlea     rcx, g_Feature_1191968056_61054031_FeatureDescriptorDetails\ncall    EvaluateCurrentState\nmov     ebx, 8\ntest    eax, eax\njz      short loc_1C0075512         ; feature off -> old subtract-8 path\ncmp     si, bx                      ; options size < 8 ?\njb      short loc_1C0075502         ; yes -> zero-fill\nsub     si, bx                      ; size - 8 (safe, size >= 8)\nloc_1C0075502:\nmovzx   r8d, si\nxor     edx, edx\nmov     rcx, r15\ncall    memset                      ; SAFE"
+    },
+    {
+      "name": "sub_1C00357C0",
+      "similarity": 0.8794,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added an EvaluateCurrentState feature-flag check before connection state validation",
+        "Connection state condition split into separate branches for afd1/afd1afd types with different flag checking",
+        "When feature flag is on, checks (*(arg1+5)&0x10) and arg1[3]&1 separately instead of as combined condition"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003EC54",
+      "similarity": 0.8796,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added an EvaluateCurrentState feature-flag check before socket dispatch",
+        "When flag is off, calls sub_1c0003e64/sub_1c0003e34 (lock/unlock) around the dispatch call",
+        "Restructured type dispatch to check afd1 type before calling sub_1c0003e64"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005B360",
+      "similarity": 0.8438,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added EvaluateCurrentState feature-flag checks",
+        "Connection validation condition split into separate branches for different socket types",
+        "Same pattern as sub_1C00357C0: separated combined condition into individual checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005B600",
+      "similarity": 0.8438,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same restructuring pattern as sub_1C005B360 with feature flag gating"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0032B70",
+      "similarity": 0.9212,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added an EvaluateCurrentState feature-flag check for connection state validation",
+        "Split combined condition into separate branches",
+        "Added explicit Handle_2 copy variable for clarity"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047DC4",
+      "similarity": 0.9067,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed dual code path (sub_1C0015AF8 vs sub_1C0049240) gated by an EvaluateCurrentState feature flag",
+        "Unified to single call to sub_1c0047ff0 in patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047D90",
+      "similarity": 0.918,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only address changes for called functions (sub_1c0047dc4 -> sub_1c0046cf4)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003C5C0",
+      "similarity": 0.6169,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed dual code path (sub_1c0015af8 vs sub_1c0049240) gated by feature flag",
+        "Unified to single call to sub_1c0047ff0",
+        "Code deduplication - same logic for rbp==0 and rbp!=0 paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005A280",
+      "similarity": 0.9236,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed dual code path (sub_1c0015af8 vs sub_1c0049240) gated by feature flag",
+        "Unified to single sub_1c0047ff0 call",
+        "Reversed condition order for pending-accept count check (rax_5 & 2 vs !(rax_5 & 2))"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0076DB0",
+      "similarity": 0.8696,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed dual code path gated by an EvaluateCurrentState feature flag",
+        "Unconditional IRP draining and connection reset in patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00795C4",
+      "similarity": 0.97,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable renaming (rbx -> rdi, rbx_1 -> rdi_1) and address changes only"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0077F70",
+      "similarity": 0.9893,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inlined sub_1c0079304 connection setup function",
+        "Connection object fields set directly instead of via helper function call"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047000",
+      "similarity": 0.9077,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function with mostly address/variable renames",
+        "Dual code path consolidation pattern"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047FF0",
+      "similarity": 0.9373,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unified function replacing sub_1c0015af8 and sub_1c0049240 dual paths",
+        "Mostly variable renaming and code consolidation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0034AD0",
+      "similarity": 0.9541,
+      "change_type": "behavioral",
+      "key_changes": [
+        "EvaluateCurrentState feature-flag check added for connection state validation",
+        "Connection validation condition split into separate branches"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanConnectHandler (sub_1C00771B0)",
+      "similarity": 0.9371,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Variable renaming and address changes",
+        "Dual code path consolidation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00548E0",
+      "similarity": 0.8961,
+      "change_type": "behavioral",
+      "key_changes": [
+        "EvaluateCurrentState feature-flag check added",
+        "Connection validation condition split into separate branches"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0035A70",
+      "similarity": 0.342,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function with significant restructuring",
+        "Feature flag and dual code path consolidation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00360C0",
+      "similarity": 0.4229,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Significant restructuring, matched to different function in patched binary"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0042230",
+      "similarity": 0.3729,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Significant restructuring, matched to different function in patched binary"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003BD30",
+      "similarity": 0.3905,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Matched to different function in patched binary, likely false match"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0053FA0",
+      "similarity": 0.1149,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0068600",
+      "similarity": 0.1301,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0076630",
+      "similarity": 0.1678,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015AF8",
+      "similarity": 0.11,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0065D98",
+      "similarity": 0.0063,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0069608",
+      "similarity": 0.0948,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match - functions are unrelated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000CEB0",
+      "similarity": 0.3288,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False match or trivial function"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "AfdSanAcceptCore (sub_1C007608C)",
+      "entry_point": "AFD accept IRP completion \u2014 reached via NtDeviceIoControlFile on \\Device\\Afd during accept/super-accept handling",
+      "call_chain": [
+        "NtDeviceIoControlFile / WSAAccept / AcceptEx (user mode)",
+        "AFD IRP_MJ_DEVICE_CONTROL dispatch",
+        "AfdAccept / AfdServiceSuperAccept / AfdServiceWaitForListen (accept service paths)",
+        "AfdSanAcceptCore (accept IRP completion routine \u2014 copies options data from the connection response into the user's MDL-mapped buffer)"
+      ],
+      "vulnerability_class": "Integer underflow leading to heap buffer overflow (kernel pool)",
+      "description": "In AfdSanAcceptCore (unpatched 0x1C007608C, patched 0x1C007508C), the options-copy block runs only when options_size (word at [connection+0x18]) >= 6. Inside it, when the connection byte at [connection+0xAC] == 0, the copy length is computed as options_size - 8 in a 16-bit register. Because the only guard is options_size >= 6, the values 6 and 7 pass the guard and options_size - 8 wraps in 16 bits to 0xFFFE (65534) or 0xFFFF (65535). That wrapped value is used as the memmove size, copying up to ~64 KB from the connection-response options data into the MDL-mapped output buffer that was sized for the small options field. The overflow is bounded to a 16-bit length (<= ~64 KB), not an unbounded copy. The other branch ([connection+0xAC] != 0) subtracts 2 and is unchanged between builds; it cannot underflow because the guard already forces options_size >= 6. The patched version adds EvaluateCurrentState(&g_Feature_1191968056_61054031) and, when enabled, checks options_size < 8 and zero-fills with memset instead of subtracting 8.",
+      "trigger_conditions": "1. Create a listening AFD socket (SOCK_STREAM, TCP) and post an accept/super-accept operation (AcceptEx / WSAAccept), reaching AfdSanAcceptCore via AfdAccept / AfdServiceSuperAccept / AfdServiceWaitForListen. 2. The completion must reach the options block: options_size at [connection+0x18] >= 6 and the connection byte at [connection+0xAC] == 0 (so the subtract-8 branch runs). 3. Drive options_size to exactly 6 or 7 so options_size - 8 wraps in 16 bits to 0xFFFE/0xFFFF. 4. The memmove then copies ~65534/65535 bytes into the MDL-mapped output buffer.",
+      "primitive": "Bounded kernel buffer overflow. memmove copies up to a 16-bit length (max 0xFFFF, <= ~64 KB) from the connection-response options data into the MDL-mapped output buffer, overrunning the buffer's mapped extent into adjacent kernel memory. Standard kernel pool-overflow follow-on techniques apply, but the bounded length and the feature-flag state constrain reliability.",
+      "evidence": "UNPATCHED (AfdSanAcceptCore @ 0x1C007608C), options block (v15[6] = options_size):\n    if ( v15[6] >= 6u ) {                       // guard\n        v31 = *((_WORD *)v15 + 12);             // v31 = options_size (16-bit)\n        // ...\n        if ( *(_BYTE *)(v46 + 172) != 0 ) {     // [conn+0xAC] != 0 : subtract-2 path, no underflow\n            // v37 = (v31-2) or (v36+2); memmove(v35, v32+1, v37);\n        } else {                                // [conn+0xAC] == 0 : subtract-8 path (VULNERABLE)\n            v39 = *v32;\n            if ( v39 + 4 >= v31 - 8 )           // v31 in {6,7}: v31-8 negative; branch taken\n                v40 = v31 - 8;                  // v40 is unsigned __int16 -> 0xFFFE/0xFFFF\n            else\n                v40 = v39 + 4;\n            *(_DWORD *)v35 = 0; *((_DWORD *)v35 + 1) = 1;\n            memmove(v35 + 8, v32, v40);         // OVERSIZED copy (up to ~65534 bytes)\n        }\n    }\n\nPATCHED (AfdSanAcceptCore @ 0x1C007508C), subtract-8 branch guarded:\n    if ( EvaluateCurrentState(&g_Feature_1191968056_61054031_FeatureDescriptorDetails) ) {\n        if ( v35 < 8u ) { memset(v39, 0, v35); goto done; }   // SAFE: zero-fill\n        v43 = v35 - 8;                          // safe: v35 >= 8\n        // ... bounded copy ...\n    } else {\n        // feature off: old subtract-8 path preserved (still underflows for size 6/7)\n    }",
+      "assembly": "; UNPATCHED subtract-8 branch (0x1C007649E-0x1C00764DA):\nmovzx   eax, r14w                   ; options size\nsub     eax, 8                      ; size - 8\ncmp     ecx, eax\njge     short loc_1C00764BD\nlea     r14d, [r9+r8]\njmp     short loc_1C00764C6\nloc_1C00764BD:\nmov     eax, 0FFF8h\nadd     r14w, ax                    ; 16-bit size - 8 -> 0FFFEh/0FFFFh for size 6/7\nloc_1C00764C6:\nmovzx   r8d, r14w                   ; Size (underflowed)\nlea     rcx, [r15+8]                ; dst = mapped output buffer + 8\ncall    memmove                     ; OVERSIZED copy\n\n; PATCHED (feature-gated < 8 zero-fill, 0x1C00754A5-0x1C007550B):\nlea     rcx, g_Feature_1191968056_61054031_FeatureDescriptorDetails\ncall    EvaluateCurrentState\nmov     ebx, 8\ntest    eax, eax\njz      short loc_1C0075512         ; feature off -> old subtract-8 path\ncmp     si, bx                      ; options size < 8 ?\njb      short loc_1C0075502         ; yes -> zero-fill\nsub     si, bx                      ; size - 8 (safe, size >= 8)\nloc_1C0075502:\nmovzx   r8d, si\nxor     edx, edx\nmov     rcx, r15\ncall    memset                      ; SAFE",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched AfdSanAcceptCore",
+            "address": "0x1c007608c",
+            "why": "Entry of the accept IRP completion routine. Break here to observe options processing; word [connection+0x18] is options_size and byte [connection+0xAC] selects the copy branch."
+          },
+          {
+            "symbol": "afd_unpatched AfdSanAcceptCore subtract-8 memmove",
+            "address": "0x1c00764da",
+            "why": "The memmove in the subtract-8 branch. Read r8 (the size argument); for options size 6/7 it holds 0xFFFE/0xFFFF."
+          }
+        ],
+        "watch": [
+          "word [connection+0x18] = options_size (must be 6 or 7 to trigger)",
+          "byte [connection+0xAC] (must be 0 to reach the subtract-8 branch)",
+          "r14 at 0x1c00764c2 after 'add r14w, ax' = copy length (0xFFFE/0xFFFF on underflow)",
+          "r15 = destination (mapped output buffer base used by the copy)",
+          "r8 at the memmove call = the copy length"
+        ],
+        "key_offsets": [
+          "0x1c0076401: 'cmp dword [rbx+18h], 6' \u2014 the only guard on options size",
+          "0x1c007645e: 'jz loc_1C007649E' \u2014 selects the subtract-8 branch when [conn+0xAC]==0",
+          "0x1c00764c2: 'add r14w, ax' \u2014 16-bit size - 8 underflow",
+          "0x1c00764da: 'call memmove' \u2014 the oversized copy"
+        ],
+        "trigger_setup": "1. Open an AFD socket via WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP) or CreateFileW(L\"\\\\\\\\.\\\\Device\\\\Afd\", ...). 2. Bind, listen, and post AcceptEx/WSAAccept. 3. Complete a connection whose options field drives [connection+0x18] to 6 or 7 with [connection+0xAC]==0. 4. The subtract-8 branch computes the wrapped length and the memmove overruns the output buffer.",
+        "expected_observation": "At 0x1c00764da the memmove size (r8) is 0xFFFE/0xFFFF, and the copy overruns the mapped output buffer into adjacent memory, typically BSOD PAGE_FAULT_IN_NONPAGED_AREA or BAD_POOL_HEADER.",
+        "notes": "The vulnerable path requires the connection byte [connection+0xAC] == 0 (the subtract-8 branch) and options_size of exactly 6 or 7. The overflow length is a 16-bit value, capped at ~64 KB. The feature flag g_Feature_1191968056_61054031 gates the patched fix; with it disabled the patched binary still contains the vulnerable subtract-8 path."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "AfdTLListenComplete (sub_1C005AB60)",
+      "entry_point": "AFD listen completion \u2014 reached via the TDI listen-completion path on \\Device\\Afd",
+      "call_chain": [
+        "NtDeviceIoControlFile / WSAIoctl / connect (user mode)",
+        "AFD IRP_MJ_DEVICE_CONTROL dispatch",
+        "AfdTLListenComplete (sub_1C005AB60) (TDI listen completion handler)"
+      ],
+      "vulnerability_class": "Use-after-free / stale IRP access (CWE-416)",
+      "description": "AfdTLListenComplete (unpatched 0x1C005AB60, patched 0x1C0059850) runs its abort branch only when the completion status a2 < 0 (a failed listen). In that branch the unpatched code clears state flags ([conn+8] &= ~3, conn[0xA8] and conn[0xAA] written from the IRP, *conn &= ~4) and releases the conn+0x30 spinlock WITHOUT draining the pending listen-IRP list at conn+0x70; AfdDerefTLBaseEndpoint then runs. Any IRPs still queued on conn+0x70 therefore survive across the endpoint dereference and can later reference a freed endpoint. The patched version inserts EvaluateCurrentState(&g_Feature_2949905720_61057653) and, when enabled, calls AfdDrainListeningIrps(conn, &LockHandle, a2) before the lock is released. That helper walks the conn+0x70 list (each list entry lies at IRP+0xA8, so IRP = entry - 0xA8), clears each IRP's cancel routine, completes it with the failing status, and re-acquires the conn+0x30 spinlock.",
+      "trigger_conditions": "1. Create a listening AFD socket and arrange for its listen to complete with a failure status (a2 < 0), selecting the abort branch. 2. Have listen/wait IRPs queued on the endpoint's conn+0x70 list at the time of the failed completion. 3. In the unpatched build the abort branch clears state flags and releases the conn+0x30 spinlock without draining conn+0x70, then AfdDerefTLBaseEndpoint runs. 4. IRPs remaining on conn+0x70 after the endpoint dereference are stale.",
+      "primitive": "Stale IRPs left queued on conn+0x70 across AfdDerefTLBaseEndpoint on the failed-listen path. If the dereference frees the endpoint, later handling of those IRPs references freed memory. The precise exploitability (use-after-free vs. leaked/stuck IRP) is not fully established from the diff.",
+      "evidence": "UNPATCHED AfdTLListenComplete @ 0x1C005AB60 (a2 < 0 branch):\n    KeAcquireInStackQueuedSpinLock((PKSPIN_LOCK)FsContext + 6, &LockHandle);  // lock at conn+0x30\n    *((_DWORD *)FsContext + 2) &= 0xFFFFFFFC;                 // [conn+8] &= ~3\n    FsContext[84] = *((_WORD *)&Irp->Tail.CompletionKey + 12);  // conn[0xA8]\n    FsContext[85] = (unsigned __int16)Irp->Tail...Flink;        // conn[0xAA]\n    *FsContext &= ~4u;                                        // clear flag 0x4\n    // NO drain of conn+0x70 list\n    KeReleaseInStackQueuedSpinLock(&LockHandle);\n\nPATCHED AfdTLListenComplete @ 0x1C0059850 (a2 < 0 branch):\n    // same state updates ...\n    if ( EvaluateCurrentState(&g_Feature_2949905720_61057653_FeatureDescriptorDetails) )\n        AfdDrainListeningIrps((KSPIN_LOCK *)FsContext, &LockHandle, a2);  // drain conn+0x70\n    KeReleaseInStackQueuedSpinLock(&LockHandle);",
+      "assembly": "; UNPATCHED (a2 < 0 branch, no drain):\nand     dword ptr [rbx+8], 0FFFFFFFCh\nmovzx   eax, word ptr [rsi+90h]\nmov     [rbx+0A8h], ax\nmovzx   eax, word ptr [rsi+78h]\nmov     [rbx+0AAh], ax\nmov     eax, 0FFFBh\nand     [rbx], ax\ncall    cs:__imp_KeReleaseInStackQueuedSpinLock\n\n; PATCHED (drain added before release):\nand     dword ptr [rbx+8], 0FFFFFFFCh\nlea     rcx, g_Feature_2949905720_61057653_FeatureDescriptorDetails\nmovzx   eax, word ptr [rsi+90h]\nmov     [rbx+0A8h], ax\nmovzx   eax, word ptr [rsi+78h]\nmov     [rbx+0AAh], ax\nmov     eax, 0FFFBh\nand     [rbx], ax\ncall    EvaluateCurrentState\ntest    eax, eax\nje      short loc_1C005995F\nmov     r8d, ebp               ; status\nlea     rdx, [rsp+88h+LockHandle]\nmov     rcx, rbx               ; connection\ncall    AfdDrainListeningIrps  ; NEW: drain conn+0x70 list\ncall    cs:__imp_KeReleaseInStackQueuedSpinLock",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched AfdTLListenComplete",
+            "address": "0x1c005ab60",
+            "why": "Entry of the listen completion handler. rbx becomes the connection object; the pending listen-IRP list head is conn+0x70. The abort branch runs when the completion status is negative."
+          },
+          {
+            "symbol": "afd_unpatched AfdTLListenComplete lock release (abort branch)",
+            "address": "0x1c005ac54",
+            "why": "The KeReleaseInStackQueuedSpinLock in the abort branch. Check whether [conn+0x70] still points at queued IRPs (i.e. [conn+0x70] != conn+0x70)."
+          }
+        ],
+        "watch": [
+          "rbx = connection object",
+          "[rbx+0x70] = pending listen-IRP list Flink; != rbx+0x70 means undrained IRPs",
+          "[rbx+8] = state dword; watch &= ~3",
+          "word [rbx] = flags; watch &= ~4",
+          "[rbx+0xA8], [rbx+0xAA] = state values written from the IRP"
+        ],
+        "key_offsets": [
+          "0x1c005abb8: 'js loc_1C005AC1B' \u2014 selects the abort branch (status < 0)",
+          "0x1c005ac2a-0x1c005ac51: state-flag updates ([conn+8] &= ~3, conn[0xA8], conn[0xAA], *conn &= ~4)",
+          "0x1c005ac54: 'call KeReleaseInStackQueuedSpinLock' \u2014 lock release without drain (unpatched)"
+        ],
+        "trigger_setup": "1. Create a listening AFD socket and drive its listen to complete with a failure status. 2. Have listen/wait IRPs queued on conn+0x70 at that moment. 3. The unpatched abort branch releases the conn+0x30 lock without draining conn+0x70, then AfdDerefTLBaseEndpoint runs.",
+        "expected_observation": "At 0x1c005ac54, [conn+0x70] does not point back to conn+0x70, indicating undrained IRPs; subsequent access to them after the endpoint dereference can touch freed memory.",
+        "notes": "The abort branch runs only for a negative completion status. The list head is conn+0x70; each list entry lies at IRP+0xA8, so IRP = entry - 0xA8. The feature flag g_Feature_2949905720_61057653 gates the patched drain. AfdDrainListeningIrps completes each IRP with the failing status, clears its cancel routine, and re-acquires the conn+0x30 spinlock before returning."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "AfdSanFastCompleteRequest (sub_1C0078630)",
+      "entry_point": "AFD receive completion path \u2014 reached via NtDeviceIoControlFile on \\Device\\Afd",
+      "call_chain": [
+        "NtDeviceIoControlFile / WSARecv / recv (user mode)",
+        "AFD IRP_MJ_DEVICE_CONTROL dispatch",
+        "AfdSanFastCompleteRequest (receive completion path with cancel-routine setup)"
+      ],
+      "vulnerability_class": "Missing state validation under feature-flag-off configuration (hardening)",
+      "description": "The original TOCTOU characterization is NOT supported by the binaries. In AfdSanFastCompleteRequest (unpatched 0x1C0078630, patched 0x1C0077700) the cancel-routine set, the Irp->Cancel check, the connection-teardown-state check, and the list insertion all execute while the conn+0x30 spinlock is held; AfdSanCancelRequest also acquires that lock, so no concurrent cancel can interleave inside this region. The actual change is defensive: the unpatched queue condition is Irp->Cancel(Irp+0x44)==0 && (!EvaluateCurrentState(flag) || conn[0x91]==0), so when the feature flag is disabled the teardown-state byte conn[0x91] is not checked and the receive IRP is queued onto conn+0x70 regardless. The patched condition is Irp->Cancel==0 && conn[0x91]==0, making the teardown-state check unconditional. The cancel routine is AfdSanCancelRequest in both builds. This is a hardening improvement, not a race.",
+      "trigger_conditions": "1. Establish a TCP connection over an AFD socket and issue receive operations that reach AfdSanFastCompleteRequest. 2. Arrange for the connection to be in teardown (conn[0x91] != 0) at completion time. 3. With the feature flag disabled, the unpatched build skips the conn[0x91] check and queues the receive IRP onto conn+0x70 even though the connection is tearing down; the patched build always checks conn[0x91] and completes the IRP as cancelled instead. This is a state-validation gap, not a timing race (all under the conn+0x30 spinlock).",
+      "primitive": "Not a standalone exploit primitive. The change removes a feature-flag-off configuration in which a receive IRP could be queued onto a connection already in teardown. Impact depends on downstream handling of that queued IRP and is not demonstrable from the diff alone.",
+      "evidence": "UNPATCHED AfdSanFastCompleteRequest @ 0x1C0078630:\n    KeAcquireInStackQueuedSpinLock((PKSPIN_LOCK)(v18 + 48), &LockHandle);   // lock at conn+0x30\n    _InterlockedExchange64(v20 + 13, (__int64)AfdSanCancelRequest);         // Irp->CancelRoutine (Irp+0x68)\n    if ( *((_BYTE *)v20 + 68) == 0                                          // Irp->Cancel (Irp+0x44) == 0\n      && (!EvaluateCurrentState(&g_Feature_757798200_60363861_FeatureDescriptorDetails)\n       || *(_BYTE *)(v18 + 145) == 0) )                                     // conn[0x91] checked only if flag on\n    {\n        // queue Irp list entry (Irp+0xA8) onto conn+0x70 list\n    }\n\nPATCHED AfdSanFastCompleteRequest @ 0x1C0077700:\n    KeAcquireInStackQueuedSpinLock((PKSPIN_LOCK)(v18 + 48), &LockHandle);\n    _InterlockedExchange64(v20 + 13, (__int64)AfdSanCancelRequest);\n    if ( *((_BYTE *)v20 + 68) == 0 && *(_BYTE *)(v18 + 145) == 0 )          // conn[0x91] check unconditional\n    {\n        // identical list insertion onto conn+0x70\n    }",
+      "assembly": "; UNPATCHED (state check gated by feature flag):\nlea     rax, AfdSanCancelRequest\nxchg    rax, [rsi+68h]              ; Irp->CancelRoutine\ncmp     byte ptr [rsi+44h], 0      ; Irp->Cancel\njne     short loc_1C00789D2\nlea     rcx, g_Feature_757798200_60363861_FeatureDescriptorDetails\ncall    EvaluateCurrentState\ntest    eax, eax\nje      short loc_1C0078995        ; flag off -> SKIP [r15+91h] check, queue IRP\ncmp     byte ptr [r15+91h], 0\njne     short loc_1C00789D2\n; queue IRP onto conn+0x70 list (entry at rsi+0xA8, head at r15+0x70)\n\n; PATCHED (state check unconditional, feature call removed):\nlea     rax, AfdSanCancelRequest\nxchg    rax, [rsi+68h]\ncmp     byte ptr [rsi+44h], 0\njne     short loc_1C0077A92\ncmp     byte ptr [r15+91h], 0      ; always checked\njne     short loc_1C0077A92\n; queue IRP onto conn+0x70 list",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched AfdSanFastCompleteRequest",
+            "address": "0x1c0078630",
+            "why": "Entry of the receive completion path. rsi = IRP, r15 = connection object. The pending-IRP list head is conn+0x70; the whole cancel/queue sequence runs under the conn+0x30 spinlock."
+          },
+          {
+            "symbol": "afd_unpatched EvaluateCurrentState call in the queue decision",
+            "address": "0x1c0078982",
+            "why": "The feature-flag call in the unpatched queue decision. If it returns 0, the [r15+0x91] teardown check is skipped and the IRP is queued unconditionally."
+          }
+        ],
+        "watch": [
+          "rsi+0x44 (Irp->Cancel)",
+          "rsi+0x68 (Irp->CancelRoutine) \u2014 set to AfdSanCancelRequest",
+          "r15+0x91 (connection teardown-state byte)",
+          "r15+0x70 (pending-IRP list head)",
+          "rsi+0xA8 / rsi+0xB0 (IRP list-entry fields queued onto the list)"
+        ],
+        "key_offsets": [
+          "0x1c0078971: 'xchg [rsi+68h], rax' \u2014 sets the cancel routine (under the lock)",
+          "0x1c0078975: 'cmp byte [rsi+44h], 0' \u2014 Irp->Cancel check",
+          "0x1c0078982: 'call EvaluateCurrentState' \u2014 feature gate; when off, [r15+0x91] is not checked",
+          "0x1c00789b0: 'mov [rsi], rcx' \u2014 IRP queued onto conn+0x70"
+        ],
+        "trigger_setup": "1. Establish a TCP connection and issue receive operations reaching AfdSanFastCompleteRequest. 2. Put the connection into teardown (conn[0x91] != 0). 3. With the feature flag disabled, the unpatched build queues the receive IRP onto conn+0x70 without checking conn[0x91]; the patched build completes it as cancelled.",
+        "expected_observation": "In the unpatched build with the flag off, the IRP list entry (rsi+0xA8) is inserted onto conn+0x70 even though conn[0x91] is set. This is a state-validation gap; the whole sequence runs under the conn+0x30 spinlock, so no concurrent cancel interleaves.",
+        "notes": "The cancel routine is AfdSanCancelRequest in both builds. The feature flag g_Feature_757798200_60363861 gated whether conn[0x91] was checked in the unpatched build; the patched build removes the gate so the check is always enforced. Severity is low: this is a hardening change, not a race, and no concrete exploit primitive is demonstrable from the diff."
+      }
+    }
+  ],
+  "summary": "The patch changes three functions in the Windows AFD (Ancillary Function Driver) for Winsock in a security-relevant way. The primary fix is in AfdSanAcceptCore (unpatched 0x1C007608C, patched 0x1C007508C): in the options-copy block (guarded only by options_size >= 6), the branch taken when the connection byte at [connection+0xAC] == 0 computes the copy length as options_size - 8 in a 16-bit register. Options sizes of 6 or 7 pass the guard and wrap to 0xFFFE/0xFFFF, driving an oversized memmove (up to ~64 KB) into the MDL-mapped output buffer; the patched build adds a feature-gated 'options_size < 8 -> memset' path. The other branch subtracts 2 and cannot underflow given the guard, and is unchanged. The second change (AfdTLListenComplete, unpatched 0x1C005AB60, patched 0x1C0059850) adds a feature-gated AfdDrainListeningIrps call on the failed-listen (status < 0) branch to drain and complete pending listen IRPs at conn+0x70 before releasing the conn+0x30 spinlock and dereferencing the endpoint. The third change (AfdSanFastCompleteRequest, unpatched 0x1C0078630, patched 0x1C0077700) makes the connection-teardown-state check (conn[0x91]) unconditional, where it was previously skipped when a feature flag was off; this is a hardening change, not a TOCTOU race (the whole sequence runs under the conn+0x30 spinlock), and is downgraded to low severity. All fixes are gated by (or, for the third, remove) EvaluateCurrentState feature flags, so with a flag disabled the patched binary may still contain the pre-fix behavior for findings 1 and 2."
+}

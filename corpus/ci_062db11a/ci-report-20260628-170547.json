@@ -1,0 +1,205 @@
+{
+  "binaries": {
+    "title": "ci.dll (Windows Code Integrity) - No security-relevant change; Code Integrity feature-staging graduation plus SymCrypt/ECC library rebuild",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9466,
+    "matched": 2498,
+    "changed": 99,
+    "identical": 2399,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CipShouldRevalidateForPolicyChange (sub_1800670B4 unpatched / sub_18006A874 patched)",
+      "similarity": 0.5609,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) staging gate from the below-MmSystemRangeStart value path; the mask 'and, 0x3ffffffffffffff' (clear bits 58-63) is applied unconditionally in the patched build instead of only when the feature returns non-zero",
+        "The comparison operand is g_CiPolicyGenerationCounter (data_180043330 unpatched / data_180045368 patched); the gating dword is g_CiPolicyState (data_180043e00 unpatched / data_180045e70 patched)",
+        "All other branches (short-circuit when g_CiPolicyGenerationCounter == 0x3ffffffffffffff, kernel-pointer path testing bit 3) are identical in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function (name: ShouldRevalidateForPolicyChange) decides whether a cached image validation must be re-run after a policy change by comparing a value against the internal policy generation counter g_CiPolicyGenerationCounter. It is not a memory bounds check. In the unpatched build the mask (clear bits 58-63) is applied only when Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) returns non-zero; the patched build applies it unconditionally. The masked/compared value is an internal generation counter, not an attacker-supplied pointer, and the mask affects only values with bits 58-63 set, which a legitimate generation counter never has. The unpatched build already contains the masked path behind the flag. This is a feature-staging graduation, not a delivered exploitable check. The earlier 'boundary check bypass allowing unsigned code execution' description is not supported by the binaries.",
+      "assembly_diff": "CipShouldRevalidateForPolicyChange (UNPATCHED @ 0x1800670B4):\n0x1800670b4: mov [rsp+8], rbx\n0x1800670b9: push rdi\n0x1800670ba: sub rsp, 0x20\n0x1800670be: mov eax, cs:g_CiPolicyState\n0x1800670c4: mov rbx, rcx\n0x1800670c7: test al, al\n0x1800670c9: js 0x1800670cf\n0x1800670cb: xor al, al            ; g_CiPolicyState >= 0 -> return 0\n0x1800670cd: jmp 0x180067114\n0x1800670cf: mov rdi, 0x3ffffffffffffff\n0x1800670d9: cmp cs:g_CiPolicyGenerationCounter, rdi\n0x1800670e0: jz 0x180067112\n0x1800670e2: mov rax, cs:MmSystemRangeStart\n0x1800670e9: cmp rbx, [rax]\n0x1800670ec: jb 0x1800670fa\n0x1800670ee: mov eax, [rcx]\n0x1800670f0: test al, 8\n0x1800670f2: jnz 0x180067112\n0x1800670f4: mov rbx, [rcx+8]\n0x1800670f8: jmp 0x180067106\n0x1800670fa: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514)  ; STAGING GATE, removed in patch\n0x1800670ff: test eax, eax\n0x180067101: jz 0x180067106        ; feature off -> skip mask\n0x180067103: and rbx, rdi          ; conditional mask\n0x180067106: cmp rbx, cs:g_CiPolicyGenerationCounter\n0x18006710d: setb al\n0x180067110: jmp 0x180067114\n0x180067112: mov al, 1\n0x180067114: mov rbx, [rsp+0x30]\n0x180067119: add rsp, 0x20\n0x18006711d: pop rdi\n0x18006711e: retn\n\nCipShouldRevalidateForPolicyChange (PATCHED @ 0x18006A874):\n0x18006a874: mov eax, cs:g_CiPolicyState\n0x18006a87a: test al, al\n0x18006a87c: js 0x18006a882\n0x18006a87e: xor al, al\n0x18006a880: retn\n0x18006a882: mov rdx, cs:g_CiPolicyGenerationCounter\n0x18006a889: mov r8, 0x3ffffffffffffff\n0x18006a893: cmp rdx, r8\n0x18006a896: jz 0x18006a8bb\n0x18006a898: mov rax, cs:MmSystemRangeStart\n0x18006a89f: cmp rcx, [rax]\n0x18006a8a2: jb 0x18006a8b0\n0x18006a8a4: mov eax, [rcx]\n0x18006a8a6: test al, 8\n0x18006a8a8: jnz 0x18006a8bb\n0x18006a8aa: mov rcx, [rcx+8]\n0x18006a8ae: jmp 0x18006a8b3\n0x18006a8b0: and rcx, r8            ; mask always applied, no feature call\n0x18006a8b3: cmp rcx, rdx\n0x18006a8b6: setb al\n0x18006a8b9: retn\n0x18006a8bb: mov al, 1\n0x18006a8bd: retn"
+    },
+    {
+      "name": "CiRevalidateImage (sub_180064DF0 unpatched / sub_180068570 patched)",
+      "similarity": 0.8888,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) gate (unpatched call at 0x180064EC3) around the pointer-validity block on [rbp+arg_20]: non-null, below MmSystemRangeStart, server-silo test on bit 0x3B via PsIsCurrentThreadInServerSilo; the patched build runs these checks unconditionally",
+        "Removed a second Feature_Servicing_CodeIntegrityWinTcbPplTocTou call (unpatched at 0x180064F65) in the Protected-Process-Light region",
+        "Added new Feature_CodeIntegrity_TrustedLaunchPolicy (sub_180018DF8) gated path with CipIsTrustedLaunch (sub_18006EBB0) and RtlQueryPackageClaims"
+      ],
+      "security_relevant": false,
+      "security_notes": "The only real change to the shared logic is removal of the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) staging gate; the patched build behaves as the unpatched build did with the feature enabled (pointer-validity and server-silo checks always run). Both builds reach the same Protected-Process-Light handling (PsGetCurrentProcess -> PsIsProtectedProcessLight, cmp ebx,7) and fall through to the Feature_TrustedLaunch path. There is no PPL 'return ALLOW without verification' bypass; that earlier claim had no supporting assembly and is withdrawn. The patched build additionally introduces the new Feature_CodeIntegrity_TrustedLaunchPolicy staging path (old behavior retained when the flag is off).",
+      "assembly_diff": "UNPATCHED @ 0x180064EC3 (staging gate on pointer-validity block):\n0x180064ec3: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514)\n0x180064ec8: mov rdi, [rbp+arg_20]\n0x180064ecc: test eax, eax\n0x180064ece: jz 0x180064f39        ; feature off -> skip pointer checks\n0x180064ed0: test rdi, rdi\n0x180064ed3: jz 0x180064f39\n0x180064ed5: mov rax, cs:MmSystemRangeStart\n0x180064edc: cmp rdi, [rax]\n0x180064edf: jnb 0x180064f39\n0x180064ee1: bt rdi, 0x3b\n0x180064ee6: jnb 0x180064f2b\n0x180064ee8: call __imp_PsIsCurrentThreadInServerSilo\n\nPATCHED @ 0x18006863B (no feature call; checks unconditional):\n0x18006863b: test r15b, 0xa\n0x18006863f: jnz 0x180068672\n0x180068641: cmp dl, 5\n0x180068644: jz 0x180068672\n0x180068646: mov rsi, [rbp+arg_20]\n0x18006864a: test rsi, rsi\n0x18006864d: jz 0x1800686ae\n0x18006864f: mov rax, cs:MmSystemRangeStart\n0x180068656: cmp rsi, [rax]\n0x180068659: jnb 0x1800686ae\n0x18006865b: bt rsi, 0x3b\n0x180068660: jnb 0x1800686a5\n0x180068662: call __imp_PsIsCurrentThreadInServerSilo"
+    },
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields (sub_180002D0C)",
+      "similarity": 0.701,
+      "change_type": "library_rebuild",
+      "key_changes": [
+        "Added a flags parameter (arg7) to the RSA private-key CRT field computation",
+        "Added an RSA key-pair consistency self-test gated by 'if ((arg7 & 0x200) != 0)': multiplies the two primes via SymCryptFdefIntMulMixedSize (sub_1800256DC) and compares the product to the modulus via SymCryptFdefIntIsEqual (sub_180025418), i.e. verifies p*q == n",
+        "Uses SymCrypt big-integer helpers (SymCryptFdefIntCopyMixedSize (sub_180025354)) for the CRT field computation"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt routine that computes RSA private-key CRT fields from the prime factors. The patched build adds an arg7 flags parameter; when bit 0x200 is set it performs a p*q == n self-test. The trigger is a caller-supplied compile-time flag, not attacker-controlled. This is robustness/self-test hardening inside the statically-linked SymCrypt library (library rebuild), not a certificate-verification or policy change."
+    },
+    {
+      "name": "MinCryptVerifySignedHash2 (sub_1800852AC)",
+      "similarity": 0.9038,
+      "change_type": "library_rebuild",
+      "key_changes": [
+        "Added support for ECC P-521 curve (OID 0x2e03) in signature verification dispatch",
+        "Changed MinAsn1ExtractValues (sub_180086F90) call pattern to new MinAsn1ParsePublicKeyInfo (sub_18008C47C) wrapper",
+        "Reorganized OID dispatch switch: merged 0x2e01/0x2e02 handling, added 0x2e03 case",
+        "Stack frame increased from var_188 to var_538 indicating larger local buffers"
+      ],
+      "security_relevant": false,
+      "security_notes": "ECC P-521 support added as part of the Feature_CodeIntegrity_EccSupport staging set introduced in the patched build (crypto library rebuild). No removed or weakened check."
+    },
+    {
+      "name": "HashpVerifyEcdsaSignature (sub_180081624)",
+      "similarity": 0.845,
+      "change_type": "library_rebuild",
+      "key_changes": [
+        "Added P-521 ECC curve parameter initialization (arg1 == 0x2e03) gated by Feature_CodeIntegrity_EccSupport__private_IsEnabledDeviceUsageNoInline (sub_180018DA4)()",
+        "Changed crypto provider flags: conditionally uses 0x1000 vs 0x1100 based on Feature_CodeIntegrity_EccSupport (sub_180018DA4)()"
+      ],
+      "security_relevant": false,
+      "security_notes": "ECC P-521 support staging (Feature_CodeIntegrity_EccSupport, new in the patched build). Crypto library rebuild."
+    },
+    {
+      "name": "CipInitialize (sub_180053BD0)",
+      "similarity": 0.9083,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "CI initialization dispatch table size grew from 0x108 to 0x110 (new entry at offset 0x100)",
+        "Added conditional function pointer assignment: 'if (Feature_CodeIntegrity_TrustedLaunchPolicy (sub_180018DF8)()) *(arg4 + 0x100) = CiIsTrustedLaunchPolicyEnabled (sub_18006FE00)'",
+        "Added new initialization call wil_InitializeFeatureStaging (sub_1800F703C)() at function entry",
+        "Added Feature_CodeIntegrity_EccSupport (sub_180018DA4)() check before calling MinCrypK_DisableEcdsa (sub_18001B980)()"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging wiring: adds a dispatch entry and initializes WIL feature staging for the new TrustedLaunchPolicy and EccSupport feature sets."
+    },
+    {
+      "name": "CiGetActionsForImage (sub_1800D5610 unpatched / sub_1800D9230 patched)",
+      "similarity": 0.9461,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) gate from the policy-flag block: unpatched opens with 'call Feature...; test eax,eax; jz' (0x1800D563D) skipping the block when the flag is off; patched runs it directly ('if (!(arg3 & 0x40))')",
+        "Removed a second Feature_Servicing_CodeIntegrityWinTcbPplTocTou check (unpatched at 0x1800D576C) from the bit 0x1d / flag 2 policy, unifying the path"
+      ],
+      "security_relevant": false,
+      "security_notes": "Computes code-integrity policy-action flags. Same staging graduation as CipShouldRevalidateForPolicyChange and CiRevalidateImage using the same flag. The unpatched build already contains the graduated path behind the flag; the patched build makes it unconditional."
+    },
+    {
+      "name": "CiQueryInformation (sub_1800D5040)",
+      "similarity": 0.9325,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new gating condition: 'if (!(data_180045e70 & 0x400000) || !(data_180052010 & 0x2000))' before setting 0x100000 flag",
+        "Restructured debugger-present logic with new r10_1 variable controlling flag 0x100000"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "CiHvciIsVbsPolicyFailure (sub_18006C478 unpatched / sub_1800707F8 patched)",
+      "similarity": 0.8914,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Added Feature_CodeIntegrity_TrustedLaunchPolicy (sub_180018DF8) gate at the function head (patched call at 0x18007081A) controlling additional bit checks",
+        "When the new flag is enabled, additionally requires bit 0x14 set and bit 0x15 clear in [rcx+938h] (bt eax,0x14 / bt eax,0x15) before the match loop, otherwise returns 0; when the flag is off, falls straight through to the same loop as the unpatched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function walks policy entries reachable from the argument structure and reports a VBS policy failure when an entry's policy ID matches SiPolicyIDVbs and the associated global qword (qword_180030498 unpatched / qword_180031660 patched). It does NOT scan for the constants 0x4b5e588ba072029f / 0x87f67dd6aa05f9b7; those literals belong to other functions and were misattributed in the earlier draft. The change is a newly-introduced Feature_CodeIntegrity_TrustedLaunchPolicy staged gate with the old behavior retained when the flag is off (staged rollout)."
+    },
+    {
+      "name": "SIPolicySearchFileRules (sub_180095218)",
+      "similarity": 0.8969,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function signature changed: added new parameters arg13 (UNICODE_STRING**), arg14 (int32_t)",
+        "bsearch callback function changed from SIPolicyFileRuleSearchCompare (sub_18006F0E0) to SIPolicyFileRuleSearchCompare (sub_180073450)"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "I_FreeCatalogData (sub_18009986C)",
+      "similarity": 0.9091,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Structure size increased from 0x118 to 0x128 (new field at offset 0x23 * 8 = 0x118)",
+        "Added conditional free of arg1[0x23] gated by Feature_TrustedLaunchSysAppsOSCatalog (sub_180019698)() feature check",
+        "Pool tag 0x63734943 freed for new field"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "CipReportAndReprieveUMCIFailure (sub_18005A44C)",
+      "similarity": 0.3104,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large expansion from 351 to 1325 lines indicating major refactoring",
+        "Function signature changed with new parameters",
+        "Added ETW activity tracking, push lock acquisition, performance counter queries",
+        "Added CiLogFileRequestedValidationEvent (sub_18009424C) call"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition / refactor (ETW, push locks, perf counters), not a security fix."
+    },
+    {
+      "name": "CipUpdateValidationContextWithFileInfo (sub_18008E9D8)",
+      "similarity": 0.8559,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Added Feature_CodeIntegrity_TrustedLaunchPolicy (sub_180018DF8)() gate before setting *(arg1 + 0x3d8) = arg2",
+        "Added additional UNICODE_STRING (var_58) with 5th string field",
+        "Changed error handling: removed STATUS_INVALID_VIEW_SIZE / STATUS_RESOURCE_LANG_NOT_FOUND special cases",
+        "Added null check: 'if (!var_48.Buffer) RtlInitUnicodeString(...)' for additional safety"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of the new TrustedLaunchPolicy staging set plus null-check hardening."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "CipShouldRevalidateForPolicyChange (sub_1800670B4 unpatched / sub_18006A874 patched)",
+      "entry_point": "Called from CiRevalidateImage (unpatched 0x180064EAE / 0x180064FD7; patched 0x180068631 / 0x180068799) on the Code Integrity image-validation path",
+      "call_chain": ["CiRevalidateImage -> CipShouldRevalidateForPolicyChange"],
+      "vulnerability_class": "Feature-staging graduation of an internal consistency mask (no delivered exploitable check)",
+      "description": "CipShouldRevalidateForPolicyChange decides whether a cached image validation must be re-run after a policy change, comparing a value against the internal policy generation counter g_CiPolicyGenerationCounter (data_180043330 / data_180045368). g_CiPolicyState (data_180043e00 / data_180045e70) gates whether the check runs (its sign bit must be set). On the below-MmSystemRangeStart value path the unpatched build applies the mask (clear bits 58-63) only when Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) returns non-zero; the patched build applies it unconditionally. The masked/compared value is an internal generation counter, not an attacker-supplied pointer, and the mask affects only values with bits 58-63 set (never true for a legitimate generation counter). The unpatched build already contains the masked path behind the flag. This is a feature-staging graduation, not a delivered exploitable check; no unsigned-code-execution primitive is demonstrable.",
+      "trigger_conditions": "For the masked and unmasked comparisons to differ at all, the value on the below-MmSystemRangeStart path would need bits 58-63 set, which does not occur for a legitimate policy generation counter. No attacker-controlled input reaching this comparison in that state is demonstrated. g_CiPolicyState must be negative (sign bit set) and g_CiPolicyGenerationCounter must not equal 0x3ffffffffffffff for the compare to run.",
+      "primitive": "None demonstrable",
+      "evidence": "See assembly_diff for CipShouldRevalidateForPolicyChange. The only difference is the conditional feature call + conditional 'and' (unpatched 0x1800670FA/0x180067103) versus an unconditional 'and rcx, r8' (patched 0x18006A8B0). The comparison against g_CiPolicyGenerationCounter and all other branches are identical.",
+      "assembly": "",
+      "notes": "The mask constant is 0x3ffffffffffffff (15 hex digits, clears bits 58-63), not 0x3fffffffffffffff. The compared global is the policy generation counter g_CiPolicyGenerationCounter, not a memory boundary limit."
+    },
+    {
+      "severity": "informational",
+      "function": "CiRevalidateImage (sub_180064DF0 unpatched / sub_180068570 patched)",
+      "entry_point": "Code Integrity image-validation path",
+      "call_chain": ["CiRevalidateImage"],
+      "vulnerability_class": "Feature-staging graduation (no delivered exploitable check)",
+      "description": "The unpatched build gates a block of pointer-validity checks (non-null, below MmSystemRangeStart, server-silo test on bit 0x3B) behind Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) (call at 0x180064EC3). The patched build removes the gate and runs those checks unconditionally, i.e. it behaves as the unpatched build did with the feature enabled. Both builds reach the same Protected-Process-Light handling and fall through to the Feature_TrustedLaunch path.",
+      "trigger_conditions": "N/A. The change is the removal of a runtime staging gate; the unpatched build already contains the graduated path.",
+      "primitive": "None demonstrable. There is no PPL 'return ALLOW without verification' bypass; the earlier claim had no supporting assembly and is withdrawn.",
+      "evidence": "See assembly_diff for CiRevalidateImage (unpatched 0x180064EC3 vs patched 0x18006863B).",
+      "assembly": "",
+      "notes": "Same staging flag as CipShouldRevalidateForPolicyChange and CiGetActionsForImage. The flag drops from 8 call sites (unpatched) to 0 (patched)."
+    }
+  ],
+  "summary": "This diff is a newer servicing build of Windows Code Integrity (ci.dll). It is not a delivered exploitable security fix. The Feature_Servicing_CodeIntegrityWinTcbPplTocTou WIL staging flag is fully removed (8 call sites -> 0) across CiValidateImageHeader, CiRevalidateImage, CipShouldRevalidateForPolicyChange, CipGetFileCache, and CiGetActionsForImage, making the previously flag-gated behavior unconditional (a feature graduation; the unpatched build already contains that path behind the flag). Two new staging feature sets are introduced only in the patched build: Feature_CodeIntegrity_TrustedLaunchPolicy (0 -> 51 call sites) and Feature_CodeIntegrity_EccSupport (0 -> 5, ECC P-521 support). The affected comparison in CipShouldRevalidateForPolicyChange is against the internal policy generation counter g_CiPolicyGenerationCounter, not an attacker-supplied pointer, and the mask is a no-op for all legitimate values, so no reachable primitive is delivered. Remaining changes in the statically-linked SymCrypt code (RSA field computation self-test) are a library rebuild. The earlier HIGH 'boundary check bypass / PPL policy bypass allowing unsigned code execution' conclusion, the magic-value attribution to CiHvciIsVbsPolicyFailure, and the associated exploit chain are not supported by the binaries and are withdrawn."
+}

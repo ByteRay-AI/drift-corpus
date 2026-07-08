@@ -1,0 +1,157 @@
+{
+  "binaries": {
+    "title": "ndis.sys - No security-relevant change: WIL feature-staging retirement moves per-handle context free from IRP_MJ_CLEANUP to IRP_MJ_CLOSE",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9908,
+    "matched": 3124,
+    "changed": 5,
+    "identical": 3119,
+    "unmatched_unpatched": 10,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ndisDispatchRequest",
+      "address": "0x1C001D550",
+      "similarity": 0.93,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "IRP dispatch routine for the \\Device\\Ndis control device. The per-handle context FsContext (0x38-byte NonPagedPoolNx allocation, tag 'NDoC' / 0x636F444E) is allocated in IRP_MJ_CREATE and stored in FileObject->FsContext.",
+        "UNPATCHED: whether FsContext is freed in IRP_MJ_CLEANUP (major 0x12) or IRP_MJ_CLOSE (major 2) is selected by the WIL feature gate Feature_3473086778__private_IsEnabledDeviceUsage() @ 0x1C003F56C. Feature enabled -> CLEANUP skips the free and CLOSE frees; feature disabled -> CLEANUP frees and CLOSE skips. Both paths share the free site at 0x1C001D75C/0x1C001D75E.",
+        "PATCHED: the WIL feature is retired. Both gate calls are removed. IRP_MJ_CLEANUP performs only miniport-reference/list/spinlock teardown and completes the IRP (no free). IRP_MJ_CLOSE unconditionally frees FsContext when non-NULL. This is the feature-enabled branch made permanent.",
+        "Remaining register-allocation differences (r12/r15, rdi/rsi) are compiler churn from removing the gate calls."
+      ],
+      "security_relevant": false,
+      "security_notes": "No demonstrated security-relevant change. The choice between freeing FsContext in IRP_MJ_CLEANUP versus IRP_MJ_CLOSE is controlled in the unpatched build by a WIL feature-staging flag (Feature_3473086778__private_IsEnabledDeviceUsage), not by any attacker-influenced or application-state condition. The deferred-to-CLOSE behavior already exists in the unpatched build as the feature-enabled branch, so the patch delivers a staged feature rather than adding a missing check. Moving a file-object-context free from CLEANUP to CLOSE is the conventional, defensively preferable object-lifecycle placement, but no path in this routine is shown to leave a reference to FsContext outstanding past IRP_MJ_CLEANUP, so no reachable use-after-free is demonstrable from the binaries. The DEVICE_CONTROL path (major 0x0E) on this device calls ndisHandlePnPRequest (@ 0x1C012CDB8), the NDIS PnP-request handler; it is not shown to keep a live FsContext reference across CLEANUP. Severity: informational.",
+      "assembly_diff": "UNPATCHED IRP_MJ_CLEANUP path (major 0x12), gate + fallback free:\n0x1C001D744: call    Feature_3473086778__private_IsEnabledDeviceUsage\n0x1C001D749: test    eax, eax\n0x1C001D74B: jnz     loc_1C001D827          ; feature ENABLED -> skip free, complete\n0x1C001D751: mov     rax, [r15+30h]         ; FileObject\n0x1C001D755: mov     rcx, rdi               ; FsContext\n0x1C001D758: mov     [rax+18h], rbx         ; FileObject->FsContext = NULL\n0x1C001D75C: xor     edx, edx               ; Tag = 0\n0x1C001D75E: call    cs:__imp_ExFreePoolWithTag  ; free (feature-disabled fallback)\n0x1C001D76A: lock dec cs:dword_1C00E70DC\n0x1C001D771: jmp     loc_1C001D827\n\nUNPATCHED IRP_MJ_CLOSE path (major 2), gate + free:\n0x1C001D78C: call    Feature_3473086778__private_IsEnabledDeviceUsage\n0x1C001D791: test    eax, eax\n0x1C001D793: je      loc_1C001D827          ; feature DISABLED -> skip free, complete\n0x1C001D799: mov     rax, [r15+30h]         ; FileObject\n0x1C001D79D: mov     rcx, [rax+18h]         ; FsContext\n0x1C001D7A1: mov     [rax+18h], rbx         ; FileObject->FsContext = NULL\n0x1C001D7A5: test    rcx, rcx\n0x1C001D7A8: je      short loc_1C001D76A\n0x1C001D7AA: jmp     short loc_1C001D75C    ; -> shared free at 0x1C001D75C/75E\n\nPATCHED IRP_MJ_CLOSE path (major 2), unconditional free, no gate:\n0x1C001D760: mov     rax, [rdi+30h]         ; FileObject\n0x1C001D764: mov     rcx, [rax+18h]         ; FsContext\n0x1C001D768: mov     [rax+18h], rbx         ; NULL\n0x1C001D76C: test    rcx, rcx\n0x1C001D76F: je      short loc_1C001D77F\n0x1C001D771: xor     edx, edx               ; Tag = 0\n0x1C001D773: call    cs:__imp_ExFreePoolWithTag\n0x1C001D77F: lock dec cs:dword_1C00E609C\n0x1C001D786: jmp     short loc_1C001D804\n\nPATCHED IRP_MJ_CLEANUP path (major 0x12), teardown then complete, no free:\n0x1C001D72F: mov     rcx, [rdi+30h]         ; sub-object at FsContext+0x30\n0x1C001D733: test    rcx, rcx\n0x1C001D736: jz      loc_1C001D804\n0x1C001D73C: call    ?ndisIfDereferenceCompartmentForUser@@YAJPEAX@Z\n0x1C001D741: mov     [rdi+30h], rbx\n0x1C001D745: jmp     loc_1C001D804          ; complete, no FsContext free"
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath",
+      "address": "0x1C003E254",
+      "similarity": 0.8259,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "WIL feature-state-cache helper. The reporting-kind computation branch (sub edx,3 / cmp edx,1 selecting a value of 0x10 or 0x20) is removed and the value is hardcoded to 0x10; the corresponding argument is dropped. Control flow restructured around the cmpxchg loop.",
+        "This is part of the DeviceUsage feature retirement: the cache fast-path no longer needs the runtime reporting-kind selection."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-state-cache plumbing. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService",
+      "address": "0x1C003DFE4",
+      "similarity": 0.9868,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "WIL usage-telemetry helper. The reporting 'kind' value is now hardcoded to 3 on the stack internally instead of taken from an argument. Stack frame grew from 0x50 to 0x60. Only relocation targets otherwise changed."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage telemetry plumbing. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_NdisDatapathVerifier__private_ReportDeviceUsage",
+      "address": "0x1C003DC44",
+      "similarity": 0.9704,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "WIL usage-reporting caller updated to match the helper's new hardcoded-argument convention: the mov r8d,3 / mov edx,3 argument setup is dropped. Only data-reference addresses changed otherwise."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-reporting caller-side plumbing. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_ScreenON_NAPS__private_ReportDeviceUsage",
+      "address": "0x1C004030C",
+      "similarity": 0.9822,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Same caller-side change as Feature_NdisDatapathVerifier__private_ReportDeviceUsage, applied to a different feature-reporting object. WIL usage-reporting plumbing."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-reporting caller-side plumbing. Not security-relevant.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Feature_3473086778__private_IsEnabledDeviceUsage",
+      "Feature_3473086778__private_IsEnabledFallback",
+      "wil_RtlStagingConfig_QueryFeatureState",
+      "wil_StagingConfig_QueryFeatureState",
+      "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "wil_details_GetCurrentFeatureEnabledState",
+      "wil_details_IsEnabledFallback",
+      "wil_details_StagingConfigFeature_HasUniqueState",
+      "wil_details_StagingConfig_Load",
+      "wil_details_StagingConfig_QueryFeatureState"
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "ndisDispatchRequest",
+      "address": "0x1C001D550",
+      "entry_point": "\\Device\\Ndis / \\.\\NDIS symbolic link - IRP dispatch (IRP_MJ_CREATE major 0, IRP_MJ_CLOSE major 2, IRP_MJ_DEVICE_CONTROL major 0x0E, IRP_MJ_CLEANUP major 0x12, IRP_MJ_SYSTEM_CONTROL major 0x17)",
+      "call_chain": [
+        "CreateFile('\\.\\NDIS') -> IRP_MJ_CREATE (major 0): allocates FsContext (0x38 bytes, tag 'NDoC') via ExAllocatePoolWithTag, runs two ndisCheckAccess checks writing results to FsContext[0]/FsContext[1], stores FsContext in FileObject->FsContext at 0x1C001D818",
+        "DeviceIoControl -> IRP_MJ_DEVICE_CONTROL (major 0x0E): sub at 0x1C001D780 calls ndisHandlePnPRequest (0x1C012CDB8), the NDIS PnP-request handler",
+        "CloseHandle() -> IRP_MJ_CLEANUP (major 0x12): in the unpatched build FsContext is freed here only when the WIL feature gate Feature_3473086778__private_IsEnabledDeviceUsage() returns FALSE (feature-disabled fallback)",
+        "IRP_MJ_CLOSE (major 2): in the unpatched build FsContext is freed here only when the same WIL gate returns TRUE"
+      ],
+      "vulnerability_class": "No demonstrated vulnerability. Object-lifecycle placement change delivered via WIL feature-staging retirement (relates to the CWE-416 class in theory only; no reachable use-after-free is demonstrable).",
+      "description": "The \\Device\\Ndis IRP dispatch routine (ndisDispatchRequest @ 0x1C001D550) allocates a per-handle context FsContext (0x38-byte NonPagedPoolNx allocation, tag 'NDoC' / 0x636F444E) during IRP_MJ_CREATE and stores it in FileObject->FsContext. In the unpatched build, whether FsContext is freed during IRP_MJ_CLEANUP (major 0x12) or during IRP_MJ_CLOSE (major 2) is selected at runtime by Feature_3473086778__private_IsEnabledDeviceUsage() @ 0x1C003F56C, a WIL feature-staging gate that reads the cached feature state and, when uncached, calls Feature_3473086778__private_IsEnabledFallback. When the feature is enabled, CLEANUP skips the free and CLOSE performs it; when disabled, CLEANUP performs the free and CLOSE skips it. Both paths share the free site at 0x1C001D75C/0x1C001D75E.\n\nIn the patched build the DeviceUsage feature is retired: both gate calls are removed, along with the entire staging-config query machinery (10 functions removed). IRP_MJ_CLEANUP now only performs miniport-reference/list/spinlock teardown and completes the IRP; IRP_MJ_CLOSE unconditionally frees FsContext when non-NULL. This is exactly the feature-enabled behavior made permanent.\n\nThis is not a demonstrated security fix. The selection is a staged-feature flag, not an attacker-influenced condition; the deferred-to-CLOSE behavior already existed in the unpatched build; and nothing in this routine establishes a reference to FsContext outstanding past CLEANUP, so no reachable use-after-free is provable from the binaries.",
+      "trigger_conditions": "Whether the unpatched build frees FsContext during CLEANUP or CLOSE depends solely on the WIL feature Feature_3473086778 (DeviceUsage) staged configuration, which is not determinable from the binaries. No attacker-controlled condition selects the path. No path in ndisDispatchRequest is shown to leave a live reference to FsContext outstanding past IRP_MJ_CLEANUP.",
+      "primitive": "None demonstrable. The change relocates a pool free between two IRP major functions via feature-flag retirement; the deferred-to-CLOSE behavior already existed in the unpatched build. No reachable use-after-free, information leak, or memory-corruption primitive is established.",
+      "evidence": "UNPATCHED IRP_MJ_CLEANUP (major 0x12), gate + fallback free:\n0x1C001D744: call    Feature_3473086778__private_IsEnabledDeviceUsage\n0x1C001D749: test    eax, eax\n0x1C001D74B: jnz     loc_1C001D827          ; feature ENABLED -> skip free\n0x1C001D751: mov     rax, [r15+30h]\n0x1C001D755: mov     rcx, rdi               ; FsContext\n0x1C001D758: mov     [rax+18h], rbx         ; NULL FsContext field\n0x1C001D75C: xor     edx, edx\n0x1C001D75E: call    cs:__imp_ExFreePoolWithTag  ; free (feature-disabled fallback)\n0x1C001D76A: lock dec cs:dword_1C00E70DC\n\nUNPATCHED IRP_MJ_CLOSE (major 2), gate + free:\n0x1C001D78C: call    Feature_3473086778__private_IsEnabledDeviceUsage\n0x1C001D791: test    eax, eax\n0x1C001D793: je      loc_1C001D827          ; feature DISABLED -> skip free\n0x1C001D799: mov     rax, [r15+30h]\n0x1C001D79D: mov     rcx, [rax+18h]\n0x1C001D7A1: mov     [rax+18h], rbx\n0x1C001D7A5: test    rcx, rcx\n0x1C001D7A8: je      short loc_1C001D76A\n0x1C001D7AA: jmp     short loc_1C001D75C\n\nPATCHED IRP_MJ_CLOSE (major 2), unconditional free, no gate:\n0x1C001D760: mov     rax, [rdi+30h]\n0x1C001D764: mov     rcx, [rax+18h]\n0x1C001D768: mov     [rax+18h], rbx\n0x1C001D76C: test    rcx, rcx\n0x1C001D76F: je      short loc_1C001D77F\n0x1C001D771: xor     edx, edx\n0x1C001D773: call    cs:__imp_ExFreePoolWithTag\n0x1C001D77F: lock dec cs:dword_1C00E609C\n\nPATCHED IRP_MJ_CLEANUP (major 0x12), teardown then complete, no free:\n0x1C001D72F: mov     rcx, [rdi+30h]\n0x1C001D733: test    rcx, rcx\n0x1C001D736: jz      loc_1C001D804\n0x1C001D73C: call    ?ndisIfDereferenceCompartmentForUser@@YAJPEAX@Z\n0x1C001D741: mov     [rdi+30h], rbx\n0x1C001D745: jmp     loc_1C001D804          ; complete, no free",
+      "assembly": "ndisDispatchRequest (\\Device\\Ndis IRP dispatch) - UNPATCHED, prologue and MajorFunction decode:\n0x1C001D550: mov     rax, rsp\n0x1C001D553: mov     [rax+8], rbx\n0x1C001D557: mov     [rax+10h], rbp\n0x1C001D55B: mov     [rax+18h], rsi\n0x1C001D55F: mov     [rax+20h], rdi\n0x1C001D563: push    r12\n0x1C001D565: push    r14\n0x1C001D567: push    r15\n0x1C001D569: sub     rsp, 40h\n0x1C001D56D: mov     r15, [rdx+0B8h]         ; current IO_STACK_LOCATION\n0x1C001D574: mov     rdi, rcx                ; DeviceObject\n0x1C001D577: xor     ebx, ebx\n0x1C001D580: mov     esi, 103h               ; STATUS_PENDING\n0x1C001D585: mov     [rdx+38h], rbx          ; IoStatus.Information = 0\n0x1C001D589: mov     [rdx+30h], esi          ; IoStatus.Status = STATUS_PENDING\n0x1C001D58C: mov     rbp, rdx                ; IRP\n0x1C001D58F: call    ndisReferencePackage\n0x1C001D594: movzx   r8d, byte [r15]         ; r8d = MajorFunction\n0x1C001D598: test    r8d, r8d\n0x1C001D59B: jz      loc_1C001D7AC          ; 0 -> IRP_MJ_CREATE\n0x1C001D5A1: sub     r8d, 2\n0x1C001D5A5: jz      loc_1C001D78C          ; 2 -> IRP_MJ_CLOSE\n0x1C001D5AB: sub     r8d, 0Ch\n0x1C001D5AF: jz      loc_1C001D77D          ; 0x0E -> IRP_MJ_DEVICE_CONTROL\n0x1C001D5B5: sub     r8d, 1\n0x1C001D5B9: jz      loc_1C001D827          ; 0x0F -> complete\n0x1C001D5BF: sub     r8d, 3\n0x1C001D5C3: jz      short loc_1C001D5E5   ; 0x12 -> IRP_MJ_CLEANUP\n0x1C001D5C5: cmp     r8d, 5\n0x1C001D5C9: jz      short loc_1C001D5D5   ; 0x17 -> IRP_MJ_SYSTEM_CONTROL\n0x1C001D5CB: mov     ebx, 0C0000002h        ; STATUS_NOT_IMPLEMENTED\n0x1C001D5D0: jmp     loc_1C001D827\n\nIRP_MJ_CREATE (major 0):\n0x1C001D7AC: mov     edx, 38h               ; allocation size = 0x38\n0x1C001D7B1: mov     ecx, 200h              ; NonPagedPoolNx\n0x1C001D7B6: mov     r8d, 636F444Eh         ; tag 'NDoC'\n0x1C001D7BC: call    cs:__imp_ExAllocatePoolWithTag\n0x1C001D7C8: mov     rdi, rax               ; FsContext\n0x1C001D7CB: test    rax, rax\n0x1C001D7CE: jnz     short loc_1C001D7D7\n0x1C001D7D0: mov     ebx, 0C000009Ah        ; STATUS_INSUFFICIENT_RESOURCES\n0x1C001D7D5: jmp     short loc_1C001D827\n0x1C001D7D7: xorps   xmm0, xmm0\n0x1C001D7DC: movups  [rdi], xmm0            ; zero FsContext[0..15]\n0x1C001D7E5: movups  [rdi+10h], xmm0\n0x1C001D7E9: movups  [rdi+20h], xmm0\n0x1C001D7ED: mov     [rdi+30h], rax\n0x1C001D7F1: mov     r8, cs:ndisSecurityDescriptor\n0x1C001D7F8: call    ndisCheckAccess        ; access check 1\n0x1C001D804: mov     [rdi], al              ; FsContext[0] = result\n0x1C001D7FD: lea     r8, unk_1C00E6E48\n0x1C001D80C: call    ndisCheckAccess        ; access check 2\n0x1C001D811: mov     [rdi+1], al            ; FsContext[1] = result\n0x1C001D814: mov     rax, [r15+30h]         ; FileObject\n0x1C001D818: mov     [rax+18h], rdi         ; FileObject->FsContext = FsContext\n0x1C001D81C: lock inc cs:dword_1C00E70DC\n\nIRP_MJ_DEVICE_CONTROL (major 0x0E):\n0x1C001D77D: mov     rcx, rbp               ; IRP\n0x1C001D780: call    ndisHandlePnPRequest   ; PnP request handler (0x1C012CDB8)\n0x1C001D785: mov     ebx, eax\n0x1C001D787: jmp     loc_1C001D823\n\nIRP_MJ_CLEANUP (major 0x12) teardown then WIL-gated free (see evidence for the free block at 0x1C001D744+).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisDispatchRequest",
+            "address": "0x1C001D550",
+            "why": "IRP dispatch for \\Device\\Ndis. At entry: rdx=IRP, r15=[rdx+0xB8]=current IO_STACK_LOCATION, r8d=byte[r15]=MajorFunction. Watch r8d: 0=CREATE, 2=CLOSE, 0x0E=DEVICE_CONTROL, 0x12=CLEANUP, 0x17=SYSTEM_CONTROL."
+          },
+          {
+            "symbol": "ndis!Feature_3473086778__private_IsEnabledDeviceUsage",
+            "address": "0x1C003F56C",
+            "why": "WIL feature-staging gate that selects whether FsContext is freed in CLEANUP or CLOSE (unpatched only; removed in patched). eax non-zero defers the free to CLOSE; eax zero frees during CLEANUP. Reads the cached feature state, falling back to Feature_3473086778__private_IsEnabledFallback when uncached."
+          },
+          {
+            "symbol": "ndis ExFreePoolWithTag call site",
+            "address": "0x1C001D75E",
+            "why": "Shared ExFreePoolWithTag site used by both the CLEANUP fallback and the CLOSE path in the unpatched build. rcx holds the FsContext pointer (0x38-byte NonPagedPoolNx, tag 'NDoC')."
+          },
+          {
+            "symbol": "ndis!ndisHandlePnPRequest",
+            "address": "0x1C012CDB8",
+            "why": "The IRP_MJ_DEVICE_CONTROL handler for this device (PnP request handler). This is what the report's earlier 'IOCTL/OID dispatch' actually is."
+          }
+        ],
+        "watch": [
+          "r8d at 0x1C001D594 - MajorFunction byte: 0x00=CREATE, 0x02=CLOSE, 0x0E=DEVICE_CONTROL, 0x12=CLEANUP, 0x17=SYSTEM_CONTROL",
+          "rcx at 0x1C001D75E - the FsContext pointer being freed (0x38-byte NonPagedPoolNx allocation, tag 'NDoC' / 0x636F444E)",
+          "eax at return of Feature_3473086778__private_IsEnabledDeviceUsage (0x1C003F59C) - selects CLEANUP-free (0) vs CLOSE-free (non-zero) in the unpatched build",
+          "[r15+30h] - FileObject; offset +0x18 is the FsContext field",
+          "dword_1C00E70DC (unpatched) / dword_1C00E609C (patched) - global FsContext counter incremented in CREATE, decremented on free"
+        ],
+        "key_offsets": [
+          "0x1C001D744 - call Feature_3473086778__private_IsEnabledDeviceUsage in the CLEANUP path (removed in patched)",
+          "0x1C001D78C - the same gate call in the CLOSE path (removed in patched)",
+          "0x1C001D75C / 0x1C001D75E - shared xor edx,edx / call ExFreePoolWithTag free site (unpatched)",
+          "0x1C001D780 - call ndisHandlePnPRequest, the DEVICE_CONTROL handler",
+          "0x1C001D818 - mov [rax+18h], rdi: stores FsContext into FileObject->FsContext during CREATE",
+          "0x1C001D760 (patched) - unconditional CLOSE free block replacing the gated logic"
+        ],
+        "trigger_setup": "Not applicable as an exploit. To observe the behavior difference: open \\.\\NDIS (CreateFile on the symbolic link) to trigger IRP_MJ_CREATE and FsContext allocation, then CloseHandle to trigger IRP_MJ_CLEANUP followed by IRP_MJ_CLOSE. In the unpatched build set a breakpoint at 0x1C003F56C and inspect eax at return to see which path frees FsContext. In the patched build the free always occurs in IRP_MJ_CLOSE.",
+        "expected_observation": "In the unpatched build, the free occurs in either IRP_MJ_CLEANUP or IRP_MJ_CLOSE depending on the WIL feature state. In the patched build the free always occurs in IRP_MJ_CLOSE and never in IRP_MJ_CLEANUP. No crash or corruption is expected from either build under normal close sequences; no reachable use-after-free is demonstrated.",
+        "notes": "The FsContext structure (0x38 bytes, tag 'NDoC') fields observed in ndisDispatchRequest: +0x00 and +0x01 (bytes) are ndisCheckAccess results written during CREATE; +0x08 is a LIST_ENTRY unlinked under the miniport spinlock during CLEANUP; +0x18 (dword) is a count/state field; +0x1C (dword) is compared as a count; +0x20 is a _NDIS_MINIPORT_BLOCK pointer whose spinlock is at +0x1168; +0x30 is a sub-object released via ndisIfDereferenceCompartmentForUser during CLEANUP. The gate Feature_3473086778__private_IsEnabledDeviceUsage reads the cached feature state (bit 0x10) and otherwise calls the fallback; it and the entire staging-config query path are removed in the patched build. ASLR: use lm ndis to find the load base and add offsets."
+      }
+    }
+  ],
+  "summary": "No demonstrated security-relevant change. The delta between the two ndis.sys builds is a single Windows feature-staging (WIL) change: the DeviceUsage staging feature (feature id 3473086778) is retired. Its enable-check gate (Feature_3473086778__private_IsEnabledDeviceUsage @ 0x1C003F56C), its fallback, and eight more staging-config query helpers are removed (10 functions total), and four feature-reporting/telemetry helpers are simplified to drop a now-constant argument. Inside ndisDispatchRequest (\\Device\\Ndis IRP dispatch @ 0x1C001D550), removing the gate hardcodes the feature-enabled behavior: the per-handle FsContext (0x38-byte NonPagedPoolNx, tag 'NDoC') is now freed unconditionally in IRP_MJ_CLOSE and never in IRP_MJ_CLEANUP, whereas the unpatched build selected between the two via the WIL flag. Moving a file-object-context free from CLEANUP to CLOSE is the conventional object-lifecycle placement, but the deferred-to-CLOSE behavior already existed in the unpatched build as the feature-enabled branch, the selection is a staged-feature flag rather than an attacker-controlled condition, and no path is shown to leave a live reference to FsContext outstanding past CLEANUP. No reachable use-after-free, information leak, or memory-corruption primitive is demonstrable. The report's earlier NDISUIO IOCTL / OID async-pend / pool-spray exploit chain is not supported by the binaries: the DEVICE_CONTROL handler on this device is ndisHandlePnPRequest, not an OID/IOCTL dispatch. Severity: informational."
+}

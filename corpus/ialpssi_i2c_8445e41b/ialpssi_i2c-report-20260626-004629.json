@@ -1,0 +1,147 @@
+{
+  "binaries": {
+    "id_unpatched": "ialpssi_i2c_unpatched.sys",
+    "id_patched": "ialpssi_i2c_patched.sys",
+    "overall_similarity": 0.9912,
+    "matched": 165,
+    "changed": 6,
+    "identical": 159,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "GetDefaultSettings",
+      "similarity": 0.9756,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added 4 new SPK_Cnt (Spike Suppression Count) default parameters for each speed mode: StandardSpeed_SPK_Cnt (offset 0x7c, value=1), FastSpeed_SPK_Cnt (offset 0x8c, value=5), FastSpeedPlus_SPK_Cnt (offset 0x9c, value=5), HighSpeed_SPK_Cnt (offset 0xac, value=1)",
+        "Struct field offsets for all subsequent parameters shifted by +0x10 bytes (e.g., CombinedWriteRead moved from 0xb8 to 0xc8, ByteTimeUs from 0x60b8 to 0x60c8)",
+        "WPP TraceGUIDs changed from c7fd46abe8ccc73e8d1c87dd7cfb4895 to 64ec75d3c22f2ff658abe815f45391b3 (build identity change)",
+        "Loop init array copy offset shifted from 0x10bc to 0x10cc"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetRegistrySettings",
+      "similarity": 0.9889,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added 4 new ReadRegistryKeyForController calls for SPK_Cnt registry values: StandardSpeed_SPK_Cnt (0x7c), FastSpeed_SPK_Cnt (0x8c), FastSpeedPlus_SPK_Cnt (0x9c), HighSpeed_SPK_Cnt (0xac)",
+        "All subsequent struct field offsets shifted +0x10 bytes (e.g., DmaError 0xa0→0xb0, MonitorOnIdleTimeout 0xa8→0xb8, etc.)",
+        "EnableMbar1Control field offset 0xb0→0xc0, MonitorOffD0EntryDelay 0xb4→0xc4"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OverrideDefaultsForHardware",
+      "similarity": 0.9891,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added SPK_Cnt override values for hardware ID 0xf2: StandardSpeed_SPK_Cnt (0x7c, value=1), FastSpeed_SPK_Cnt (0x8c, value=3), FastSpeedPlus_SPK_Cnt (0x9c, value=3), HighSpeed_SPK_Cnt (0xac, value=1)",
+        "All subsequent struct field offsets shifted +0x10 bytes",
+        "DmaInit override offset shifted from 0xa4 to 0xb4"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerConfigureForTransfer",
+      "similarity": 0.985,
+      "change_type": "functional",
+      "key_changes": [
+        "UNPATCHED: writes the Standard (0x14/0x18), Fast/FastPlus (0x1c/0x20) and HighSpeed (0x24/0x28) SCL high/low count registers as a linear sequence. The active speed mode is still programmed into IC_CON at MMIO offset 0 ((2*(mode&3))|0x61); the mode switch selects only the SDA-hold value written to 0x7c.",
+        "UNPATCHED: does not program SPKLEN (offset 0xA0) or HS_SPKLEN (offset 0xA4) - confirmed by scanning the full function (0x1400083c0-0x140009bf8) for add rcx,0A0h/0A4h, which yields no match.",
+        "PATCHED: moves the SCL-count writes inside the existing speed-mode switch so each branch writes only its own group (verified in decompilation, function 0x140008360).",
+        "PATCHED: adds SPKLEN (0xA0) write in every branch (add rcx,0A0h at 0x1400087be/0x140008830/0x140008892/0x140008901).",
+        "PATCHED: adds HS_SPKLEN (0xA4) write in the HighSpeed branch (add rcx,0A4h at 0x14000893d)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Functional / hardware-correctness change, not a security fix. The patch adds programming of the DesignWare-compatible I2C SPKLEN (0xA0) and HS_SPKLEN (0xA4) registers and moves the SCL-count writes into the per-mode branch. The written values (SPK_Cnt and SCL counts) come from GetDefaultSettings constants, ACPI/registry configuration, and hardware-ID overrides; none is attacker-controlled. The unpatched linear write of all SCL groups is functionally harmless because DesignWare hardware consumes only the count registers for the speed selected in IC_CON, so no controller state is corrupted; the per-mode restructuring is a cleanup side effect of introducing the SPK_Cnt fields. The hardware reset value of SPKLEN/HS_SPKLEN cannot be determined from these binaries, so no 'no spike filtering' impact can be substantiated. No trust boundary is crossed and there is no memory-safety effect.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerConfigureForTransfer_PassiveLevel",
+      "similarity": 0.985,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Field offset 0x70d0 → 0x70e0 (struct shift cascade from SPK_Cnt additions)",
+        "Jump target from ControllerConfigureForTransfer at 0x1400083c0 to 0x140008360"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I2CInitDma",
+      "similarity": 0.9927,
+      "change_type": "behavioral",
+      "key_changes": [
+        "MmAllocateContiguousMemorySpecifyCache CacheType parameter changed from MmNonCached (0) to MmCached (1): unpatched uses 'and dword [rsp+0x20], 0x0' (zeroing CacheType), patched uses 'mov dword [rsp+0x20], esi' where esi=1",
+        "All DMA-related struct offsets shifted +0x10 bytes: 0x71b0→0x71c0, 0x7168→0x7178, 0x7170→0x7180, 0x71b8→0x71c8, 0x7208→0x7218, 0x7210→0x7220",
+        "Register allocation changes (rdi→rbx, r15→r14, r13→r12, r14→rsi) - cosmetic only"
+      ],
+      "security_relevant": false,
+      "security_notes": "The MmNonCached→MmCached change for the DMA contiguous buffer is a correctness/performance fix. MmNonCached prevents CPU caching of the buffer, which can cause performance issues on some Intel LPSS DMA implementations. This is not security-relevant.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ControllerConfigureForTransfer",
+      "entry_point": "SPB I2C transfer request (OnWrite/OnRead/OnSequence WDF callbacks → ControllerConfigureForTransfer_PassiveLevel work item → ControllerConfigureForTransfer). This is the normal code path that runs the changed function; it is not an attack surface for the register-programming change.",
+      "call_chain": [
+        "SPB framework I2C read/write/sequence request from user-mode client",
+        "OnRead (0x140004ec8) / OnWrite (0x140005b90) / OnSequence (0x1400055b4) / PbcRequestConfigureForNonSequence (0x140006298)",
+        "ControllerConfigureForTransfer_PassiveLevel (0x140002434) - WDF work item callback",
+        "ControllerConfigureForTransfer (0x1400083c0) - programs I2C controller hardware registers"
+      ],
+      "vulnerability_class": "not a vulnerability; hardware register programming completeness / configuration change",
+      "description": "The patch adds programming of the DesignWare-compatible I2C SPKLEN (MMIO 0xA0) and HS_SPKLEN (MMIO 0xA4) spike-suppression registers, and moves the Standard (0x14/0x18), Fast/FastPlus (0x1c/0x20) and HighSpeed (0x24/0x28) SCL-count writes inside the existing per-speed-mode switch so each branch writes only its own group. In both builds the active speed is programmed into IC_CON at MMIO offset 0. The unpatched linear write of all SCL groups is functionally harmless because DesignWare hardware consumes only the count registers for the speed selected in IC_CON; no controller state is corrupted. The written SPK_Cnt and SCL-count values come from GetDefaultSettings constants, ACPI/registry configuration, and hardware-ID overrides, and are not attacker-controlled. No trust boundary is crossed and there is no memory-safety effect.",
+      "trigger_conditions": "Any I2C transfer request through the SPB framework runs ControllerConfigureForTransfer, which programs the controller registers with fixed configuration values. No request-controlled data influences the changed register-programming logic; there is no input-dependent branch, bounds decision, or buffer sizing in this change.",
+      "primitive": "None. No kernel memory corruption, no arbitrary read/write, no code execution, no privilege escalation, and no trust-boundary crossing. The change only alters which fixed hardware-configuration values are written and in what order.",
+      "evidence": "UNPATCHED ControllerConfigureForTransfer speed register programming (no SPKLEN writes):\n\n  // Registers 0x14/0x18 (Standard Speed) - ALWAYS written\n  HWREG<unsigned long>::Write(*(arg1 + 8) + 0x14, *(arg1 + 0x70));\n  HWREG<unsigned long>::Write(*(arg1 + 8) + 0x18, *(arg1 + 0x74));\n  // Register 0x1c (Fast or FastPlus) - ALWAYS written\n  HWREG<unsigned long>::Write(rcx_25, *(arg1 + 0x88));  // or 0x7c\n  // Register 0x20 - ALWAYS written\n  HWREG<unsigned long>::Write(*(arg1 + 8) + 0x20, rdx_11);\n  // Registers 0x24/0x28 (High Speed) - ALWAYS written regardless of mode\n  HWREG<unsigned long>::Write(*(arg1 + 8) + 0x24, *(arg1 + 0x94));\n  HWREG<unsigned long>::Write(*(arg1 + 8) + 0x28, *(arg1 + 0x98));\n  // NO write to 0xA0 (SPKLEN) or 0xA4 (HS_SPKLEN)!\n\nPATCHED ControllerConfigureForTransfer (mode-specific writes + SPKLEN):\n\n  if (rax_16 == 1) {  // Standard Speed\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0x14, *(arg1 + 0x70));\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0x18, *(arg1 + 0x74));\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0xa0, *(arg1 + 0x7c));  // SPKLEN!\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0x7c, *(arg1 + 0x78));\n  } else if (rax_16 == 2) {  // Fast/FastPlus\n    ...\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0xa0, *(arg1 + 0x9c));  // SPKLEN!\n    ...\n  } else if (rax_16 == 3) {  // HighSpeed\n    ...\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0xa0, *(arg1 + 0x8c));  // SPKLEN!\n    HWREG<unsigned long>::Write(*(arg1 + 8) + 0xa4, *(arg1 + 0xac));  // HS_SPKLEN!\n    ...\n  }",
+      "assembly": "UNPATCHED ControllerConfigureForTransfer at 0x1400083c0 - speed register programming:\n\n0x1400087e0 : mov     rcx, qword [rsi+0x8]\n0x1400087e4 : mov     edx, dword [rsi+0x70]      ; Standard SCL High\n0x1400087e7 : add     rcx, 0x14                   ; reg offset 0x14\n0x1400087eb : call    0x14000be00                 ; HWREG::Write\n0x1400087f0 : mov     rcx, qword [rsi+0x8]\n0x1400087f4 : mov     edx, dword [rsi+0x74]      ; Standard SCL Low\n0x1400087f7 : add     rcx, 0x18                   ; reg offset 0x18\n0x1400087fb : call    0x14000be00\n0x140008800 : mov     rax, qword [rsi+0x30]\n0x140008804 : mov     rcx, qword [rsi+0x8]\n0x140008808 : add     rcx, 0x1c                   ; reg offset 0x1c (Fast/FastPlus)\n0x14000880c : cmp     byte [rax+0x14], r13b\n0x140008810 : jne     0x140008822\n0x140008822 : mov     edx, dword [rsi+0x88]      ; FastPlus SCL High (or 0x7c for Fast)\n0x140008828 : call    0x14000be00\n0x14000882d : mov     edx, dword [rsi+0x8c]      ; FastPlus SCL Low\n0x140008833 : mov     rcx, qword [rsi+0x8]\n0x140008837 : add     rcx, 0x20                   ; reg offset 0x20\n0x14000883b : call    0x14000be00\n0x140008840 : mov     rcx, qword [rsi+0x8]\n0x140008844 : mov     edx, dword [rsi+0x94]      ; HighSpeed SCL High - UNCONDITIONAL\n0x14000884a : add     rcx, 0x24                   ; reg offset 0x24\n0x14000884e : call    0x14000be00\n0x140008853 : mov     rcx, qword [rsi+0x8]\n0x140008857 : mov     edx, dword [rsi+0x98]      ; HighSpeed SCL Low - UNCONDITIONAL\n0x14000885d : add     rcx, 0x28                   ; reg offset 0x28\n0x140008861 : call    0x14000be00\n; NOTE: No write to offset 0xa0 (SPKLEN) or 0xa4 (HS_SPKLEN) anywhere!\n0x140008866 : mov     ecx, dword [rsi+rbp*4+0x60b8]\n0x14000886d : mov     dword [r15+0x24], ecx\n0x140008871 : mov     rcx, qword [rsi+0x30]\n0x140008875 : mov     eax, dword [rcx+0x10]       ; speed mode selection\n0x140008878 : cmp     eax, r12d                   ; mode == 1 (Standard)?",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ialpssi_i2c!ControllerConfigureForTransfer",
+            "address": "0x1400083c0",
+            "why": "Break here to observe I2C controller register programming. arg1 (rcx) = PBC_DEVICE struct, arg2 (rdx) = PBC_REQUEST. Monitor which HWREG::Write calls execute and verify no write to MMIO offset 0xA0 (SPKLEN) occurs."
+          },
+          {
+            "symbol": "ialpssi_i2c!HWREG<unsigned long>::Write",
+            "address": "0x14000be00",
+            "why": "Break on every register write. rcx = MMIO base + offset, edx = value. Check if offset 0xA0 or 0xA4 is ever written in the unpatched version (it should never be hit)."
+          }
+        ],
+        "watch": [
+          "rcx at HWREG::Write call sites - the low byte reveals register offset: 0x14=SS_SCL_HCNT, 0x18=SS_SCL_LCNT, 0x1c=FS_SCL_HCNT, 0x20=FS_SCL_LCNT, 0x24=HS_SCL_HCNT, 0x28=HS_SCL_LCNT, 0xA0=SPKLEN, 0xA4=HS_SPKLEN",
+          "edx at HWREG::Write - the value being written to the register",
+          "[rsi+0x30]+0x10 (speed mode): 1=Standard, 2=Fast/FastPlus, 3=HighSpeed",
+          "In unpatched: observe that registers 0x24/0x28 (HighSpeed) are written even when speed mode is Standard (1) or Fast (2)"
+        ],
+        "key_offsets": [
+          "0x1400087e0-0x140008861: Unconditional speed register write block in unpatched binary",
+          "0x140008875: Speed mode check (eax = mode from [rcx+0x10]) - only affects SDA hold, not SPKLEN",
+          "No write to MMIO offset 0xA0 (SPKLEN) exists anywhere in unpatched ControllerConfigureForTransfer",
+          "0x140008910: lock or dword [rsp], r13d - memory barrier before enabling controller (reg 0x6c=1)"
+        ],
+        "trigger_setup": "Open an I2C device handle through the SPB framework (e.g., via Windows.Devices.I2c.I2cDevice from a UWP app, or via CreateFile on the SPB device interface GUID). Send any I2C read or write transfer. This triggers ControllerConfigureForTransfer_PassiveLevel as a WDF work item, which calls ControllerConfigureForTransfer.",
+        "expected_observation": "In the unpatched binary: at the HWREG::Write breakpoint, observe that MMIO offset 0xA0 (SPKLEN) is NEVER written, confirming missing spike suppression programming. Also observe that offsets 0x24/0x28 (HighSpeed SCL counts) are written even when speed mode is Standard or Fast. In the patched binary, SPKLEN (0xA0) is always written, and only the relevant mode's registers are programmed.",
+        "notes": "This is a functional / hardware-correctness change, not a security issue. The patched driver programs SPKLEN/HS_SPKLEN from configuration instead of relying on the hardware reset default; that reset default is not observable from these binaries, so no 'no spike filtering' impact can be substantiated. The unpatched linear write of all SCL-count groups is harmless because DesignWare hardware uses only the group selected by IC_CON. The PBC_DEVICE struct grew by 0x10 bytes (4 new DWORD SPK_Cnt fields). The I2CInitDma function also changed the DMA buffer cache type from MmNonCached to MmCached, a performance/correctness change. No value in the changed code is attacker-controlled."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The patch adds programming of the DesignWare-compatible I2C SPKLEN (MMIO 0xA0) and HS_SPKLEN (0xA4) spike-suppression registers to ControllerConfigureForTransfer (unpatched 0x1400083c0, patched 0x140008360) and moves the SCL-count register writes inside the existing per-speed-mode switch. Four new SPK_Cnt configuration fields were added to PBC_DEVICE, growing the struct by 0x10 bytes (cascading offsets across several functions) and adding corresponding default values, registry reads, and hardware-ID overrides. The active speed is programmed into IC_CON in both builds, so the unpatched linear SCL writes are functionally harmless. All written values are configuration constants (defaults / registry / hardware-ID overrides), not attacker-controlled; no trust boundary is crossed and there is no memory-safety effect. An independent per-function diff of both builds found no omitted security-relevant change: the other differing functions vary only by the +0x10 offset cascade, a WPP trace-GUID rebuild rename, and an I2CInitDma DMA cache-type change (MmNonCached -> MmCached)."
+}

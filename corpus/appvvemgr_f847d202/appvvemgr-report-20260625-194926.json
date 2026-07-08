@@ -1,0 +1,47 @@
+{
+  "binaries": {
+    "id_unpatched": "appvvemgr_unpatched.sys",
+    "id_patched": "appvvemgr_patched.sys",
+    "overall_similarity": 0.9928,
+    "matched": 327,
+    "changed": 0,
+    "identical": 327,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "No code or data-constant function changed (all 327 functions byte-identical); the file delta is build metadata plus Authenticode re-sign only",
+      "entry_point": "Not applicable — no executable-code or data-constant difference exists between the two builds.",
+      "call_chain": [],
+      "vulnerability_class": "No security-relevant change",
+      "description": "Direct byte-level comparison of the two drivers shows every executable and data section is identical. The .text section (VA 0x1c0001000, file offset 0x400, size 0x19923) is byte-for-byte identical, and so is the .data section (VA 0x1c0024000, file offset 0x22200, size 0x460), .pdata, .idata, PAGE, INIT, GFIDS, and .reloc. All 327 functions match with similarity 1.0. The overall file-level similarity of 0.9928 is fully explained by build metadata and the code-signing certificate, not by any instruction or data-constant change. The 2736-byte file-size increase (175456 -> 178192) is exactly the growth of the Authenticode certificate. This is a rebuild of the same source at a newer servicing version, re-signed. It carries no security-relevant code or configuration change.",
+      "trigger_conditions": "None. There is no changed code path or data constant to trigger. Because .text and .data are byte-identical, both builds behave identically at runtime.",
+      "primitive": "None. No exploitable primitive is introduced or removed; the two builds are functionally identical.",
+      "evidence": "Section-by-section byte comparison of appvvemgr_unpatched.sys vs appvvemgr_patched.sys (identical PE section layout in both):\n  .text  (file 0x400-0x19e00): IDENTICAL\n  .data  (file 0x22200-0x22600): IDENTICAL\n  .pdata, .idata, PAGE, .edata(body), INIT, GFIDS, .reloc: IDENTICAL\n\nOnly 52 bytes differ before the certificate, all of them build metadata:\n  PE COFF TimeDateStamp @ file 0xf8: 0xa9816af1 -> 0x336196a0\n  PE optional-header CheckSum @ file 0x148: 0x3519c -> 0x377e7\n  Security data-directory size field (records the new certificate size)\n  Debug directory CodeView RSDS record @ file 0x20b60: PDB name 'AppvVemgr.pdb' in both; PDB GUID 30f2869a88c20a425263ca2fe21fe842 -> b07961aef9161477f4a95132c0fba838 (per-build identifier), plus the three debug-entry timestamps\n  Export table TimeDateStamp @ file 0x26404\n  Version resource (.rsrc): FileVersion 10.0.17763.3469 -> 10.0.17763.4010 (VS_FIXEDFILEINFO words @ file 0x26ed4 and the '3469'->'4010' StringFileInfo text @ file 0x27052)\n\nThe remaining 8942 differing bytes are entirely inside the Authenticode certificate (WIN_CERTIFICATE) at file offset 0x28800, whose size grows from 0x2560 to 0x3010 (delta 0xab0 = 2736 bytes = the full file-size increase). This is a re-sign, not a code change.\n\nContext (unchanged in both builds): the driver is the Microsoft App-V Virtual Environment Manager (appvvemgr.sys, Windows 10.0.17763). Its IOCTL router DispatchIOCTL (?DispatchIOCTL@@YAJKPEAXKKPEAK@Z @ 0x1c000ee60) dispatches codes 0xa6898004-0xa689802c and is byte-identical between the two builds, as are VEManagerDispatch (0x1c0014360), ProcessNotifyCallbackEx (vemgr, 0x1c0015460), and TerminateProcesses (VirtualEnvironmentManager, 0x1c0004a40).",
+      "assembly": "No instruction differs between the two builds. The .text section is byte-identical, so there is no changed disassembly to show.",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [
+          "file 0x400-0x19e00 (.text): byte-identical in both builds",
+          "file 0x22200-0x22600 (.data): byte-identical in both builds",
+          "file 0xf8 (PE TimeDateStamp), 0x148 (CheckSum): build-metadata differences only",
+          "file 0x20b60 (CodeView RSDS PDB GUID): per-build identifier difference only",
+          "file 0x26ed4 / 0x27052 (.rsrc FileVersion): 10.0.17763.3469 -> 10.0.17763.4010",
+          "file 0x28800 (Authenticode certificate): re-sign, size 0x2560 -> 0x3010, accounts for the entire 2736-byte file-size delta"
+        ],
+        "trigger_setup": "Not applicable. There is no code or data-constant change to reach or exercise.",
+        "expected_observation": "A raw byte compare (fc /b appvvemgr_unpatched.sys appvvemgr_patched.sys) shows differences only in the PE timestamp/checksum, the debug (PDB GUID) record, the export timestamp, the version resource, and the appended certificate. Both drivers load and behave identically.",
+        "notes": "Verified against both binaries: this is a version bump (10.0.17763.3469 -> 10.0.17763.4010) and Authenticode re-sign of an unchanged image. No security-relevant change."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. Byte-level comparison of the two appvvemgr.sys images shows the .text section (file 0x400-0x19e00) and the .data section (file 0x22200-0x22600), along with .pdata, .idata, PAGE, INIT, GFIDS, and .reloc, are all byte-for-byte identical; all 327 functions match at similarity 1.0. The only differences are build metadata (PE TimeDateStamp and CheckSum, the CodeView RSDS PDB GUID and debug timestamps, the export-table timestamp, and the version resource FileVersion 10.0.17763.3469 -> 10.0.17763.4010) plus a new Authenticode certificate, whose growth (0x2560 -> 0x3010) exactly accounts for the 2736-byte file-size increase. The overall_similarity of 0.9928 is explained entirely by these metadata and signature bytes, not by any executable-code or data-constant change. This is a recompile at a newer servicing version, re-signed, with no security fix delivered."
+}

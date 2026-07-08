@@ -1,0 +1,205 @@
+{
+  "binaries": {
+    "title": "mssecwfp.sys - No security-relevant change (WFP guard-policy stored-value struct layout revision plus gated comparison mode)",
+    "id_unpatched": "mssecwfp_unpatched.sys",
+    "id_patched": "mssecwfp_patched.sys",
+    "overall_similarity": 0.8839,
+    "matched": 113,
+    "changed": 8,
+    "identical": 105,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SecWfpShouldEnforcePolicyOnFilterCondition sub_1400081D0 -> sub_140008838",
+      "similarity": 0.8137,
+      "change_type": "refactor",
+      "key_changes": [
+        "Patched adds a per-condition mode selector: cmp dword [rdi+0x1C],0 (rule struct +0x1C); when non-zero the condition is routed to the new dispatcher SecWfpEvaluateConditionComparison (sub_140008394), otherwise the legacy inline dispatch is retained",
+        "The rule +0x1C field is the SAME field the unpatched build already reads on the 0x101 condition path (mov al,[rdx+0xC] with rdx = rule+0x10, i.e. rule +0x1C); it is repurposed from a presence byte to a mode selector, both sourced from the configuration buffer",
+        "Unpatched 0x101 path returns STATUS_NOT_SUPPORTED (0xC00000BB) when the rule +0x1C byte is non-zero; patched (selector-zero route) skips the 0x101 condition and continues the rule loop",
+        "Inline audit call to SecAuditWfpGuardBlock (sub_140007000) is replaced by SecWfpAuditMatchedCondition (sub_1400081FC), which emits additional SID / security-descriptor string fields into the existing Event_WfpWfpGuardBlock ETW event"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the per-condition dispatch of the WFP filter-assignment guard (it iterates SecWfpGuardPolicyConfig rules, not live packets). The rule +0x1C field is populated from the driver's own configuration buffer and is read at the same offset in both builds; the patched build makes it a comparison-mode selector that opts a condition into the new validated dispatcher while retaining the legacy path unchanged for selector-zero rules. No reachable memory-safety defect or policy bypass is removed.",
+      "assembly_diff": "Unpatched sub_1400081D0 (rdx = rule+0x10 for the value struct):\n0x140008227: lea rdx, [rbp+0x10]        ; rdx = &rule[i] + 0x10\n0x14000822b: add rdx, rdi\n0x14000827e: cmp eax, 0x101\n0x140008285: mov al, byte [rdx+0xc]     ; reads rule +0x1C (same field patched repurposes)\n0x140008288: neg al\n0x14000828a: sbb eax, eax\n0x14000828c: and eax, 0xc00000bb         ; STATUS_NOT_SUPPORTED if non-zero\n\nPatched sub_140008838:\n0x1400088a6: cmp dword [rdi+0x1c], 0x0   ; rule +0x1C mode selector\n0x1400088aa: jnz 0x1400088ee\n0x1400088dd: jz  0x14000892d            ; selector-zero 0x101 path: skip condition\n0x1400088f6: call 0x140008394           ; selector-nonzero: SecWfpEvaluateConditionComparison"
+    },
+    {
+      "name": "SecWfpAreValuesEqual sub_140007DA4 -> SecWfpAreSimpleTypesEqual sub_140007F78 + SecWfpAreValuesEqual sub_1400080F0",
+      "similarity": 0.545,
+      "change_type": "refactor",
+      "key_changes": [
+        "The monolithic unpatched comparator is split into a simple-type comparator (sub_140007F78) and a value comparator (sub_1400080F0) that dispatches simple vs blob types",
+        "For byte-blob comparison (value type 0xc): the stored blob-size field moved from value +0x10 (rule +0x20) in the unpatched build to value +0x14 (rule +0x24) in the patched build; the blob data pointer is unchanged at value +0x18 (rule +0x28) in both",
+        "This size-field offset move is applied in lockstep with the configuration parser SecSetWfpGuardConfiguration, so within each build the offset written equals the offset read (unpatched: write +0x20 / read +0x20; patched: write +0x24 / read +0x24)",
+        "The unpatched build already validates the value type before comparison (cmp r9d,[rdx+8]; returns STATUS_INVALID_PARAMETER 0xC000000D on mismatch) and bounds the blob compare; the patched split preserves that type check and routes the blob path to SecIsSuffixMatch",
+        "The blob compare helper was renamed/split: unpatched SecArePrefixBlobs (which compares the tail of the stored blob) becomes SecIsPrefixMatch + SecIsSuffixMatch; all three bound the memcmp by the incoming size after requiring incoming_size <= stored_size"
+      ],
+      "security_relevant": false,
+      "security_notes": "There is no intra-build offset mismatch. The stored-value structure is built entirely by this driver from the IOCTL configuration buffer by SecSetWfpGuardConfiguration, and the size field it writes is read at the identical offset by the comparator in the same build. The +0x20 -> +0x24 shift is a structure-layout revision, not a read against a mismatched layout. The blob size read by the comparator is the same value used to allocate the blob, and the memcmp is bounded, so no out-of-bounds read arises.",
+      "assembly_diff": "Unpatched SecSetWfpGuardConfiguration (parser) writes size at rule +0x20, ptr at rule +0x28:\n0x140007bc5: lea r12, [rbp+0x20]        ; size field at entry +0x20\n0x140007bdd: mov ecx, [r12]             ; blob size\n0x140007c43: mov [rdi+r12+8], rbp        ; blob ptr at entry +0x28\n\nUnpatched SecWfpAreValuesEqual (comparator, rdx = rule+0x10) type 0xc:\n0x140007f50: mov ecx, [rdx+0x10]        ; size at rule +0x20 (matches parser)\n0x140007f57: mov rcx, [rdx+0x18]        ; blob ptr at rule +0x28\n0x140007f69: call 0x1400078e4           ; SecArePrefixBlobs (bounded memcmp)\n\nPatched SecSetWfpGuardConfiguration (parser) writes size at rule +0x24, ptr at rule +0x28:\n0x140007d99: lea r12, [rbp+0x24]        ; size field at entry +0x24\n0x140007e3b: mov r8d, [r12]             ; blob size\n0x140007e17: mov [rdi+r12+4], rbp        ; blob ptr at entry +0x28 (unchanged)\n\nPatched SecWfpAreValuesEqual (comparator, rdx = rule+0x10) type 0xc:\n0x140008159: mov eax, [rdx+0x14]        ; size at rule +0x24 (matches revised parser)\n0x140008164: mov rax, [rdx+0x18]        ; blob ptr at rule +0x28\n0x140008172: call 0x140007c40           ; SecIsSuffixMatch (bounded memcmp)"
+    },
+    {
+      "name": "SecWfpAreValuesMatch sub_140007F80 -> sub_140008188 (retained) plus new SecWfpEvaluateConditionComparison sub_140008394",
+      "similarity": 0.3939,
+      "change_type": "feature_addition",
+      "key_changes": [
+        "SecWfpAreValuesMatch is retained (unpatched 0x140007F80 -> patched 0x140008188); it still checks the match/operator field ([rdx+4] vs [rcx+4]) and delegates to the value comparator",
+        "SecWfpEvaluateConditionComparison (sub_140008394) is a NEW dispatcher, reached only when the rule +0x1C selector is non-zero",
+        "The new dispatcher reads the operator from the stored value (mov r9d,[rdx+0xC]) and enforces value-type compatibility per operator before comparing, returning STATUS_INVALID_PARAMETER (0xC000000D) / STATUS_NOT_SUPPORTED (0xC00000BB) on mismatch",
+        "Two new blob operators, SecIsPrefixMatch (sub_140007B38) and SecIsSuffixMatch (sub_140007C40), back the new prefix/suffix comparison mode"
+      ],
+      "security_relevant": false,
+      "security_notes": "The new validated dispatcher is an opt-in comparison mode: it runs only for rules whose configuration-supplied +0x1C selector is non-zero, while the legacy dispatch (which already performs value-type validation) is retained unchanged for existing selector-zero configurations. This is an added feature with richer per-operator type checks, not the removal of a reachable defect from the unpatched build.",
+      "assembly_diff": "Unpatched SecWfpAreValuesMatch (sub_140007F80): checks match field then delegates:\n0x140007f80: (retained in patched at 0x140008188)\n0x140008197: mov eax, [rcx+4]           ; match/operator field\n0x1400081a6: cmp [rdx+4], eax            ; STATUS_NOT_SUPPORTED on mismatch\n0x1400081bb: call SecWfpAreValuesEqual\n\nPatched new SecWfpEvaluateConditionComparison (sub_140008394), reached via rule +0x1C selector:\n0x1400088f6: call 0x140008394           ; entry from dispatch when [rdi+0x1c] != 0\n; reads operator from stored value +0xC and validates value-type compatibility per operator"
+    },
+    {
+      "name": "SecWfpIsIpV4MaskMatch sub_1400080BC -> sub_14000871C",
+      "similarity": 0.126,
+      "change_type": "refactor",
+      "key_changes": [
+        "Validity/presence check tracks the stored-value layout revision: unpatched tests one field (value +0xC = rule +0x1C); patched tests two fields (value +0xC and value +0x10 = rule +0x1C and rule +0x20)",
+        "Both builds require value type == 3 (dword) before performing the bitwise-AND mask comparison, and read the mask operand from value +0x18 (rule +0x28)",
+        "Unpatched returns success without setting a result when the presence field is zero; patched returns STATUS_NOT_SUPPORTED (0xC00000BB) when both presence fields are zero or the type is not 3"
+      ],
+      "security_relevant": false,
+      "security_notes": "The changed field offsets read fields of the same stored-value structure that each build's own parser populates; the +0x1C / +0x20 reshuffle tracks the size-field layout revision. This is not a bounds fix and does not remove a reachable bypass; the fields are driver-managed configuration, not attacker-controlled packet data.",
+      "assembly_diff": "Unpatched sub_1400080BC (rdx = value struct):\n0x1400080c1: cmp byte [rdx+0xc], al       ; presence at value +0xC\n0x1400080c4: jz  0x1400080f2               ; if zero, no result set\n0x1400080c6: cmp dword [rdx+8], 3          ; require type 3\n0x1400080d7: mov rcx, [rdx+0x18]           ; mask operand at value +0x18\n\nPatched sub_14000871C:\n0x140008721: cmp [rdx+0xc], eax            ; value +0xC\n0x140008724: jnz 0x140008732\n0x140008726: cmp [rdx+0x10], al            ; value +0x10 (freed by size-field move)\n0x140008729: jnz 0x140008732\n0x14000872b: mov eax, 0xc00000bb           ; else STATUS_NOT_SUPPORTED\n0x140008732: cmp dword [rdx+8], 3          ; require type 3"
+    },
+    {
+      "name": "SecWfpIsValueInRange sub_1400080F4 -> sub_14000875C",
+      "similarity": 0.0,
+      "change_type": "refactor",
+      "key_changes": [
+        "The 0x102 (range) condition validity flag read moves from stored value +0xC (unpatched) to value +0x10 (patched), tracking the same layout revision",
+        "The remaining logic is unchanged: both check the condition tag == 0x102, then call the value comparator (unpatched SecWfpAreValuesEqual sub_140007DA4 / patched sub_1400080F0) and SecWfpIsValueGreater for the low/high bounds"
+      ],
+      "security_relevant": false,
+      "security_notes": "The presence-flag offset moves in lockstep with the stored-value layout revision and is read from a driver-managed configuration structure. No behavior change beyond the layout offset; not a security fix.",
+      "assembly_diff": "Unpatched sub_1400080F4:\n0x140008114: cmp byte [rdx+0xc], bl        ; validity flag at value +0xC\n0x140008117: jz  0x1400081bc               ; if zero, STATUS_NOT_SUPPORTED\n0x14000811d: cmp dword [rcx], 0x102\n\nPatched sub_14000875C:\n0x14000877c: cmp byte [rdx+0x10], bl       ; validity flag at value +0x10\n0x14000877f: jz  0x140008824               ; if zero, STATUS_NOT_SUPPORTED\n0x140008785: cmp dword [rcx], 0x102"
+    },
+    {
+      "name": "SecSetWfpGuardConfiguration sub_140007AB4 -> sub_140007C88 (configuration parser)",
+      "similarity": 0.83,
+      "change_type": "refactor",
+      "key_changes": [
+        "The IOCTL configuration parser that builds the stored guard-policy rule array; writes the blob-size field at the revised offset (rule +0x20 unpatched -> rule +0x24 patched) and the blob data pointer at rule +0x28 (unchanged in both)",
+        "This is the write side that keeps each build internally consistent with its comparator: the offset written here equals the offset read by SecWfpAreValuesEqual in the same build",
+        "Rule stride is 0x30; each blob is pool-allocated ('sGw' tag, size read from the same size field) and copied by memmove, so the comparator's size read equals the allocation size"
+      ],
+      "security_relevant": false,
+      "security_notes": "Decisive evidence that there is no offset mismatch: the parser writes the blob size at the same offset the comparator reads it within each build (+0x20 unpatched, +0x24 patched), and the blob pointer is at +0x28 in both. The +4-byte shift is a struct-layout revision applied to writer and reader together.",
+      "assembly_diff": "Unpatched (write size +0x20, ptr +0x28):\n0x140007bc5: lea r12, [rbp+0x20]\n0x140007bdd: mov ecx, [r12]\n0x140007c43: mov [rdi+r12+8], rbp\n0x140007c67: mov r8d, [r12]              ; size for memmove\n\nPatched (write size +0x24, ptr +0x28):\n0x140007d99: lea r12, [rbp+0x24]\n0x140007e17: mov [rdi+r12+4], rbp\n0x140007e3b: mov r8d, [r12]              ; size for memmove"
+    },
+    {
+      "name": "SecAddWfpCallouts sub_140007144 -> sub_1400071EC",
+      "similarity": 0.8653,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds a KclIsWindows8-family version/feature flag (set during initialization) gating the PsReferencePrimaryToken/PsImpersonateClient/PsRevertToSelf sequence",
+        "When the flag is clear, patched code skips the impersonation sequence and uses a different code path",
+        "Register allocation changes otherwise cosmetic"
+      ],
+      "security_relevant": false,
+      "security_notes": "OS version / feature-staging gate around an impersonation sequence, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecInitializeGlobalData sub_1400077AC -> sub_14000782C",
+      "similarity": 0.647,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched initialization adds calls (KclIsWindows8 / KclIsWindowsBlueOrLater) to populate new version/feature flags",
+        "Patched resolves SeConvertSecurityDescriptorToString via MmGetSystemRoutineAddress, used by the new SID / security-descriptor to-string audit helpers",
+        "Function call targets shifted due to new code additions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization churn: version-flag population and routine resolution for the expanded audit telemetry. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KclGetProtectionLevel sub_140008AF0 -> sub_1400091B4",
+      "similarity": 0.8815,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds a KclIsWindows8 short-circuit that returns 0 early on that version before ZwQueryInformationProcess"
+      ],
+      "security_relevant": false,
+      "security_notes": "OS version gating, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecAuditWfpGuardBlock sub_140007000",
+      "similarity": 0.9446,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ETW event descriptor set expanded from 8 to 14 (0xE) fields",
+        "Added fields for logging (e.g. process start key) and a bounded (< 0x400) field with a conditional data pointer"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry expansion of the existing WFP-guard-block ETW event. Not a security fix.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SecSetWfpGuardConfiguration sub_140007AB4 / SecWfpAreValuesEqual sub_140007DA4 / SecWfpShouldEnforcePolicyOnFilterCondition sub_1400081D0 / SecWfpIsIpV4MaskMatch sub_1400080BC / SecWfpIsValueInRange sub_1400080F4",
+      "entry_point": "WFP filter-assignment guard registered via NETIO KfdRegisterLayerEventNotifyEx (callback SecWfpShouldForbidFiltersAssignment, callout id 1); the guard policy is configured via DeviceIoControl to \\Device\\MsSecWfp (SecDeviceIoControl -> SecSetWfpGuardConfiguration). This is a layer-event notification on WFP filter add/change, not a data-plane packet classify callout.",
+      "call_chain": [
+        "WFP filter add/change -> NETIO layer-event notification",
+        "SecWfpShouldForbidFiltersAssignment (sub_140008390 -> sub_1400089B0, acquires SecWfpGuardPolicyConfigLock shared, returns STATUS_ACCESS_DENIED 0xC0000022 on match)",
+        "SecWfpShouldForbidFilterAssignment (sub_140008334 -> sub_140008958, iterates guard-policy rules for one condition)",
+        "SecWfpShouldEnforcePolicyOnFilterCondition (sub_1400081D0 -> sub_140008838, matches one condition against one rule)",
+        "SecWfpAreValuesMatch / SecWfpAreValuesEqual / SecWfpIsIpV4MaskMatch / SecWfpIsValueInRange (value comparison against driver-managed rule data)"
+      ],
+      "vulnerability_class": "None (structure-layout revision plus config-gated comparison-mode addition; no reachable memory-safety defect or policy bypass)",
+      "description": "The apparent 4-byte field shift in the WFP guard-policy stored-value structure is a self-consistent layout revision, not an exploitable offset mismatch. The stored-value structure is built entirely by this driver from the IOCTL configuration buffer by SecSetWfpGuardConfiguration, and the configuration parser was revised in lockstep with the comparator: within each single build the offset that is written equals the offset that is read. Unpatched writes the blob size at rule +0x20 and reads it at rule +0x20; patched writes it at rule +0x24 and reads it at rule +0x24; the blob data pointer is at rule +0x28 in both builds. No build ever runs the 'old' reader against the 'new' writer. The byte at rule +0x1C is read at the same offset in both builds and is repurposed from a per-condition presence byte to a comparison-mode selector, sourced from the configuration buffer. The patched build additionally adds a config-gated, opt-in validated comparison dispatcher (SecWfpEvaluateConditionComparison), prefix/suffix blob operators, and an expanded ETW audit record. None of these removes a reachable out-of-bounds read or a reachable filter-assignment bypass from the unpatched build. The compared operands are driver-managed structures (the stored guard-policy rule and the incoming filter's conditions), not live packet payloads; the reachable callback forbids WFP filter assignment with STATUS_ACCESS_DENIED and is an anti-tamper guard, not a data-plane packet filter.",
+      "trigger_conditions": "Not applicable to a security impact. The guard policy is configured via DeviceIoControl to \\Device\\MsSecWfp (a privileged operation restricted by the device security descriptor set at init), and the comparison runs when a WFP filter is added/assigned on a monitored layer. No condition path produces an out-of-bounds access or an incorrect match arising from an offset mismatch, because parser and comparator use matching offsets within each build.",
+      "primitive": "None. No filter bypass of live traffic (the callback guards filter assignment, not packet flow), no information leak, and no memory corruption. The blob comparator requires incoming_size <= stored_size and bounds the memcmp; rule blobs are pool-allocated at exactly their stored size and the comparator reads that same size field.",
+      "evidence": "Unpatched: parser writes size at rule +0x20, comparator reads size at rule +0x20 (same offset):\n```asm\n; SecSetWfpGuardConfiguration @ 0x140007AB4\n0x140007bc5: lea r12, [rbp+0x20]      ; size field at entry +0x20\n0x140007c43: mov [rdi+r12+8], rbp      ; blob ptr at entry +0x28\n; SecWfpAreValuesEqual @ 0x140007DA4 (rdx = rule+0x10), type 0xc\n0x140007f50: mov ecx, [rdx+0x10]       ; size at rule +0x20\n0x140007f57: mov rcx, [rdx+0x18]       ; blob ptr at rule +0x28\n0x140007f69: call 0x1400078e4          ; SecArePrefixBlobs (bounded)\n```\nPatched: parser writes size at rule +0x24, comparator reads size at rule +0x24 (same offset):\n```asm\n; SecSetWfpGuardConfiguration @ 0x140007C88\n0x140007d99: lea r12, [rbp+0x24]      ; size field at entry +0x24\n0x140007e17: mov [rdi+r12+4], rbp      ; blob ptr at entry +0x28 (unchanged)\n; SecWfpAreValuesEqual @ 0x1400080F0 (rdx = rule+0x10), type 0xc\n0x140008159: mov eax, [rdx+0x14]       ; size at rule +0x24\n0x140008164: mov rax, [rdx+0x18]       ; blob ptr at rule +0x28\n0x140008172: call 0x140007c40          ; SecIsSuffixMatch (bounded)\n```\nThe write offset equals the read offset in each build; the +0x20 -> +0x24 shift is a structure revision, not a read against a mismatched layout.",
+      "assembly": "Bounds-safety of the blob comparator (identical bounding in both builds):\n; Unpatched SecArePrefixBlobs @ 0x1400078E4 (rcx=incoming {size,ptr}, rdx=stored {size,ptr})\n0x1400078f2: mov r9d, [r10]            ; stored size\n0x1400078f5: test r9d, r9d\n0x1400078f8: jz  0x140007923           ; require stored size != 0\n0x1400078fa: mov eax, [rcx]            ; incoming size\n0x1400078fc: test eax, eax\n0x1400078fe: jz  0x140007923           ; require incoming size != 0\n0x140007900: cmp eax, r9d\n0x140007903: ja  0x140007923           ; require incoming_size <= stored_size\n0x14000790c: mov r8d, eax              ; memcmp Size = incoming_size (bounded)\n0x140007919: call memcmp\n; Patched SecIsPrefixMatch @ 0x140007B38 applies the same three guards before a bounded memcmp.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mssecwfp!SecSetWfpGuardConfiguration",
+            "address": "0x140007AB4",
+            "why": "Configuration parser (unpatched). Break here to confirm the parser writes the blob size at rule +0x20 (lea r12,[rbp+20h] at 0x140007BC5) and the blob pointer at rule +0x28 (mov [rdi+r12+8],rbp at 0x140007C43) - the same offsets the comparator reads."
+          },
+          {
+            "symbol": "mssecwfp!SecWfpAreValuesEqual",
+            "address": "0x140007DA4",
+            "why": "Comparator (unpatched). For a type 0xc blob comparison, the read at 0x140007F50 (mov ecx,[rdx+0x10], rdx=rule+0x10) is rule +0x20 - the same offset the parser wrote. Confirm [rdx+0x10] equals the value stored by the parser (no mismatch to exploit)."
+          },
+          {
+            "symbol": "mssecwfp!SecWfpShouldForbidFiltersAssignment",
+            "address": "0x140008390",
+            "why": "Guard entry point. Confirms the reachable path is a WFP layer-event (filter add/change) notification (callout id must be 1), which returns STATUS_ACCESS_DENIED (0xC0000022) to forbid an assignment - an anti-tamper guard, not a per-packet classify callout."
+          }
+        ],
+        "watch": [
+          "rule +0x20 (unpatched) / rule +0x24 (patched): blob size field; equals the size used to pool-allocate the blob in SecSetWfpGuardConfiguration",
+          "rule +0x28 (both builds): blob data pointer",
+          "rule +0x1C: read at the same offset in both builds; presence byte (unpatched) / comparison-mode selector (patched), sourced from the configuration buffer",
+          "SecWfpGuardPolicyConfig / SecWfpGuardPolicyConfigCount: base pointer and count of the guard-policy rule array (stride 0x30)"
+        ],
+        "key_offsets": [
+          "0x140007BC5: lea r12,[rbp+0x20] - unpatched parser writes blob size at rule +0x20",
+          "0x140007F50: mov ecx,[rdx+0x10] - unpatched comparator reads blob size at rule +0x20 (same offset as the parser)",
+          "0x140007D99: lea r12,[rbp+0x24] - patched parser writes blob size at rule +0x24",
+          "0x140008159: mov eax,[rdx+0x14] - patched comparator reads blob size at rule +0x24 (same offset as the parser)",
+          "0x1400088A6: cmp dword [rdi+0x1c],0 - patched comparison-mode selector at rule +0x1C (same field read on the unpatched 0x101 path at 0x140008285)"
+        ],
+        "trigger_setup": "Configuration path: open \\Device\\MsSecWfp (privileged; restricted by the device security descriptor set at init) and configure the guard policy via DeviceIoControl (SecSetWfpGuardConfiguration). The guard then evaluates conditions when a WFP filter is added on a monitored layer. There is no offset-mismatch primitive to demonstrate: the parser and comparator use matching offsets within each build.",
+        "expected_observation": "At SecWfpAreValuesEqual for a type 0xc comparison, [rdx+0x10] (unpatched) / [rdx+0x14] (patched) holds exactly the blob size that SecSetWfpGuardConfiguration wrote and used to allocate the blob. The comparison uses a consistent size and a bounded memcmp; conditions evaluate correctly. The +0x1C field is read at the same offset in both builds.",
+        "notes": "The stored-value structure is driver-managed, built from the IOCTL configuration buffer; it is not attacker-controlled packet data. The rule array (SecWfpGuardPolicyConfig) has 0x30-byte entries. Struct offsets: +0x00 rule ID, +0x04 rule sub-ID, +0x08 action byte, +0x0A layer ID (word), +0x0C session ID (dword), +0x10 stored condition value base, +0x1C presence byte (unpatched) / comparison-mode selector (patched), +0x20 blob size (unpatched layout) / +0x24 blob size (patched layout), +0x28 blob data pointer (both builds)."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The patch is a WFP guard-policy stored-value structure-layout revision plus the addition of a config-gated, opt-in comparison mode and an expanded ETW audit record. The apparent 4-byte field shift is not an exploitable offset mismatch: the stored-value structure is built by the driver's own IOCTL configuration parser (SecSetWfpGuardConfiguration), which was revised in lockstep with the comparator, so within each single build the offset written equals the offset read (blob size at rule +0x20 unpatched, +0x24 patched; blob pointer at rule +0x28 in both). No build runs the old reader against the new writer. The rule +0x1C field is read at the same offset in both builds and is repurposed from a presence byte to a comparison-mode selector sourced from the configuration buffer; when zero the legacy dispatch is retained unchanged, when non-zero the condition opts into a new validated dispatcher (SecWfpEvaluateConditionComparison) with prefix/suffix operators. The blob comparator is bounded (incoming_size <= stored_size) in both builds and rule blobs are allocated at exactly their stored size, so there is no out-of-bounds read. The reachable callback (SecWfpShouldForbidFiltersAssignment) guards WFP filter assignment with STATUS_ACCESS_DENIED - an anti-tamper guard on driver-managed structures, not a data-plane packet filter - so there is no filter bypass of live traffic. Remaining changes are OS-version / feature-staging gates (KclIsWindows8) and telemetry expansion."
+}

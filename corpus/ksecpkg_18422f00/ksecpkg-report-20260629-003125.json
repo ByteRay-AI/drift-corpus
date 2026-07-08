@@ -1,0 +1,197 @@
+{
+  "binaries": {
+    "title": "ksecpkg.sys - No security-relevant change (WIL feature-staged context-buffer allocator refactor)",
+    "id_unpatched": "ksecpkg_unpatched.sys",
+    "id_patched": "ksecpkg_patched.sys",
+    "overall_similarity": 0.9462,
+    "matched": 472,
+    "changed": 9,
+    "identical": 463,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "TSQueryContextAttributes @ 0x1C002C9D0 -> Pku2uQueryContextAttributes @ 0x1C0027E20",
+      "similarity": 0.37,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-package diff pairing (same C++ role, different package, relocated between builds)",
+        "Both handle SECPKG_ATTR queries and allocate response buffers through the package _SECPKG_KERNEL_FUNCTIONS callback via __guard_dispatch_icall_fptr (CFG dispatch)",
+        "Patched wraps the allocation site with Feature_4099632442__private_IsEnabledDeviceUsage: enabled -> KSecAllocateContextBuffer/ExAllocatePoolWithTag; disabled (default) -> original CFG-guarded callback, unchanged",
+        "Existing NULL guards on the session-key pointer and length are present and unchanged in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-gated allocator routing refactor. The default (feature-off) path is byte-equivalent to the unpatched code. No bounds/size/reachability change.",
+      "assembly_diff": "; UNPATCHED allocation site (representative):\n;   mov     rax, cs:g_LsaKernelFunctions\n;   call    cs:__guard_dispatch_icall_fptr   ; CFG-guarded allocate callback\n;\n; PATCHED same site:\n;   call    Feature_4099632442__private_IsEnabledDeviceUsage\n;   test    eax, eax\n;   jz      legacy\n;   call    cs:__imp_KSecAllocateContextBuffer   ; feature on\n;   jmp     store\n; legacy:\n;   mov     rax, cs:g_LsaKernelFunctions\n;   call    cs:__guard_dispatch_icall_fptr        ; retained default\n; store:"
+    },
+    {
+      "name": "NtLmQueryContextAttributes @ 0x1C001F510 -> TSQueryContextAttributes @ 0x1C002EE10",
+      "similarity": 0.39,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-package diff pairing",
+        "Same feature-gated allocator wrapper as the other QueryContextAttributes handlers",
+        "Allocations go through the package _SECPKG_KERNEL_FUNCTIONS callback via CFG dispatch in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same feature-staged allocator refactor. Default path unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Pku2uQueryContextAttributes @ 0x1C0025AD0 -> KerbQueryContextAttributes @ 0x1C0022E40",
+      "similarity": 0.43,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-package diff pairing",
+        "Same feature-gated allocator wrapper"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same feature-staged allocator refactor. Default path unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KerbQueryContextAttributes @ 0x1C0020D50 -> NtLmQueryContextAttributes @ 0x1C0021510",
+      "similarity": 0.50,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-package diff pairing",
+        "Same feature-gated allocator wrapper"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same feature-staged allocator refactor. Default path unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Pku2uBuildFullServiceName @ 0x1C000B2F0 -> Pku2uDuplicateString @ 0x1C000C238",
+      "similarity": 0.52,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-name diff pairing",
+        "The combined-length check (cmp edx, 0FFFDh) is byte-identical in both builds - no bounds-check change",
+        "Only the allocation site was wrapped: unpatched uses the Pku2uKernelFunctions allocate callback via CFG dispatch; patched wraps it with Feature_4099632442__private_IsEnabledDeviceUsage and adds a tagged-pool path (ExAllocatePoolWithTag), retaining the callback as default"
+      ],
+      "security_relevant": false,
+      "security_notes": "The credential-string helper's size validation is unchanged. Only the allocator was placed behind a feature gate.",
+      "assembly_diff": "; UNPATCHED (Pku2uBuildFullServiceName):\n;   cmp     edx, 0FFFDh                  ; length check (unchanged)\n;   mov     rax, cs:Pku2uKernelFunctions\n;   call    cs:__guard_dispatch_icall_fptr\n;\n; PATCHED (same length check, feature-gated allocator):\n;   cmp     edx, 0FFFDh                  ; identical length check\n;   call    Feature_4099632442__private_IsEnabledDeviceUsage\n;   ... ExAllocatePoolWithTag (feature on) / Pku2uKernelFunctions callback (default) ..."
+    },
+    {
+      "name": "Pku2uDuplicateString @ 0x1C000B3D4 -> Pku2uBuildFullServiceName @ 0x1C000C120",
+      "similarity": 0.53,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cross-name diff pairing",
+        "Same feature-gated allocator wrapper",
+        "Length check preserved unchanged in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same feature-staged allocator refactor. Size validation unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Pku2uFreeString @ 0x1C000B684 -> Pku2uFreeString @ 0x1C000C504",
+      "similarity": 0.73,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Correctly matched pair",
+        "Unpatched: frees [rcx+8] via the Pku2uKernelFunctions FreeContextBuffer callback (struct offset +8) through __guard_dispatch_icall_fptr (CFG dispatch)",
+        "Patched: wraps the free with Feature_4099632442__private_IsEnabledDeviceUsage - enabled -> ExFreePoolWithTag(buffer, 0); disabled (default) -> original CFG-guarded Pku2uKernelFunctions free, unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Deallocation counterpart to the allocation refactor. The default path is unchanged. The added ExFreePoolWithTag path only executes when the staged feature is enabled, matching the feature-on tagged-pool allocation.",
+      "assembly_diff": "; UNPATCHED Pku2uFreeString @ 0x1C000B684:\n;   mov     rax, qword ptr cs:Pku2uKernelFunctions+8\n;   call    cs:__guard_dispatch_icall_fptr   ; CFG-guarded free callback\n;\n; PATCHED Pku2uFreeString @ 0x1C000C504:\n;   call    Feature_4099632442__private_IsEnabledDeviceUsage\n;   test    eax, eax\n;   jnz     tagged_free\n;   mov     rax, qword ptr cs:Pku2uKernelFunctions+8\n;   call    cs:__guard_dispatch_icall_fptr    ; retained default free\n;   jmp     done\n; tagged_free:\n;   xor     edx, edx                          ; Tag = 0\n;   call    cs:__imp_ExFreePoolWithTag        ; feature on\n; done:"
+    },
+    {
+      "name": "SpQuerySessionKey @ 0x1C0009194 -> SpQuerySessionKey @ 0x1C0009F94",
+      "similarity": 0.78,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Correctly matched pair (SSL/TLS package, CSslUserContext)",
+        "Length gate unchanged: session-key length field ([ctx+0x17C]) must equal 0x10, else return 0x80090302",
+        "Unpatched: allocates via SslLsaKernelFunctions allocate callback through __guard_dispatch_icall_fptr, then memmove of 0x10 bytes",
+        "Patched: wraps allocation with Feature_4099632442__private_IsEnabledDeviceUsage - enabled -> ExAllocatePoolWithTag(SslPoolType, size, 'SlSc'=0x436C7353); disabled (default) -> original CFG-guarded callback, unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged allocator refactor for the session-key buffer. Default path unchanged. The 'SlSc' tag and ExAllocatePoolWithTag only apply on the feature-on path. The fixed 0x10-byte copy and the length gate are unchanged.",
+      "assembly_diff": "; UNPATCHED SpQuerySessionKey @ 0x1C0009194:\n;   cmp     [rdi+17Ch], ecx           ; ecx=0x10, require length==16\n;   jnz     err_80090302\n;   mov     rax, cs:SslLsaKernelFunctions\n;   mov     rax, [rax]\n;   call    cs:__guard_dispatch_icall_fptr   ; CFG-guarded allocate\n;   mov     [rbx+8], rax\n;   test    rax, rax / jz err_80090300\n;   ... memmove(rax, [rdi+180h], [rbx]) ...\n;\n; PATCHED SpQuerySessionKey @ 0x1C0009F94:\n;   cmp     dword ptr [rcx+17Ch], 10h\n;   jnz     err_80090302\n;   call    Feature_4099632442__private_IsEnabledDeviceUsage\n;   test    eax, eax / jz legacy\n;   mov     r8d, 436C7353h            ; Tag 'SlSc'\n;   mov     ecx, cs:SslPoolType\n;   call    cs:__imp_ExAllocatePoolWithTag   ; feature on\n;   jmp     store\n; legacy:\n;   mov     rax, cs:SslLsaKernelFunctions\n;   mov     rax, [rax]\n;   call    cs:__guard_dispatch_icall_fptr    ; retained default\n; store:\n;   mov     [rbx+8], rax\n;   ... memmove ..."
+    },
+    {
+      "name": "WDigestQueryContextAttributes @ 0x1C0025090 -> WDigestQueryContextAttributes @ 0x1C0027240",
+      "similarity": 0.80,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Correctly matched pair",
+        "Attribute-response buffers allocated via g_LsaKernelFunctions allocate callback through __guard_dispatch_icall_fptr in the unpatched build",
+        "Patched wraps each allocation site with Feature_4099632442__private_IsEnabledDeviceUsage: enabled -> KSecAllocateContextBuffer; disabled (default) -> original CFG-guarded callback",
+        "Cosmetic: a constant store in the SECPKG_ATTR_PACKAGE_INFO path was folded to an immediate - semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged allocator refactor for WDigest attribute-response buffers. Default path unchanged.",
+      "assembly_diff": "; UNPATCHED (representative allocation site) @ 0x1C0025090:\n;   mov     rax, cs:g_LsaKernelFunctions\n;   call    cs:__guard_dispatch_icall_fptr\n;\n; PATCHED (same site, feature-gated) @ 0x1C0027240:\n;   call    Feature_4099632442__private_IsEnabledDeviceUsage\n;   call    cs:__imp_KSecAllocateContextBuffer   ; feature on\n;   mov     rax, cs:g_LsaKernelFunctions\n;   call    cs:__guard_dispatch_icall_fptr        ; retained default"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SpQuerySessionKey (0x1C0009194), Pku2uFreeString (0x1C000B684), WDigestQueryContextAttributes (0x1C0025090), and six other QueryContextAttributes / string helpers across the SSL/TLS, PKU2U, NTLM, Kerberos, and TS packages",
+      "entry_point": "Sp*QueryContextAttributes / SpQuerySessionKey handlers, reachable from user mode via QueryContextAttributes / QueryContextAttributesEx dispatched through ksecdd.sys",
+      "call_chain": [
+        "User-mode: QueryContextAttributes / QueryContextAttributesEx (secur32.dll/sspi.h)",
+        "Kernel: LSA kernel dispatch -> ksecdd.sys -> ksecpkg.sys package handler",
+        "ksecpkg.sys: SpQuerySessionKey (SSL/TLS) / WDigestQueryContextAttributes / NtLmQueryContextAttributes / KerbQueryContextAttributes / Pku2uQueryContextAttributes / TSQueryContextAttributes",
+        "Allocation: package _SECPKG_KERNEL_FUNCTIONS callback (SslLsaKernelFunctions / g_LsaKernelFunctions / Pku2uKernelFunctions) invoked via __guard_dispatch_icall_fptr (Control Flow Guard dispatch)"
+      ],
+      "vulnerability_class": "N/A - allocator routing refactor / defense-in-depth, staged behind a WIL feature flag",
+      "description": "The patch wraps the security-context buffer allocation and free callsites in nine SSP functions with the WIL feature-staging predicate Feature_4099632442__private_IsEnabledDeviceUsage (located at 0x1C0004290). When the feature is enabled the buffer is allocated via ExAllocatePoolWithTag (tags 'SlSc'=0x436C7353 for the SSL session-key path, 'PrCb'=0x43627250 for context buffers) or KSecAllocateContextBuffer, and freed via ExFreePoolWithTag. When the feature is disabled (the default) the code takes the original path unchanged: an indirect call through the package _SECPKG_KERNEL_FUNCTIONS callback table via the Control Flow Guard dispatch thunk __guard_dispatch_icall_fptr. Because the pre-patch path is retained verbatim as the default else branch and the new path only executes when the staged feature is turned on, the delivered default behavior of the patched binary is identical to the unpatched binary. The unpatched allocate/free callsites are not a reachable memory-safety defect: they call legitimate LSA-installed callbacks through CFG dispatch, not an attacker-reachable .data function-pointer table. No bounds check, size validation, or reachability condition changed (for example, the Pku2uBuildFullServiceName combined-length check cmp edx, 0FFFDh is identical in both builds).",
+      "trigger_conditions": "Ordinary SSPI flows reach this code: AcquireCredentialsHandle then InitializeSecurityContext / AcceptSecurityContext to establish a context, then QueryContextAttributes (e.g. SECPKG_ATTR_SESSION_KEY exercises SpQuerySessionKey; SECPKG_ATTR_PACKAGE_INFO exercises the QueryContextAttributes allocator path). Reaching the code does not demonstrate a vulnerability: both builds allocate through a CFG-guarded LSA callback, and with the feature disabled the patched build takes the same path.",
+      "primitive": "None. The allocate/free callsites route through CFG-guarded LSA _SECPKG_KERNEL_FUNCTIONS callbacks in both builds; a corrupted pointer is rejected by Control Flow Guard, and the callback table is not attacker-reachable. There is no out-of-bounds access, use-after-free, allocator/deallocator mismatch, or function-pointer hijack introduced or fixed by this change. The pool tags and the switch to ExAllocatePoolWithTag/KSecAllocateContextBuffer are allocation-hygiene refactors that only take effect when the staged feature is enabled.",
+      "evidence": "; UNPATCHED SpQuerySessionKey @ 0x1C0009194 - allocate via LSA callback, CFG-guarded:\n  00000001C00091B1  mov     rax, cs:SslLsaKernelFunctions\n  00000001C00091BA  mov     rax, [rax]\n  00000001C00091BD  call    cs:__guard_dispatch_icall_fptr   ; CFG dispatch\n  00000001C00091C3  mov     [rbx+8], rax\n\n; PATCHED SpQuerySessionKey @ 0x1C0009F94 - feature gate, old path retained:\n  00000001C0009FB3  call    Feature_4099632442__private_IsEnabledDeviceUsage\n  00000001C0009FC6  jz      loc_1C0009FE4                    ; feature off -> legacy\n  00000001C0009FCA  mov     r8d, 436C7353h                  ; Tag 'SlSc'\n  00000001C0009FD6  call    cs:__imp_ExAllocatePoolWithTag  ; feature on\n  00000001C0009FE4  mov     rax, cs:SslLsaKernelFunctions   ; retained default\n  00000001C0009FEE  call    cs:__guard_dispatch_icall_fptr\n\n; UNPATCHED Pku2uFreeString @ 0x1C000B684 - free via LSA callback, CFG-guarded:\n  00000001C000B69A  mov     rax, qword ptr cs:Pku2uKernelFunctions+8\n  00000001C000B6A1  call    cs:__guard_dispatch_icall_fptr\n\n; PATCHED Pku2uFreeString @ 0x1C000C504 - feature gate, old path retained:\n  00000001C000C518  call    Feature_4099632442__private_IsEnabledDeviceUsage\n  00000001C000C523  jnz     loc_1C000C534                   ; feature on -> tagged free\n  00000001C000C525  mov     rax, qword ptr cs:Pku2uKernelFunctions+8\n  00000001C000C52C  call    cs:__guard_dispatch_icall_fptr  ; retained default\n  00000001C000C536  call    cs:__imp_ExFreePoolWithTag      ; feature on (Tag=0)",
+      "assembly": "; UNPATCHED ksecpkg.sys - SpQuerySessionKey @ 0x1C0009194 (SSL/TLS)\n  00000001C0009194  mov     [rsp+arg_0], rbx\n  00000001C0009199  push    rdi\n  00000001C000919A  sub     rsp, 20h\n  00000001C000919E  mov     rdi, rcx\n  00000001C00091A1  mov     rbx, rdx\n  00000001C00091A4  mov     ecx, 10h\n  00000001C00091A9  cmp     [rdi+17Ch], ecx              ; require session-key length == 16\n  00000001C00091AF  jnz     short loc_1C00091E9\n  00000001C00091B1  mov     rax, cs:SslLsaKernelFunctions\n  00000001C00091B8  mov     [rdx], ecx\n  00000001C00091BA  mov     rax, [rax]\n  00000001C00091BD  call    cs:__guard_dispatch_icall_fptr   ; CFG-guarded allocate callback\n  00000001C00091C3  mov     [rbx+8], rax\n  00000001C00091C7  test    rax, rax\n  00000001C00091CA  jz      short loc_1C00091E2\n  00000001C00091CC  mov     r8d, [rbx]\n  00000001C00091CF  lea     rdx, [rdi+180h]\n  00000001C00091D6  mov     rcx, rax\n  00000001C00091D9  call    memmove\n  00000001C00091DE  xor     eax, eax\n  00000001C00091E0  jmp     short loc_1C00091EE\n  00000001C00091E2  mov     eax, 80090300h\n  00000001C00091E7  jmp     short loc_1C00091EE\n  00000001C00091E9  mov     eax, 80090302h\n  00000001C00091EE  mov     rbx, [rsp+28h+arg_0]\n  00000001C00091F3  add     rsp, 20h\n  00000001C00091F7  pop     rdi\n  00000001C00091F8  retn\n;\n; The indirect call goes through __guard_dispatch_icall_fptr (Control Flow Guard)\n; to a member of the LSA-installed SslLsaKernelFunctions (_SECPKG_KERNEL_FUNCTIONS)\n; struct. This is a legitimate kernel callback, not an attacker-reachable .data table.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksecpkg!SpQuerySessionKey",
+            "address": "0x1C0009194",
+            "why": "Unpatched: the allocate callback is invoked at 0x1C00091BD via __guard_dispatch_icall_fptr. Patched (0x1C0009F94): the feature gate is called at 0x1C0009FB3 and selects between ExAllocatePoolWithTag('SlSc') and the retained callback."
+          },
+          {
+            "symbol": "ksecpkg!Pku2uFreeString",
+            "address": "0x1C000B684",
+            "why": "Unpatched: the free callback is invoked at 0x1C000B6A1 via __guard_dispatch_icall_fptr. Patched (0x1C000C504): the feature gate at 0x1C000C518 selects between ExFreePoolWithTag(buffer,0) and the retained callback."
+          },
+          {
+            "symbol": "ksecpkg!WDigestQueryContextAttributes",
+            "address": "0x1C0025090",
+            "why": "Unpatched: response buffers allocated via g_LsaKernelFunctions callback (CFG dispatch). Patched (0x1C0027240): each site wrapped with the feature gate selecting KSecAllocateContextBuffer vs the retained callback."
+          },
+          {
+            "symbol": "ksecpkg!Feature_4099632442__private_IsEnabledDeviceUsage",
+            "address": "0x1C0004290",
+            "why": "The WIL feature-staging predicate that gates every new tagged-pool allocate/free path. Present in both builds; its return value is set by feature configuration, not attacker input."
+          }
+        ],
+        "watch": [
+          "SslLsaKernelFunctions (SSL/TLS _SECPKG_KERNEL_FUNCTIONS) - allocate callback target for SpQuerySessionKey",
+          "Pku2uKernelFunctions (_SECPKG_KERNEL_FUNCTIONS) - allocate/free callbacks for the PKU2U helpers",
+          "g_LsaKernelFunctions (_SECPKG_KERNEL_FUNCTIONS) - allocate callback for WDigestQueryContextAttributes",
+          "Return value of Feature_4099632442__private_IsEnabledDeviceUsage - selects tagged-pool vs legacy callback path"
+        ],
+        "key_offsets": [
+          "0x1C00091BD (call __guard_dispatch_icall_fptr) - unpatched CFG-guarded allocate in SpQuerySessionKey",
+          "0x1C0009FB3 (call Feature_4099632442...) - patched feature gate in SpQuerySessionKey",
+          "0x1C000B6A1 (call __guard_dispatch_icall_fptr) - unpatched CFG-guarded free in Pku2uFreeString",
+          "0x1C000C518 (call Feature_4099632442...) - patched feature gate in Pku2uFreeString",
+          "0x1C0004290 - Feature_4099632442__private_IsEnabledDeviceUsage (the WIL gate)"
+        ],
+        "trigger_setup": "1. AcquireCredentialsHandle for an affected package (SSL/TLS/Schannel for SpQuerySessionKey; NTLM/Kerberos/PKU2U/WDigest/TS for the QueryContextAttributes handlers). 2. Establish a context with InitializeSecurityContext (client) or AcceptSecurityContext (server). 3. Call QueryContextAttributes with SECPKG_ATTR_SESSION_KEY (exercises SpQuerySessionKey) or SECPKG_ATTR_PACKAGE_INFO (exercises the QueryContextAttributes allocator path). 4. In the patched build, whether the tagged-pool path runs depends on the Feature_4099632442 configuration.",
+        "expected_observation": "In both builds the allocate/free callsites call CFG-guarded LSA _SECPKG_KERNEL_FUNCTIONS callbacks. In the patched build with the feature disabled (default), behavior is identical to unpatched. With the feature enabled, the session-key buffer carries the 'SlSc' tag and is allocated via ExAllocatePoolWithTag / freed via ExFreePoolWithTag.",
+        "notes": "ksecpkg.sys is a kernel-mode Security Support Provider host loaded via ksecdd.sys. Feature_4099632442__private_IsEnabledDeviceUsage is a WIL feature-staging predicate. The change is a staged allocator-routing refactor with the pre-patch path retained as the default branch; it does not fix a reachable memory-safety defect."
+      }
+    }
+  ],
+  "summary": "The patch modifies 9 functions in ksecpkg.sys (Windows kernel-mode Security Support Provider host) by wrapping each security-context buffer allocate/free callsite with the WIL feature-staging predicate Feature_4099632442__private_IsEnabledDeviceUsage (at 0x1C0004290). When the feature is enabled, buffers are allocated via ExAllocatePoolWithTag (tags 'SlSc', 'PrCb') or KSecAllocateContextBuffer and freed via ExFreePoolWithTag. When disabled (the default), the code takes the original path unchanged: an indirect call through the package _SECPKG_KERNEL_FUNCTIONS callback table via the Control Flow Guard dispatch thunk __guard_dispatch_icall_fptr. Because the pre-patch path is retained as the default else branch and the new path is staged behind a feature flag, the delivered default behavior is identical to the unpatched build. The unpatched callsites are not a reachable vulnerability (CFG-guarded calls to legitimate LSA callbacks, not an attacker-reachable .data table), and no bounds check, size validation, or reachability condition changed. This is a staged allocator-routing refactor / defense-in-depth change, not a delivered security fix - no security-relevant change."
+}

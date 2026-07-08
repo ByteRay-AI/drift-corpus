@@ -1,0 +1,233 @@
+{
+  "binaries": {
+    "title": "hvsocket.sys - feature-gated loopback endpoint use-after-free / race in teardown, fixed by removing the EvaluateCurrentState WIL feature gate",
+    "id_unpatched": "hvsocket_unpatched.sys",
+    "id_patched": "hvsocket_patched.sys",
+    "overall_similarity": 0.9678,
+    "matched": 269,
+    "changed": 9,
+    "identical": 260,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VmbusTlLoopbackDisconnect (unpatched 0x1C0006C30, patched 0x1C00068B0)",
+      "similarity": 0.9128,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed 3 EvaluateCurrentState (0x1C0001D78) WIL feature-gate calls",
+        "Endpoint spinlock at endpoint+0x48 is now acquired and released unconditionally (was gated on the legacy path)",
+        "The peer back-reference *(entry+0x68) is now cleared unconditionally (was gated)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The function reads two DISTINCT objects: rsi = *(endpoint+0x2b8) (entry A) and rbp = *(A+0x68) (peer B). Each is reference-counted (lock xadd [.+8]) and freed at most once (B at 0x1C0006DF1, A at 0x1C0006EBC), in BOTH builds. There is NO double-free; the 'and qword [rsi+68h],0' instruction clears A's pointer to B, it does not zero rsi. The real change is that on the unpatched legacy path (EvaluateCurrentState false) the read/clear of endpoint+0x2b8 runs without the endpoint spinlock; the patch makes the spinlock unconditional, aligning teardown with the referenced read path used by NotifyReceiveConsumed and Send.",
+      "assembly_diff": "UNPATCHED key block at 0x1C0006C8B:\n0x1C0006C8B: mov rsi, [rbx+2B8h]        ; rsi = A = *(endpoint+0x2b8)\n0x1C0006C92: and qword [rbx+2B8h], 0\n0x1C0006C9A: test rsi, rsi\n0x1C0006C9D: jz 0x1C0006CB3\n0x1C0006C9F: mov rbp, [rsi+68h]         ; rbp = B = *(A+0x68) (DISTINCT object)\n0x1C0006CA3: call EvaluateCurrentState  ; WIL feature gate\n0x1C0006CA8: test eax, eax\n0x1C0006CAA: jz 0x1C0006CB5             ; gate false: skip clearing A's back-ref\n0x1C0006CAC: and qword [rsi+68h], 0     ; clears A+0x68 (NOT rsi)\n; B teardown: lock xadd [rbp+8]; ExFreePoolWithTag(rbp) at 0x1C0006DF1 if count==0\n; A teardown: lock xadd [rsi+8]; ExFreePoolWithTag(rsi) at 0x1C0006EBC if count==0\n; A and B are separate allocations, each freed once.\n\nPATCHED at 0x1C00068E7:\n0x1C00068EB: KeAcquireSpinLockRaiseToDpc (endpoint+0x48) - always\n0x1C00068F7: mov rsi, [rbx+2B8h]\n0x1C000690B: mov rbp, [rsi+68h]\n0x1C000690F: and qword [rsi+68h], 0     ; always cleared\n0x1C000691E: KeReleaseSpinLock          ; always"
+    },
+    {
+      "name": "VmbusTlLoopbackNotifyReceiveConsumed (unpatched 0x1C0006F50, patched 0x1C0006BB0)",
+      "similarity": 0.8389,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed EvaluateCurrentState gate that chose between VmbusTlLoopbackReferenceEndpointDeliveryQueue (0x1C0007128, referenced) and a raw legacy read",
+        "On the legacy path (0x1C00070A3) reads *(endpoint+0x2b8) and dereferences *(entry+0x68) without a lock or a reference count",
+        "Patch always uses the referenced, spinlock-protected read"
+      ],
+      "security_relevant": true,
+      "security_notes": "Use-after-free / race: on the legacy path the pending entry pointer at endpoint+0x2b8 is read without the endpoint spinlock and without incrementing the entry's reference count, then *(entry+0x68) is dereferenced and *(peer+0x210) |= 2 is written. A concurrent VmbusTlLoopbackDisconnect can drop the last reference and free the entry in that window. The retained helper VmbusTlLoopbackReferenceEndpointDeliveryQueue acquires the spinlock and takes a reference before returning the entry.",
+      "assembly_diff": "Legacy path (unpatched):\n0x1C00070A3: mov rdi, [rbx+2B8h]       ; unlocked, unreferenced read\n0x1C00070AF: mov rdi, [rdi+68h]        ; deref peer (may be freed)\n0x1C00070B7: KeAcquireSpinLockRaiseToDpc(rdi+0x48)\n0x1C00070C3: or dword [rdi+210h], 2\n\nSafe helper VmbusTlLoopbackReferenceEndpointDeliveryQueue (0x1C0007128):\n0x1C0007141: KeAcquireSpinLockRaiseToDpc(endpoint+0x48)\n0x1C000714D: mov rbx, [rbx+2B8h]       ; read under lock\n0x1C000718E: lock xadd [rbx+8], rdx    ; take a reference\n0x1C00071AA: KeReleaseSpinLock"
+    },
+    {
+      "name": "VmbusTlLoopbackSend (unpatched 0x1C00065EC, patched 0x1C00062A4)",
+      "similarity": 0.8832,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed 3 EvaluateCurrentState gate calls",
+        "On the legacy path (0x1C0006640) reads rbx = *(endpoint+0x2b8) raw, with no reference and no null check, then dereferences [rbx+68h] at 0x1C00066CD",
+        "Patch always uses VmbusTlLoopbackReferenceEndpointDeliveryQueue (referenced, null-checked)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Use-after-free / race: the legacy path uses the pending entry pointer at endpoint+0x2b8 without incrementing its reference count. A concurrent disconnect/close can free it, leading to use-after-free when the send path dereferences it.",
+      "assembly_diff": "0x1C0006622: test eax, eax             ; gate result\n0x1C0006624: jz 0x1C0006640            ; legacy path\n0x1C0006629: call VmbusTlLoopbackReferenceEndpointDeliveryQueue ; safe (gate true)\n0x1C0006640: mov rbx, [r15+2B8h]       ; legacy: raw, no ref, no null check\n0x1C00066CD: mov rax, [rbx+68h]        ; later deref of the raw pointer"
+    },
+    {
+      "name": "VmbusTlLoopbackAcceptConnection (0x1C001B630) / VmbusTlLoopbackSetupConnection (0x1C001B1D0)",
+      "similarity": 0.6072,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed EvaluateCurrentState gate calls (3 in AcceptConnection, 2 in SetupConnection)",
+        "These functions create the 0x70-byte 'Vnpi' entry (VmbusTlCreateObject, size 0x70) and publish it to endpoint+0x2b8; the surrounding critical-region/mutex handling is made unconditional",
+        "This is the write side of the same synchronization change addressed in the read/teardown paths"
+      ],
+      "security_relevant": true,
+      "security_notes": "Race condition (write side): publication and teardown of the single-slot pending entry at endpoint+0x2b8 are brought under one consistent locking discipline by removing the gate.",
+      "assembly_diff": "VmbusTlLoopbackSetupConnection: object created at 0x1C001B211 (VmbusTlCreateObject, edx=0x70) and stored at 0x1C001B275 (mov [rbx+2B8h], rax)."
+    },
+    {
+      "name": "VmbusTlLoopbackSetupConnection (0x1C001B1D0) / VmbusTlLoopbackAcceptConnection (0x1C001B630) cleanup path",
+      "similarity": 0.4819,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed EvaluateCurrentState gate that guarded cleanup-time ExReleaseFastMutexUnsafe / KeLeaveCriticalRegion and object dereference",
+        "Acquisition and release are now unconditional and symmetric"
+      ],
+      "security_relevant": false,
+      "security_notes": "Lock-handling consistency (defense-in-depth). A lock imbalance would require the feature to evaluate differently between the matched acquire and release within one call; because both are guarded by the same runtime evaluation this is not a demonstrable imbalance in either build. Downgraded from a claimed deadlock/DoS to defense-in-depth.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlNotifyListenerAccept (0x1C0005F18)",
+      "similarity": 0.8043,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed EvaluateCurrentState gate around the refcount-increment path for an inbound connection",
+        "Refcount handling made unconditional; duplicated try-reference/telemetry block collapsed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of the refcount path. No isolated memory-safety issue.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlCommonConnectCompletion (0x1C0002670)",
+      "similarity": 0.9609,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed EvaluateCurrentState gate before a dereference path",
+        "Condition simplified from 'if (EvaluateCurrentState() && arg1[0x42] < 0)' to 'if (arg1[0x42] < 0)'"
+      ],
+      "security_relevant": false,
+      "security_notes": "Minor behavioral change: the gate condition was dropped from a dereference path; the value check is now unconditional.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProviderListen (0x1C001E420)",
+      "similarity": 0.5765,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed 2 EvaluateCurrentState gate calls from the listen path",
+        "Rewires VmbusTlCreateListenEndpoint to the existing VmbusTlCreateEndpoint (the standalone VmbusTlCreateListenEndpoint disappears)",
+        "Core listen logic preserved"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural reorganization of the listen path consistent with the gate removal. No memory-safety change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProcessNewConnectionForListener (0x1C0019E60)",
+      "similarity": 0.9756,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed 2 EvaluateCurrentState gate calls guarding partition-state reads",
+        "Register allocation churn otherwise"
+      ],
+      "security_relevant": false,
+      "security_notes": "Gate removal plus register-allocation churn; no semantic memory-safety change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": ["VmbusTlCreateListenEndpoint (folded into VmbusTlCreateEndpoint by VmbusTlProviderListen)"],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "VmbusTlLoopbackNotifyReceiveConsumed (0x1C0006F50) and VmbusTlLoopbackSend (0x1C00065EC)",
+      "entry_point": "Hyper-V Socket (AF_HYPERV) loopback receive-consumed notification and send paths on an endpoint with a pending loopback entry at endpoint+0x2b8",
+      "call_chain": [
+        "User-mode operation on an AF_HYPERV loopback socket (receive-consumed notification or send)",
+        "VmbusTlLoopbackNotifyReceiveConsumed / VmbusTlLoopbackSend",
+        "On the legacy (EvaluateCurrentState false) path: unlocked, unreferenced read of *(endpoint+0x2b8)",
+        "Concurrent VmbusTlLoopbackDisconnect frees the entry"
+      ],
+      "vulnerability_class": "Use-after-free / race condition (CWE-416 / CWE-362)",
+      "description": "In the unpatched build the WIL feature gate EvaluateCurrentState (0x1C0001D78) selects between a referenced path and a legacy path. On the legacy path, VmbusTlLoopbackNotifyReceiveConsumed (at 0x1C00070A3) and VmbusTlLoopbackSend (at 0x1C0006640) read the pending loopback entry pointer at endpoint+0x2b8 without holding the endpoint spinlock and without incrementing the entry's reference count, then dereference *(entry+0x68). A concurrent VmbusTlLoopbackDisconnect can drop the entry's last reference and free it in that window, causing a use-after-free. The patch removes the gate so both functions always call VmbusTlLoopbackReferenceEndpointDeliveryQueue (0x1C0007128), which acquires the endpoint spinlock, reads the slot under the lock, and takes a reference before returning.",
+      "trigger_conditions": "1. EvaluateCurrentState (0x1C0001D78) returns false, selecting the legacy path. It calls EvaluateFeature over reg_FeatureDescriptors_a and returns (feature_state != 1); the runtime default is not determinable from the static image and must be confirmed on the target build.\n2. An endpoint has a non-NULL pending loopback entry at offset 0x2b8 (established via the accept/setup path).\n3. One thread issues a receive-consumed notification or send while another thread disconnects/closes the same endpoint, racing the unlocked read against the reference-decrement and free.",
+      "primitive": "Use-after-free of a 0x70-byte NonPagedPool object (tag 'Vnpi' = 0x69706E56) if the legacy path is live and the race is won. No stronger primitive (controlled reclamation, information disclosure, or code execution) is demonstrable from this diff and none is claimed.",
+      "evidence": "Legacy unlocked read in VmbusTlLoopbackNotifyReceiveConsumed:\n0x1C00070A3: mov rdi, [rbx+2B8h]   ; unlocked, unreferenced\n0x1C00070AF: mov rdi, [rdi+68h]    ; deref peer (may be freed)\n0x1C00070C3: or dword [rdi+210h], 2\n\nSafe helper VmbusTlLoopbackReferenceEndpointDeliveryQueue (0x1C0007128):\n0x1C0007141: KeAcquireSpinLockRaiseToDpc(endpoint+0x48)\n0x1C000714D: mov rbx, [rbx+2B8h]   ; read under lock\n0x1C000718E: lock xadd [rbx+8], rdx ; take a reference\n0x1C00071AA: KeReleaseSpinLock\n\nLegacy raw read in VmbusTlLoopbackSend:\n0x1C0006640: mov rbx, [r15+2B8h]   ; raw, no ref, no null check\n0x1C00066CD: mov rax, [rbx+68h]    ; later deref",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket_unpatched VmbusTlLoopbackNotifyReceiveConsumed",
+            "address": "0x1C0006F50",
+            "why": "Entry; RCX = endpoint object. Watch the EvaluateCurrentState result and the legacy read at 0x1C00070A3."
+          },
+          {
+            "symbol": "hvsocket_unpatched legacy unref read",
+            "address": "0x1C00070A3",
+            "why": "Reads *(endpoint+0x2b8) without a lock or reference; use !pool @rdi to check whether the entry is still valid, and race a concurrent disconnect."
+          }
+        ],
+        "watch": [
+          "RCX at entry = endpoint object",
+          "EAX from EvaluateCurrentState: 0 selects the legacy (unreferenced) path",
+          "RDI/RBX after reading endpoint+0x2b8 = the unreferenced entry pointer being dereferenced"
+        ],
+        "key_offsets": [
+          "0x1C0006F62: call EvaluateCurrentState (feature gate)",
+          "0x1C00070A3: legacy read of endpoint+0x2b8 without lock/reference",
+          "0x1C00070AF: deref *(entry+0x68) on the possibly-freed entry",
+          "VmbusTlLoopbackSend 0x1C0006640: legacy raw read; 0x1C00066CD: deref [entry+0x68]"
+        ],
+        "trigger_setup": "Establish an AF_HYPERV loopback endpoint with a pending entry at endpoint+0x2b8, then concurrently issue a receive-consumed notification / send on one thread and close/disconnect the endpoint on another, while the feature evaluates to the legacy path.",
+        "expected_observation": "PAGE_FAULT_IN_NONPAGED_AREA (0x50) when accessing freed pool, or pool corruption from a write to reclaimed memory, if the race is won.",
+        "notes": "The entry object is 0x70 bytes (VmbusTlCreateObject size 0x70) with tag 'Vnpi' (0x69706E56). EvaluateCurrentState (0x1C0001D78) is a WIL feature gate: it calls EvaluateFeature over reg_FeatureDescriptors_a and returns (state != 1). The patch removes all EvaluateCurrentState calls from the 9 changed functions and finalizes the referenced/spinlock-synchronized path."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "VmbusTlLoopbackDisconnect (0x1C0006C30)",
+      "entry_point": "AF_HYPERV loopback endpoint close/disconnect on an endpoint with a pending entry at endpoint+0x2b8",
+      "call_chain": [
+        "User-mode socket close on an AF_HYPERV loopback connection",
+        "hvsocket.sys endpoint teardown",
+        "VmbusTlLoopbackDisconnect (0x1C0006C30)"
+      ],
+      "vulnerability_class": "Race condition (CWE-362)",
+      "description": "On the unpatched legacy path (EvaluateCurrentState false) the endpoint spinlock at endpoint+0x48 is not held while endpoint+0x2b8 is read and cleared, so the teardown of the single pending-entry slot is unsynchronized with the concurrent readers in Findings above. The patch acquires and releases the spinlock unconditionally and clears the peer back-reference *(entry+0x68) unconditionally. IMPORTANT: this function does NOT contain a double-free. It reads two distinct objects, A = *(endpoint+0x2b8) into rsi and B = *(A+0x68) into rbp, and reference-decrements/frees each at most once (B at 0x1C0006DF1, A at 0x1C0006EBC). The 'and qword [rsi+68h],0' clears A's pointer to B; it does not zero rsi.",
+      "trigger_conditions": "1. EvaluateCurrentState returns false (legacy path).\n2. The endpoint has a non-NULL pending entry at offset 0x2b8.\n3. Disconnect runs concurrently with a legacy-path reader (NotifyReceiveConsumed / Send) that reads endpoint+0x2b8 without synchronization.",
+      "primitive": "Unsynchronized teardown of the pending-entry slot; combined with the unreferenced reads in the sibling functions this forms the use-after-free window. No standalone exploitation primitive is claimed for the disconnect function itself.",
+      "evidence": "0x1C0006C8B: mov rsi, [rbx+2B8h]      ; rsi = A\n0x1C0006C9F: mov rbp, [rsi+68h]       ; rbp = B = *(A+0x68), DISTINCT object\n0x1C0006CA3: call EvaluateCurrentState\n0x1C0006CAA: jz 0x1C0006CB5           ; gate false: skip clearing A's back-ref\n0x1C0006CAC: and qword [rsi+68h], 0   ; clears A+0x68 (not rsi)\n0x1C0006D6A: lock xadd [rbp+8], rax   ; decrement B refcount\n0x1C0006DF1: ExFreePoolWithTag(rbp)   ; free B if count==0\n0x1C0006E3C: lock xadd [rsi+8], rax   ; decrement A refcount\n0x1C0006EBC: ExFreePoolWithTag(rsi)   ; free A (distinct) if count==0\n\nPATCHED: KeAcquireSpinLockRaiseToDpc / KeReleaseSpinLock at endpoint+0x48 are unconditional; *(rsi+0x68)=0 is unconditional; no EvaluateCurrentState calls remain.",
+      "assembly": "VmbusTlLoopbackDisconnect (unpatched 0x1C0006C30):\n\n0x1C0006C4D: mov rbx, rcx                       ; rbx = endpoint\n0x1C0006C53: call KeEnterCriticalRegion\n0x1C0006C5F: lea rcx, [rbx+10h]                  ; FastMutex\n0x1C0006C63: call ExAcquireFastMutexUnsafe\n0x1C0006C6F: call EvaluateCurrentState           ; WIL feature gate #1\n0x1C0006C74: test eax, eax\n0x1C0006C76: jz 0x1C0006C8B                       ; gate false: skip spinlock\n0x1C0006C78: lea rcx, [rbx+48h]                  ; SpinLock\n0x1C0006C7C: call KeAcquireSpinLockRaiseToDpc\n0x1C0006C88: mov dil, al\n0x1C0006C8B: mov rsi, [rbx+2B8h]                 ; rsi = A = *(endpoint+0x2b8)\n0x1C0006C92: and qword [rbx+2B8h], 0\n0x1C0006C9A: test rsi, rsi\n0x1C0006C9D: jz 0x1C0006CB3\n0x1C0006C9F: mov rbp, [rsi+68h]                  ; rbp = B = *(A+0x68) (DISTINCT object)\n0x1C0006CA3: call EvaluateCurrentState           ; gate #2\n0x1C0006CA8: test eax, eax\n0x1C0006CAA: jz 0x1C0006CB5                       ; gate false: skip clearing A back-ref\n0x1C0006CAC: and qword [rsi+68h], 0              ; clears A+0x68 (NOT rsi)\n0x1C0006CB1: jmp 0x1C0006CB5\n0x1C0006CB3: xor ebp, ebp                         ; B = NULL\n0x1C0006CB5: call EvaluateCurrentState           ; gate #3\n0x1C0006CBA: test eax, eax\n0x1C0006CBC: jz 0x1C0006CD1\n0x1C0006CC1: lea rcx, [rbx+48h]\n0x1C0006CC5: call KeReleaseSpinLock\n0x1C0006CD1: lea rcx, [rbx+10h]\n0x1C0006CD5: call ExReleaseFastMutexUnsafe\n0x1C0006CE1: call KeLeaveCriticalRegion\n; B (rbp) teardown:\n0x1C0006D6A: lock xadd [rbp+8], rax              ; decrement B refcount\n0x1C0006D76: jg 0x1C0006E0A                       ; still referenced -> skip free\n0x1C0006DE9: mov edx, 69706E56h                  ; tag 'Vnpi'\n0x1C0006DF1: call ExFreePoolWithTag               ; free B (if count==0)\n; A (rsi) teardown:\n0x1C0006E0A: test rsi, rsi\n0x1C0006E0D: jz 0x1C0006EC8\n0x1C0006E3C: lock xadd [rsi+8], rax              ; decrement A refcount\n0x1C0006E48: jg 0x1C0006EC8\n0x1C0006EB4: mov edx, 69706E56h\n0x1C0006EBC: call ExFreePoolWithTag               ; free A (distinct object)\n0x1C0006EE6: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket_unpatched VmbusTlLoopbackDisconnect",
+            "address": "0x1C0006C30",
+            "why": "Entry; RCX (arg1) = endpoint object. After 0x1C0006C4D, RBX = endpoint."
+          },
+          {
+            "symbol": "ExFreePoolWithTag (B / rbp)",
+            "address": "0x1C0006DF1",
+            "why": "Frees object B = *(A+0x68). RCX = rbp."
+          },
+          {
+            "symbol": "ExFreePoolWithTag (A / rsi)",
+            "address": "0x1C0006EBC",
+            "why": "Frees object A = *(endpoint+0x2b8), a DIFFERENT allocation from B. RCX = rsi. Confirm RCX here differs from RCX at 0x1C0006DF1."
+          }
+        ],
+        "watch": [
+          "RCX at function entry = endpoint object (arg1)",
+          "RBX after 0x1C0006C4D = endpoint",
+          "RSI after 0x1C0006C8B = A = *(endpoint+0x2b8)",
+          "RBP after 0x1C0006C9F = B = *(A+0x68) (distinct object)",
+          "RCX at 0x1C0006DF1 (B) vs RCX at 0x1C0006EBC (A): different pointers"
+        ],
+        "key_offsets": [
+          "0x1C0006C8B: mov rsi, [rbx+2B8h] - reads entry A",
+          "0x1C0006C9F: mov rbp, [rsi+68h] - reads peer B (distinct)",
+          "0x1C0006CA3: call EvaluateCurrentState - WIL feature gate",
+          "0x1C0006CAA: je 0x1C0006CB5 - gate false skips clearing A's back-ref",
+          "0x1C0006DF1: ExFreePoolWithTag(rbp) - frees B",
+          "0x1C0006EBC: ExFreePoolWithTag(rsi) - frees A (distinct)"
+        ],
+        "trigger_setup": "Open an AF_HYPERV loopback socket, establish a pending entry at endpoint+0x2b8, then close/disconnect to invoke VmbusTlLoopbackDisconnect. The security-relevant aspect is the unsynchronized legacy teardown racing the readers in the sibling functions, not a double-free.",
+        "expected_observation": "No double-free bugcheck occurs from this function in isolation. Under a concurrent legacy-path reader, a use-after-free may manifest as PAGE_FAULT_IN_NONPAGED_AREA (0x50) or pool corruption.",
+        "notes": "rsi (A) and rbp (B = *(A+0x68)) are distinct 0x70-byte 'Vnpi' allocations; each is reference-decremented and freed at most once in both builds. The patch removes the WIL feature gate EvaluateCurrentState (0x1C0001D78), making the endpoint spinlock and the back-reference clear unconditional."
+      }
+    }
+  ],
+  "summary": "The patch removes the WIL feature gate EvaluateCurrentState (0x1C0001D78) from 9 loopback-transport functions in hvsocket.sys (19 gate calls in the unpatched build, 0 in the patched build). The gate selected between a legacy path that touches the single pending-loopback-entry pointer at endpoint+0x2b8 without a lock or reference count, and a retained path (VmbusTlLoopbackReferenceEndpointDeliveryQueue, 0x1C0007128) that reads the slot under the endpoint spinlock and takes a reference. Removing the gate makes the referenced, spinlock-synchronized path the only path, closing a use-after-free / race window in VmbusTlLoopbackNotifyReceiveConsumed (0x1C0006F50) and VmbusTlLoopbackSend (0x1C00065EC) against concurrent VmbusTlLoopbackDisconnect (0x1C0006C30). This is a synchronization fix (CWE-416 / CWE-362), rated Medium; real-world reachability depends on the runtime default of the feature, which cannot be read out of the static image. There is NO double-free: VmbusTlLoopbackDisconnect frees two distinct objects (the entry A and its peer B = *(A+0x68)), each guarded by its own reference count and freed at most once. An independent content diff confirms the 9 gate functions are the only connection-path changes; the sole other change, rbc_InitializeFeatureStaging emptying its feature-descriptor table, is build/feature-staging configuration, not a security fix."
+}

@@ -1,0 +1,240 @@
+{
+  "binaries": {
+    "title": "monitor.sys - Windows Monitor Driver - brightness dim-state telemetry instrumentation (no security-relevant change)",
+    "id_unpatched": "monitor_unpatched.sys",
+    "id_patched": "monitor_patched.sys",
+    "overall_similarity": 0.9036,
+    "matched": 117,
+    "changed": 15,
+    "identical": 102,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EvtIoInternalDeviceControl 0x1C0009C40 -> 0x1C000BF80",
+      "similarity": 0.8644,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Dispatch control flow refactored: unpatched special-cases 0x23242f and 0x2324d7 and uses a switch over the remaining codes; patched collapses all into one switch(a5)",
+        "Set of handled internal-IOCTL codes is identical in both builds: 0x23242f, 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf, 0x2324d7",
+        "Both builds gate every code through the identical SupportedInternalIoctl whitelist and forward rejected codes via ForwardRequestToPhysicalDevice",
+        "New brightness dim-state telemetry for code 0x2324d7: old brightness-mode byte (*(ctx+0x4a4)), new user value, and a per-step status code captured into a stack structure and reported via DimStateTelemetry",
+        "Brightness setter call updated to ProcessBrightness(ctx, &status) / ProcessBrightness(ctx, 0) to match the new 2-parameter signature"
+      ],
+      "security_relevant": false,
+      "security_notes": "The dispatch was reshaped from nested if/else-if plus switch into a single switch(a5), but the set of handled codes is unchanged and every code is validated by the identical SupportedInternalIoctl whitelist in both builds, so there is no dispatch gap in either build. The brightness-mode field at offset 0x4a4 (1188) is read in the dispatcher body in both builds, so there is no time-of-check/time-of-use difference. The only behavioral addition is telemetry (DimStateTelemetry and status-code tracking). This is an internal device-control handler (IRP_MJ_INTERNAL_DEVICE_CONTROL), reached from adjacent kernel-mode drivers, not from user-mode DeviceIoControl.",
+      "assembly_diff": "UNPATCHED:\n  if (a5 != 0x23242f) {\n    if (a5 == 0x2324d7) { /* brightness mode change; reads *(ctx+1188) */ }\n    else switch(a5) { 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf }\n  } else { /* 0x23242f */ }\n\nPATCHED:\n  switch(a5) { 0x23242f, 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf, 0x2324d7 }\n  case 0x2324d7 also calls DimStateTelemetry(&status, ctx, result)"
+    },
+    {
+      "name": "EvtDriverDeviceAdd 0x1C0009F50 -> 0x1C000CAC0",
+      "similarity": 0.8041,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Fixed 0x28-byte stack buffer (output area of the internal request IoBuildDeviceIoControlRequest(0x232407, ..., 0x28u)) is zeroed via five unrolled qword stores in the patched build instead of memset(buf, 0, 0x28) in the unpatched build",
+        "Stack frame grew from 0x360 (864) to 0x440 (1088) bytes due to additional telemetry/tracing locals in the patched function",
+        "The movups xmm0/xmm1 loads in the prologue reference the same 'BrightnessControl' string constant in both builds (string setup, not new data constants)"
+      ],
+      "security_relevant": false,
+      "security_notes": "EvtDriverDeviceAdd is the WDF EvtDriverDeviceAdd PnP callback (2 parameters: WDFDRIVER, WDFDEVICE_INIT), invoked by the framework during device enumeration, not in response to any user-mode request. It creates the BrightnessControl symbolic link and issues an internal request (IoBuildDeviceIoControlRequest(0x232407, ...)) DOWN to the lower device object with IofCallDriver. The 0x28-byte buffer whose zero-initialization changed is the OUTPUT area of that downward request; it is zeroed in both builds and is never returned to a user-mode caller. This is a memset-to-unrolled-stores codegen difference, not an uninitialized-memory-disclosure fix.",
+      "assembly_diff": "UNPATCHED prologue:\n  sub     rsp, 360h\n  lea     rcx, [rbp-...]        ; dst\n  xor     edx, edx              ; 0\n  lea     r8d, [r15+28h]        ; size = 0x28\n  call    memset\n  movups  xmm0, cs:aBrightnesscont      ; 'BrightnessControl'\n  movups  xmm1, cs:aBrightnesscont+10h\n\nPATCHED prologue:\n  sub     rsp, 440h\n  movups  xmm0, cs:aBrightnesscont      ; SAME 'BrightnessControl' load\n  xor     eax, eax\n  xor     ecx, ecx\n  movups  xmm1, cs:aBrightnesscont+10h  ; SAME load\n  mov     [rbp+..var_3A8], rax          ; five unrolled zero stores of the same 0x28 buffer\n  mov     [rbp+..var_3A0], rax\n  mov     [rbp+..var_398], rax\n  mov     [rbp+..var_390], rax\n  mov     [rbp+..var_388], rax"
+    },
+    {
+      "name": "ProcessBrightness 0x1C0009B10 -> 0x1C000BC80",
+      "similarity": null,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Gained one optional second parameter (a2). When non-null the function writes a status back: *(a2+8)=0 at entry, then *(a2+8)=1 and *(a2+12)=result after IoctlSetBrightness / the vendor brightness callback",
+        "The second parameter is used by the new brightness telemetry path (DimStateTelemetry) in EvtIoInternalDeviceControl",
+        "Device-context reads (+616, +481, +64, +480, +48, +60, +32), the fast-mutex critical section, and the brightness application path are unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "ProcessBrightness remains ProcessBrightness across the patch (0x1C0009B10 -> 0x1C000BC80); it was NOT repurposed into a telemetry function. The only change is an optional status out-parameter used to report the operation result to the new telemetry code. It does not read the brightness-mode field at offset 0x4a4; that read is in the dispatcher in both builds. No TOCTOU is introduced or removed."
+    },
+    {
+      "name": "DimStateTelemetry (new) -> 0x1C0001A60",
+      "similarity": null,
+      "change_type": "added",
+      "key_changes": [
+        "New telemetry reporter for brightness dim/bright state changes; does not exist in the unpatched build",
+        "Called from the 0x2324d7 case of EvtIoInternalDeviceControl with the captured old/new brightness values and status"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry function added in the patched build. Not security-relevant."
+    },
+    {
+      "name": "InitializeTelemetryAssertsKM (new) -> 0x1C0001C4C",
+      "similarity": null,
+      "change_type": "added",
+      "key_changes": [
+        "New telemetry-assert initialization; does not exist in the unpatched build",
+        "Called from DriverEntry during initialization"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry initialization added in the patched build. The report's earlier characterization of this call as registry-path validation/sanitization is incorrect; it initializes Microsoft telemetry asserts. Not security-relevant."
+    },
+    {
+      "name": "DriverEntry 0x1C0012040 -> 0x1C0014040",
+      "similarity": 0.8933,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds a call to InitializeTelemetryAssertsKM(arg2) during initialization",
+        "Remaining differences are ETW provider GUID / data-section renumbering"
+      ],
+      "security_relevant": false,
+      "security_notes": "The new call is telemetry-assert initialization, not a validation/sanitization routine. The rest is recompilation churn.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvtIoDeviceControl (user-facing IRP_MJ_DEVICE_CONTROL handler)",
+      "similarity": null,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds an inline TraceLogging brightness-state emission gated on the telemetry provider being enabled",
+        "IOCTL handling logic is unchanged; the 208-byte path memmove(dst+5, src+169, *(src+168)) into the memset-cleared 0x68-byte buffer is byte-for-byte identical between builds",
+        "ProcessBrightness call updated to pass the new null out-parameter (ProcessBrightness(x, 0))"
+      ],
+      "security_relevant": false,
+      "security_notes": "The user-mode-reachable device-control handler only gained telemetry; no bounds check, buffer initialization, or input validation changed. The variable-length memmove path was verified identical in both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvtDriverUnload",
+      "similarity": null,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds UninitializeTelemetryAssertsKM() teardown to match the new telemetry initialization in DriverEntry"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry teardown, not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SetThermalThrottle 0x1C000EB90 -> 0x1C0010BC0",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Brightness call updated from ProcessBrightness(arg1) to ProcessBrightness(arg1, 0) to match the new 2-parameter signature",
+        "Data address renumbering from recompilation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SupportedInternalIoctl 0x1C0001240 -> 0x1C0001270",
+      "similarity": null,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IOCTL whitelist gate; content-identical between builds apart from data/name renumbering (WPP_MAIN_CB.SectorSize vs WPP_MAIN_CB.Reserved, off_1C0006018 vs off_1C0007018)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The internal-IOCTL whitelist is unchanged, confirming the dispatch refactor did not add or remove any handled code.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "0x1C000F4D0 -> 0x1C0011500 (ETW unregister / cleanup)",
+      "similarity": 0.9878,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Data address renumbering and function-name renumbering only",
+        "Minor cleanup helper call added"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "0x1C0009010 -> 0x1C000B010 (WMI query handler)",
+      "similarity": 0.9755,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Data address renumbering, function-name renumbering, register allocation differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset 0x1C0001E40 -> (renumbered)",
+      "similarity": 0.3337,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Matcher paired the optimized memset helper with an unrelated address; the routine is structurally identical, just renumbered"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "0x1C000B620 -> 0x1C000F090 (WMI/ETW helper)",
+      "similarity": 0.1559,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Matcher artifact due to call-reference overlap",
+        "Patched version resolves routines dynamically via MmGetSystemRoutineAddress for PsGetVersion, WmiTraceMessage, WmiQueryTraceInformation, EtwRegisterClassicProvider, EtwUnregister"
+      ],
+      "security_relevant": false,
+      "security_notes": "Dynamic routine resolution, not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "0x1C00026B8 / 0x1C00026E4 / 0x1C00029E4 (ETW trace helpers)",
+      "similarity": 0.6333,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address renumbering and minor register allocation changes in ETW event logging helpers"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "note": "The diff tool reported 0 unmatched in each direction because new telemetry functions were paired with existing ones by the matcher (e.g. the low-similarity ProcessBrightness->DimStateTelemetry pairing is an artifact; ProcessBrightness actually maps to ProcessBrightness). The functions below are genuinely new/removed by content and are all telemetry infrastructure, not security-relevant.",
+    "removed": [
+      "_TlgDefineProvider_annotation__TlggDisplayTelemetryProviderProv (old TraceLogging provider annotation stub, replaced)"
+    ],
+    "added": [
+      "DimStateTelemetry 0x1C0001A60",
+      "InitializeTelemetryAssertsKM 0x1C0001C4C",
+      "UninitializeTelemetryAssertsKM",
+      "MicrosoftTelemetryAssertTriggeredNoArgsKM",
+      "MicrosoftTelemetryAssertTriggeredWorker",
+      "TraceLoggingRegisterEx",
+      "_TlgCreateSz",
+      "_TlgKeywordOn",
+      "_TlgDefineProvider_annotation__Tlgmtakm_hTelemetryAssertProv (new TraceLogging provider annotation stub)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "EvtDriverDeviceAdd 0x1C0009F50 -> 0x1C000CAC0",
+      "entry_point": "WDF EvtDriverDeviceAdd PnP callback, invoked by the framework during monitor device enumeration (not user-mode reachable)",
+      "call_chain": ["WDF framework device-add", "EvtDriverDeviceAdd", "IoBuildDeviceIoControlRequest(0x232407) + IofCallDriver to the lower device object"],
+      "vulnerability_class": "No security-relevant change (fixed-size buffer zero-init refactor)",
+      "description": "Earlier characterization as a kernel stack information disclosure via IOCTL is not supported by the binaries. EvtDriverDeviceAdd is a 2-parameter WDF EvtDriverDeviceAdd callback, not an IOCTL handler, and it does not return data to user mode. It issues an internal request (IoBuildDeviceIoControlRequest(0x232407, ..., outputBuffer, 0x28u, ...)) DOWN to the lower device object. The 0x28-byte output buffer for that request is zero-initialized in BOTH builds: memset(buf, 0, 0x28) in the unpatched build and five unrolled qword zero-stores of the same buffer in the patched build. The stack frame grew from 0x360 to 0x440 because the patched function carries additional telemetry/tracing locals. The prologue movups xmm0/xmm1 loads reference the shared 'BrightnessControl' string constant in both builds, not new 128-bit data. No uninitialized-memory disclosure exists in either build.",
+      "trigger_conditions": "Not applicable. The function is a PnP device-add callback and is not reachable from user mode; the buffer whose initialization changed is never returned to a user-mode caller.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED EvtDriverDeviceAdd @ 0x1C0009F50:\n  memset(v83, 0, 0x28);\n  wcscpy(v98, L\"BrightnessControl\");\n  v9 = IoBuildDeviceIoControlRequest(0x232407u, InputBuffer, nullptr, 0, v83, 0x28u, 1u, &Event, &IoStatusBlock);\n  Status = IofCallDriver(v8, v9);\n\nPATCHED EvtDriverDeviceAdd @ 0x1C000CAC0:\n  v93 = 0; v94 = 0; v95 = 0; v96 = 0; v97 = 0;   // same 0x28-byte buffer, unrolled\n  wcscpy(v128, L\"BrightnessControl\");\n  v11 = IoBuildDeviceIoControlRequest(0x232407u, v8, nullptr, 0, &v93, 0x28u, 1u, &Event, &IoStatusBlock);",
+      "assembly": "UNPATCHED @ 0x1C0009F50:\n  00000001C0009F70  sub     rsp, 360h\n  00000001C0009F96  xor     edx, edx\n  00000001C0009FA3  lea     r8d, [r15+28h]        ; size = 0x28\n  00000001C0009FA7  call    memset\n  00000001C0009FB5  movups  xmm0, cs:aBrightnesscont      ; 'BrightnessControl'\n  00000001C0009FC9  movups  xmm1, cs:aBrightnesscont+10h\n\nPATCHED @ 0x1C000CAC0:\n  00000001C000CAE0  sub     rsp, 440h\n  00000001C000CAF8  movups  xmm0, cs:aBrightnesscont      ; SAME string load\n  00000001C000CAFF  xor     eax, eax\n  00000001C000CB03  movups  xmm1, cs:aBrightnesscont+10h  ; SAME string load\n  00000001C000CB0A  mov     [rbp+..var_3A8], rax          ; five zero stores of the same 0x28 buffer\n  00000001C000CB11  mov     [rbp+..var_3A0], rax\n  00000001C000CB18  mov     [rbp+..var_398], rax\n  00000001C000CB1F  mov     [rbp+..var_390], rax\n  00000001C000CB25  mov     [rbp+..var_388], rax"
+    },
+    {
+      "severity": "none",
+      "function": "EvtIoInternalDeviceControl 0x1C0009C40 -> 0x1C000BF80",
+      "entry_point": "IRP_MJ_INTERNAL_DEVICE_CONTROL handler for monitor internal-IOCTL codes 0x23242f-0x2324d7, reached from adjacent kernel-mode drivers in the device stack (not user-mode DeviceIoControl)",
+      "call_chain": ["adjacent kernel-mode driver", "IRP_MJ_INTERNAL_DEVICE_CONTROL", "EvtIoInternalDeviceControl", "SupportedInternalIoctl gate", "per-code handler / ForwardRequestToPhysicalDevice"],
+      "vulnerability_class": "No security-relevant change (dispatch refactor + telemetry)",
+      "description": "Earlier characterization as an incomplete dispatch range check and a TOCTOU on the brightness-mode field is not supported by the binaries. The unpatched dispatcher special-cases 0x23242f and 0x2324d7 and uses a switch over the remaining codes; the patched dispatcher collapses these into a single switch(a5). The set of handled codes is identical in both builds (0x23242f, 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf, 0x2324d7), and every code is validated by the identical SupportedInternalIoctl whitelist, with unrecognized codes forwarded via ForwardRequestToPhysicalDevice, so no dispatch gap exists in either build. The brightness-mode field at offset 0x4a4 (1188) is read in the dispatcher body in BOTH builds; it was not relocated, so there is no time-of-check/time-of-use difference. The only behavioral addition is telemetry: the 0x2324d7 case captures the old and new brightness-mode values and a per-step status code and reports them through the new DimStateTelemetry function, and ProcessBrightness gained an optional status out-parameter.",
+      "trigger_conditions": "Not applicable. This is an internal (kernel-to-kernel) device-control interface, and both builds handle the same code set through the same whitelist.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED @ 0x1C0009C40:\n  if (SupportedInternalIoctl(v11, a5) == 0) return ForwardRequestToPhysicalDevice(v11, a2, a3, a4, a5);\n  if (a5 != 0x23242f) {\n    if (a5 == 0x2324d7) { /* reads *(ctx+1188); calls ProcessBrightness(v11) or SetNitsBrightness */ }\n    else switch(a5) { 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf }\n  } else { /* 0x23242f */ }\n\nPATCHED @ 0x1C000BF80:\n  if (SupportedInternalIoctl(v11, a5) == 0) return ForwardRequestToPhysicalDevice(v11, a2, a3, a4, a5);\n  switch(a5) { 0x23242f, 0x232433, 0x232437, 0x23243b, 0x23243f, 0x2324cb, 0x2324cf, 0x2324d7 }\n  case 0x2324d7:\n    LODWORD(v43) = *(unsigned __int8 *)(v25 + 1188);   // old mode (also read in unpatched)\n    HIDWORD(v43) = new value from input;\n    v31 = ProcessBrightness(v11, &v43);\n    DimStateTelemetry(&v43, v26, v9);                  // NEW telemetry",
+      "assembly": "Both builds first execute SupportedInternalIoctl(v11, a5) and return ForwardRequestToPhysicalDevice on rejection. The unpatched build branches with direct comparisons (a5 != 0x23242f; a5 == 0x2324d7) plus a switch; the patched build uses a single switch(a5). The handled code set is identical. The brightness-mode read *(ctx + 0x4a4) (offset 1188) occurs in the dispatcher body in both builds.",
+      "debugging_aids": {
+        "notes": "SupportedInternalIoctl (0x1C0001240 unpatched / 0x1C0001270 patched) is content-identical and whitelists the internal-IOCTL codes; it requires the device-context checks and the internal request type. The affected codes are IRP_MJ_INTERNAL_DEVICE_CONTROL codes reached from adjacent kernel-mode drivers, not user-mode DeviceIoControl. Device-context offset 0x4a4 (1188) holds the current brightness-mode byte."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was found. The patch adds brightness dim/bright state-change telemetry to monitor.sys (new functions DimStateTelemetry at 0x1C0001A60 and InitializeTelemetryAssertsKM at 0x1C0001C4C, plus MicrosoftTelemetryAssertTriggeredNoArgsKM calls) and is otherwise recompilation churn. The EvtDriverDeviceAdd PnP callback (0x1C0009F50 -> 0x1C000CAC0) zero-initializes the same fixed 0x28-byte output buffer of an internal downward request in both builds (memset vs. unrolled stores); it is not user-mode reachable and does not disclose kernel memory. The EvtIoInternalDeviceControl internal-IOCTL dispatcher (0x1C0009C40 -> 0x1C000BF80) handles the same eight codes through the identical SupportedInternalIoctl whitelist in both builds; it was refactored from nested if/else plus switch into a single switch and instrumented with telemetry, with no dispatch gap and no TOCTOU difference (the brightness-mode field at offset 0x4a4 is read in the dispatcher in both builds). ProcessBrightness (0x1C0009B10 -> 0x1C000BC80) stayed ProcessBrightness and gained only an optional status out-parameter used by the telemetry path."
+}

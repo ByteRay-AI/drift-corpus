@@ -1,0 +1,220 @@
+{
+  "binary": "ndiswan.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": true,
+  "patched": {
+    "version": "10.0.17763.10666",
+    "sha256": "c6f724479d56c98c5bd07003ebf6f099a238b6c406f62eb466c56e110c67ac6b",
+    "file": "ndiswan_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "639d6862f15a443de00f09a131f3f86d55077ae0f75a7f9a09d1a1cac9c6a674",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "MS PPP Framing Driver (Strong Encryption)",
+      "FileVersion": "10.0.17763.10666 (WinBuild.160101.0800)",
+      "InternalName": "NDISWAN.SYS",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "NDISWAN.SYS",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.10666"
+    }
+  },
+  "prev": {
+    "version": "10.0.17763.4252",
+    "sha256": "99146e1f8a02848a20006cfdbce485bbdf5818b2da307ab1cb2d49b3690ec463",
+    "kb_numbers": [
+      "KB5006744",
+      "KB5007206",
+      "KB5008602",
+      "KB5007266",
+      "KB5008218",
+      "KB5010196",
+      "KB5009557",
+      "KB5010791",
+      "KB5009616",
+      "KB5010351",
+      "KB5010427",
+      "KB5011503",
+      "KB5011551",
+      "KB5012647",
+      "KB5012636",
+      "KB5013941",
+      "KB5015018",
+      "KB5014022",
+      "KB5014692",
+      "KB5014669",
+      "KB5015811",
+      "KB5015880",
+      "KB5016623",
+      "KB5016690",
+      "KB5017315",
+      "KB5017379",
+      "KB5018419",
+      "KB5020438",
+      "KB5019966",
+      "KB5021655",
+      "KB5021237",
+      "KB5022554",
+      "KB5022286",
+      "KB5022840",
+      "KB5023702"
+    ],
+    "win_versions": [],
+    "file": "ndiswan_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "MS PPP Framing Driver (Strong Encryption)",
+      "FileVersion": "10.0.17763.4252 (WinBuild.160101.0800)",
+      "InternalName": "NDISWAN.SYS",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "NDISWAN.SYS",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.4252"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

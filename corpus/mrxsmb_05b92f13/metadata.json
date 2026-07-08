@@ -1,0 +1,205 @@
+{
+  "binary": "mrxsmb.sys",
+  "kb": "KB5075941",
+  "release_date": "2026-02-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-21248",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21247",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21236",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21255",
+      "title": "Windows Hyper-V Security Feature Bypass Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Security Feature Bypass",
+      "cvss": 8.8
+    },
+    {
+      "id": "CVE-2026-21244",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21240",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21241",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-21239",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21238",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21232",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21231",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21222",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    }
+  ],
+  "naming_corrected": true,
+  "patched": {
+    "version": "10.0.22621.1555",
+    "sha256": "79a348b7e5654396c9b21c846a5959218a3af3dd622be9d89184263fb4852cce",
+    "file": "mrxsmb_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "7a2f5d983392e9de61c1514ef007d639a82626cb0a6c03559df342e44b7bda54",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Windows NT SMB Minirdr",
+      "FileVersion": "10.0.22621.1555 (WinBuild.160101.0800)",
+      "InternalName": "MRxSmb.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MRXSMB.Sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.22621.1555"
+    }
+  },
+  "prev": {
+    "version": "10.0.22621.1511",
+    "sha256": "05b92f13f8ca0064da4a16305440781aeb7626e271ea2ff553065f2a7b5b8a1b",
+    "kb_numbers": [
+      "KB5023778",
+      "KB5025239"
+    ],
+    "win_versions": [
+      "11-22H2"
+    ],
+    "file": "mrxsmb_unpatched.sys",
+    "hash_match": false,
+    "expected_sha256": "c36d06dab3d970fdc5b5661359a3b62c486e24889448aa0cc36e8f7e3cb445f1",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Windows NT SMB Minirdr",
+      "FileVersion": "10.0.22621.1511 (WinBuild.160101.0800)",
+      "InternalName": "MRxSmb.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MRXSMB.Sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.22621.1511"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

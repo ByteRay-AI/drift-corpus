@@ -1,0 +1,83 @@
+{
+  "binaries": {
+    "title": "mup.sys (Multiple UNC Provider) - No security-relevant change (WIL feature-staging library churn)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.9873,
+    "matched": 357,
+    "changed": 3,
+    "identical": 354,
+    "matched_changed_identical": {"changed": 3, "identical": 354},
+    "unmatched_unpatched": 1,
+    "unmatched_patched": 3
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState",
+      "unpatched_address": "0x140003244",
+      "patched_address": "0x1400032E4",
+      "similarity": 0.5265,
+      "change_type": "wil_feature_staging",
+      "key_changes": [
+        "Internal Windows Implementation Library (WIL) feature-staging routine. It calls wil_RtlStagingConfig_QueryFeatureState (the ntoskrnl feature-staging configuration query) and packs the result into a feature-enabled-state word. The bits are WIL feature-state encodings, not SMB/UNC-hardening flags.",
+        "Unpatched: the feature-dependency evaluation is an inline loop over *(a1+32) that evaluates each dependency via wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState.",
+        "Patched: that loop is factored into a new helper wil_details_AreDependenciesEnabled (0x140002C3C, patched-only), and a gate '(state & 0xC00) == 0xC00' is added that clears one feature-state bit (btr ebx, 0Ah @ 0x1400033C2) when a staged feature's dependencies are not all enabled. This is feature-flag dependency gating, not an authorization or integrity check."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security relevance. The dependency list at *(a1+32) is a WIL feature-dependency list, not a UNC provider list; the 0x400/0x800/0xC00 bits are WIL feature-state encodings, not RequireIntegrity/RequireMutualAuth. The change is a refactor plus a tightening of when a staged feature is reported enabled based on its dependencies. Note: at address 0x140002C3C the unpatched build holds a different function (wil_details_FeatureReporting_IncrementOpportunityInCache); the address was reused, so the patched-only wil_details_AreDependenciesEnabled must not be treated as the same function across builds.",
+      "assembly_diff": "; unpatched wil_details_GetCurrentFeatureEnabledState @ 0x140003244 (inline dependency loop):\n000000014000334C  call    wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState\n\n; patched wil_details_GetCurrentFeatureEnabledState @ 0x1400032E4 (loop factored out + new gate):\n0000000140003389  mov     edx, 0C00h\n000000014000338E  mov     eax, ebx\n0000000140003390  and     eax, edx\n0000000140003394  cmp     eax, edx\n00000001400033A9  jz      short loc_1400033B7\n00000001400033AE  call    wil_details_AreDependenciesEnabled\n00000001400033C2  btr     ebx, 0Ah"
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState",
+      "unpatched_address": "0x140012200",
+      "patched_address": "0x140012200",
+      "similarity": 0.7537,
+      "change_type": "wil_feature_staging",
+      "key_changes": [
+        "Same WIL feature-dependency gating as wil_details_GetCurrentFeatureEnabledState, in the cached-state re-evaluation variant that updates the feature-state word via lock cmpxchg.",
+        "Patched adds 'and eax, 0xC00; cmp eax, 0xC00; setz bpl' and, after the dependency loop, 'if (both-bits-set && no-satisfying-dependency) btr edx, 0Ah' before the existing lock cmpxchg.",
+        "The unpatched variant lacks the combined-bit gate; the underlying evaluated state is the same WIL feature-staging word."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security relevance. WIL feature-staging cached-state re-evaluation; the atomically-updated value is a WIL feature-enabled-state cache word, not a UNC-hardening global.",
+      "assembly_diff": "PATCHED adds (relative to unpatched):\n  mov  ecx, 0C00h ; and eax, ecx ; cmp eax, ecx ; setz bpl   ; both feature-state bits set?\n  ... dependency loop ...\n  btr  edx, 0Ah                                              ; clear feature-state bit when deps unsatisfied\n  ... existing: btr ecx, 9 ; lock cmpxchg [r15], ecx"
+    },
+    {
+      "name": "wil_InitializeFeatureStaging",
+      "unpatched_address": "0x1400230F0",
+      "patched_address": "0x1400230F0",
+      "similarity": 0.9836,
+      "change_type": "wil_feature_staging",
+      "key_changes": [
+        "Feature-usage-provider registration refactor: an inline RtlRegisterFeatureUsageProvider sequence (with its global assignments) is replaced by a call to a new helper wil_details_RegisterFeatureUsageProvider (0x14001238C).",
+        "No behavioral or security-boundary change."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security relevance. Feature-usage telemetry registration extracted into a helper.",
+      "assembly_diff": "UNPATCHED inline:\n  lea rax, wil_details_RecordFeatureUsageReporting\n  lea r8, g_wil_details_featureUsageProvider\n  mov cs:g_wil_details_recordFeatureUsage, rax\n  lea rcx, wil_details_OnFeatureUsageProviderFlushNotification\n  call cs:__imp_RtlRegisterFeatureUsageProvider\nPATCHED:\n  call wil_details_RegisterFeatureUsageProvider"
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      {"name": "WPP_SF_D", "note": "WPP trace-format helper differing from WPP_SF_d only in a format specifier."}
+    ],
+    "added": [
+      {"name": "wil_details_AreDependenciesEnabled", "address": "0x140002C3C", "note": "WIL feature-dependency evaluation helper extracted from wil_details_GetCurrentFeatureEnabledState; walks *(a1+32) and evaluates each dependency via wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState."},
+      {"name": "wil_details_RegisterFeatureUsageProvider", "address": "0x14001238C", "note": "WIL feature-usage-provider registration helper extracted from wil_InitializeFeatureStaging."},
+      {"name": "WPP_SF_d", "note": "WPP trace-format helper."}
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "n/a",
+      "vulnerability_class": "No security-relevant change (WIL feature-staging library churn)",
+      "cwe": "none",
+      "description": "The patch contains no security-relevant change. An independent, name-matched content diff of both builds shows only three functions with real instruction-level changes, and all three are internal Windows Implementation Library (WIL) feature-staging routines: wil_details_GetCurrentFeatureEnabledState (0x140003244 -> 0x1400032E4), wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (0x140012200), and wil_InitializeFeatureStaging (0x1400230F0). The change factors a feature-dependency evaluation loop into a helper (wil_details_AreDependenciesEnabled) and gates whether a staged feature is reported enabled on its dependencies being enabled. The bit values (0x400, 0x800, 0xC00, 0x40) are WIL feature-state encodings, not SMB RequireIntegrity/RequireMutualAuth flags, and the code does not process UNC paths, IRP contents, or any attacker-controlled input. Every Mup* UNC function (create dispatch, prefix resolution, UNC-hardening configuration, provider selection) is identical between builds apart from relocated references. wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState, which consumes the same feature-state word, is identical in both builds.",
+      "trigger_conditions": "None. There is no vulnerability to trigger. The changed code runs during WIL feature-flag queries and is governed by the compiled-in feature-staging configuration, not by any remote server or local caller input.",
+      "primitive": "None. No memory-corruption, information-disclosure, or authorization primitive exists in this diff; no security check is added to or removed from the UNC/SMB path.",
+      "notes": "Prior interpretation of this diff as a 'UNC Hardening integrity/mutual-auth bypass' does not survive symbol resolution: the functions are WIL feature-staging internals, and address 0x140002C3C holds different functions in the two builds (unpatched: wil_details_FeatureReporting_IncrementOpportunityInCache; patched: wil_details_AreDependenciesEnabled)."
+    }
+  ],
+  "summary": "No security-relevant change. The only functions with real logic changes are three internal WIL (Windows Implementation Library) feature-staging routines: wil_details_GetCurrentFeatureEnabledState, wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState, and wil_InitializeFeatureStaging. The change extracts a feature-dependency evaluation loop into a helper (wil_details_AreDependenciesEnabled) and gates a staged feature's reported-enabled state on its dependencies also being enabled; wil_InitializeFeatureStaging simply moves an inline feature-usage-provider registration into a helper. The bits involved are WIL feature-state encodings, not SMB integrity/mutual-auth flags, and no UNC/SMB code path is touched. Every Mup* UNC function is identical between builds apart from relocated references. This is ordinary WIL library churn from a rebuild, not a security fix."
+}

@@ -1,0 +1,237 @@
+{
+  "binaries": {
+    "title": "ndis.sys - NDIS open-block reference-count use-after-free race and interface-alias out-of-bounds read (CWE-416/CWE-362/CWE-125), NDPQualityWinter25 feature gate folded to safe path",
+    "id_unpatched": "ndis_unpatched.sys",
+    "id_patched": "ndis_patched.sys",
+    "overall_similarity": 0.9897,
+    "matched": 3583,
+    "changed": 40,
+    "identical": 3543,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ndisReferenceOpenByHandle",
+      "address_unpatched": "0x1400119A0",
+      "address_patched": "0x140011920",
+      "similarity": 0.8405,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline (0x14009B460) gate that selected between two reference paths",
+        "Removed unsafe path: reads *(openblock+0xe4) at 0x140011a6b WITHOUT holding the +0x258 spinlock that guards it, then calls ndisMReferenceOpen (0x140059890) which acquires +0x258 and increments unconditionally",
+        "Patched version acquires openblock+0x258, checks *(openblock+0xe4), and increments only if non-zero (inlined ndisMTryReferenceOpen logic)",
+        "The unsafe ndisMReferenceOpen call at 0x140011a7b is eliminated"
+      ],
+      "security_relevant": true,
+      "security_notes": "Reference-count race (CWE-362) leading to use-after-free (CWE-416) on an _NDIS_OPEN_BLOCK. The feature-off path reads the reference count at openblock+0xe4 while holding ndisGlobalOpenListLock and the per-open-block lock at +0xe8, but not the +0x258 spinlock that guards +0xe4. It then calls ndisMReferenceOpen, which acquires +0x258 and increments +0xe4 unconditionally. A concurrent thread that decrements the count to zero under +0x258 between the unlocked read and the increment causes the blind increment to resurrect a reference on an open block being torn down. The patched build always uses the check-under-lock path (ndisMTryReferenceOpen), closing the window.",
+      "assembly_diff": "UNPATCHED ndisReferenceOpenByHandle @ 0x1400119A0 (feature-off path):\n0000000140011A56  call    Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline\n0000000140011A5B  test    eax, eax\n0000000140011A5D  mov     eax, [rbx+0E0h]\n0000000140011A63  jnz     short loc_140011A85     ; feature ON -> ndisMTryReferenceOpen\n0000000140011A65  bt      eax, 0Fh\n0000000140011A69  jb      short loc_140011A9A\n0000000140011A6B  cmp     dword ptr [rbx+0E4h], 0 ; read count WITHOUT +0x258 lock\n0000000140011A72  jz      short loc_140011A9A\n0000000140011A7B  call    ?ndisMReferenceOpen@@YAXPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n0000000140011A92  call    ?ndisMTryReferenceOpen@@YAEPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n\nPATCHED ndisReferenceOpenByHandle @ 0x140011920 (always checked under lock):\n00000001400119E1  lea     rcx, [rbx+258h]        ; acquire +0x258 first\n00000001400119F9  cmp     dword ptr [rbx+0E4h], 0 ; check INSIDE the lock\n0000000140011A11  call    NdisReferenceWithTag\n0000000140011A16  inc     dword ptr [rbx+0E4h]    ; increment only if non-zero\n\nUNSAFE HELPER ndisMReferenceOpen @ 0x140059890 (no re-check inside lock):\n00000001400598B1  call    cs:__imp_KeAcquireSpinLockRaiseToDpc ; lock openblock+0x258\n00000001400598CB  call    NdisReferenceWithTag\n00000001400598D0  inc     dword ptr [rsi+0E4h]    ; always increments\n\nSAFE HELPER ndisMTryReferenceOpen @ 0x1400a0b60 (checks inside lock):\n00000001400A0B8B  call    cs:__imp_KeAcquireSpinLockRaiseToDpc ; lock openblock+0x258\n00000001400A0B9A  cmp     [rbx+0E4h], edi         ; check INSIDE lock\n00000001400A0BA0  jz      short loc_1400A0BBA\n00000001400A0BAC  call    NdisReferenceWithTag\n00000001400A0BB1  inc     dword ptr [rbx+0E4h]    ; increment only after check"
+    },
+    {
+      "name": "ndisPktMonRegisterAllOpens",
+      "address_unpatched": "0x1400B6668",
+      "address_patched": "0x1400B6420",
+      "similarity": 0.8847,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same reference-count race pattern as ndisReferenceOpenByHandle: removed the NDPQualityWinter25 gate that selected the unsafe ndisMReferenceOpen path",
+        "Unpatched feature-off path checks *(rbx+0xe4) at 0x1400b66e8 under the +0xe8 lock, then calls ndisMReferenceOpen (0x1400b66f6) which re-acquires +0x258 and increments unconditionally",
+        "Patched version (0x1400B6420) removes the gate and always calls ndisMTryReferenceOpen (0x1400b646e)",
+        "Function walks the open-block list to register each open with PktMon"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same reference-count race (CWE-362 / CWE-416) in the PktMon open-registration path. The feature-off path checks *(openblock+0xe4) outside the +0x258 spinlock and then blind-increments via ndisMReferenceOpen. The patched version always uses ndisMTryReferenceOpen (check under +0x258). Reached via ndisPktMonRegisterComponentsCallback (0x1400B6890) when PktMon component registration runs.",
+      "assembly_diff": "UNPATCHED ndisPktMonRegisterAllOpens @ 0x1400B6668:\n00000001400B66C4  call    cs:__imp_KeAcquireSpinLockAtDpcLevel  ; open-block lock at +0xe8\n00000001400B66E8  cmp     dword ptr [rbx+0E4h], 0               ; read count WITHOUT +0x258 lock\n00000001400B66EF  jz      short loc_1400B66FD\n00000001400B66F6  call    ?ndisMReferenceOpen@@YAXPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n\nPATCHED ndisPktMonRegisterAllOpens @ 0x1400B6420:\n00000001400B646E  call    ?ndisMTryReferenceOpen@@YAEPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z ; gate and blind path removed"
+    },
+    {
+      "name": "ndisIfAliasChange",
+      "address_unpatched": "0x1400CFE18",
+      "address_patched": "0x1400CFB48",
+      "similarity": 0.9021,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed the ndisNDPQualityWinter25IsEnabled gate on the length check: unpatched only enforces a1->Length < ndisDeviceStr.Length when the feature is enabled",
+        "Patched version performs 'if (a1->Length < ndisDeviceStr.Length) fail;' unconditionally",
+        "When the check is skipped, the USHORT subtraction a1->Length - ndisDeviceStr.Length underflows and becomes GuidString.Length, with GuidString.Buffer advanced past a1->Buffer"
+      ],
+      "security_relevant": true,
+      "security_notes": "Integer underflow (CWE-191) leading to out-of-bounds read (CWE-125). ndisDeviceStr is a device-name prefix (USHORT byte length). When ndisNDPQualityWinter25IsEnabled is 0 the length guard is skipped; if the caller-supplied interface-name string a1 has a Length shorter than the prefix, a1->Length - ndisDeviceStr.Length wraps to a large USHORT that is used as GuidString.Length, while GuidString.Buffer points past the end of a1->Buffer. RtlGUIDFromString then reads out of bounds. The memmove into ifAlias later in the function is separately clamped to 0x200, so there is no out-of-bounds write on this path. The patched build enforces the check unconditionally. Note: earlier descriptions of this function as GUID/registry-value parsing and the flag as data_140120d21 / bound data_14011e200 were incorrect; the real names are ndisIfAliasChange, ndisNDPQualityWinter25IsEnabled, and ndisDeviceStr.",
+      "assembly_diff": "UNPATCHED ndisIfAliasChange @ 0x1400CFE18 (decompiled):\n  if ( ndisNDPQualityWinter25IsEnabled != 0 && a1->Length < ndisDeviceStr.Length )\n      goto fail;                       // length check gated behind the feature\n  v7 = a1->Length - ndisDeviceStr.Length;   // USHORT subtraction, underflows if unchecked\n  GuidString.Buffer = &a1->Buffer[ndisDeviceStr.Length >> 1];\n  GuidString.Length = v7;\n  GuidString.MaximumLength = v7 + 2;\n  RtlGUIDFromString(&GuidString, &Guid);    // OOB read when v7 underflowed\n\nPATCHED ndisIfAliasChange @ 0x1400CFB48 (decompiled):\n  if ( a1->Length < ndisDeviceStr.Length )\n      goto fail;                       // check is unconditional\n  GuidString.Length = a1->Length - ndisDeviceStr.Length;\n  GuidString.MaximumLength = a1->Length - ndisDeviceStr.Length + 2;\n  GuidString.Buffer = &a1->Buffer[ndisDeviceStr.Length >> 1];\n  RtlGUIDFromString(&GuidString, &Guid);"
+    },
+    {
+      "name": "ndisReadRegistry",
+      "address_unpatched": "0x14009DA20",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the assignment ndisNDPQualityWinter25IsEnabled = 1 (guarded by Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline)",
+        "The ndisNDPQualityWinter25IsEnabled global no longer exists in the patched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization change tied to the feature-gate removal. In the unpatched build this function caches the NDPQualityWinter25 feature state into ndisNDPQualityWinter25IsEnabled; in the patched build the global and its assignment are gone, consistent with the gate being removed binary-wide and ndisIfAliasChange always taking the checked path."
+    },
+    {
+      "name": "DriverEntry",
+      "address_unpatched": "0x140191234",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the NDPQualityWinter25 feature-gate initialization call"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization change from removing the NDPQualityWinter25 feature gate."
+    },
+    {
+      "name": "other NDPQualityWinter25 gate touchpoints",
+      "change_type": "non_security",
+      "key_changes": [
+        "Identical dead branches folded (both gate arms performed the same operation): FILTER_SET_FLAG, FILTER_CLEAR_FLAG, FILTER_CLEAR_ALL_STATE_FLAGS, FILTER_TEST_FLAG, ndisFIndicateStatusInternal, ndisMRawIndicateStatusEx",
+        "Discarded usage-telemetry gate call removed (no control-flow effect): ndisFilterSendNetBufferLists, ndisSendNBLToFilter, NdisQueryPendingIOCount",
+        "Fixed-size Guid output-field population (+ helper refactor in V3): ndisBindReadProtocolDriverFromV2Registry, ndisBindReadProtocolDriverFromV3Registry"
+      ],
+      "security_relevant": false,
+      "security_notes": "Independently reviewed. None of these feature-off paths contains a memory-safety, reference-count, or bounds defect; the gate either wrapped identical statements, a discarded feature-usage call, or a fixed 16-byte Guid copy into an output struct. No omitted security fix."
+    },
+    {
+      "name": "cosmetic / register-allocation changes",
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Remaining changed functions differ only by register reassignment, instruction reordering, WPP trace-GUID relocation, or removal of the now-unused Feature_NDPQualityWinter25__private_IsEnabled* stub functions"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "ndisReferenceOpenByHandle",
+      "address_unpatched": "0x1400119A0",
+      "address_patched": "0x140011920",
+      "entry_point": "Shared open-block reference helper; reached from ndisMOidRequest (0x1400117F0, call site 0x140011814) and five other open-block reference sites",
+      "call_chain": [
+        "ndisMOidRequest (0x1400117F0) references the target open block by handle",
+        "ndisReferenceOpenByHandle (0x1400119A0) looks up the open block in ndisGlobalOpenList and takes a reference",
+        "ndisMReferenceOpen (0x140059890) blind increment on the feature-off path"
+      ],
+      "vulnerability_class": "Reference-count race condition (CWE-362) leading to use-after-free (CWE-416)",
+      "description": "In the unpatched build, ndisReferenceOpenByHandle selects a reference path with the WIL feature gate Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline (0x14009B460). When the feature is off, it reads the open-block reference count at openblock+0xe4 (at 0x140011a6b) while holding ndisGlobalOpenListLock and the per-open-block lock at +0xe8, but not the +0x258 spinlock that actually guards +0xe4. If the count is non-zero it calls ndisMReferenceOpen (0x140059890), which acquires +0x258 and increments +0xe4 unconditionally. A concurrent thread that decrements +0xe4 to zero under +0x258 between the unlocked read and the increment (an open-block close/teardown path) makes the blind increment resurrect a reference on an open block being freed, a use-after-free condition. The patched build always uses the check-under-lock path (inlined ndisMTryReferenceOpen), acquiring +0x258 and re-checking +0xe4 before referencing.",
+      "trigger_conditions": "Requires the unpatched ndis.sys with the NDPQualityWinter25 feature off. Two concurrent operations on the same open block are needed: one that references it by handle (e.g. OID routing via ndisMOidRequest) and one that closes/tears the binding down so another thread decrements openblock+0xe4 to zero under the +0x258 lock. The race window is between the unlocked read at 0x140011a6b and the locked increment at 0x1400598d0 inside ndisMReferenceOpen.",
+      "primitive": "Reference-count resurrection on an _NDIS_OPEN_BLOCK (NonPagedPool), a use-after-free condition. The binaries do not demonstrate any controlled read/write, information-leak, or code-execution primitive built on this; impact beyond kernel memory corruption / bugcheck is not established by the diff.",
+      "evidence": "Unpatched decompilation selects the path with the feature gate; the feature-off branch reads *(openblock+0xe4) then calls ndisMReferenceOpen (blind increment), while the feature-on/patched branch uses ndisMTryReferenceOpen (check inside +0x258 lock). ndisMReferenceOpen @ 0x140059890 increments *(rsi+0xe4) at 0x1400598d0 with no re-check; ndisMTryReferenceOpen @ 0x1400a0b60 checks *(rbx+0xe4) at 0x1400a0b9a inside the +0x258 lock before incrementing. Patched ndisReferenceOpenByHandle @ 0x140011920 inlines the checked pattern (acquire +0x258, cmp [rbx+0xe4], reference, inc).",
+      "assembly": "UNPATCHED ndisReferenceOpenByHandle @ 0x1400119A0 (real disassembly):\n0000000140011A08  call    cs:__imp_KeAcquireSpinLockRaiseToDpc     ; ndisGlobalOpenListLock\n0000000140011A3E  lea     rcx, [rbx+0E8h]                          ; per-open-block lock\n0000000140011A4A  call    cs:__imp_KeAcquireSpinLockAtDpcLevel\n0000000140011A56  call    Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline\n0000000140011A5B  test    eax, eax\n0000000140011A5D  mov     eax, [rbx+0E0h]\n0000000140011A63  jnz     short loc_140011A85                      ; feature ON -> safe path\n0000000140011A65  bt      eax, 0Fh\n0000000140011A69  jb      short loc_140011A9A\n0000000140011A6B  cmp     dword ptr [rbx+0E4h], 0                  ; read count WITHOUT +0x258 lock\n0000000140011A72  jz      short loc_140011A9A\n0000000140011A78  mov     rcx, rbx\n0000000140011A7B  call    ?ndisMReferenceOpen@@YAXPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n0000000140011A80  mov     dil, 1\n0000000140011A83  jmp     short loc_140011A9A\n0000000140011A85  bt      eax, 0Fh\n0000000140011A89  jb      short loc_140011A9A\n0000000140011A92  call    ?ndisMTryReferenceOpen@@YAEPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n0000000140011AA1  call    cs:__imp_KeReleaseSpinLockFromDpcLevel\n\nUNSAFE HELPER ndisMReferenceOpen @ 0x140059890:\n00000001400598AA  add     rcx, 258h\n00000001400598B1  call    cs:__imp_KeAcquireSpinLockRaiseToDpc     ; lock openblock+0x258\n00000001400598BD  mov     rcx, [rsi+250h]\n00000001400598CB  call    NdisReferenceWithTag\n00000001400598D0  inc     dword ptr [rsi+0E4h]                     ; unconditional increment\n00000001400598E0  call    cs:__imp_KeReleaseSpinLock\n\nSAFE HELPER ndisMTryReferenceOpen @ 0x1400a0b60:\n00000001400A0B8B  call    cs:__imp_KeAcquireSpinLockRaiseToDpc     ; lock openblock+0x258\n00000001400A0B9A  cmp     [rbx+0E4h], edi                         ; check INSIDE lock (edi=0)\n00000001400A0BA0  jz      short loc_1400A0BBA\n00000001400A0BA2  mov     rcx, [rbx+250h]\n00000001400A0BAC  call    NdisReferenceWithTag\n00000001400A0BB1  inc     dword ptr [rbx+0E4h]                     ; increment only after check\n00000001400A0BC0  call    cs:__imp_KeReleaseSpinLock\n\nPATCHED ndisReferenceOpenByHandle @ 0x140011920:\n00000001400119E1  lea     rcx, [rbx+258h]                         ; acquire +0x258 first\n00000001400119F9  cmp     dword ptr [rbx+0E4h], 0                 ; check INSIDE the lock\n0000000140011A11  call    NdisReferenceWithTag\n0000000140011A16  inc     dword ptr [rbx+0E4h]                    ; increment only if non-zero",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisReferenceOpenByHandle+0xcb",
+            "address": "0x140011a6b",
+            "why": "The unlocked read: cmp dword ptr [rbx+0E4h], 0. rbx is the _NDIS_OPEN_BLOCK. The +0x258 spinlock that guards +0xe4 is not held here."
+          },
+          {
+            "symbol": "ndis!ndisMReferenceOpen+0x40",
+            "address": "0x1400598d0",
+            "why": "The unconditional increment: inc dword ptr [rsi+0E4h]. rsi is the open block. Compare [rsi+0xe4] here to the value read at 0x140011a6b; a concurrent decrement under +0x258 can have zeroed it."
+          }
+        ],
+        "watch": [
+          "[rbx+0xe4] (at 0x140011a6b) - reference count read outside the +0x258 lock",
+          "[rsi+0xe4] (at 0x1400598d0) - reference count incremented inside +0x258 with no re-check",
+          "rbx / rsi - open block pointer",
+          "concurrent decrements of openblock+0xe4 from open-block close/teardown paths under +0x258"
+        ],
+        "key_offsets": [
+          "0x140011a56 - call to the NDPQualityWinter25 feature gate (selects safe vs unsafe path)",
+          "0x140011a6b - read of +0xe4 outside the +0x258 spinlock",
+          "0x140011a7b - call to ndisMReferenceOpen (unsafe path)",
+          "0x140011a92 - call to ndisMTryReferenceOpen (safe path)",
+          "0x1400598d0 - unconditional increment inside ndisMReferenceOpen",
+          "0x1400a0b9a - the correct check inside the +0x258 lock in ndisMTryReferenceOpen",
+          "open-block offsets: +0xe0 flags (bit 0xf = closing/teardown), +0xe4 reference count, +0x250 refcount block, +0x258 spinlock guarding +0xe4, +0xe8 per-open-block spinlock, +0x180 next pointer; global list ndisGlobalOpenList guarded by ndisGlobalOpenListLock"
+        ],
+        "notes": "Timing-dependent local race. The window is between the unlocked read at 0x140011a6b and the locked increment at 0x1400598d0."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "ndisPktMonRegisterAllOpens",
+      "address_unpatched": "0x1400B6668",
+      "address_patched": "0x1400B6420",
+      "entry_point": "ndisPktMonRegisterComponentsCallback (0x1400B6890) - PktMon component registration",
+      "call_chain": [
+        "ndisPktMonRegisterComponentsCallback (0x1400B6890)",
+        "ndisPktMonRegisterAllOpens (0x1400B6668) walks the open-block list",
+        "ndisMReferenceOpen (0x140059890) blind increment on the feature-off path"
+      ],
+      "vulnerability_class": "Reference-count race condition (CWE-362) leading to use-after-free (CWE-416)",
+      "description": "Same pattern as ndisReferenceOpenByHandle in the PktMon open-registration path. The unpatched feature-off path checks *(openblock+0xe4) at 0x1400b66e8 under the +0xe8 lock and then calls ndisMReferenceOpen (0x1400b66f6), which re-acquires +0x258 and increments unconditionally. The patched version (0x1400B6420) removes the gate and always calls ndisMTryReferenceOpen (0x1400b646e), which checks +0xe4 under +0x258.",
+      "trigger_conditions": "PktMon component registration (reaching ndisPktMonRegisterAllOpens) running while a targeted open block is concurrently closed so another thread decrements openblock+0xe4 to zero under +0x258 during the window between the check at 0x1400b66e8 and the increment at 0x1400598d0.",
+      "primitive": "Reference-count resurrection on an _NDIS_OPEN_BLOCK, a use-after-free condition. No controlled exploitation primitive is demonstrated by the binaries.",
+      "evidence": "Unpatched ndisPktMonRegisterAllOpens @ 0x1400B6668 calls the feature gate at 0x1400b66b1, checks cmp dword ptr [rbx+0E4h], 0 at 0x1400b66e8 under the +0xe8 lock, then calls ndisMReferenceOpen at 0x1400b66f6; the feature-on arm at 0x1400b6716 calls ndisMTryReferenceOpen. Patched ndisPktMonRegisterAllOpens @ 0x1400B6420 has no gate and no ndisMReferenceOpen call - it calls ndisMTryReferenceOpen at 0x1400b646e.",
+      "assembly": "UNPATCHED ndisPktMonRegisterAllOpens @ 0x1400B6668:\n00000001400B66B1  call    Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline\n00000001400B66C4  call    cs:__imp_KeAcquireSpinLockAtDpcLevel      ; open-block lock at +0xe8\n00000001400B66D6  bt      eax, 0Fh\n00000001400B66E2  bt      eax, 10h\n00000001400B66E8  cmp     dword ptr [rbx+0E4h], 0                   ; read count WITHOUT +0x258 lock\n00000001400B66EF  jz      short loc_1400B66FD\n00000001400B66F6  call    ?ndisMReferenceOpen@@YAXPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n00000001400B6716  call    ?ndisMTryReferenceOpen@@YAEPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z\n\nPATCHED ndisPktMonRegisterAllOpens @ 0x1400B6420:\n00000001400B646E  call    ?ndisMTryReferenceOpen@@YAEPEAU_NDIS_OPEN_BLOCK@@W4_NDIS_OPEN_REFTAG@@@Z ; gate and blind path removed",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisPktMonRegisterAllOpens",
+            "address": "0x1400b66e8",
+            "why": "The unlocked check cmp dword ptr [rbx+0E4h], 0 before the blind ndisMReferenceOpen call. rbx iterates open blocks."
+          }
+        ],
+        "watch": [
+          "[rbx+0xe4] - reference count checked under +0xe8 but incremented under +0x258 without re-check",
+          "open-block list traversal"
+        ],
+        "key_offsets": [
+          "0x1400b66b1 - feature gate call",
+          "0x1400b66e8 - unlocked-relative check of +0xe4",
+          "0x1400b66f6 - call ndisMReferenceOpen (unsafe)",
+          "0x1400b646e - patched call ndisMTryReferenceOpen (safe)"
+        ],
+        "notes": "Same race class as ndisReferenceOpenByHandle, in the PktMon registration path."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "ndisIfAliasChange",
+      "address_unpatched": "0x1400CFE18",
+      "address_patched": "0x1400CFB48",
+      "entry_point": "ndisDriverDispatch (0x140044F80) -> ndisDispatchRequest (0x140044080) -> ndisHandlePnPRequest (0x140184EB0) -> ndisHandleUModePnPOp (0x140075D00)",
+      "call_chain": [
+        "ndisDriverDispatch (0x140044F80)",
+        "ndisDispatchRequest (0x140044080)",
+        "ndisHandlePnPRequest (0x140184EB0)",
+        "ndisHandleUModePnPOp (0x140075D00) - calls ndisIfAliasChange at 0x140075EF8",
+        "ndisIfAliasChange (0x1400CFE18)"
+      ],
+      "vulnerability_class": "Integer underflow (CWE-191) leading to out-of-bounds read (CWE-125)",
+      "description": "The unpatched ndisIfAliasChange only enforces the length check 'a1->Length < ndisDeviceStr.Length' when the cached feature flag ndisNDPQualityWinter25IsEnabled is set (if ( ndisNDPQualityWinter25IsEnabled != 0 && a1->Length < ndisDeviceStr.Length )). When the feature is off the check is skipped, and the USHORT subtraction a1->Length - ndisDeviceStr.Length underflows to a large value used as GuidString.Length, while GuidString.Buffer is advanced past the end of a1->Buffer. RtlGUIDFromString then reads out of bounds. The patched function performs the check unconditionally. a1 is the interface-name string supplied through a user-mode PnP request, so the Length field is caller-influenced.",
+      "trigger_conditions": "Issue a user-mode PnP/interface request that reaches ndisHandleUModePnPOp -> ndisIfAliasChange with an interface-name string whose Length is smaller than ndisDeviceStr.Length, on the unpatched build with the NDPQualityWinter25 feature off.",
+      "primitive": "Out-of-bounds read: an over-long UNICODE_STRING (from the 16-bit length underflow) is passed to RtlGUIDFromString, reading kernel memory adjacent to the caller-supplied string (potential information disclosure or bugcheck). There is no out-of-bounds write on this path; the memmove into ifAlias later in the function is separately clamped to 0x200.",
+      "evidence": "Unpatched: 'if ( ndisNDPQualityWinter25IsEnabled != 0 && a1->Length < ndisDeviceStr.Length ) goto fail;' followed by 'v7 = a1->Length - ndisDeviceStr.Length; GuidString.Length = v7; GuidString.MaximumLength = v7 + 2; GuidString.Buffer = &a1->Buffer[ndisDeviceStr.Length >> 1]; RtlGUIDFromString(&GuidString, &Guid);'. Patched: 'if ( a1->Length < ndisDeviceStr.Length ) goto fail;' unconditionally, then the same GuidString setup.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndis!ndisIfAliasChange",
+            "address": "0x1400cfe18",
+            "why": "Entry. a1 (rcx) = interface-name UNICODE_STRING, a2 (rdx) = new alias. Observe whether the a1->Length < ndisDeviceStr.Length check is taken and whether a1->Length - ndisDeviceStr.Length underflows."
+          }
+        ],
+        "watch": [
+          "a1->Length - interface-name string length (caller-influenced)",
+          "ndisDeviceStr.Length - device-prefix length the subtraction is against",
+          "ndisNDPQualityWinter25IsEnabled - cached feature flag that gates the check (unpatched only)",
+          "GuidString.Length after the subtraction - large if underflowed"
+        ],
+        "key_offsets": [
+          "ndisNDPQualityWinter25IsEnabled && a1->Length < ndisDeviceStr.Length - the gated check (unpatched)",
+          "a1->Length - ndisDeviceStr.Length - the USHORT subtraction that can underflow",
+          "RtlGUIDFromString call - consumes GuidString.Length bytes"
+        ],
+        "notes": "Reachable from a user-mode PnP interface-alias request. Impact is a kernel out-of-bounds read; no OOB write. Earlier descriptions of this as GUID/registry-value parsing with a data_140120d21 flag and data_14011e200 bound were incorrect."
+      }
+    }
+  ],
+  "summary": "The patch removes the WIL feature gate Feature_NDPQualityWinter25__private_IsEnabledDeviceUsageNoInline binary-wide (present 24 times in the unpatched build, 0 in the patched build) and folds the affected code to the safe path with no feature-off branch retained - a delivered fix, not a staged rollout. Two memory-safety defects are corrected. (1) ndisReferenceOpenByHandle (0x1400119A0) and ndisPktMonRegisterAllOpens (0x1400B6668) have a reference-count race (CWE-362 -> CWE-416): the feature-off path reads an _NDIS_OPEN_BLOCK reference count at openblock+0xe4 outside the +0x258 spinlock that guards it, then calls ndisMReferenceOpen (0x140059890) which increments +0xe4 unconditionally under +0x258; a concurrent thread that zeroes the count during the window can cause the blind increment to resurrect a reference on an open block being torn down (use-after-free). The patched build always uses ndisMTryReferenceOpen (check under +0x258). (2) ndisIfAliasChange (0x1400CFE18) gates its length check behind the feature flag; when off, a1->Length - ndisDeviceStr.Length underflows (USHORT) into GuidString.Length, causing an out-of-bounds read in RtlGUIDFromString (CWE-191 -> CWE-125), reachable from a user-mode PnP request via ndisHandleUModePnPOp. The patched build enforces the check unconditionally. No controlled exploitation primitive (info-leak/read-write/code-execution) is demonstrated by the binaries; severities are rated by demonstrable reachable impact."
+}

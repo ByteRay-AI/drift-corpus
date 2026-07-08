@@ -1,0 +1,66 @@
+{
+  "binaries": {
+    "id_unpatched": "appvstrm_unpatched.sys",
+    "id_patched": "appvstrm_patched.sys",
+    "unpatched_file_version": "10.0.19041.3570",
+    "patched_file_version": "10.0.19041.3636",
+    "overall_similarity": 0.993,
+    "matched": 275,
+    "changed": 0,
+    "identical": 275,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "No code change — examined candidate patterns only",
+      "entry_point": "Minifilter callbacks (StrmPreCreate, StrmPreRead, StrmPreMDLRead, StrmPostCreate, StrmPostCleanup) via FltMgr registration",
+      "call_chain": ["FltMgr minifilter callbacks", "StrmPreRead/StrmPostCreate/StrmPostCleanup", "Reader::ReadFile -> stream fault -> StreamFault::Execute -> stream_fault_request::pack", "OR: GetReparseData -> ReadStreamingInformation -> StreamingBitMap::CreateInstance"],
+      "vulnerability_class": "Integer overflow candidate (CWE-190) evaluated and not reachable; code identical across both revisions",
+      "description": "Byte-level comparison of the two PE files shows the executable code did not change between the unpatched (10.0.19041.3570) and patched (10.0.19041.3636) builds of appvstrm.sys. The .text (raw file offsets 0x400-0x14800), .data, .pdata, .idata, PAGE, INIT, GFIDS, and .reloc sections are byte-identical, .rdata is byte-identical apart from its debug directory and CodeView/PDB record (its string and constant data are unchanged), and all 275 functions match at similarity 1.0. The function-level diff's report of zero changed functions is accurate. The 0.7% overall byte delta (overall similarity 0.993) is confined entirely to non-code build metadata: the version resource build-number bump (3570 -> 3636) and the matching binary fields in VS_FIXEDFILEINFO, the debug directory and its CodeView/PDB signature record (a rebuild artifact), the recomputed PE header checksum, and the appended Authenticode certificate overlay (9688 -> 9584 bytes). There is no instruction-level security fix in this driver between these two revisions. The three code patterns examined during triage are present identically in both binaries and none is an exploitable integer overflow: (1) GetReparseData at 0x1c00029b0 computes OutputBufferLength = v7[2] + 0x1c where v7[2] is the REPARSE_DATA_BUFFER::ReparseDataLength field, a 16-bit USHORT (max 0xFFFF), so the 32-bit addition cannot wrap and the same value is reused as the FltFsControlFile output-buffer length; (2) stream_fault_request::pack at 0x1c0010e08 computes v13 = v11 + v10 + 0x30 where v10 and v11 are 16-bit wchar_t byte-lengths, so the sum is bounded to 0x2002E and cannot wrap a 32-bit computation, and the copy uses the previously recorded length; (3) StreamFault::Execute at 0x1c000c3c4 clamps the read length against the file size at *(*this + 0x50) and caps chunks at 0x100000, identical in both revisions. The driver is a Windows App-V Streaming minifilter using FltMgr with callbacks for IRP_MJ_CREATE, IRP_MJ_READ, IRP_MJ_CLEANUP, IRP_MJ_DIRECTORY_CONTROL, IRP_MJ_FILE_SYSTEM_CONTROL, IRP_MJ_MDL_READ, and IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION.",
+      "trigger_conditions": "Not applicable to a memory-safety fault: the code is unchanged and the examined size arithmetic is bounded by 16-bit source operands. The App-V Streaming minifilter is reachable from user-mode file operations (create, read, directory enumeration) on files managed by App-V, and through the staging/streaming subsystem when packages are loaded or streamed, but the reparse-data and message-packing size computations cannot overflow.",
+      "primitive": "None available from these paths in either binary. The reparse-length field is a 16-bit USHORT and the pack string lengths are 16-bit, so neither size computation can wrap a 32-bit sum, and each allocation size matches the corresponding copy/output length.",
+      "evidence": "The .text section (raw file offsets 0x400-0x14800) is byte-identical between appvstrm_unpatched.sys and appvstrm_patched.sys, as are .pdata and .reloc. GetReparseData (0x1c00029b0): OutputBufferLength = v7[2] + 28 with v7[2] a 16-bit USHORT, and the same length is passed to the second FltFsControlFile(0x900a8), so allocation and copy length match. stream_fault_request::pack (0x1c0010e08): v13 = v11 + v10 + 48 with v10, v11 unsigned __int16, and the prior contents are copied with the recorded length v15 into the v13-byte buffer. The only inter-binary differences are in the PE header (checksum), the debug directory / CodeView PDB record in .rdata (file offsets 0x1a050-0x1a3a7), the .rsrc version resource (3570 -> 3636), and the Authenticode certificate overlay.",
+      "assembly": "The code sections are byte-identical, so there is no assembly diff for any function. GetReparseData size arithmetic at ~0x1c0002a7c is 'movzx edi, word ptr [rbp+4]; add edi, 1Ch' (16-bit source, no wrap). pack size arithmetic at ~0x1c0010e93 sums two 16-bit lengths plus 0x30 (bounded to 0x2002E). StreamFault::Execute bounds/clamp at ~0x1c000c40c and chunk loop at 0x1c000c4a2 are identical in both revisions.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "Streaming::FileOperations::GetReparseData",
+            "address": "0x1c00029b0",
+            "why": "Reparse data reallocation path: size computation OutputBufferLength = v7[2] + 0x1c at ~0x1c0002a7c. v7[2] is REPARSE_DATA_BUFFER::ReparseDataLength, a 16-bit USHORT (max 0xFFFF), so the addition cannot wrap and the same value is used as the FltFsControlFile output-buffer length. Present identically in both revisions."
+          },
+          {
+            "symbol": "messages::stream_fault_request::pack<...>",
+            "address": "0x1c0010e08",
+            "why": "Message packing size computation v13 = v11 + v10 + 0x30 at ~0x1c0010e93. v10 and v11 are 16-bit wchar_t byte-lengths, so the sum is bounded to 0x2002E and cannot wrap the 32-bit total; the copy uses the previously recorded length. Present identically in both revisions."
+          },
+          {
+            "symbol": "Streaming::StreamFault::Execute",
+            "address": "0x1c000c3c4",
+            "why": "Stream fault execution: read length clamped against file size (r8 = *(*this + 0x50)) at 0x1c000c40c-0x1c000c46e, chunk sizes capped at 0x100000 at the loop 0x1c000c4a2. Reviewed for sign/off-by-one; identical in both revisions."
+          }
+        ],
+        "watch": [
+          "At GetReparseData 0x1c0002a7c: edi before the add = ReparseDataLength (16-bit USHORT, max 0xFFFF); after the add = length + 0x1c (<= 0x1001B, no 32-bit wrap)",
+          "At pack 0x1c0010e93: computed total v13 = v11 + v10 + 0x30 where v10, v11 are 16-bit (max 0x2002E, no wrap)",
+          "At StreamFault::Execute 0x1c000c4ac: remaining bytes after the current chunk; clamp to file size holds"
+        ],
+        "key_offsets": [
+          "0x1c0002a7c — GetReparseData: 'add edi, 1Ch' with a 16-bit source field (identical in both revisions; no overflow)",
+          "0x1c0010e93 — pack: total = 16-bit + 0x30 + 16-bit (identical in both revisions; no overflow)",
+          "0x1c000c40c — StreamFault::Execute: offset+length vs file size clamp (identical in both revisions)"
+        ],
+        "trigger_setup": "To reach the App-V Streaming minifilter callbacks: 1) Ensure App-V client is installed and a package is published. 2) Access files within the App-V package mount point (typically C:\\ProgramData\\App-V\\<PackageGUID>). 3) Perform file reads (StrmPreRead -> Reader::ReadFile -> stream fault), file creation (StrmPreCreate/StrmPostCreate), or directory enumeration to trigger the minifilter callbacks. These reach the examined code, which is unchanged and does not overflow.",
+        "expected_observation": "No memory-safety fault: the code is identical between revisions and the examined size arithmetic is bounded by 16-bit operands.",
+        "notes": "The function-level diff correctly reported zero changed functions. Byte-level comparison confirms the code sections are identical; the sub-1.0 overall similarity (0.993) is due to the version resource (3570 -> 3636), the rebuilt debug/PDB record, the recomputed PE checksum, and the Authenticode signature overlay. To locate the actual security fix for this update, cross-check the update package manifest to identify which binary received the code change; it was not appvstrm.sys in this revision."
+      }
+    }
+  ],
+  "summary": "Byte-level comparison of appvstrm_unpatched.sys (10.0.19041.3570) and appvstrm_patched.sys (10.0.19041.3636) shows the executable code is byte-identical: the .text (raw file offsets 0x400-0x14800), .data, .pdata, .idata, PAGE, INIT, GFIDS, and .reloc sections match exactly, .rdata matches apart from its debug directory and CodeView/PDB record (its string and constant data are unchanged), and all 275 functions are identical (similarity 1.0). The function-level diff's report of zero changed functions is accurate. The 0.7% overall byte delta (overall similarity 0.993) is confined to non-code build metadata: the version resource build-number bump (3570 -> 3636) and matching VS_FIXEDFILEINFO fields, the debug directory and CodeView/PDB signature record, the recomputed PE checksum, and the appended Authenticode certificate (9688 -> 9584 bytes). There is no instruction-level security fix in appvstrm.sys between these revisions. The three examined candidate patterns are present identically in both binaries and none is an exploitable integer overflow: GetReparseData (0x1c00029b0) adds 0x1c to a 16-bit REPARSE_DATA_BUFFER::ReparseDataLength field (max 0x1001B, no wrap) and reuses the value as the FltFsControlFile output length; stream_fault_request::pack (0x1c0010e08) sums two 16-bit string lengths plus 0x30 (bounded to 0x2002E) and copies with the recorded length; StreamFault::Execute (0x1c000c3c4) clamps the read length against the file size and caps chunks at 0x100000. The security fix for this update, if any, was applied to a different binary in the package."
+}

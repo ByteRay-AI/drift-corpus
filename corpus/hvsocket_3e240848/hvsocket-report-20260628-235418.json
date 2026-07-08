@@ -1,0 +1,159 @@
+{
+  "binaries": {
+    "title": "hvsocket.sys - Hyper-V Socket Driver - One delivered fix: unconditional connection-establishment race hardening (CWE-362) in the AF_HYPERV connect() path (VmbusTlProviderConnect); the originally-claimed socket-address/authorization bypass remains a false positive (validation identical in both builds)",
+    "id_unpatched": "hvsocket_unpatched.sys",
+    "id_patched": "hvsocket_patched.sys",
+    "overall_similarity": 0.792,
+    "matched": 272,
+    "changed": 177,
+    "identical": 95,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VmbusTlProviderConnect (0x1C001F9C0 unpatched / 0x140021AC0 patched)",
+      "similarity": 0.2092,
+      "change_type": "refactor",
+      "key_changes": [
+        "Both builds call VmbusTlValidateSockAddress as a mandatory gate before VmbusTlCreateConnection and abort on a negative return. Unpatched call site 0x1C001FB98, patched call site 0x140021C94. This gate is NOT the delivered change.",
+        "DELIVERED, UNCONDITIONAL FIX (CWE-362): the connect path is reordered so that the endpoint+0x2C8 connect-complete NotificationEvent (created SIGNALED in VmbusTlCreateConnection at 0x1C0018332, State=1) is held cleared across connection publication. Patched clears it with KeClearEvent at 0x140021E29 BEFORE VmbusTlSetupConnection (0x140021E49) and VmbusTlAssociateConnectionToPartition (0x140021E5F), and only re-signals it after transport dispatch inside the new VmbusTlEstablishConnection (KeSetEvent at 0x14001A6D8). Unpatched associates first at 0x1C001FE1E while the event is still signaled, and only resets it later inside VmbusTlSetupConnection (KeResetEvent 0x1C001839C, called at 0x1C001FED5). Unpatched VmbusTlProviderConnect never touches the +0x2C8 event itself.",
+        "New helper functions VmbusTlEndpointSetPendingConnectRequest (0x14001A594), VmbusTlEndpointClearPendingConnectRequest (0x140002F7C), and VmbusTlEstablishConnection (0x14001A658) are absent from hvsocket_unpatched.asm; unpatched does the pending-request store inline at 0x1C001FE79 and bundles establishment inside VmbusTlSetupConnection. No Feature_MSRC*/IsEnabled gate guards this reorder (delivered by default), distinct from the feature-staged mutex change.",
+        "Remaining differences are variable renumbering, trace-level constant renames (dword_1C0013058 / dword_140014058 threshold changes), the interlocked S-List to ExFreeToNPagedLookasideList free-path swap, and ExAllocatePoolWithTag to ExAllocatePool2 modernization."
+      ],
+      "security_relevant": true,
+      "security_notes": "The originally claimed missing validation gate does not exist (VmbusTlValidateSockAddress is invoked from the connect path in BOTH builds, no address-validation delta). The genuine delivered change is an unconditional connection-establishment race hardening: the peer-driven VmbusTlEndpointActionWorkQueueRoutine (0x1C0005550) waits on endpoint+0x2C8 (KeWaitForSingleObject 0x1C000582E) before dereferencing and CFG-dispatching through the transport pointer at endpoint+0x2E0 (0x1C000583A). In the unpatched build the connection is published via VmbusTlAssociateConnectionToPartition while that gate is still signaled and before transport establishment; the patch holds the gate cleared across the publish-and-establish window, closing the race. CWE-362, Medium; no concrete corruption primitive is demonstrable from static comparison (the consumer null-checks +0x2E0 and uses guard_dispatch_icall).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlValidateSockAddress (0x1C0019254 unpatched / 0x14001B1A0 patched)",
+      "similarity": 0.3317,
+      "change_type": "refactor",
+      "key_changes": [
+        "Identical checks in both builds: address family must equal 0x22 (AF_HYPERV) else STATUS_INVALID_ADDRESS 0xC0000141 with 'Address family mismatch.'; reserved field at +2 must be zero else 0xC0000141 with 'Reserved field mismatch.'; destination GUID at +4 must not equal wildcard GUIDs (HV_GUID_ZERO all-zeros, HV_GUID_CHILDREN) else 0xC0000141 with 'Cannot connect to wildcard addresses.'.",
+        "Both builds then call VmbusTlResolvePartitionId, VmbusTlFindAndReferencePartition, and VmbusTlAuthenticateConnectSockAddress(partition, sockaddr, PEPROCESS) for caller-identity authorization (unpatched call 0x1C00193F2, patched call 0x14001B325).",
+        "Only difference: the object-dereference cleanup path. Unpatched pushes the freed object onto an interlocked S-List (ExpInterlockedPushEntrySList); patched frees via ExFreeToNPagedLookasideList."
+      ],
+      "security_relevant": false,
+      "security_notes": "The wildcard-address rejection and the caller-identity authorization are present and functionally identical in both builds. The only change is a memory-management refactor of the free path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProcessNewConnection (0x1C001B824 unpatched / 0x14001CD30 patched)",
+      "similarity": 0.8028,
+      "change_type": "refactor",
+      "key_changes": [
+        "No authorization call was added. VmbusTlAuthenticateConnectSockAddress is called only from VmbusTlValidateSockAddress in both builds (unpatched line context 0x1C0019254, patched 0x14001B1A0), never from VmbusTlProcessNewConnection.",
+        "Difference is the interlocked S-List to ExFreeToNPagedLookasideList refactor on the dereference path plus WPP/ETW trace churn.",
+        "Both builds retain the same structure: VmbusTlProcessNewConnectionForListener, HvSocketGetPendingOutboundConnectionFromPartition, VmbusTlFindAndReferencePartition, VmbusTlProcessNewConnectionForConnectRequest."
+      ],
+      "security_relevant": false,
+      "security_notes": "The claimed added inbound-authorization check is not present. No PEPROCESS-based authorization was introduced in this function in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProcessNewConnectionForListener (0x1C001ADA4 unpatched / 0x14001D2D4 patched)",
+      "similarity": 0.8528,
+      "change_type": "refactor",
+      "key_changes": [
+        "Interlocked S-List free paths migrated to ExFreeToNPagedLookasideList.",
+        "Refcount dereference blocks restructured with adjusted null-checking and cleanup ordering."
+      ],
+      "security_relevant": false,
+      "security_notes": "Memory-management refactor with refcount-cleanup restructuring. Core logic unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlAuthenticateWildcardListen (0x1C00081AC unpatched / 0x1400078B8 patched)",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds a gate at the top: if HvSocketGetAzureFeatureSetEnabled() (patched-only, 0x14001E5C4, reads a virtualization-key registry DWORD) is nonzero, deny the wildcard listen with 0xC0000208 (asm: 0x1400078E5 call HvSocketGetAzureFeatureSetEnabled, 0x1400078F5 mov ebx, 0C0000208h).",
+        "When the flag is false (default on ordinary Hyper-V hosts), the else branch runs the same logic as the unpatched function: find the wildcard descriptor and VmbusTlEndpointAccessCheck against its / the partition security descriptor.",
+        "The unpatched function already performs the wildcard-listen access check; the patch does not add a missing check, it adds a config-gated total denial."
+      ],
+      "security_relevant": false,
+      "security_notes": "Configuration-gated hardening for Azure-configured hosts, with the original access-check path retained in the else branch and the gate off by default. Not a universally delivered fix and not an added-authorization fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_MSRC97534_57540200-gated locking routines (VmbusTlAssociateConnectionToService 0x1C000A7A0/0x1400096E0 and ~7 others)",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched introduces WIL staging flag Feature_MSRC97534_57540200 (MSRC = Microsoft Security Response Center case tag).",
+        "In VmbusTlAssociateConnectionToService, unpatched acquires the (a2+16) fast mutex unconditionally; patched acquires it only when Feature_MSRC97534_57540200__private_IsEnabledNoReportingNoInline() is nonzero. Same pattern in HvSocketBeginProcessingConnection, HvSocketPendConnection, VmbusTlConnectComplete, HvSocketAcceptIncomingConnection, VmbusTlAssociateListenerToPartition, VmbusTlCloseServiceEndpoints, VmbusTlDissociateEndpointFromService.",
+        "Staged behind a runtime feature flag with the prior behavior reachable depending on flag state."
+      ],
+      "security_relevant": false,
+      "security_notes": "A real, MSRC-tagged lock-discipline reorganization, but staged behind a WIL feature flag and not delivered unconditionally in this build. Its exact reachable impact (e.g. a specific race or lock-ordering defect) is not determinable from these two binaries alone, so it is not rated here."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "VmbusTlProviderConnect (0x1C001F9C0 unpatched / 0x140021AC0 patched)",
+      "entry_point": "AF_HYPERV socket connect() / WSAConnect - user-mode WinSock API via hvsocket.sys WSK provider",
+      "call_chain": ["User-mode connect() on AF_HYPERV socket", "WSK dispatch -> hvsocket.sys NMR provider", "VmbusTlProviderConnect", "VmbusTlCreateConnection -> VmbusTlSetupConnection -> VmbusTlAssociateConnectionToPartition", "peer-driven concurrent path: VmbusTlEndpointActionWorkQueueRoutine waits on endpoint+0x2C8 then indirect-calls through endpoint+0x2E0"],
+      "vulnerability_class": "Race Condition / concurrent execution using shared state (CWE-362)",
+      "description": "DELIVERED, UNCONDITIONAL FIX that the earlier triage of this function missed. The connect path publishes a new connection into the partition's connection tables (VmbusTlAssociateConnectionToPartition), which makes it reachable to peer-driven endpoint-action processing. That processing (VmbusTlEndpointActionWorkQueueRoutine, 0x1C0005550) synchronizes on a per-endpoint NotificationEvent at endpoint+0x2C8: it null-checks endpoint+0x2E0 (the transport object), waits on +0x2C8 (KeWaitForSingleObject 0x1C000582E), then dereferences +0x2E0 and indirect-calls through it (0x1C000583A, guard_dispatch_icall). The +0x2C8 event is created SIGNALED in VmbusTlCreateConnection (KeInitializeEvent State=1 at 0x1C0018332). In the UNPATCHED build, VmbusTlProviderConnect calls VmbusTlAssociateConnectionToPartition (0x1C001FE1E) while that event is still in its initial signaled state, and the event is only reset later inside VmbusTlSetupConnection (KeResetEvent 0x1C001839C), which is called after association (0x1C001FED5); VmbusTlProviderConnect itself never touches the +0x2C8 event. So between association and the KeResetEvent, the connection is published while its connect-complete gate is open, allowing a concurrently scheduled endpoint-action routine to pass the wait and operate on a connection whose transport establishment has not run. The PATCHED build clears the event FIRST (KeClearEvent 0x140021E29) before VmbusTlSetupConnection (0x140021E49) and VmbusTlAssociateConnectionToPartition (0x140021E5F), and only re-signals it after transport dispatch in the new VmbusTlEstablishConnection (KeSetEvent 0x14001A6D8); on association failure it signals (0x140021E79) and unwinds via VmbusTlEndpointClearPendingConnectRequest (0x140021E88). This moves the association inside the connect-complete barrier and closes the window. The reorder is unconditional (no Feature_MSRC*/IsEnabled gate in the function), delivered by default, and shares the MSRC97534 concurrency theme with the separately-noted feature-staged mutex change. It is NOT the originally-claimed authorization/wildcard bypass (that gate is identical in both builds).",
+      "trigger_conditions": "A user-mode AF_HYPERV connect()/WSAConnect() begins connection setup while a peer-driven endpoint-action routine is scheduled against the same endpoint. In the unpatched build the connect-complete event (endpoint+0x2C8) is still signaled during and immediately after VmbusTlAssociateConnectionToPartition, so the action routine can proceed past its KeWaitForSingleObject before VmbusTlSetupConnection establishes the transport.",
+      "primitive": "Race window between connection publication (VmbusTlAssociateConnectionToPartition) and transport establishment, observable by the peer-driven VmbusTlEndpointActionWorkQueueRoutine that indirect-calls through endpoint+0x2E0. No concrete memory-corruption primitive (reliable UAF or controlled indirect call) is demonstrable from static comparison alone: the consumer null-checks endpoint+0x2E0 and dispatches through a CFG-guarded pointer, which bounds trivial exploitation.",
+      "evidence": "Event created signaled in VmbusTlCreateConnection (0x1C0018210):\n0x1C001832B  lea rcx, [rbx+2C8h]; Event\n0x1C0018332  mov r8b, 1; State   (SIGNALED)\n0x1C0018335  xor edx, edx; Type  (NotificationEvent)\n0x1C001833F  call KeInitializeEvent\nConsumer VmbusTlEndpointActionWorkQueueRoutine (0x1C0005550):\n0x1C000580B  cmp qword ptr [rbx+2E0h], 0\n0x1C0005813  jz  loc_1C000591E\n0x1C000582E  call KeWaitForSingleObject  ([rbx+2C8h])\n0x1C000583A  mov rax, [rbx+2E0h]  ; then guard_dispatch_icall\nUnpatched VmbusTlProviderConnect (0x1C001F9C0) success path:\n0x1C001FE1E  call VmbusTlAssociateConnectionToPartition  ; event still SIGNALED\n0x1C001FED5  call VmbusTlSetupConnection\nUnpatched VmbusTlSetupConnection (0x1C0018370):\n0x1C001839C  call KeResetEvent   ; +0x2C8 reset only here, after association\n0x1C00184AE  call KeSetEvent\nPatched VmbusTlProviderConnect (0x140021AC0) success path:\n0x140021E29  call KeClearEvent   ; +0x2C8 cleared BEFORE setup/association\n0x140021E41  call VmbusTlEndpointSetPendingConnectRequest\n0x140021E49  call VmbusTlSetupConnection\n0x140021E5F  call VmbusTlAssociateConnectionToPartition  ; event CLEARED\n0x140021FED  call VmbusTlEstablishConnection\nPatched VmbusTlEstablishConnection (0x14001A658):\n0x14001A6B6  call guard_dispatch_icall  ; establish transport\n0x14001A6D8  call KeSetEvent  ([rbx+2C8h])  ; signaled only after establishment",
+      "assembly": "Real anchors:\n0x1C0018332  mov r8b, 1; State        ; unpatched VmbusTlCreateConnection, event init SIGNALED\n0x1C000582E  call KeWaitForSingleObject ; unpatched VmbusTlEndpointActionWorkQueueRoutine gate\n0x1C001FE1E  call VmbusTlAssociateConnectionToPartition ; unpatched, event still signaled\n0x1C001839C  call KeResetEvent         ; unpatched VmbusTlSetupConnection, reset after association\n0x140021E29  call KeClearEvent         ; patched VmbusTlProviderConnect, cleared before association\n0x140021E5F  call VmbusTlAssociateConnectionToPartition ; patched, event cleared\n0x14001A6D8  call KeSetEvent           ; patched VmbusTlEstablishConnection, signaled after establishment",
+      "debugging_aids": {
+        "notes": "The helpers VmbusTlEndpointSetPendingConnectRequest (0x14001A594), VmbusTlEndpointClearPendingConnectRequest (0x140002F7C), and VmbusTlEstablishConnection (0x14001A658) exist only in the patched build (absent by name and content in hvsocket_unpatched.asm). To observe the window in the unpatched build, breakpoint VmbusTlAssociateConnectionToPartition return in VmbusTlProviderConnect and inspect KeReadStateEvent(endpoint+0x2C8): it is signaled there, and only clears when VmbusTlSetupConnection's KeResetEvent runs. In the patched build the event is already cleared at the association point."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "VmbusTlProviderConnect / VmbusTlValidateSockAddress (outbound connect path)",
+      "entry_point": "AF_HYPERV socket connect() / WSAConnect - user-mode WinSock API via hvsocket.sys WSK provider",
+      "call_chain": ["User-mode connect() on AF_HYPERV socket", "WSK dispatch -> hvsocket.sys NMR provider", "VmbusTlProviderConnect", "VmbusTlValidateSockAddress"],
+      "vulnerability_class": "N/A - originally claimed Missing Authorization / Input Validation Bypass (CWE-862 / CWE-20) is not supported by the binaries",
+      "description": "FALSE POSITIVE. The original report claimed the unpatched connect path lacks a mandatory VmbusTlValidateSockAddress gate and therefore permits connecting to wildcard destination GUIDs (HV_GUID_WILDCARD / HV_GUID_BROADCAST), bypassing per-service Hyper-V socket isolation. Verification against both builds shows this is false. VmbusTlValidateSockAddress exists in both builds (0x1C0019254 unpatched, 0x14001B1A0 patched) and performs identical checks: address family == 0x22 (AF_HYPERV), reserved field == 0, rejection of wildcard destination GUIDs (HV_GUID_ZERO all-zeros and HV_GUID_CHILDREN) with STATUS_INVALID_ADDRESS 0xC0000141 and the trace 'Cannot connect to wildcard addresses.', followed by VmbusTlAuthenticateConnectSockAddress(partition, sockaddr, PEPROCESS) caller-identity authorization. VmbusTlProviderConnect calls this gate as a mandatory check and aborts on negative return in BOTH builds (unpatched call 0x1C001FB98, patched call 0x140021C94). The wildcard-descriptor helper functions the original report claimed were added in the patch (VmbusTlAuthenticateWildcardListen, VmbusTlUpdateWildcardDescriptorList, VmbusTlFindAndReferenceWildcardDescriptor, VmbusTlCreateWildcardDescriptor) all exist in the unpatched build as well. The report's cited symbol names (data_14000f318, data_14000f338, sub_140005b6c, sub_14001b1a0, sub_140021ac0) do not exist in either binary; the associated pseudocode and assembly listings were fabricated. There is no delivered security fix on this path.",
+      "trigger_conditions": "No differential trigger. A connect() to a wildcard DestinationVmId on an AF_HYPERV socket is rejected with STATUS_INVALID_ADDRESS (0xC0000141) by VmbusTlValidateSockAddress in BOTH builds because the wildcard-rejection block is identical.",
+      "primitive": "None. The originally claimed logical authorization/isolation bypass does not exist; the wildcard rejection and caller-identity authorization are present in both builds.",
+      "evidence": "Unpatched VmbusTlProviderConnect (0x1C001F9C0):\n```c\nIsPassthruRequest = HvSocketIsPassthruRequest(a1, (__int64)&v52, (__int64)v13, &v51);\nv15 = VmbusTlValidateSockAddress(a1, (__int64)&v52, (int)v13, CurrentProcess, IsPassthruRequest, &v56);\nif ( v15 >= 0 ) { v47 = VmbusTlCreateConnection(a1, CurrentProcess, &ListEntry); /* proceed */ }\n```\nPatched VmbusTlProviderConnect (0x140021AC0):\n```c\nIsPassthruRequest = HvSocketIsPassthruRequest(a1, (__int64)&v40, (__int64)v12, &v39);\nv36 = VmbusTlValidateSockAddress(a1, &v40, (int)v12, CurrentProcess, IsPassthruRequest, (__int64)&v44);\nif ( v36 < 0 ) goto LABEL_63; // abort\nv36 = VmbusTlCreateConnection(a1, CurrentProcess, &Entry); /* proceed */\n```\nPatched VmbusTlValidateSockAddress (0x14001B1A0) wildcard block:\n```c\nif ( memcmp(a2 + 2, &HV_GUID_ZERO, 0x10u) != 0 && memcmp(a2 + 2, &HV_GUID_CHILDREN, 0x10u) != 0 ) {\n    v14 = VmbusTlResolvePartitionId(a1, a3, ...);\n    ...\n    v6 = VmbusTlAuthenticateConnectSockAddress(v18, (__int64)a2, a4); // a4 = PEPROCESS\n} else { /* 'Cannot connect to wildcard addresses.' -> 0xC0000141 */ }\n```\nUnpatched VmbusTlValidateSockAddress (0x1C0019254) expresses the same wildcard rejection as inline 8-byte comparisons and calls VmbusTlAuthenticateConnectSockAddress at 0x1C00193F2.",
+      "assembly": "Real call-site anchors:\n0x1C001FB98  call VmbusTlValidateSockAddress    ; unpatched VmbusTlProviderConnect gate\n0x140021C94  call VmbusTlValidateSockAddress    ; patched VmbusTlProviderConnect gate\n0x1C00193F2  call VmbusTlAuthenticateConnectSockAddress  ; unpatched authorization\n0x14001B325  call VmbusTlAuthenticateConnectSockAddress  ; patched authorization",
+      "debugging_aids": {
+        "notes": "To confirm the false positive: VmbusTlValidateSockAddress is present in both builds (unpatched 0x1C0019254, patched 0x14001B1A0) and is called from VmbusTlProviderConnect in both (unpatched call 0x1C001FB98, patched call 0x140021C94). Setting a breakpoint on the unpatched VmbusTlValidateSockAddress will show it firing on every connect() and rejecting wildcard destinations with 0xC0000141, identical to the patched build."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "VmbusTlProcessNewConnection (inbound connection acceptance)",
+      "entry_point": "Inbound VMBus connection processing",
+      "call_chain": ["hvsocket.sys receive path", "VmbusTlProcessNewConnection (0x1C001B824 unpatched / 0x14001CD30 patched)"],
+      "vulnerability_class": "N/A - originally claimed Missing authorization check on inbound connection (CWE-862) is not supported",
+      "description": "FALSE POSITIVE. The original report claimed the patched VmbusTlProcessNewConnection adds a caller-identity authorization call (referred to as sub_140005b6c) on the inbound path. Verification shows VmbusTlAuthenticateConnectSockAddress (the real symbol behind the claimed sub_140005b6c at 0x140005B6C) is called only from VmbusTlValidateSockAddress in both builds, never from VmbusTlProcessNewConnection. The evidence pseudocode in the original report (P_2[0x3a], P_2[0x3b], sub_140007d70, sub_14000c7f0, sub_14000c04c) does not correspond to the actual function and was fabricated. The only real difference between the two VmbusTlProcessNewConnection bodies is the interlocked S-List to ExFreeToNPagedLookasideList refactor plus trace churn.",
+      "trigger_conditions": "No differential trigger; no authorization behavior changed on this path.",
+      "primitive": "None.",
+      "evidence": "Both VmbusTlProcessNewConnection bodies retain the same structure (VmbusTlProcessNewConnectionForListener, HvSocketGetPendingOutboundConnectionFromPartition, VmbusTlFindAndReferencePartition, VmbusTlProcessNewConnectionForConnectRequest). VmbusTlAuthenticateConnectSockAddress is called only from VmbusTlValidateSockAddress in both builds.",
+      "assembly": "",
+      "debugging_aids": {
+        "notes": "grep confirms VmbusTlAuthenticateConnectSockAddress is invoked from VmbusTlValidateSockAddress only, in both builds; it is not reachable from VmbusTlProcessNewConnection."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "VmbusTlAuthenticateWildcardListen (0x1C00081AC unpatched / 0x1400078B8 patched) and Feature_MSRC97534_57540200-gated locking routines",
+      "entry_point": "Wildcard listen path (AF_HYPERV bind/listen on wildcard address) and connection/service-association paths",
+      "call_chain": ["listen() on wildcard AF_HYPERV address -> VmbusTlAssociateListenerToPartition -> VmbusTlAuthenticateWildcardListen", "connection setup/teardown -> VmbusTlAssociateConnectionToService and related"],
+      "vulnerability_class": "Behavioral changes present but not delivered as default-on security fixes",
+      "description": "Two genuine but non-delivered deltas were identified. (1) VmbusTlAuthenticateWildcardListen adds an Azure-configuration-gated denial: if HvSocketGetAzureFeatureSetEnabled() (patched-only, 0x14001E5C4, reads a virtualization-key registry DWORD) is nonzero it returns 0xC0000208 and denies the wildcard listen; otherwise it runs the same access-check path as the unpatched function. The original access check exists in both builds; the patch adds a config-gated total denial with the old path retained, so it is environment-specific hardening rather than a delivered fix or an added-authorization fix. (2) A WIL feature flag Feature_MSRC97534_57540200 (MSRC case tag) makes a previously unconditional fast-mutex acquisition conditional across roughly eight connection/service-association routines (e.g. VmbusTlAssociateConnectionToService: unpatched takes the (a2+16) mutex unconditionally, patched only when the flag is enabled). This is a real, MSRC-tagged lock-discipline reorganization but is staged behind a runtime feature flag with the prior path retained, so it is not delivered unconditionally.",
+      "trigger_conditions": "(1) differs only when the Azure feature-set registry value is set. (2) differs only by the WIL feature-flag state.",
+      "primitive": "None demonstrable from these two binaries.",
+      "evidence": "VmbusTlAuthenticateWildcardListen patched (0x1400078B8):\n```c\nif ( (unsigned __int8)HvSocketGetAzureFeatureSetEnabled() != 0 ) { /* trace */ return 3221225992LL; /* 0xC0000208 */ }\nelse { /* find wildcard descriptor + VmbusTlEndpointAccessCheck, same as unpatched 0x1C00081AC */ }\n```\nasm: 0x1400078E5 call HvSocketGetAzureFeatureSetEnabled; 0x1400078F5 mov ebx, 0C0000208h.\nVmbusTlAssociateConnectionToService: unpatched (0x1C000A7A0) does ExAcquireFastMutexUnsafe(a2+16) unconditionally; patched (0x1400096E0) does it inside if ( Feature_MSRC97534_57540200__private_IsEnabledNoReportingNoInline() != 0 ).",
+      "assembly": "",
+      "debugging_aids": {
+        "notes": "HvSocketGetAzureFeatureSetEnabled (0x14001E5C4) and the Feature_MSRC97534_57540200__private_IsEnabled* helpers exist only in the patched build. Feature_MSRC97534 appears 29 times in the patched decompilation and 0 times in the unpatched decompilation."
+      }
+    }
+  ],
+  "summary": "One delivered security fix, plus the originally-titled bypass being a false positive. DELIVERED FIX (CWE-362, Medium, unconditional): VmbusTlProviderConnect (0x1C001F9C0 unpatched / 0x140021AC0 patched) reorders the connect path so that VmbusTlAssociateConnectionToPartition (which publishes the connection to peer-driven endpoint-action processing) runs while the endpoint+0x2C8 connect-complete NotificationEvent is held cleared, and only re-signals it after transport establishment in the new VmbusTlEstablishConnection. The event is created SIGNALED in VmbusTlCreateConnection (State=1, 0x1C0018332) and gates VmbusTlEndpointActionWorkQueueRoutine (KeWaitForSingleObject 0x1C000582E) before it indirect-calls through endpoint+0x2E0 (0x1C000583A). Unpatched associates first (0x1C001FE1E) while the event is still signaled and only resets it later inside VmbusTlSetupConnection (KeResetEvent 0x1C001839C); patched clears it up front (KeClearEvent 0x140021E29) before setup (0x140021E49) and association (0x140021E5F) and sets it in VmbusTlEstablishConnection (KeSetEvent 0x14001A6D8). Helpers VmbusTlEndpointSetPendingConnectRequest (0x14001A594), VmbusTlEndpointClearPendingConnectRequest (0x140002F7C), and VmbusTlEstablishConnection (0x14001A658) are absent from the unpatched binary; no Feature_MSRC*/IsEnabled gate guards the reorder, so it is delivered by default. This narrows a connection-establishment race window on the attacker-reachable connect() path; a concrete corruption primitive is not demonstrable from static comparison alone (consumer null-checks +0x2E0 and uses guard_dispatch_icall). FALSE POSITIVE (unchanged): the originally titled missing socket-address validation / wildcard authentication bypass on the AF_HYPERV connect path is not real. VmbusTlValidateSockAddress exists and is functionally identical in both builds (unpatched 0x1C0019254, patched 0x14001B1A0): it checks address family (0x22), reserved field, rejects wildcard destination GUIDs (HV_GUID_ZERO / HV_GUID_CHILDREN) with STATUS_INVALID_ADDRESS 0xC0000141, and calls VmbusTlAuthenticateConnectSockAddress for caller-identity authorization. VmbusTlProviderConnect invokes it as a mandatory gate in both builds (unpatched call 0x1C001FB98, patched call 0x140021C94). The wildcard-descriptor helper functions and the inbound-path authorization the original report claimed were added in the patch all already exist in the unpatched build. The original report's sub_ symbol names, pseudocode, assembly listings, and PoC were fabricated (those symbols do not appear in either binary). The two genuine deltas - an Azure-config-gated wildcard-listen denial in VmbusTlAuthenticateWildcardListen and a WIL feature-flag-staged (Feature_MSRC97534_57540200) locking reorganization across the connection/service-association paths - are not delivered by default and are not the claimed address-authorization fix. The remainder of the 177 changed functions is a mechanical interlocked-S-List to ExFreeToNPagedLookasideList migration plus ExAllocatePoolWithTag to ExAllocatePool2 modernization and trace churn. Overall severity: None (Informational)."
+}

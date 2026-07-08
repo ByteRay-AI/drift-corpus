@@ -1,0 +1,290 @@
+{
+  "binaries": {
+    "title": "hvsocket.sys (Hyper-V Sockets kernel driver) - Feature-gated missing spinlock synchronization / race on VmbusTl loopback delivery queue",
+    "id_unpatched": "hvsocket_unpatched.sys",
+    "id_patched": "hvsocket_patched.sys",
+    "overall_similarity": 0.9745,
+    "matched": 288,
+    "changed": 14,
+    "identical": 274,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C0007CF0 (VmbusTlLoopbackNotifyReceiveConsumed)",
+      "similarity": 0.8389,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: gated by WIL feature Feature_1274333499__private_IsEnabledDeviceUsage (sub_1c000293c). When the gate returns 0, reads the shared delivery-queue head [endpoint+0x2b8] WITHOUT acquiring spinlock [endpoint+0x48] and without taking a reference, then dereferences the entry at [+0x68]",
+        "UNPATCHED: when the gate returns non-zero, calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (sub_1c0007ecc), which acquires KeAcquireSpinLockRaiseToDpc([endpoint+0x48]) before reading [endpoint+0x2b8] and takes a reference on the entry",
+        "PATCHED: removes the gate entirely and unconditionally calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (relocated to sub_1c0007cd0)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Race condition / potential use-after-free (CWE-362, CWE-416). On the gate-off branch the delivery-queue head [endpoint+0x2b8] is read without the protecting spinlock and without a reference, while a concurrent VmbusTlLoopbackDisconnect can clear that head and drop the entry's reference count to zero, freeing it with tag 'Vnpi'. The racing dereference at [rdi+0x68] / write at [rdi+0x210] can hit freed memory. The entry's [+0x50] destructor dispatch is CFG-guarded (__guard_dispatch_icall_fptr), and no arbitrary read/write or control-flow primitive is demonstrable from the binaries; realistic impact is a race-induced UAF / bugcheck. Whether the unsynchronized branch is the default at runtime depends on the feature's enablement, which is not determinable from the static image.",
+      "assembly_diff": "; UNPATCHED sub_1c0007cf0 (VmbusTlLoopbackNotifyReceiveConsumed) @ 0x1c0007cf0\n0x1c0007d02: call    Feature_1274333499__private_IsEnabledDeviceUsage\n0x1c0007d07: test    eax, eax\n0x1c0007d09: jz      0x1c0007e43         ; gate off -> UNSYNCHRONIZED branch\n\n; --- SYNCHRONIZED BRANCH (gate on) ---\n0x1c0007d0f: mov     rcx, rbx\n0x1c0007d12: call    VmbusTlLoopbackReferenceEndpointDeliveryQueue  ; locks +0x48, refs entry\n0x1c0007d17: mov     rsi, rax\n0x1c0007d23: mov     rdi, [rax+0x68]     ; referenced under lock\n0x1c0007d27: lea     rcx, [rdi+0x48]\n0x1c0007d2b: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n\n; --- UNSYNCHRONIZED BRANCH (gate off) ---\n0x1c0007e43: mov     rdi, [rbx+0x2b8]    ; read head WITHOUT +0x48 spinlock, no ref\n0x1c0007e4a: test    rdi, rdi\n0x1c0007e4d: jz      0x1c0007e8a\n0x1c0007e4f: mov     rdi, [rdi+0x68]     ; deref racing a concurrent free\n0x1c0007e53: lea     rcx, [rdi+0x48]\n0x1c0007e57: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n0x1c0007e63: or      dword [rdi+0x210], 2\n\n; PATCHED sub_1c0007b70 @ 0x1c0007b70: no gate; unconditionally calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (sub_1c0007cd0)"
+    },
+    {
+      "name": "sub_1C0007388 (VmbusTlLoopbackSend)",
+      "similarity": 0.8832,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: gate-off branch reads [r15+0x2b8] (endpoint delivery-queue head, decompiled as endpoint[0x57]) directly, without the spinlock or a reference (mov rbx,[r15+0x2b8] @ 0x1c00073dc)",
+        "UNPATCHED: gate-on branch calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (sub_1c0007ecc) @ 0x1c00073c5",
+        "PATCHED: always calls VmbusTlLoopbackReferenceEndpointDeliveryQueue, no gate"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same race pattern as VmbusTlLoopbackNotifyReceiveConsumed on the send path. The gate-off branch reads the delivery-queue head without synchronization; a concurrent disconnect can free the entry. Reachable by sending on an HV loopback socket while another thread disconnects.",
+      "assembly_diff": "; UNPATCHED sub_1c0007388 (VmbusTlLoopbackSend) @ 0x1c0007388\n0x1c00073ab: call    Feature_1274333499__private_IsEnabledDeviceUsage\n0x1c00073be: test    eax, eax\n0x1c00073c0: jz      0x1c00073dc\n0x1c00073c5: call    VmbusTlLoopbackReferenceEndpointDeliveryQueue  ; gate on: synchronized + ref\n0x1c00073dc: mov     rbx, [r15+0x2b8]    ; gate off: unsynchronized head read\n;\n; PATCHED sub_1c0007260: always uses VmbusTlLoopbackReferenceEndpointDeliveryQueue"
+    },
+    {
+      "name": "sub_1C00079D0 (VmbusTlLoopbackDisconnect)",
+      "similarity": 0.9147,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: conditionally acquires spinlock [endpoint+0x48] only when the gate returns non-zero; on the gate-off branch it reads and clears the shared head [endpoint+0x2b8] without the spinlock",
+        "UNPATCHED: the gate is evaluated three times (0x1c0007a0a acquire, 0x1c0007a3e back-pointer clear, 0x1c0007a50 release); these are independent inlined evaluations of the same stable WIL feature state, not a demonstrable lock-imbalance TOCTOU",
+        "PATCHED: unconditionally acquires and releases spinlock [endpoint+0x48] around all [endpoint+0x2b8] access"
+      ],
+      "security_relevant": true,
+      "security_notes": "Race condition (CWE-362). This is the writer side of the delivery-queue race: on the gate-off branch the disconnect clears the shared head [endpoint+0x2b8] without holding the protecting spinlock, allowing a concurrent send/notify on the unsynchronized branch to read a stale or being-freed pointer. The patch acquires/releases the spinlock unconditionally.",
+      "assembly_diff": "; UNPATCHED sub_1c00079d0 (VmbusTlLoopbackDisconnect) @ 0x1c00079d0\n0x1c0007a0a: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #1\n0x1c0007a0f: test    eax, eax\n0x1c0007a11: jz      0x1c0007a26         ; skip spinlock acquire if gate off\n0x1c0007a13: lea     rcx, [rbx+0x48]\n0x1c0007a17: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n0x1c0007a23: mov     dil, al\n0x1c0007a26: mov     rsi, [rbx+0x2b8]    ; read head (no lock if gate off)\n0x1c0007a2d: and     qword [rbx+0x2b8], 0  ; clear head (no lock if gate off)\n0x1c0007a3a: mov     rbp, [rsi+0x68]\n0x1c0007a3e: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #2\n0x1c0007a47: and     qword [rsi+0x68], 0\n0x1c0007a50: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #3\n0x1c0007a59: lea     rcx, [rbx+0x48]\n0x1c0007a60: call    qword [rel KeReleaseSpinLock]  ; release only if gate on\n0x1c0007bd3: lock xadd [rsi+0x8], rax     ; reference decrement -> free\n;\n; PATCHED sub_1c0007870: unconditionally acquires/releases the spinlock"
+    },
+    {
+      "name": "sub_1C001BEF4 (VmbusTlProcessNewConnectionForListener)",
+      "similarity": 0.9806,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: evaluates Feature_1274333499__private_IsEnabledDeviceUsage twice within the connection-acceptance path (0x1c001c0f8 and 0x1c001c120); reads the acceptance field [rcx_9+0x1a9] only on the gate-on branch",
+        "PATCHED: removes both gate evaluations and reads the field unconditionally"
+      ],
+      "security_relevant": true,
+      "security_notes": "Part of the same feature-gate removal / synchronization consolidation. The acceptance field is read unconditionally in the patched build. No demonstrable exploitable incorrect accept/reject decision is evidenced in the binaries; recorded for completeness. Low security impact.",
+      "assembly_diff": "; UNPATCHED sub_1c001bef4 (VmbusTlProcessNewConnectionForListener) @ 0x1c001bef4\n; two calls to Feature_1274333499__private_IsEnabledDeviceUsage at 0x1c001c0f8 and 0x1c001c120;\n; acceptance field [rcx_9+0x1a9] read only on the gate-on branch.\n; PATCHED: both gate calls removed; field read unconditionally."
+    },
+    {
+      "name": "sub_1C001D700 (VmbusTlLoopbackAcceptConnection)",
+      "similarity": 0.7806,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: gate-off branch reads [endpoint+0x2b8] (endpoint[0x57]) directly, unsynchronized; gate-on branch calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (sub_1c0007ecc)",
+        "PATCHED: always calls VmbusTlLoopbackReferenceEndpointDeliveryQueue, no gate"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same unsynchronized delivery-queue head access pattern on the accept path. On the gate-off branch the head is read without the protecting spinlock; racing a disconnect can lead to a use-after-free.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0006C9C (VmbusTlNotifyListenerAccept)",
+      "similarity": 0.8034,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: gate-gated reference/head handling on the delivery queue (single gate call)",
+        "PATCHED: unified to the single synchronized path via VmbusTlLoopbackReferenceEndpointDeliveryQueue"
+      ],
+      "security_relevant": true,
+      "security_notes": "The gate-off branch handles the delivery-queue reference without the synchronization the gate-on branch provides. The patch unifies to the synchronized path, consistent with the other loopback routines.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0020570 (VmbusTlProviderListen)",
+      "similarity": 0.5976,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: contains gate-gated dual paths for listener setup and endpoint creation (two gate calls)",
+        "PATCHED: removes the gate branching and unifies to a single synchronized path (large reduction in pseudo-C size)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The provider-listen path (entry point for creating HV socket listeners) carries the same gate-gated dual-path structure and establishes the loopback context the other functions operate on. Patch unifies to the synchronized path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C001D290 (VmbusTlLoopbackSetupConnection)",
+      "similarity": 0.8477,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removes the gate conditional around SLIST cleanup in the error path",
+        "Changes from a gate-conditional cleanup to always calling sub_1c0007d78(arg2, 0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error-path cleanup consistency change. The error path already holds the fast mutex, so the race window is small. Lower risk than the send/notify/disconnect paths.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0003254 (VmbusTlCommonConnectCompletion)",
+      "similarity": 0.9636,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removes the gate guard around a reference decrement on the abort path",
+        "Makes the decrement unconditional"
+      ],
+      "security_relevant": false,
+      "security_notes": "The removed gate check only affected whether a reference was decremented on the abort path. The patch makes the decrement unconditional, addressing a potential reference leak on the gate-off branch, not a UAF.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00023EC (wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath)",
+      "similarity": 0.8176,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state cache helper; the state source moves off a per-call argument (arg3 dropped) to the module feature-state global"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging library infrastructure. No direct security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002358 (wil_details_IsEnabledFallback)",
+      "similarity": 0.9535,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state fallback helper updated alongside the state-source change"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging library infrastructure. No direct security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0001DFC (wil_details_FeatureReporting_ReportUsageToServiceDirect)",
+      "similarity": 0.9765,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-usage reporting helper; uses the module feature-reporting singleton"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging library infrastructure (usage reporting). No direct security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0001EE4 (wil_details_FeatureReporting_ReportUsageToService)",
+      "similarity": 0.9897,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL reporting wrapper; compiler restructured an if-else chain into a subtract-and-compare cascade"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler-driven restructuring of WIL reporting code. Functionally equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00040A8 (Feature_1043374394__private_IsEnabledFallback)",
+      "similarity": 0.6736,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Small WIL fallback stub for a different feature ID (1043374394), updated for relocated targets"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature fallback stub. No security impact.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "sub_1c0007cf0 (VmbusTlLoopbackNotifyReceiveConsumed) — primary; also affects sub_1c0007388 (VmbusTlLoopbackSend), sub_1c00079d0 (VmbusTlLoopbackDisconnect), sub_1c001d700 (VmbusTlLoopbackAcceptConnection), sub_1c0006c9c (VmbusTlNotifyListenerAccept)",
+      "entry_point": "HV Socket I/O operations on loopback connections (AF_HYPERV sockets connecting to the local partition). The VmbusTlLoopback* functions run on the socket send/receive/disconnect/accept paths for same-partition HV socket connections.",
+      "call_chain": [
+        "User-mode HV socket API (send/recv/closesocket on AF_HYPERV socket)",
+        "hvsocket.sys TlDefaultRequest* dispatch (imported TlDefaultRequestMessage/TlDefaultRequestResume)",
+        "VmbusTl loopback callback path",
+        "sub_1c0007cf0 (VmbusTlLoopbackNotifyReceiveConsumed) — gate-off branch reads [endpoint+0x2b8] unsynchronized",
+        "Dereference of the delivery-queue entry at [rdi+0x68] racing a concurrent free"
+      ],
+      "vulnerability_class": "Race Condition leading to Use-After-Free (CWE-362, CWE-416). Synchronization conditionally skipped by a WIL feature gate.",
+      "description": "The hvsocket.sys VmbusTl loopback routines contain two implementations selected by the WIL feature gate Feature_1274333499__private_IsEnabledDeviceUsage (sub_1c000293c), which returns the cached state of Feature_1274333499__private_featureState (falling back to Feature_1274333499__private_IsEnabledFallback). When the gate returns non-zero, the code calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (sub_1c0007ecc), which acquires KeAcquireSpinLockRaiseToDpc([endpoint+0x48]) and reads the delivery-queue head [endpoint+0x2b8] under the lock while taking a reference. When the gate returns zero, the code reads [endpoint+0x2b8] directly with no spinlock held and no reference taken.\n\nA concurrent VmbusTlLoopbackDisconnect (sub_1c00079d0) can, on its own gate-off branch, clear [endpoint+0x2b8] without the lock, drop the entry's reference count, and free it via ExFreePoolWithTag with tag 'Vnpi' (0x69706e56). The notify/send thread on the unsynchronized branch then dereferences the entry at [rdi+0x68] and writes [rdi+0x210], and later decrements a reference it never took — a race that can produce a use-after-free or reference-count imbalance on the delivery-queue object.\n\nThe patch removes all gate conditionals and unconditionally calls VmbusTlLoopbackReferenceEndpointDeliveryQueue (relocated to sub_1c0007cd0 in the patched build), which always holds the spinlock and takes a reference before touching the head. Unpatched carries 18 gate call sites across 9 functions; patched carries 0.",
+      "trigger_conditions": "1. Create an HV socket loopback connection: open an AF_HYPERV socket, bind, listen, and connect within the same partition (loopback).\n2. From two threads, concurrently: Thread A performs socket I/O (send / receive completion) invoking VmbusTlLoopbackSend or VmbusTlLoopbackNotifyReceiveConsumed; Thread B closes/disconnects invoking VmbusTlLoopbackDisconnect.\n3. The race window is between the unsynchronized head read (mov rdi,[rbx+0x2b8] @ 0x1c0007e43) and the dereference (mov rdi,[rdi+0x68] @ 0x1c0007e4f). If the disconnect frees the entry in this window, the dereference accesses freed pool.\n4. Reachability of the unsynchronized branch depends on the Feature_1274333499 enablement state on the running build, which is not observable from the static image.",
+      "primitive": "A race on the per-endpoint loopback delivery-queue entry (a 'Vnpi'-tagged nonpaged-pool object). The demonstrable consequences are a use-after-free read/write at [entry+0x68]/[entry+0x210] and a reference-count imbalance that the driver guards with RtlFailFast (int 29h) on underflow. The entry's [+0x50] destructor dispatch is invoked through __guard_dispatch_icall_fptr (Control Flow Guard), so it is not a free indirect-call primitive. No arbitrary read/write, information leak, or control-flow hijack is demonstrable from these binaries; realistic impact is a kernel race manifesting as UAF / bugcheck (denial of service) on the loopback path.",
+      "evidence": "// UNPATCHED sub_1c0007cf0 (VmbusTlLoopbackNotifyReceiveConsumed)\nif (!Feature_1274333499__private_IsEnabledDeviceUsage())  // gate off branch\n{\n    void* head = *(endpoint + 0x2b8);      // read WITHOUT the +0x48 spinlock, no ref taken\n    if (!head)\n        status = STATUS_INVALID_DEVICE_REQUEST;\n    else\n    {\n        int64_t* obj = *(head + 0x68);     // deref racing a concurrent free\n        KeAcquireSpinLockRaiseToDpc(obj + 0x48);\n        *(obj + 0x210) |= 2;\n        VmbusTlTransitionDisconnectState(obj, 3);\n        VmbusTlFinishDisconnectStateTransition(obj, ...);\n    }\n}\nelse  // gate on branch\n{\n    entry = VmbusTlLoopbackReferenceEndpointDeliveryQueue(endpoint);  // locks +0x48, refs entry\n    // ... synchronized ...\n}\n\n// PATCHED sub_1c0007b70: no gate; always synchronized\nentry = VmbusTlLoopbackReferenceEndpointDeliveryQueue(endpoint);\nif (!entry) return STATUS_INVALID_DEVICE_REQUEST;\nKeAcquireSpinLockRaiseToDpc(*(entry+0x68) + 0x48);\n*(*(entry+0x68) + 0x210) |= 2;\n// ... safe ...",
+      "assembly": "; UNPATCHED sub_1c0007cf0 (VmbusTlLoopbackNotifyReceiveConsumed) @ 0x1c0007cf0\n0x1c0007cf0: mov     [rsp+0x8], rbx\n0x1c0007cf5: mov     [rsp+0x10], rsi\n0x1c0007cfa: push    rdi\n0x1c0007cfb: sub     rsp, 0x30\n0x1c0007cff: mov     rbx, rcx\n0x1c0007d02: call    Feature_1274333499__private_IsEnabledDeviceUsage\n0x1c0007d07: test    eax, eax\n0x1c0007d09: jz      0x1c0007e43          ; gate off -> UNSYNCHRONIZED branch\n\n; === SYNCHRONIZED BRANCH (gate on) ===\n0x1c0007d0f: mov     rcx, rbx\n0x1c0007d12: call    VmbusTlLoopbackReferenceEndpointDeliveryQueue  ; locks +0x48, refs entry\n0x1c0007d17: mov     rsi, rax\n0x1c0007d1a: test    rax, rax\n0x1c0007d1d: jz      0x1c0007e2a\n0x1c0007d23: mov     rdi, [rax+0x68]\n0x1c0007d27: lea     rcx, [rdi+0x48]\n0x1c0007d2b: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n0x1c0007d37: or      dword [rdi+0x210], 2\n0x1c0007d48: call    VmbusTlTransitionDisconnectState\n0x1c0007d55: call    VmbusTlFinishDisconnectStateTransition\n0x1c0007d8b: lock xadd [rsi+0x8], rax     ; reference-count decrement\n0x1c0007d95: jg      0x1c0007e86\n; ... ExFreePoolWithTag(rsi, 'Vnpi') when it hits 0 ...\n\n; === UNSYNCHRONIZED BRANCH (gate off) ===\n0x1c0007e43: mov     rdi, [rbx+0x2b8]     ; read head WITHOUT +0x48 spinlock, no ref\n0x1c0007e4a: test    rdi, rdi\n0x1c0007e4d: jz      0x1c0007e8a\n0x1c0007e4f: mov     rdi, [rdi+0x68]      ; deref racing a concurrent free\n0x1c0007e53: lea     rcx, [rdi+0x48]\n0x1c0007e57: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n0x1c0007e63: or      dword [rdi+0x210], 2\n0x1c0007e74: call    VmbusTlTransitionDisconnectState\n0x1c0007e81: call    VmbusTlFinishDisconnectStateTransition\n0x1c0007e86: xor     edi, edi\n0x1c0007e88: jmp     0x1c0007eb0",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackNotifyReceiveConsumed",
+            "address": "0x1c0007cf0",
+            "why": "Function entry. rcx = endpoint. Step to 0x1c0007d02 (the gate call). If EAX==0 after the call, the unsynchronized branch at 0x1c0007e43 is taken. Set a BP at 0x1c0007e43 to observe the unsynchronized head read."
+          },
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackDisconnect",
+            "address": "0x1c00079d0",
+            "why": "The concurrent writer. Set a BP at 0x1c0007a26 (the head read/clear, unsynchronized on the gate-off branch) and at 0x1c0007bd3 (the reference-count decrement leading to ExFreePoolWithTag with tag 'Vnpi')."
+          },
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackReferenceEndpointDeliveryQueue",
+            "address": "0x1c0007ecc",
+            "why": "The synchronized helper (gate-on and patched path). It acquires KeAcquireSpinLockRaiseToDpc([endpoint+0x48]) before reading [endpoint+0x2b8] and takes a reference. Compare with the unsynchronized branch to confirm the synchronization difference."
+          },
+          {
+            "symbol": "hvsocket_unpatched!Feature_1274333499__private_IsEnabledDeviceUsage",
+            "address": "0x1c000293c",
+            "why": "The WIL feature gate. Reads Feature_1274333499__private_featureState; if bit 0x10 (cached) is set, returns bit 0, otherwise calls Feature_1274333499__private_IsEnabledFallback. Its return value selects the branch."
+          }
+        ],
+        "watch": [
+          "rcx (endpoint) at function entry; [endpoint+0x2b8] = shared delivery-queue head",
+          "rbx+0x2b8 at 0x1c0007e43 = the unsynchronized head read",
+          "rdi at 0x1c0007e4f = [head+0x68] — the entry back-pointer dereference",
+          "eax after the gate call at 0x1c0007d07 — 0 selects the unsynchronized branch",
+          "Pool tag 'Vnpi' (0x69706e56) in ExFreePoolWithTag calls — the delivery-queue entry tag"
+        ],
+        "key_offsets": [
+          "0x1c0007d02: call Feature_1274333499__private_IsEnabledDeviceUsage — gate selecting the branch",
+          "0x1c0007d09: jz 0x1c0007e43 — jump to the unsynchronized branch when the gate is off",
+          "0x1c0007e43: mov rdi,[rbx+0x2b8] — unsynchronized delivery-queue head read",
+          "0x1c0007e4f: mov rdi,[rdi+0x68] — dereference racing a concurrent free",
+          "0x1c0007e63: or dword [rdi+0x210], 2 — write on the racing branch",
+          "In sub_1c00079d0 @ 0x1c0007a26: mov rsi,[rbx+0x2b8] — disconnect's unsynchronized head read/clear",
+          "In sub_1c00079d0 @ 0x1c0007bd3: lock xadd [rsi+0x8], rax — reference-count decrement leading to free"
+        ],
+        "trigger_setup": "1. Create an HV socket: socket(AF_HYPERV, SOCK_STREAM, HV_PROTOCOL_RAW), bind, listen. From a second socket, connect within the same partition (loopback), then accept.\n2. Thread A: repeatedly send()/drive receive completion (VmbusTlLoopbackSend / VmbusTlLoopbackNotifyReceiveConsumed).\n3. Thread B: repeatedly close/disconnect and re-establish (VmbusTlLoopbackDisconnect, which clears the head and drops the reference count).\n4. The race window is a handful of instructions between the read at 0x1c0007e43 and the deref at 0x1c0007e4f. Reachability of the unsynchronized branch depends on the feature's enablement state.",
+        "expected_observation": "If the race fires: a fault dereferencing a freed delivery-queue entry at 0x1c0007e4f / 0x1c0007e63, or a reference-count fail-fast (int 29h / RtlFailFast) from the mismatched decrement. In a kernel debugger, !pool on the faulting address may show a freed/reclaimed 'Vnpi' block.",
+        "notes": "Struct layout observed from the free/dispatch paths.\nLoopback endpoint object (arg1):\n- +0x10: FAST_MUTEX (held during these routines)\n- +0x48: KSPIN_LOCK (skipped on the gate-off branch)\n- +0x2b8: delivery-queue head pointer (unsynchronized read target; decompiled as endpoint[0x57])\n- +0x70: parent provider/listener object\n\nDelivery-queue entry object (tag 'Vnpi', 0x69706e56):\n- +0x08: reference count (atomic; lock xadd at 0x1c0007bd3)\n- +0x50: destructor function pointer (invoked via __guard_dispatch_icall_fptr / CFG)\n- +0x58: free-mode selector (1 = ExFreePoolWithTag, 2 = SLIST return)\n- +0x60: SLIST_HEADER* (lookaside/return list)\n- +0x68: back-pointer to endpoint object (dereferenced on the racing branch)\n- +0x210: status flags (written on the racing branch)\n\nThe gate is the WIL feature Feature_1274333499__private_IsEnabledDeviceUsage, reading Feature_1274333499__private_featureState. Its default enablement is not determinable from the static image. Offsets above are RVAs from the analyzed image base (0x1c0000000)."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "sub_1c00079d0 (VmbusTlLoopbackDisconnect)",
+      "entry_point": "HV Socket close/disconnect on a loopback connection — triggers the VmbusTlLoopbackDisconnect path.",
+      "call_chain": [
+        "User-mode closesocket() / disconnect on AF_HYPERV socket",
+        "hvsocket.sys disconnect dispatch",
+        "VmbusTlLoopbackDisconnect @ 0x1c00079d0",
+        "Gate-off branch: read/clear of shared head [endpoint+0x2b8] without the spinlock"
+      ],
+      "vulnerability_class": "Race Condition (CWE-362) — writer side of the delivery-queue race",
+      "description": "VmbusTlLoopbackDisconnect gates the spinlock at [endpoint+0x48] on Feature_1274333499__private_IsEnabledDeviceUsage. On the gate-off branch it reads and clears the shared head [endpoint+0x2b8] without holding the spinlock, then drops the entry's reference count and can free it. This is the freeing side of the race in the primary finding: the disconnect clears/frees the head while a send/notify thread on the unsynchronized branch is reading it. The gate is evaluated three times (0x1c0007a0a, 0x1c0007a3e, 0x1c0007a50) for the acquire, back-pointer clear, and release decisions; these are independent inlined evaluations of the same stable WIL feature state and do not constitute a demonstrable lock-imbalance TOCTOU. The patch acquires and releases the spinlock unconditionally.",
+      "trigger_conditions": "Same as the primary finding: concurrent disconnect with send/notify on a loopback HV socket while the unsynchronized branch is active.",
+      "primitive": "Unprotected shared-state access enabling the use-after-free described in the primary finding.",
+      "evidence": "// UNPATCHED sub_1c00079d0 (VmbusTlLoopbackDisconnect)\nKeEnterCriticalRegion();\nExAcquireFastMutexUnsafe(endpoint + 0x10);\n\nif (Feature_1274333499__private_IsEnabledDeviceUsage())   // check #1\n    NewIrql = KeAcquireSpinLockRaiseToDpc(endpoint + 0x48);  // only if gate on\n\nrsi = *(endpoint + 0x2b8);      // unsynchronized read if gate off\n*(endpoint + 0x2b8) = 0;        // unsynchronized clear if gate off\nif (rsi) rbp = *(rsi + 0x68);\n\nif (Feature_1274333499__private_IsEnabledDeviceUsage())   // check #2\n    *(rsi + 0x68) = 0;\n\nif (Feature_1274333499__private_IsEnabledDeviceUsage())   // check #3\n    KeReleaseSpinLock(endpoint + 0x48, NewIrql);           // only if gate on",
+      "assembly": "; UNPATCHED sub_1c00079d0 (VmbusTlLoopbackDisconnect) @ 0x1c00079d0 — key blocks\n0x1c0007a0a: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #1\n0x1c0007a0f: test    eax, eax\n0x1c0007a11: jz      0x1c0007a26         ; skip spinlock acquire if gate off\n0x1c0007a13: lea     rcx, [rbx+0x48]\n0x1c0007a17: call    qword [rel KeAcquireSpinLockRaiseToDpc]\n0x1c0007a23: mov     dil, al\n0x1c0007a26: mov     rsi, [rbx+0x2b8]    ; read head (no lock if gate off)\n0x1c0007a2d: and     qword [rbx+0x2b8], 0  ; clear head (no lock if gate off)\n0x1c0007a35: test    rsi, rsi\n0x1c0007a38: jz      0x1c0007a4e\n0x1c0007a3a: mov     rbp, [rsi+0x68]\n0x1c0007a3e: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #2\n0x1c0007a43: test    eax, eax\n0x1c0007a45: jz      0x1c0007a50\n0x1c0007a47: and     qword [rsi+0x68], 0\n0x1c0007a50: call    Feature_1274333499__private_IsEnabledDeviceUsage  ; check #3\n0x1c0007a55: test    eax, eax\n0x1c0007a57: jz      0x1c0007a6c\n0x1c0007a59: lea     rcx, [rbx+0x48]\n0x1c0007a60: call    qword [rel KeReleaseSpinLock]  ; release only if gate on",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket_unpatched!VmbusTlLoopbackDisconnect",
+            "address": "0x1c00079d0",
+            "why": "Entry. rcx = endpoint. Watch the three gate calls at 0x1c0007a0a, 0x1c0007a3e, 0x1c0007a50. Set a BP at 0x1c0007a26 to catch the unsynchronized head read/clear on the gate-off branch."
+          }
+        ],
+        "watch": [
+          "eax after each gate call — selects whether the spinlock is acquired/released",
+          "rsi at 0x1c0007a26 = the head read from [rbx+0x2b8]",
+          "rbp = [rsi+0x68] — the object dereferenced and potentially freed"
+        ],
+        "key_offsets": [
+          "0x1c0007a0a: gate check #1 (acquire decision)",
+          "0x1c0007a26: unsynchronized head read/clear",
+          "0x1c0007a3e: gate check #2 (back-pointer clear)",
+          "0x1c0007a50: gate check #3 (release decision)",
+          "0x1c0007bd3: lock xadd [rsi+0x8], rax — reference-count decrement leading to ExFreePoolWithTag"
+        ],
+        "trigger_setup": "Same as the primary finding — concurrent disconnect and send/notify on a loopback HV socket.",
+        "expected_observation": "If the race fires: PAGE_FAULT_IN_NONPAGED_AREA on the dereference of a freed entry, or a reference-count fail-fast. On the gate-off branch the spinlock is not held around the shared-head access.",
+        "notes": "This is the writer/freeing side of the primary UAF scenario. Its unsynchronized read/clear of [endpoint+0x2b8] creates the window where the notify/send thread obtains a stale pointer."
+      }
+    }
+  ],
+  "summary": "The patch removes a WIL feature gate (Feature_1274333499__private_IsEnabledDeviceUsage, sub_1c000293c, reading Feature_1274333499__private_featureState) that conditionally selected between a spinlock-synchronized path and an unsynchronized one across the hvsocket.sys VmbusTl loopback routines. On the gate-off branch, functions such as VmbusTlLoopbackNotifyReceiveConsumed (sub_1c0007cf0), VmbusTlLoopbackSend (sub_1c0007388), and VmbusTlLoopbackDisconnect (sub_1c00079d0) read/clear the shared delivery-queue head [endpoint+0x2b8] without holding the protecting spinlock at [endpoint+0x48] and without taking a reference on the entry. A concurrent disconnect can clear the head and free the 'Vnpi'-tagged entry between the unsynchronized read and the subsequent dereference, producing a race that can lead to a use-after-free or reference-count imbalance (CWE-362 / CWE-416). The patch deletes the gate (18 call sites across 9 functions in the unpatched build, 0 in the patched build) and unconditionally calls the synchronized helper VmbusTlLoopbackReferenceEndpointDeliveryQueue, which acquires the spinlock and takes a reference before touching the head. The entry's [+0x50] destructor dispatch is CFG-guarded and no arbitrary read/write or control-flow primitive is demonstrable from the binaries; realistic impact is a race-induced UAF / bugcheck on the loopback path. Whether the unsynchronized branch is the default at runtime depends on the feature's enablement state, which is not determinable from the static image. Rated Medium."
+}

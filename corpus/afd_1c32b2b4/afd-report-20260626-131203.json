@@ -1,0 +1,248 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9835,
+    "matched": 1179,
+    "changed": 16,
+    "identical": 1163,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdSanCancelAccept @ 0x1C007E110 -> 0x1C007F120 (AFD San accept IRP cancel/teardown routine)",
+      "similarity": 0.6008,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: Added a feature-gated (EvaluateCurrentState on g_Feature_556471608_60363862) drain loop over the pending-IRP list head at conn+0x70, unlinking every queued IRP and completing each with STATUS_CANCELLED (0xc0000120) BEFORE resetting the connection.",
+        "PATCHED: Added teardown flag at conn+0x91 = 1 set before the drain.",
+        "PATCHED: Splits the reset into a second locked pass (KeAcquireInStackQueuedSpinLock at 0x1C007F2D0) performed after siblings are drained and completed.",
+        "PATCHED: When the feature is disabled the routine falls through to the original endpoint-deref + memset(conn+0x50,0,0x48) + type reset, identical to the unpatched path (old path retained).",
+        "UNPATCHED: Unlinks only the current IRP, then (if not already closed) drops the endpoint ref at conn+0x50 and memsets 0x48 bytes at conn+0x50 (which zeroes the pending-list head at conn+0x70/+0x78), sets type 0xAFD0, without draining the other queued IRPs."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched AFD San accept cancel routine unlinks only the current IRP from the connection's pending-IRP list, then resets the connection in place: it drops the endpoint reference at conn+0x50 (AfdDereferenceEndpointInline), memsets 0x48 bytes starting at conn+0x50, clears state at conn+0x08, and writes the recycled marker 0xAFD0 to conn+0x00. The pending-list head lives at conn+0x70/+0x78, INSIDE that memset range, so any sibling IRPs still queued on that list are left linked to a zeroed head on a connection object marked recycled. When such a sibling is later cancelled/completed, AfdSanCancelRequest re-acquires the connection lock and manipulates list linkage on the zeroed head, driving an int 29h list-integrity fail-fast (local DoS), or operates on a connection object that has been recycled and possibly re-issued by the AFD SLIST allocator (use of a recycled object, CWE-416) with a teardown race (CWE-362). The connection is reset/recycled in place, NOT freed via ExFreePool, so no pool-allocation UAF primitive or arbitrary read/write is demonstrable. The patch adds the drain, the teardown flag at conn+0x91 (checked by the insert paths AfdSanFastCompleteRequest and AfdSanRedirectRequest), and a second-pass reset. All of this is gated behind g_Feature_556471608_60363862 with the original path retained, so it is a staged rollout.",
+      "assembly_diff": "UNPATCHED AfdSanCancelAccept @ 0x1C007E110:\n00000001C007E110  mov     r11, rsp\n00000001C007E11F  push    rdi\n00000001C007E120  sub     rsp, 40h\n00000001C007E124  mov     rax, [rdx+0B8h]\n00000001C007E12B  mov     rsi, rdx\n00000001C007E132  mov     rbp, [rax+20h]                 ; context object\n00000001C007E136  mov     rdi, [rbp+18h]                 ; connection object\n00000001C007E13A  lea     rcx, [rdi+30h]                 ; &conn->SpinLock (conn+0x30)\n00000001C007E13E  call    cs:__imp_KeAcquireInStackQueuedSpinLockAtDpcLevel\n00000001C007E14A  lea     rax, [rsi+0A8h]                ; current IRP list entry\n00000001C007E151  mov     rdx, [rax]\n00000001C007E154  test    rdx, rdx\n00000001C007E157  jz      loc_1C007E230\n00000001C007E15D  cmp     [rdx+8], rax\n00000001C007E161  jnz     loc_1C007E229                  ; __fastfail on corruption\n00000001C007E167  mov     rcx, [rax+8]\n00000001C007E16B  cmp     [rcx], rax\n00000001C007E16E  jnz     loc_1C007E229\n00000001C007E174  mov     [rcx], rdx                    ; RemoveEntryList (current IRP only)\n00000001C007E177  mov     [rdx+8], rcx\n00000001C007E19E  test    dword ptr [rdi+8], 800h        ; already closed?\n00000001C007E1A5  jnz     short loc_1C007E1CF\n; ===== NO DRAIN OF SIBLING IRPs =====\n00000001C007E1A7  mov     rcx, [rdi+50h]                 ; endpoint pointer at conn+0x50\n00000001C007E1AB  call    AfdDereferenceEndpointInline\n00000001C007E1B2  lea     rcx, [rdi+50h]                 ; dst = conn+0x50\n00000001C007E1B6  lea     r8d, [rdx+48h]                 ; size 0x48 (covers +0x70/+0x78)\n00000001C007E1BA  call    memset\n00000001C007E1BF  and     dword ptr [rdi+8], 0\n00000001C007E1C3  mov     eax, 0AFD0h\n00000001C007E1C8  mov     [rdi], ax                     ; type = 0xAFD0 (recycled)\n00000001C007E1CB  mov     byte ptr [rdi+2], 1\n00000001C007E1CF  lea     rcx, [rsp+48h+LockHandle]\n00000001C007E1D4  call    cs:__imp_KeReleaseInStackQueuedSpinLockFromDpcLevel\n00000001C007E1E0  mov     cl, [rsi+45h]\n00000001C007E1E3  call    cs:__imp_IoReleaseCancelSpinLock\n00000001C007E1F1  mov     rcx, rbp                       ; context object\n00000001C007E1F4  xchg    eax, [rdi+158h]                ; clear field at conn+0x158\n00000001C007E1FA  call    cs:__imp_ObfDereferenceObject   ; deref context (not connection)\n00000001C007E20C  mov     rcx, rsi\n00000001C007E214  mov     dword ptr [rsi+30h], 0C0000120h ; STATUS_CANCELLED\n00000001C007E21B  call    cs:__imp_IofCompleteRequest     ; completes ONLY this IRP\n00000001C007E229  mov     ecx, 3\n00000001C007E22E  int     29h                            ; list-corruption fail-fast\n00000001C007E264  retn\n\nPATCHED AfdSanCancelAccept @ 0x1C007F120 (key additions):\n00000001C007F1C0  lea     rcx, g_Feature_556471608_60363862_FeatureDescriptorDetails\n00000001C007F1C7  call    EvaluateCurrentState\n00000001C007F1CE  jz      short loc_1C007F20E            ; feature disabled -> old path (memset, no drain)\n00000001C007F1D0  mov     byte ptr [rdi+91h], 1          ; teardown flag\n00000001C007F1D7  lea     rcx, [rdi+70h]                 ; pending-list head\n00000001C007F1DB  mov     rax, [rcx]                     ; drain loop over conn+0x70 ...\n00000001C007F20E  mov     rcx, [rdi+50h]                 ; old path: endpoint deref\n00000001C007F221  call    memset                        ; memset(conn+0x50, 0, 0x48)\n00000001C007F251  call    EvaluateCurrentState          ; re-check feature\n00000001C007F2B6  call    cs:__imp_IofCompleteRequest     ; complete each drained IRP (STATUS_CANCELLED)\n00000001C007F2D0  call    cs:__imp_KeAcquireInStackQueuedSpinLock ; second locked pass\n00000001C007F2F8  call    memset                        ; reset connection after drain"
+    },
+    {
+      "name": "AfdSanAcceptCore @ 0x1C007D0B8 (AFD San accept handler - installs cancel routine)",
+      "similarity": 0.9826,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: Installs the relocated AfdSanCancelAccept (0x1C007F120) as the accept IRP CancelRoutine instead of 0x1C007E110.",
+        "PATCHED: Connection initialization refactor into a helper."
+      ],
+      "security_relevant": true,
+      "security_notes": "Installs AfdSanCancelAccept as the accept IRP cancel routine (lea rax, AfdSanCancelAccept at 0x1C007D2B5). In the patched build this resolves to the relocated, drain-capable AfdSanCancelAccept at 0x1C007F120. Confirms reachability of Finding 1 from the accept path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanFastCompleteRequest @ 0x1C007FE70 -> 0x1C0080F80 (AFD San send/receive fast-complete)",
+      "similarity": 0.9698,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: Adds teardown-flag gate before inserting the IRP into the pending list at conn+0x70: insert only if !EvaluateCurrentState(g_Feature_556471608_60363862) || conn+0x91 == 0.",
+        "PATCHED: Cancel routine relocated (AfdSanCancelRequest 0x1C007E3A0 -> 0x1C007F4D0)."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched path inserts an IRP (entry at irp+0xA8) into the connection pending list at conn+0x70 after only checking the IRP-cancelled flag. The patched path additionally rejects insertion when the teardown flag conn+0x91 is set (under the same feature gate), so new IRPs are not queued onto a connection that is being drained. Amplifier for Finding 1; same staged feature.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanRedirectRequest @ 0x1C0081074 -> 0x1C0082238 (AFD San receive/redirect)",
+      "similarity": 0.9457,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: Same conn+0x91 teardown-flag gate before queuing an IRP into the pending list.",
+        "PATCHED: Cancel routine relocated (AfdSanCancelRequest 0x1C007E3A0 -> 0x1C007F4D0)."
+      ],
+      "security_relevant": true,
+      "security_notes": "Same insert-path hardening as AfdSanFastCompleteRequest: adds the teardown-flag check before inserting into conn+0x70. Feature-gated.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00589F0 (AFD event/connect completion handler)",
+      "similarity": 0.9146,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Feature-gated dispatch between old and new connection-creation paths (AfdCreateConnection_Old vs AfdCreateConnection 0x1C0055BF0)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003F0CC (AFD connection allocation dispatch)",
+      "similarity": 0.757,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Feature-gated dispatch between AfdCreateConnection (0x1C0055AB0) and new AfdCreateConnection (0x1C0055BF0)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005591C (AFD connection/endpoint SLIST allocator)",
+      "similarity": 0.931,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Feature-gated connection allocation path; SLIST drain/refill refactor."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0057ED0 (AFD IOCTL dispatch)",
+      "similarity": 0.9238,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Feature-gated connection-allocation path; stack layout adjustment."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005A210 (AFD IOCTL dispatch)",
+      "similarity": 0.9241,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Feature-gated connection-allocation paths; internal call-target changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanConnectHandler @ 0x1C007E500 (AFD San accept/connect handler)",
+      "similarity": 0.9626,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Cancel-routine address and WPP trace changes; feature-gated paths."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0046230 (AFD IOCTL handler)",
+      "similarity": 0.9792,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Stack-variable renaming; WPP/telemetry address changes. No semantic effect."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00379D0 (AFD IOCTL handler)",
+      "similarity": 0.9447,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Stack-variable layout adjustments; WPP/telemetry address changes. No semantic effect."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCreateConnection @ 0x1C0055AB0 -> 0x1C0055BF0 (connection creation; device-attachment validation added)",
+      "similarity": 0.0962,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: New AfdCreateConnection (0x1C0055BF0) adds IoGetDeviceAttachmentBaseRef-based device-attachment validation (IoGetDeviceAttachmentBaseRef call sites rise 3 -> 5 binary-wide) plus DesiredAccess/Options checks.",
+        "PATCHED: Original logic retained as AfdCreateConnection_Old (0x1C0007DE4) for the feature-disabled fallback."
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense-in-depth hardening of connection creation: the new routine validates device attachment and access/options, failing mismatches. Feature-gated behind g_Feature_556471608_60363862 with the old logic retained. Note that address 0x1C0007DE4 holds a different function (rbc_InitializeFeatureStaging) in the unpatched build; AfdCreateConnection_Old is the relocated pre-patch connection-creation logic matched by content.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvaluateCurrentState @ 0x1C0007AF8 (Windows feature-staging evaluator)",
+      "similarity": 0.0039,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pre-existing feature-staging evaluator present at the same address in both builds; used to gate the patched paths. Low diff similarity is relocation/inlining churn, not new logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "AfdSanCancelAccept @ 0x1C007E110 -> 0x1C007F120 (AFD San accept IRP cancel/teardown routine)",
+      "entry_point": "NtDeviceIoControlFile on \\Device\\Afd via the AFD San accept/redirect path",
+      "call_chain": [
+        "NtDeviceIoControlFile(\\Device\\Afd) -- AFD San accept path",
+        "AfdSanAcceptCore (0x1C007D0B8) -- installs IRP->CancelRoutine = AfdSanCancelAccept (lea rax, AfdSanCancelAccept at 0x1C007D2B5)",
+        "AfdSanCancelAccept (0x1C007E110) -- resets the connection without draining sibling pending IRPs at conn+0x70",
+        "AfdSanCancelRequest (0x1C007E3A0) -- later runs on a surviving sibling IRP and manipulates list linkage on the zeroed head / recycled connection"
+      ],
+      "vulnerability_class": "Use-After-Free of a recycled object (CWE-416) with teardown race (CWE-362) -- pending IRPs not drained on connection teardown",
+      "description": "The unpatched AfdSanCancelAccept (0x1C007E110) unlinks only the current IRP from the connection's pending-IRP list, then (if the connection is not already marked closed at conn+0x08 bit 0x800) drops the endpoint reference at conn+0x50 via AfdDereferenceEndpointInline, memsets 0x48 bytes starting at conn+0x50, clears conn+0x08, and writes the recycled marker 0xAFD0 to conn+0x00 with conn+0x02 = 1. Because the pending-IRP list head is at conn+0x70/+0x78, inside that memset range, any sibling IRPs still queued on the list (entries at irp+0xA8) are left linked to a zeroed head on a connection object marked recycled. When such a sibling is later cancelled or completed, AfdSanCancelRequest (0x1C007E3A0) re-acquires the connection lock and operates on the zeroed list linkage, driving an int 29h list-integrity fail-fast (local DoS), or operates on a connection that has been recycled and possibly re-issued by the AFD SLIST allocator (use of a recycled object). The connection is reset/recycled in place, NOT freed through ExFreePool, so no pool-allocation UAF primitive or arbitrary read/write is demonstrable. The unpatched insert paths AfdSanFastCompleteRequest (0x1C007FE70) and AfdSanRedirectRequest (0x1C0081074) also lack a teardown-flag check, widening the window. The patch adds a pending-IRP drain, a teardown flag at conn+0x91, and a second-pass reset, plus the teardown-flag gate in the insert paths -- all gated behind g_Feature_556471608_60363862 with the original paths retained, i.e. a staged rollout.",
+      "trigger_conditions": "1. Open an AFD endpoint and reach the AFD San accept path (AfdSanAcceptCore installs AfdSanCancelAccept as the accept IRP cancel routine). 2. Queue more than one IRP on the connection's pending list at conn+0x70 (via AfdSanFastCompleteRequest / AfdSanRedirectRequest). 3. Cancel one queued IRP (endpoint close/abort) so AfdSanCancelAccept runs while at least one sibling IRP is still on the list. In the unpatched build (or the patched build with g_Feature_556471608_60363862 disabled) the connection is reset without draining the siblings. 4. When a surviving sibling IRP is later cancelled/completed, AfdSanCancelRequest operates on the zeroed list head / recycled connection. Reliable triggering requires racing a cancel against a still-queued sibling IRP.",
+      "primitive": "Local denial of service via list-integrity fail-fast (int 29h) when a stale sibling IRP is processed on a zeroed pending-list head; potentially use of a recycled connection object under lock (CWE-416) if the reset connection is re-issued by the AFD allocator. No pool-spray reclamation, information leak, or arbitrary kernel read/write is demonstrable, because the connection is reset/recycled in place rather than freed to the pool.",
+      "evidence": "UNPATCHED AfdSanCancelAccept @ 0x1C007E110 (vulnerable path after unlinking the current IRP):\n\n    if ((*(uint*)(conn+0x08) & 0x800) == 0) {\n        // NO DRAIN of the other queued IRPs on conn+0x70\n        AfdDereferenceEndpointInline(*(void**)(conn+0x50));\n        memset(conn+0x50, 0, 0x48);   // zeroes conn+0x50..0x98 incl. list head +0x70/+0x78\n        *(uint*)(conn+0x08) = 0;\n        *(ushort*)conn = 0xAFD0;      // recycled marker\n        *(byte*)(conn+0x02) = 1;\n    }\n    _InterlockedExchange(conn+0x158, 0);\n    ObfDereferenceObject(context);   // derefs the context, not the connection\n    a2->IoStatus.Status = 0xC0000120; // STATUS_CANCELLED\n    IofCompleteRequest(a2, ...);      // completes ONLY this IRP\n\nPATCHED AfdSanCancelAccept @ 0x1C007F120 (fix, feature-gated):\n\n    if ((*(uint*)(conn+0x08) & 0x800) == 0) {\n        if (EvaluateCurrentState(&g_Feature_556471608_60363862)) {\n            *(byte*)(conn+0x91) = 1;                 // teardown flag\n            for (head = conn+0x70; *head != head; ) { // drain ALL pending IRPs\n                entry = *head;\n                *head = entry->Flink; entry->Flink->Blink = head;\n                entry->Flink = 0; entry->Blink = drain; drain = entry;\n            }\n        } else {\n            // old path retained: reset immediately, no drain\n            AfdDereferenceEndpointInline(*(void**)(conn+0x50));\n            memset(conn+0x50, 0, 0x48);\n            *(uint*)(conn+0x08) = 0; *(ushort*)conn = 0xAFD0; *(byte*)(conn+0x02) = 1;\n        }\n    }\n    // release lock; then, if feature enabled, complete each drained IRP with\n    // STATUS_CANCELLED outside the lock, re-acquire the lock and only then reset.",
+      "assembly": "See changed_functions[0].assembly_diff for the full unpatched listing and the key patched additions. Anchors: unpatched reset at 0x1C007E1A7-0x1C007E1CB (endpoint deref, memset(conn+0x50,0,0x48), type 0xAFD0); patched feature gate at 0x1C007F1C7 (EvaluateCurrentState), teardown flag at 0x1C007F1D0, drain loop 0x1C007F1D7-0x1C007F20C, second locked reset 0x1C007F2D0-0x1C007F308.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdSanCancelAccept",
+            "address": "0x1C007E110",
+            "why": "Entry to the teardown/cancel routine. rdx = IRP; context = *(*(rdx+0xB8)+0x20); connection = *(context+0x18) (rdi). Inspect the pending-list head at rdi+0x70."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanCancelAccept+0x97",
+            "address": "0x1C007E1A7",
+            "why": "Start of the reset sequence with no drain. If rdi+0x70 (Flink) != &rdi+0x70, sibling IRPs remain and will be left dangling on the head that the following memset zeroes."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanCancelAccept+0xAA",
+            "address": "0x1C007E1BA",
+            "why": "The memset(rdi+0x50, 0, 0x48). rcx = rdi+0x50, r8d = 0x48 -- confirms the reset range covers the list head at rdi+0x70/+0x78."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanCancelRequest",
+            "address": "0x1C007E3A0",
+            "why": "Cancel routine for the surviving sibling IRPs. Runs later on a stale IRP, re-acquires the connection lock and manipulates list linkage on the zeroed head -- the fail-fast/fault site."
+          }
+        ],
+        "watch": [
+          "rdi = connection object (at *(context+0x18), context = *(*(IRP+0xB8)+0x20))",
+          "rdi+0x30 = connection KSPIN_LOCK",
+          "rdi+0x70 = pending-IRP list head Flink (initialised to self); inside the reset memset range",
+          "rdi+0x78 = pending-IRP list head Blink",
+          "rdi+0x08 = connection state flags (bit 0x800 = already closed)",
+          "rdi+0x50 = endpoint back-pointer (AfdDereferenceEndpointInline); start of the 0x48-byte reset memset",
+          "rdi+0x91 = teardown flag (set only in the patched, feature-enabled path)",
+          "rdi+0x158 = field cleared via xchg at 0x1C007E1F4",
+          "rsi = the IRP currently being cancelled"
+        ],
+        "key_offsets": [
+          "0x1C007E19E: test dword [rdi+8], 0x800 -- skip reset if connection already closed",
+          "0x1C007E1A7: mov rcx, [rdi+0x50] -- start of connection reset with NO drain of sibling IRPs",
+          "0x1C007E1BA: call memset -- memset(rdi+0x50, 0, 0x48) zeroes the pending-list head at rdi+0x70/+0x78",
+          "0x1C007E1C3-0x1C007E1CB: type set to 0xAFD0, byte at +0x02 set to 1 (recycled marker)",
+          "0x1C007E1F4: xchg eax, [rdi+0x158] -- clears field at conn+0x158",
+          "0x1C007E21B: IofCompleteRequest -- completes ONLY the current IRP",
+          "Pending IRP list: rdi+0x70 (Flink) / rdi+0x78 (Blink), circular head (empty when Flink == &rdi+0x70); IRP entries at irp+0xA8",
+          "Patched teardown flag: rdi+0x91 (set in patched AfdSanCancelAccept 0x1C007F120 before the drain)"
+        ],
+        "trigger_setup": "1. Open an AFD endpoint and reach the AFD San accept path so AfdSanAcceptCore (0x1C007D0B8) installs AfdSanCancelAccept as the accept IRP cancel routine. 2. Queue more than one IRP on the connection's pending list at conn+0x70 (AfdSanFastCompleteRequest / AfdSanRedirectRequest). 3. Cancel one queued IRP (close/abort) so AfdSanCancelAccept runs while at least one sibling IRP remains on the list; the connection is reset without draining the siblings. 4. Cancel/complete a surviving sibling IRP so AfdSanCancelRequest processes it on the zeroed head. Racing the cancel against a still-queued sibling is required.",
+        "expected_observation": "When a surviving sibling IRP is processed, AfdSanCancelRequest hits the list-integrity checks on the zeroed pending-list head and executes int 29h, producing a fail-fast bugcheck (KERNEL_SECURITY_CHECK_FAILURE / local DoS). If the reset connection has already been re-issued by the AFD SLIST allocator, the sibling instead operates under lock on a recycled connection object.",
+        "notes": "The connection object is reset/recycled in place: the endpoint reference at conn+0x50 is dropped, the 0x48-byte region at conn+0x50 (including the pending-list head at conn+0x70/+0x78) is zeroed, and the type tag is set to 0xAFD0. There is no ExFreePool on this object in the cancel path. AfdSanCancelRequest is content-identical across builds (relocated 0x1C007E3A0 -> 0x1C007F4D0; only jump targets and the per-build WPP trace GUID differ). The fix and its insert-path gates are all controlled by the Windows feature g_Feature_556471608_60363862 (evaluated via EvaluateCurrentState), with the original paths retained when the feature is disabled."
+      }
+    }
+  ],
+  "summary": "The patch adds a feature-staged correctness fix to the AFD San connection cancel/teardown path. In the unpatched build, AfdSanCancelAccept (0x1C007E110) unlinks only the current IRP and then resets the connection object in place -- dropping the endpoint reference at conn+0x50, memsetting 0x48 bytes at conn+0x50 (which zeroes the pending-IRP list head at conn+0x70/+0x78), and writing the recycled marker 0xAFD0 -- without draining the other IRPs still queued on that list. Those siblings are left linked to a zeroed head on a recycled connection (CWE-416 use of a recycled object) with a teardown race (CWE-362); when later processed they drive a list-integrity int 29h fail-fast (local DoS) or operate on a re-issued connection. The connection is reset/recycled in place, not freed via ExFreePool, so no pool-spray, information leak, or arbitrary read/write primitive is demonstrable. The patched AfdSanCancelAccept (0x1C007F120) adds a pending-IRP drain that completes every queued IRP with STATUS_CANCELLED before resetting the connection, a teardown flag at conn+0x91 checked by the insert paths AfdSanFastCompleteRequest (0x1C007FE70 -> 0x1C0080F80) and AfdSanRedirectRequest (0x1C0081074 -> 0x1C0082238), and a related IoGetDeviceAttachmentBaseRef device-attachment check in AfdCreateConnection (0x1C0055AB0 -> 0x1C0055BF0). Every one of these changes is gated behind the Windows feature g_Feature_556471608_60363862 with the original paths retained, making this a staged rollout rather than an unconditional fix. Severity assessed as Medium."
+}

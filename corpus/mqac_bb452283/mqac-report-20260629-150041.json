@@ -1,0 +1,111 @@
+{
+  "binaries": {
+    "title": "mqac.sys (MSMQ AC Kernel Driver) - No security-relevant change; probe direction and size identical across builds (compiler inlining churn)",
+    "id_unpatched": "mqac_unpatched.sys",
+    "id_patched": "mqac_patched.sys",
+    "overall_similarity": 0.6052,
+    "matched": 512,
+    "changed": 418,
+    "identical": 94,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ACDeepProbeMsgPropsForReceive",
+      "address_unpatched": "0x1400234E0",
+      "address_patched": "0x1C0026338",
+      "similarity": 0.6608,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Offset 0x168 (a2[45]): ProbeForRead(ptr, 0x10, 1) in the unpatched build is emitted as an inline MmUserProbeAddress range check of the same size 0x10 in the patched build. Probe direction (Read) and size (0x10) are unchanged; only the inlining differs.",
+        "Offsets 0x198 (a2[51]) ProbeForWrite size 4, 0x1A0 (a2[52]) size 1, 0x1A8 (a2[53]) size 1, 0x1B8 (a2[55]) size 8 are identical in both builds.",
+        "Read-phase probes (offsets 0x1F0 and above) are ProbeForRead in both builds; in the patched build they are emitted inline. No direction or size change.",
+        "All ProbeForRead calls inlined into MmUserProbeAddress range checks in the patched build (toolchain/compiler change, not security-relevant)."
+      ],
+      "security_relevant": false,
+      "security_notes": "ACDeepProbeMsgPropsForReceive probes a caller-supplied structure of pointers on the MSMQ message-receive path. Comparing both builds field-by-field, no probe direction and no probe size changed. For the pointer at offset 0x168 the unpatched build calls out-of-line ProbeForRead(ptr, 0x10, 1); the patched build performs the identical validation inline (if (ptr + 0x10 > MmUserProbeAddress || overflow) fault) with the same size 0x10. The inlined shape is identical to the patched inline of offset 0x1F0, which is an out-of-line ProbeForRead in the unpatched build, confirming the 0x168 inline is an inlined ProbeForRead and not a converted ProbeForWrite. The surrounding write-phase probe sizes (0x198=4, 0x1A0=1, 0x1A8=1, 0x1B8=8) are unchanged. There is no ProbeForRead->ProbeForWrite direction change and no probe-size change delivered by the patch.",
+      "assembly_diff": "Unpatched (ACDeepProbeMsgPropsForReceive @ 0x1400234E0), offset 0x168 field:\n0x1400237E3  mov  rcx, [rbx+168h]        ; Address\n0x1400237EA  mov  r13d, 10h              ; Length = 0x10\n0x1400237F0  test rcx, rcx\n0x1400237F3  jz   loc_140023807         ; skip if NULL\n0x1400237F5  mov  r8d, r14d              ; Alignment = 1\n0x1400237F8  mov  edx, r13d              ; Length = 0x10\n0x1400237FB  call cs:__imp_ProbeForRead  ; ProbeForRead(ptr, 0x10, 1)\n\nPatched (ACDeepProbeMsgPropsForReceive @ 0x1C0026338), offset 0x168 field (same probe, inlined):\n0x1C0026637  mov  rax, [rbx+168h]\n0x1C002663E  mov  rdx, cs:MmUserProbeAddress\n0x1C0026645  test rax, rax\n0x1C0026648  jz   loc_1C002665E         ; skip if NULL\n0x1C002664A  mov  rcx, [rdx]            ; rcx = MmUserProbeAddress\n0x1C002664D  lea  r8, [rax+10h]         ; end = ptr + 0x10 (size unchanged)\n0x1C0026651  cmp  r8, rcx\n0x1C0026654  ja   loc_1C002665B\n0x1C0026656  cmp  r8, rax\n0x1C0026659  jnb  loc_1C002665E         ; no overflow -> ok\n0x1C002665B  mov  [rcx], bpl            ; write guard to raise fault on range failure\n\nThe patched inline reads from and writes to neither the user pointer [rax]; it only range-checks ptr+0x10 against MmUserProbeAddress. Size 0x10 is unchanged from the unpatched ProbeForRead."
+    },
+    {
+      "name": "ACDeviceControl",
+      "address_unpatched": "0x14000B100",
+      "similarity": 0.9541,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Main IRP/IOCTL dispatch handler. Register reallocation and control-flow reshuffle.",
+        "ProbeForRead calls emitted as inline MmUserProbeAddress checks.",
+        "Same IOCTL code comparisons and input-size checks."
+      ],
+      "security_relevant": false,
+      "security_notes": "Main IRP_MJ_DEVICE_CONTROL dispatch. Differences are compiler restructuring and probe inlining; same logic and constants. No new or removed security check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140006A58",
+      "similarity": 0.9395,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ProbeForRead(arg3, 0x48, 1) emitted as inline MmUserProbeAddress check.",
+        "Array index lookup (sub_14000D93C) inlined together with its pre-existing bounds check.",
+        "Refcount decrement (sub_14000AF28) inlined."
+      ],
+      "security_relevant": false,
+      "security_notes": "The array lookup was already bounds-checked in the unpatched build; the patched build inlines that check. No new security boundary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14000644C",
+      "similarity": 0.9362,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ProbeForRead(arg3, 0x18, 1) emitted as inline MmUserProbeAddress check.",
+        "Pool allocation wrapper replaced with direct ExAllocatePoolWithTagPriority; free wrapper replaced with ExFreePoolWithTag."
+      ],
+      "security_relevant": false,
+      "security_notes": "Toolchain/pool-wrapper inlining. No security boundary change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACSendMessage",
+      "address_unpatched": "0x140009478",
+      "similarity": 0.9378,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ProbeForRead emitted as inline MmUserProbeAddress check.",
+        "__builtin_memset replaced with a wrapper call.",
+        "Stack security cookie present."
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler hardening and inlining on the message-send path. This function does not reach ACDeepProbeMsgPropsForReceive. No new security logic.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ACDeepProbeMsgPropsForReceive",
+      "address_unpatched": "0x1400234E0",
+      "address_patched": "0x1C0026338",
+      "entry_point": "IOCTL dispatch via the MSMQ AC device (\\\\.\\MQAC), message-receive path (ACDeviceControl -> CPacket::GetProperties -> ACDeepProbeReceiveParams -> ACDeepProbeMsgPropsForReceive). Requires the Message Queuing feature installed.",
+      "call_chain": [
+        "DeviceIoControl / NtDeviceIoControlFile to \\\\.\\MQAC",
+        "ACDeviceControl (0x14000B100, main IRP dispatch)",
+        "CPacket::GetProperties (0x140017000)",
+        "ACDeepProbeReceiveParams (0x1400254C4)",
+        "ACDeepProbeMsgPropsForReceive (0x1400234E0)"
+      ],
+      "vulnerability_class": "None (no security-relevant change between builds)",
+      "description": "The original report claimed the patch converts a ProbeForRead into a ProbeForWrite at offset 0x168 and corrects several probe sizes. Verification against both builds shows this is not the case. At offset 0x168 the probe is ProbeForRead(ptr, 0x10, 1) in the unpatched build and an inlined MmUserProbeAddress range check of the same size 0x10 in the patched build; direction (Read) and size (0x10) are unchanged. The surrounding write-phase probe sizes (0x198=4, 0x1A0=1, 0x1A8=1, 0x1B8=8) are identical in both builds, and there is no probe at offset 0x1B0. The single difference is that one ProbeForRead call is emitted inline in the patched build, matching the toolchain-wide pattern of inlining ProbeForRead/ProbeForWrite into MmUserProbeAddress checks. No probe direction or size was changed by the patch.",
+      "trigger_conditions": "Not applicable. No behavioral difference exists between the builds in this function.",
+      "primitive": "None. No exploit primitive is delivered or removed by the patch. There is no demonstrated kernel write to a read-only page, no out-of-bounds write, and no denial-of-service primitive attributable to the change.",
+      "evidence": "Unpatched ACDeepProbeMsgPropsForReceive (decompiled):\n  v29 = a2[45];                          // offset 0x168\n  if (v29) ProbeForRead(v29, 0x10u, 1u);\n  ...\n  v33 = a2[52]; if (v33) ProbeForWrite(v33, 1u, 1u);   // offset 0x1A0\n  v34 = a2[53]; if (v34) ProbeForWrite(v34, 1u, 1u);   // offset 0x1A8\n  v35 = a2[55]; if (v35) ProbeForWrite(v35, 8u, 1u);   // offset 0x1B8\n\nPatched ACDeepProbeMsgPropsForReceive (decompiled), offset 0x168:\n  v30 = (unsigned __int64 *)MmUserProbeAddress;\n  if (v29 != 0 && (v29 + 16 > MmUserProbeAddress || v29 + 16 < v29))\n      *(_BYTE *)MmUserProbeAddress = 0;   // inlined ProbeForRead, size 0x10 unchanged\n  ... offsets 0x1A0/0x1A8/0x1B8 remain ProbeForWrite(1)/ProbeForWrite(1)/ProbeForWrite(8), unchanged.\n\nThe patched inline at offset 0x168 is identical in shape to the patched inline of offset 0x1F0, which is an out-of-line ProbeForRead(ptr, 4, 1) in the unpatched build, confirming the 0x168 inline is an inlined ProbeForRead and not a ProbeForWrite.",
+      "assembly": "Unpatched, ACDeepProbeMsgPropsForReceive @ 0x1400234E0, offset 0x168:\n0x1400237E3  mov  rcx, [rbx+168h]        ; Address\n0x1400237EA  mov  r13d, 10h              ; Length = 0x10\n0x1400237F0  test rcx, rcx\n0x1400237F3  jz   loc_140023807\n0x1400237F5  mov  r8d, r14d              ; Alignment = 1\n0x1400237F8  mov  edx, r13d              ; Length = 0x10\n0x1400237FB  call cs:__imp_ProbeForRead  ; ProbeForRead(ptr, 0x10, 1)\n\nPatched, ACDeepProbeMsgPropsForReceive @ 0x1C0026338, offset 0x168 (same probe, inlined):\n0x1C0026637  mov  rax, [rbx+168h]\n0x1C002663E  mov  rdx, cs:MmUserProbeAddress\n0x1C0026645  test rax, rax\n0x1C0026648  jz   loc_1C002665E\n0x1C002664A  mov  rcx, [rdx]\n0x1C002664D  lea  r8, [rax+10h]         ; size 0x10 unchanged\n0x1C0026651  cmp  r8, rcx\n0x1C0026654  ja   loc_1C002665B\n0x1C0026656  cmp  r8, rax\n0x1C0026659  jnb  loc_1C002665E\n0x1C002665B  mov  [rcx], bpl"
+    }
+  ],
+  "summary": "No security-relevant change is present between the two builds. The original report claimed the patch fixes a ProbeForRead->ProbeForWrite direction mismatch at struct offset 0x168 and corrects several undersized/oversized probes in ACDeepProbeMsgPropsForReceive. Verification against both builds disproves this: at offset 0x168 the probe is ProbeForRead(ptr, 0x10, 1) in the unpatched build and an inlined MmUserProbeAddress range check of the same size 0x10 in the patched build (an inlined ProbeForRead, confirmed by the identical inline shape of offset 0x1F0 which is ProbeForRead in the unpatched build). The surrounding write-phase probe sizes are identical in both builds and there is no probe at offset 0x1B0. The two files are different toolchain/servicing builds whose 418 changed functions differ predominantly by ProbeForRead/ProbeForWrite inlining into MmUserProbeAddress checks, register reallocation, and pool/memset wrapper inlining. No probe direction or size changed and no exploit primitive is introduced or removed."
+}

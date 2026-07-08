@@ -1,0 +1,80 @@
+{
+  "binaries": {
+    "id_unpatched": "bthhfenum_unpatched.sys",
+    "id_patched": "bthhfenum_patched.sys",
+    "overall_similarity": 0.9903,
+    "matched": 338,
+    "changed": 3,
+    "identical": 335,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ScoCloseCompletionRoutine (0x1C0007520)",
+      "similarity": 0.8589,
+      "change_type": "feature_addition",
+      "key_changes": [
+        "Added a new branch in the path where the completion event pointer at offset 0x70 is claimed as NULL (the caller that lost the atomic xchg). Unpatched: 'jz loc_1C000765A' converges directly to the common tail. Patched: 'jz loc_1C0007664' leads to 'cmp dword ptr [rdi+6Ch], 1 / jnz loc_1C0007693', and when the state field equals 1 it calls the WDF function-table entry at vtable+0x9F8 with (context, [rdi+140h], 0xFFFFFFFFFD050F80). The immediate is a signed -0x2FAF080 = -50,000,000 in 100 ns units = a -5 second relative due time, i.e. it arms the WDF timer object stored at offset 0x140.",
+        "The winner path (event non-NULL) now ends with 'jmp short loc_1C0007693' to skip the new branch, where unpatched simply fell through.",
+        "The disconnect-complete KeSetEvent target shifted from [rdi+140h] (unpatched, 0x1C0007676) to [rdi+148h] (patched, 0x1C00076AF), because the new timer object occupies offset 0x140 and the KEVENT moved to 0x148.",
+        "WPP tracing GUID reference changed (WPP_24e0ab97... -> WPP_e1d4e7d7...), which is build-time WPP churn, not a behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "In both builds the NULL-event path (the caller that loses the atomic xchg at offset 0x70) signals the disconnect-complete KEVENT and returns; nothing is freed and then reused on this path. The patched build ADDS a call that arms a newly introduced WDF timer (offset 0x140) with a -5 second due time when the state field at 0x6C equals 1. Its callback, ScoReopenTimer (0x1C0007CF0, a new function), sets the SCO state to 2 to reopen the channel. This is an added automatic SCO reopen feature, not a synchronization or lifetime fix. Arming a timer that fires later is not a use-after-free remediation.",
+      "assembly_diff": "UNPATCHED tail after the atomic event claim (0x1C000762C-0x1C0007682):\n00000001C000762C  xor     ebx, ebx\n00000001C000762E  xchg    rbx, [rdi+70h]\n00000001C0007632  test    rbx, rbx\n00000001C0007635  jz      short loc_1C000765A\n00000001C0007637  ... KeSetEvent(rbx) ; ObfDereferenceObject(rbx)\n00000001C000765A  xor     edx, edx            ; converge (no timer arming)\n00000001C000765C  mov     rcx, rbp\n00000001C000765F  call    Bus_MpmAvdtpSuspendRequest\n00000001C0007676  lea     rcx, [rdi+140h]     ; disconnect-complete KEVENT\n00000001C0007682  call    cs:__imp_KeSetEvent\n\nPATCHED equivalent (0x1C0007634-0x1C00076AF):\n00000001C0007634  xor     ebx, ebx\n00000001C0007636  xchg    rbx, [rdi+70h]\n00000001C000763A  test    rbx, rbx\n00000001C000763D  jz      short loc_1C0007664\n00000001C000763F  ... KeSetEvent(rbx) ; ObfDereferenceObject(rbx)\n00000001C0007662  jmp     short loc_1C0007693\n00000001C0007664  cmp     dword ptr [rdi+6Ch], 1   ; NEW branch (event was NULL)\n00000001C0007668  jnz     short loc_1C0007693\n00000001C0007671  mov     r8, 0FFFFFFFFFD050F80h    ; -5 s relative due time\n00000001C0007678  mov     rdx, [rdi+140h]          ; new WDF timer object\n00000001C0007686  mov     rax, [rax+9F8h]          ; WDF function-table (arm timer)\n00000001C000768D  call    cs:__guard_dispatch_icall_fptr\n00000001C0007693  xor     edx, edx                 ; converge\n00000001C00076AF  lea     rcx, [rdi+148h]          ; disconnect-complete KEVENT (was 140h)"
+    },
+    {
+      "name": "ScoCreate (0x1C000808C unpatched / 0x1C000816C patched)",
+      "similarity": 0.9606,
+      "change_type": "feature_addition",
+      "key_changes": [
+        "Added creation of a new WDF timer object stored at connection-context offset 0x140, with callback ScoReopenTimer (0x1C0007CF0), a genuinely new function absent from the unpatched binary. Patched 0x1C000831D 'lea rax, ScoReopenTimer', handle written via 'add r9, 140h' before the WDF timer-create entry at vtable+0x9F0.",
+        "The pre-existing ScoIdleTimer registration moved its handle from offset 0x158 (unpatched, 'add r9, 158h') to offset 0x160 (patched, 'add r9, 160h').",
+        "The KEVENT initialized by KeInitializeEvent shifted from offset 0x140 (unpatched, 0x1C00083F4) to offset 0x148 (patched, 0x1C0008551).",
+        "The object created via vtable+0x9D8 shifted from offset 0x160 (unpatched, 'add r8, 160h') to offset 0x168 (patched, 'add r8, 168h').",
+        "The ScoDataCompletionTimer registration is present in BOTH builds; the unpatched build already registers two timers (ScoIdleTimer and ScoDataCompletionTimer)."
+      ],
+      "security_relevant": false,
+      "security_notes": "This initializer adds one new WDF timer object at offset 0x140 whose callback (ScoReopenTimer) reopens the SCO channel. Because a new object occupies offset 0x140, the KEVENT and the other objects shift +8. This is the allocation half of the added reopen feature; it is not a security fix. The unpatched build is not missing a timer: it already creates ScoIdleTimer and ScoDataCompletionTimer.",
+      "assembly_diff": "PATCHED new timer registration:\n00000001C000831D  lea     rax, ScoReopenTimer\n00000001C0008363  add     r9, 140h                 ; new timer handle stored at ctx+0x140\n00000001C0008380  mov     rax, [rax+9F0h]          ; WDF timer-create entry\n00000001C00083A8  lea     rax, ScoIdleTimer        ; pre-existing timer, handle now at ctx+0x160\n00000001C00083EB  add     r9, 160h\n00000001C0008551  add     rcx, 148h                ; KEVENT now initialized at ctx+0x148 (was 0x140)"
+    },
+    {
+      "name": "ScoCleanup (0x1C0008A60 unpatched / 0x1C0008BC0 patched)",
+      "similarity": 0.99,
+      "change_type": "feature_addition",
+      "key_changes": [
+        "Added a WdfObjectDelete-style call (vtable+0xA00, with r8b=1) on the new timer object at offset 0x140 (patched 0x1C0008CD5-0x1C0008CEA). This teardown is absent from the unpatched build because the object does not exist there.",
+        "The pre-existing ScoIdleTimer object deletion (vtable+0xA00) shifted from offset 0x158 (unpatched) to offset 0x160 (patched, 0x1C0008CFA).",
+        "The timer stop/dereference calls (vtable+0x9E0, +0x9E8) shifted from offset 0x160 to 0x168.",
+        "The request-cancel call (vtable+0x838) shifted from offset 0x170 to 0x178.",
+        "KeWaitForSingleObject and KeClearEvent on the disconnect-complete KEVENT shifted from offset 0x140 to 0x148."
+      ],
+      "security_relevant": false,
+      "security_notes": "The teardown simply gains one extra WdfObjectDelete for the newly added reopen timer object at offset 0x140, and all other object teardowns shift +8 to match the new layout. Every pre-existing object is deleted in both builds; there is no missing-cleanup bug in the unpatched code. This is the deallocation half of the added reopen feature.",
+      "assembly_diff": "PATCHED added teardown for the new object:\n00000001C0008CD2  mov     r8b, 1\n00000001C0008CD5  mov     rdx, [rbx+140h]          ; new reopen-timer object\n00000001C0008CE3  mov     rax, [rax+0A00h]         ; WDF object-delete entry\n00000001C0008CEA  call    cs:__guard_dispatch_icall_fptr\n00000001C0008CFA  mov     rdx, [rbx+160h]          ; pre-existing timer (was 0x158)\n00000001C0008D08  mov     rax, [rax+0A00h]\n00000001C0008D0F  call    cs:__guard_dispatch_icall_fptr"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ScoCloseCompletionRoutine (0x1C0007520)",
+      "entry_point": "SCO (Bluetooth voice) channel close completion path",
+      "call_chain": [
+        "SCO channel close orchestration (ScoChannelClose, 0x1C00094EC unpatched / 0x1C000966C patched) registers this completion callback",
+        "ScoCloseCompletionRoutine (0x1C0007520) runs when the close completes"
+      ],
+      "vulnerability_class": "No security-relevant change (feature addition: automatic SCO channel reopen timer)",
+      "description": "The patch adds an automatic SCO reopen feature and does not fix a security defect. Three functions change together to introduce one new WDF timer object at connection-context offset 0x140 with the new callback ScoReopenTimer (0x1C0007CF0): ScoCreate allocates and registers it, ScoCleanup deletes it, and ScoCloseCompletionRoutine arms it. In ScoCloseCompletionRoutine, both builds atomically claim the completion-event pointer at offset 0x70 via 'xchg'; the caller that reads NULL (lost the race) signals the disconnect-complete KEVENT and returns. The unpatched NULL path is correct and frees nothing. The patched build adds a branch that, when the state field at offset 0x6C equals 1, arms the new timer at offset 0x140 with a -5 second relative due time (immediate 0xFFFFFFFFFD050F80). The timer callback ScoReopenTimer checks the context fields at 0x170 and 0x6C and, if appropriate, calls SetScoState with state 2 to reopen the channel. Arming a timer that fires later is not a use-after-free remediation, and there is no object that is freed and then reused on this path in the unpatched build.",
+      "trigger_conditions": "Not applicable. The change is a behavioral feature (delayed SCO reopen after a close where this caller lost the completion race and the connection is still marked active). No attacker-reachable memory-safety condition is introduced or removed.",
+      "primitive": "None. No use-after-free, out-of-bounds access, or other memory-safety primitive is present in the unpatched build on this path, and none is fixed by the patch. The unpatched build already creates and tears down its timers (ScoIdleTimer and ScoDataCompletionTimer) symmetrically across ScoCreate and ScoCleanup.",
+      "evidence": "New callback ScoReopenTimer (0x1C0007CF0, patched only):\n00000001C0007D07  mov     rax, [rax+0A08h]        ; WDF get-parent-object\n00000001C0007D25  mov     rax, [rcx+650h]         ; get typed context\n00000001C0007D64  cmp     dword ptr [rbx+170h], 0\n00000001C0007D6B  jnz     short loc_1C0007D80\n00000001C0007D6D  cmp     dword ptr [rbx+6Ch], 0\n00000001C0007D71  jz      short loc_1C0007D80\n00000001C0007D73  mov     edx, 2                  ; new SCO state\n00000001C0007D78  mov     rcx, rbx\n00000001C0007D7B  call    SetScoState\n\nAdded arming call in ScoCloseCompletionRoutine (patched):\n00000001C0007664  cmp     dword ptr [rdi+6Ch], 1\n00000001C0007668  jnz     short loc_1C0007693\n00000001C0007671  mov     r8, 0FFFFFFFFFD050F80h  ; -5 s relative due time\n00000001C0007678  mov     rdx, [rdi+140h]         ; new timer object\n00000001C0007686  mov     rax, [rax+9F8h]         ; WDF timer arm\n00000001C000768D  call    cs:__guard_dispatch_icall_fptr\n\nUnpatched has no such branch; the NULL-event path converges directly at 0x1C000765A and returns after signaling the disconnect-complete KEVENT at [rdi+140h].",
+      "assembly": "UNPATCHED ScoCloseCompletionRoutine tail (authoritative disassembly):\n00000001C000762C  xor     ebx, ebx\n00000001C000762E  xchg    rbx, [rdi+70h]\n00000001C0007632  test    rbx, rbx\n00000001C0007635  jz      short loc_1C000765A\n00000001C0007637  xor     r8d, r8d\n00000001C000763A  xor     edx, edx\n00000001C000763C  mov     rcx, rbx\n00000001C000763F  call    cs:__imp_KeSetEvent\n00000001C000764B  mov     rcx, rbx\n00000001C000764E  call    cs:__imp_ObfDereferenceObject\n00000001C000765A  xor     edx, edx\n00000001C000765C  mov     rcx, rbp\n00000001C000765F  call    Bus_MpmAvdtpSuspendRequest\n00000001C0007664  mov     rcx, [rdi+60h]\n00000001C0007671  call    WdfIoQueueFindAndCompleteIoctlRequest\n00000001C0007676  lea     rcx, [rdi+140h]\n00000001C0007682  call    cs:__imp_KeSetEvent\n00000001C00076A6  call    cs:__guard_dispatch_icall_fptr\n00000001C00076C6  retn"
+    }
+  ],
+  "summary": "The patch to bthhfenum.sys (Bluetooth Hands-Free enumerator) adds an automatic SCO channel reopen feature and contains no security-relevant change. Three functions change in concert to introduce a single new WDF timer object at connection-context offset 0x140 with a new callback, ScoReopenTimer (0x1C0007CF0): ScoCreate allocates and registers it (pushing the KEVENT to 0x148 and the pre-existing ScoIdleTimer handle to 0x160), ScoCleanup deletes it via WdfObjectDelete, and ScoCloseCompletionRoutine arms it with a -5 second due time on the path where the completion-event pointer at offset 0x70 is claimed as NULL and the state field at 0x6C equals 1. The reopen callback sets the SCO state to 2 to reopen the channel. In both builds the NULL-event path signals the disconnect-complete KEVENT and returns without freeing anything, so the previously claimed race-condition use-after-free does not exist: the unpatched build already creates and tears down its two timers (ScoIdleTimer and ScoDataCompletionTimer) symmetrically, and the patch merely adds and manages one additional feature timer. Final assessment: No security-relevant change. Severity none; no CWE applies."
+}

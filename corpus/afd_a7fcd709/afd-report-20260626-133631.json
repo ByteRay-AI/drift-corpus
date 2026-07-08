@@ -1,0 +1,349 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.979,
+    "matched": 1182,
+    "changed": 18,
+    "identical": 1164,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdRestartSuperAcceptGetAddress (unpatched sub_1C006D7F0 -> patched sub_1C006D730) (SuperAccept IRP completion routine)",
+      "similarity": 0.912,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched gates the correct copy-length clamp behind EvaluateCurrentState(g_Feature_298020153_59190810_FeatureDescriptorDetails); when the flag is false it clamps only to MdlByteCount - offset, omitting the 0xa reservation needed for the +0xa memmove destination shift",
+        "Patched removes the feature flag entirely and always uses the reserving clamp min(sizefield - 0xa, len)",
+        "The weak clamp lets memmove(dst = ptr+0xa, src = ptr, len) write up to 10 bytes past the end of the mapped transport-address buffer (out-of-bounds write only; the source range stays in bounds)"
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched build the safe clamp is present but gated. When EvaluateCurrentState returns false, the copy length is clamped to MdlByteCount - offset, which does not reserve the 10 bytes consumed by the +0xa destination shift in memmove(rbp_2, rbp_2+0xa, len). The destination can therefore extend up to 10 bytes past the mapped buffer end, writing transport-supplied address bytes into adjacent memory. There is no out-of-bounds read (the source range src..src+len stays within the buffer) and no information disclosure. The store at [r15+rbp-2] is identical in both builds and merely records the computed length. CWE-787 Out-of-bounds Write, bounded to <= 10 bytes.",
+      "assembly_diff": "AfdRestartSuperAcceptGetAddress unpatched @ 0x1C006D7F0, clamp and copy:\n0x1C006D8CE: cmp     [rdi+0ACh], r12b        ; endpoint address flag; must be set\n0x1C006D8F9: mov     ebp, [rsi+8]            ; offset\n0x1C006D8FC: lea     rcx, g_Feature_298020153_59190810_FeatureDescriptorDetails\n0x1C006D903: mov     r15d, [rsi+18h]         ; size field\n0x1C006D907: add     rbp, rax               ; ptr = MappedSystemVa + offset\n0x1C006D90A: movzx   edi, word ptr [rbp+8]  ; transport-supplied length\n0x1C006D90E: add     di, 2                  ; len = length + 2\n0x1C006D912: call    EvaluateCurrentState\n0x1C006D917: test    eax, eax\n0x1C006D919: jz      0x1C006D937            ; flag off -> weak clamp\n; safe path (flag on): reserves 0xa\n0x1C006D91B: movzx   eax, word ptr [rsi+18h]\n0x1C006D91F: cmp     ax, 0Ah\n0x1C006D923: lea     ecx, [rax-0Ah]         ; cap = size - 0xa\n0x1C006D926: cmovb   cx, r12w\n0x1C006D92B: cmp     cx, di\n0x1C006D92E: cmovnb  cx, di                 ; len = min(cap, len)\n0x1C006D932: movzx   edi, cx\n0x1C006D935: jmp     0x1C006D955\n; weak path (flag off): no 0xa reservation\n0x1C006D937: mov     rax, [rbx+8]           ; MDL\n0x1C006D93B: mov     r8d, [rsi+8]           ; offset\n0x1C006D93F: mov     edx, [rax+28h]         ; MDL ByteCount\n0x1C006D944: sub     ecx, r8d               ; avail = ByteCount - offset (0xa NOT reserved)\n0x1C006D947: movzx   eax, di\n0x1C006D94A: cmp     ecx, eax\n0x1C006D94C: jnb     0x1C006D955\n0x1C006D94E: movzx   edi, dx\n0x1C006D951: sub     di, r8w                ; len = ByteCount - offset\n; copy with +0xa destination shift\n0x1C006D955: movzx   r8d, di                ; Size\n0x1C006D959: lea     rdx, [rbp+0Ah]         ; dst = ptr + 0xa\n0x1C006D95D: mov     rcx, rbp               ; src = ptr\n0x1C006D960: call    memmove\n0x1C006D965: mov     [r15+rbp-2], di        ; store length (identical in both builds)\n\nPATCHED @ 0x1C006D730 has no EvaluateCurrentState and no ByteCount-offset fallback; it always computes len = min(sizefield - 0xa, len) at 0x1C006D83D..0x1C006D858 before memmove at 0x1C006D865."
+    },
+    {
+      "name": "AfdSetInformation (sub_1C005B800) (AFD IOCTL SetOptions handler)",
+      "similarity": 0.603,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds the feature-gated serialization counter *(rbx + 0xf8) inc/dec (gated by EvaluateCurrentState(g_Feature_3088522553_60513072)) around TDI callback invocations, with the old counter-less path retained in the else-branch",
+        "Operation-code dispatch restructured from cascaded compares into a bounded jump-table (cmp eax,0Eh / ja default)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The added counter at endpoint+0xf8 is feature-staged (Finding 2): every inc/dec is guarded by EvaluateCurrentState with a jz that retains the original counter-less behavior when the flag is off. The dispatch restructure to a bounded jump-table is a refactor; the unpatched handler dispatches via cascaded explicit compares, so there is no evidence of an out-of-bounds write. No concrete race is demonstrated. CWE-362 (Race Condition), feature-staged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLListenComplete (unpatched sub_1C005FC10 -> patched sub_1C0060E90) (AFD event completion routine)",
+      "similarity": 0.5625,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds a spin-wait 'while (*(rbx + 0xf8) != 0) { pause; }' before the callback dispatch, gated by EvaluateCurrentState(g_Feature_3088522553_60513072); the old non-waiting path is retained via the jz when the flag is off",
+        "The counter at +0xf8 does not exist anywhere in the unpatched build; the endpoint structure grew by 8 bytes (close-refcount field moved from [rbx+0x158] to [rbx+0x160])",
+        "The callback dispatch (__guard_dispatch_icall_fptr) is otherwise identical between builds"
+      ],
+      "security_relevant": true,
+      "security_notes": "The spin-wait and the +0xf8 counter are newly added in the patched build but every use is gated behind the WIL feature flag g_Feature_3088522553_60513072 with the original behavior retained in the else-branch (staged rollout). The callback dispatch is otherwise identical and no use-after-free or double-free is demonstrable in the unpatched code, so the underlying race is not established. CWE-362 (Race Condition), feature-staged, not a confirmed UAF.",
+      "assembly_diff": "PATCHED AfdTLListenComplete @ 0x1C0060E90:\n0x1C0060F0F: lea     rcx, g_Feature_3088522553_60513072_FeatureDescriptorDetails\n0x1C0060F2E: call    EvaluateCurrentState\n0x1C0060F33: test    eax, eax\n0x1C0060F35: jz      0x1C0060F47            ; flag off -> skip wait\n0x1C0060F39: pause\n0x1C0060F3B: mov     rax, [rbx+0F8h]\n0x1C0060F42: test    rax, rax\n0x1C0060F45: jnz     0x1C0060F39           ; spin while counter != 0\n0x1C0060F47: ... call __guard_dispatch_icall_fptr\n\nUNPATCHED AfdTLListenComplete @ 0x1C005FC10 dispatches the callback directly with no +0xf8 read and no EvaluateCurrentState."
+    },
+    {
+      "name": "AfdCreateConnection (unpatched sub_1C0055BF0 -> patched sub_1C0056280) (AFD endpoint accept/connect)",
+      "similarity": 0.9425,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched wraps the IoGetDeviceAttachmentBaseRef device-stack comparison in if (EvaluateCurrentState(g_Feature_1552108857_59735561_FeatureDescriptorDetails)); when the flag is false the comparison is skipped (jz at 0x1C0055F75 jumps past it to 0x1C0056076)",
+        "Patched removes the gate; the comparison runs unconditionally (only a handle != NULL null-check precedes it) and returns STATUS_INVALID_PARAMETER (0xC000000D) on mismatch"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched build can skip the IoGetDeviceAttachmentBaseRef comparison that validates the supplied handle belongs to the same device stack as the endpoint's connection object. When skipped, a handle from a different device stack can be associated with the AFD endpoint, causing subsequent I/O to interpret the wrong object type. The patched build removes the feature-flag gate entirely, so the bypass path no longer exists. Direction is correct (patched stricter). CWE-843 (Type Confusion).",
+      "assembly_diff": "UNPATCHED @ 0x1C0055BF0:\n0x1C0055F67: lea     rcx, g_Feature_1552108857_59735561_FeatureDescriptorDetails\n0x1C0055F6E: call    EvaluateCurrentState\n0x1C0055F73: test    eax, eax\n0x1C0055F75: jz      0x1C0056076            ; flag off -> skip comparison\n0x1C0055FCC: call    IoGetDeviceAttachmentBaseRef\n0x1C0055FED: call    IoGetDeviceAttachmentBaseRef\n0x1C0055FFC: cmp     rsi, rax\n0x1C0055FFF: jz      0x1C005604C            ; match\n0x1C0056042: mov     eax, 0C000000Dh        ; mismatch -> STATUS_INVALID_PARAMETER\n\nPATCHED @ 0x1C0056280 runs the comparison unconditionally:\n0x1C005662E: call    IoGetDeviceAttachmentBaseRef\n0x1C005664F: call    IoGetDeviceAttachmentBaseRef\n0x1C005665E: cmp     rdi, rax\n0x1C0056661: jz      0x1C00566AE\n0x1C00566A4: mov     eax, 0C000000Dh"
+    },
+    {
+      "name": "AfdCreateConnection_Old (sub_1C0007DE4) (AFD connect/bind handler)",
+      "similarity": 0.9637,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same as AfdCreateConnection: unpatched wraps the IoGetDeviceAttachmentBaseRef comparison in if (EvaluateCurrentState(g_Feature_1552108857_59735561_FeatureDescriptorDetails)); patched removes the gate and always performs the comparison"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same type-confusion validation-bypass as AfdCreateConnection. The feature flag conditional (g_Feature_1552108857_59735561) can skip the device-stack comparison in the unpatched build; the patched build enforces it unconditionally. CWE-843 (Type Confusion).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdAddConnectedReference (unpatched sub_1C0058F28 -> patched sub_1C0059A48) (AFD reference counting)",
+      "similarity": 0.468,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched can perform lock inc [rbx+0x30] BEFORE releasing the spin lock, but only when EvaluateCurrentState(g_Feature_2476938553_60405306) is true; when false it retains the original order (increment after release)",
+        "The increment is an atomic lock inc in both builds and both branches"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-staged ordering adjustment (Finding 4). The reference-count increment is an atomic lock inc in both builds, so the count is never torn regardless of lock position, and the patched build retains the old order in the else-branch when the feature flag is off. No use-after-free is demonstrable. CWE-362 (Race Condition), feature-staged, not a confirmed UAF.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdQueryCompartmentId (unpatched sub_1C0036D94 -> patched sub_1C0036DC4) (AFD query endpoint info)",
+      "similarity": 0.912,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds feature-gated *(rbx + 0xf8) inc/dec (EvaluateCurrentState(g_Feature_3088522553_60513072)) around the AfdTLEndpointIoControl query callback, old path retained in else-branch"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-staged +0xf8 counter (Finding 2). The memset zero-fill size is a fixed 0x50 in both builds; there is no buffer-size change. CWE-362 (Race Condition), feature-staged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLPauseUnPause (unpatched sub_1C0061A70 -> patched sub_1C0062D80) (TDI pause/unpause callback)",
+      "similarity": 0.8586,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds feature-gated *(rbx + 0xf8) inc/dec (EvaluateCurrentState(g_Feature_3088522553_60513072)) around the TDI callback, old path retained in else-branch"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-staged +0xf8 counter (Finding 2). CWE-362 (Race Condition), feature-staged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdConnect (sub_1C005A4F0) (TDI event dispatch - large function)",
+      "similarity": 0.9643,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register allocation changes from recompilation; no confirmed security-relevant change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCleanupCore (sub_1C00571F0) (AFD disconnect/cleanup)",
+      "similarity": 0.781,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset changes reflecting the 8-byte endpoint growth (0x158 -> 0x160, 0x18c -> 0x194)",
+        "Re-addressed callees (AfdTLIoControl sub_1c005a360 -> sub_1c005aec0, AfdCloseConnection sub_1c0056124 -> sub_1c0056784)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdDoDatagramConnect (sub_1C0061F80) (AFD receive IRP completion)",
+      "similarity": 0.8925,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset changes (0x158 -> 0x160, 0x18c -> 0x194, 0x100 -> 0x108) reflecting endpoint struct growth",
+        "Re-addressed callees; added EvaluateCurrentState(...) conditional"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetInformation (unpatched sub_1C0038900 -> patched sub_1C00389B0); AfdGetAddress (sub_1C0036320, in place)",
+      "similarity": 0.3897,
+      "change_type": "behavioral",
+      "key_changes": [
+        "IOCTL info/address query handlers; structural reorganization plus the feature-gated +0xf8 counter (Finding 2)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Carries the feature-staged +0xf8 counter; no independent confirmed vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSetEventHandler (unpatched sub_1C00410A0 -> patched sub_1C0041120)",
+      "similarity": 0.008,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same function relocated across versions; structural/layout differences only, no security-relevant change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCloseRouteChangeNotifyHandles (unpatched sub_1C004194C -> patched sub_1C00419CC)",
+      "similarity": 0.1941,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same function relocated across versions; structural/layout differences only, no security-relevant change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetAddressFileReference (unpatched sub_1C006DDF4 -> patched sub_1C006DCF4)",
+      "similarity": 0.0954,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same function relocated across versions; reordered in the binary layout, no security-relevant change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLConnectEventHandler (sub_1C00549B0) (TDI connect event handler)",
+      "similarity": 0.8202,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register allocation changes and re-addressed callees (AfdTLIoControl sub_1c005a360 -> sub_1c005aec0)",
+        "Trace-data reference changes (data_1c00293d0 -> data_1c00293f0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetDeliveryStatus (unpatched sub_1C0072140 -> patched sub_1C0072040)",
+      "similarity": 0.0064,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Same function relocated across versions; reordered in the binary layout, no security-relevant change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "AfdRestartSuperAcceptGetAddress (unpatched sub_1C006D7F0 -> patched sub_1C006D730) (SuperAccept IRP completion routine)",
+      "entry_point": "AcceptEx / AFD_SUPER_ACCEPT on a listening socket over \\Device\\Afd; the out-of-bounds write occurs in the transport completion routine",
+      "call_chain": ["NtDeviceIoControlFile(\\Device\\Afd, AcceptEx/AFD_SUPER_ACCEPT)", "IofCallDriver to TCP/IP transport", "transport completes IRP with accepted-connection address data", "AfdRestartSuperAcceptGetAddress completion routine", "memmove(ptr, ptr+0xa, len) with len clamped only to MdlByteCount-offset"],
+      "vulnerability_class": "Out-of-bounds write via missing 10-byte header reservation (CWE-787)",
+      "description": "The routine shifts the mapped transport-address buffer forward by 10 (0xa) bytes with memmove(dst = ptr+0xa, src = ptr, len). The copy length must be clamped to reserve those 10 bytes. In the unpatched build the reserving clamp (sizefield - 0xa) is gated behind EvaluateCurrentState(g_Feature_298020153_59190810_FeatureDescriptorDetails). When that flag returns false, the code instead clamps only to MdlByteCount - offset, which does not reserve the 10 bytes for the destination shift. The memmove destination can then extend up to 10 bytes past the end of the mapped buffer, writing transport-supplied address bytes into adjacent memory. The patched build removes the gate and always uses the reserving clamp. The memmove source range stays within the buffer, so there is no out-of-bounds read and no information disclosure.",
+      "trigger_conditions": "1. Issue AcceptEx / AFD_SUPER_ACCEPT on a listening socket over \\Device\\Afd. 2. Complete a connection so the transport returns address data; the completion routine runs with IoStatus.Information == 0x1a and the endpoint address flag at [rdi+0xac] set. 3. The address length field at [mapped+offset+8] must be large enough that, after the +0xa shift, the clamp to MdlByteCount-offset still allows the copy to reach past the buffer end. 4. EvaluateCurrentState(g_Feature_298020153_59190810) must return false, routing to the weak clamp at 0x1C006D937.",
+      "primitive": "Bounded out-of-bounds write of up to 10 bytes of transport-supplied address data immediately past the end of the mapped transport-address buffer in kernel pool. No out-of-bounds read. Broader exploitation would depend on the layout and contents of the adjacent pool allocation, which is not established here.",
+      "evidence": "See assembly_diff for AfdRestartSuperAcceptGetAddress in changed_functions. Unpatched weak clamp at 0x1C006D937 computes len = MdlByteCount - offset (no 0xa reservation); memmove at 0x1C006D960 uses dst = ptr+0xa. Patched (0x1C006D730) has no EvaluateCurrentState and always computes len = min(sizefield - 0xa, len).",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdRestartSuperAcceptGetAddress",
+            "address": "0x1C006D7F0",
+            "why": "Start of the SuperAccept completion routine. rdx = IRP, r8 = list entry."
+          },
+          {
+            "symbol": "afd_unpatched!EvaluateCurrentState",
+            "address": "0x1C006D912",
+            "why": "Feature-flag check for g_Feature_298020153_59190810. eax == 0 selects the weak clamp path."
+          },
+          {
+            "symbol": "afd_unpatched (weak clamp)",
+            "address": "0x1C006D937",
+            "why": "Weak clamp entry: len computed as MdlByteCount - offset without the 0xa reservation. di holds the transport-supplied length + 2."
+          },
+          {
+            "symbol": "afd_unpatched (memmove)",
+            "address": "0x1C006D960",
+            "why": "The copy. r8d = size, rcx = src (ptr), rdx = dst (ptr+0xa). If rdx + r8d exceeds MappedSystemVa + MdlByteCount, the write is out of bounds."
+          }
+        ],
+        "watch": [
+          "eax at 0x1C006D917: feature-flag result; 0 takes the weak clamp path",
+          "di at 0x1C006D90A: transport-supplied length field ([ptr+8]) + 2",
+          "r8d at 0x1C006D955: final copy size; compare against (sizefield - offset - 0xa) to detect overshoot",
+          "byte [rdi+0xac] at 0x1C006D8CE: endpoint address flag, must be set to enter the copy path"
+        ],
+        "key_offsets": [
+          "0x1C006D8CE: gate to the address-copy path (endpoint flag)",
+          "0x1C006D912: EvaluateCurrentState feature-flag check",
+          "0x1C006D919: jz to weak clamp (taken when flag false)",
+          "0x1C006D937: weak clamp (no 0xa reservation)",
+          "0x1C006D960: memmove with +0xa destination shift"
+        ],
+        "trigger_setup": "Issue AcceptEx/AFD_SUPER_ACCEPT and complete a connection so the transport returns address data with a length field at [mapped+offset+8] large enough to overshoot after the +0xa shift, while the feature flag is off.",
+        "expected_observation": "At the memmove call, rdx + r8d extends up to 10 bytes past MappedSystemVa + MdlByteCount. With special pool enabled on the affected allocation this surfaces as pool corruption or a page-fault bugcheck.",
+        "notes": "The reserving clamp exists in the unpatched build but is gated; the patched build removes the gate. The value written is transport-supplied address data and the overshoot is bounded to 10 bytes. Actual exposure of unpatched systems depends on the runtime default of g_Feature_298020153_59190810."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "AfdCreateConnection (unpatched sub_1C0055BF0 -> patched sub_1C0056280) + AfdCreateConnection_Old (sub_1C0007DE4)",
+      "entry_point": "NtDeviceIoControlFile on \\Device\\Afd - accept/connect with a supplied context handle",
+      "call_chain": ["NtDeviceIoControlFile(\\Device\\Afd, accept/connect)", "AfdCreateConnection or AfdCreateConnection_Old", "EvaluateCurrentState(g_Feature_1552108857_59735561) returns false -> device-stack comparison skipped", "AfdIssueDeviceControl attaches the mismatched handle to the endpoint"],
+      "vulnerability_class": "Type confusion via bypassed device-stack validation (CWE-843)",
+      "description": "The unpatched accept/connect handlers wrap the IoGetDeviceAttachmentBaseRef comparison (which verifies the supplied handle shares the endpoint's device stack) in if (EvaluateCurrentState(g_Feature_1552108857_59735561_FeatureDescriptorDetails)). When the flag is false, the comparison is skipped and execution falls through to AfdIssueDeviceControl without validation, allowing a handle from a different device stack to be associated with the AFD endpoint. Subsequent I/O then interprets the wrong object type. The patched build removes the feature-flag gate and performs the comparison unconditionally (only a handle != NULL null-check precedes it), returning STATUS_INVALID_PARAMETER (0xC000000D) on mismatch.",
+      "trigger_conditions": "1. Create an AFD endpoint. 2. Issue an accept/connect request with a context handle pointing to a non-matching device object (e.g., a handle from a different device stack). 3. In the unpatched build EvaluateCurrentState(g_Feature_1552108857_59735561) returns false, skipping the device-stack comparison. 4. The mismatched handle is attached to the endpoint.",
+      "primitive": "Type confusion enabling incorrect object interpretation for subsequent I/O on the endpoint.",
+      "evidence": "See assembly_diff for AfdCreateConnection in changed_functions. Unpatched jz at 0x1C0055F75 jumps past the IoGetDeviceAttachmentBaseRef comparison when the flag is false; patched runs the comparison unconditionally at 0x1C005662E..0x1C0056661.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdCreateConnection",
+            "address": "0x1C0055BF0",
+            "why": "Accept/connect handler. Watch EvaluateCurrentState(g_Feature_1552108857_59735561) at 0x1C0055F6E and the jz at 0x1C0055F75 that bypasses the device-stack comparison."
+          }
+        ],
+        "watch": [
+          "eax at 0x1C0055F73: feature-flag result; 0 skips the comparison",
+          "rsi and rax at 0x1C0055FFC: the two IoGetDeviceAttachmentBaseRef results being compared"
+        ],
+        "key_offsets": [
+          "0x1C0055F75: jz that skips the comparison when the flag is false",
+          "0x1C0055FCC / 0x1C0055FED: IoGetDeviceAttachmentBaseRef calls",
+          "0x1C0056042: STATUS_INVALID_PARAMETER on mismatch"
+        ],
+        "trigger_setup": "Open a handle to a different device stack and supply it as the context handle to an accept/connect request while the feature flag is off.",
+        "expected_observation": "In the unpatched build the mismatched handle is attached without validation; in the patched build the request fails with STATUS_INVALID_PARAMETER.",
+        "notes": "Affects both AfdCreateConnection (sub_1C0055BF0) and AfdCreateConnection_Old (sub_1C0007DE4). The feature-flag symbol is g_Feature_1552108857_59735561_FeatureDescriptorDetails."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "AfdTLListenComplete (sub_1C005FC10) + AfdSetInformation (sub_1C005B800) + AfdQueryCompartmentId (sub_1C0036D94) + AfdTLPauseUnPause (sub_1C0061A70) + AfdGetAddress (sub_1C0036320) + AfdGetInformation (sub_1C0038900) (multiple AFD functions)",
+      "entry_point": "N/A - feature-staged mechanism, not a demonstrated reachable vulnerability",
+      "call_chain": ["Patched build adds endpoint+0xf8 counter and AfdTLListenComplete spin-wait, all gated by EvaluateCurrentState(g_Feature_3088522553_60513072)"],
+      "vulnerability_class": "Race condition (CWE-362) - not demonstrated",
+      "description": "The patched build introduces a counter at endpoint offset +0xf8 that is atomically incremented before and decremented after TDI callback invocations, plus a spin-wait 'while (*(rbx+0xf8) != 0) { pause; }' in AfdTLListenComplete before its callback dispatch. The unpatched build contains no +0xf8 reference in these paths (the endpoint structure grew by 8 bytes). Every +0xf8 use and the spin-wait are gated behind EvaluateCurrentState(g_Feature_3088522553_60513072_FeatureDescriptorDetails) with the original counter-less path retained in the else-branch, so this is a staged rollout rather than an unconditional change. The callback dispatch is otherwise identical between builds and no use-after-free or double-free is demonstrable in the unpatched code.",
+      "trigger_conditions": "Not established. The added serialization mechanism is feature-staged and no concrete race leading to a free/reuse is demonstrated in the unpatched build.",
+      "primitive": "None demonstrated.",
+      "evidence": "See assembly_diff for AfdTLListenComplete in changed_functions: patched spin-wait at 0x1C0060F39..0x1C0060F45 gated by the jz at 0x1C0060F35; unpatched has no +0xf8 read.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_patched!AfdTLListenComplete",
+            "address": "0x1C0060E90",
+            "why": "Event completion routine in the patched build; observe the feature-gated spin-wait on [rbx+0xf8] before the callback dispatch."
+          }
+        ],
+        "watch": ["rbx+0xf8: serialization counter, present only in the patched build and only when the feature flag is on"],
+        "key_offsets": ["0xf8: serialization counter (patched, feature-gated)", "0x160: close-refcount field (moved from 0x158 in the unpatched build)"],
+        "trigger_setup": "Not established.",
+        "expected_observation": "Not established; the counter and spin-wait are only active when the feature flag is enabled.",
+        "notes": "Feature-staged callback serialization. Reported as Low pending evidence of a concrete race in the unpatched build."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "AfdAddConnectedReference (unpatched sub_1C0058F28 -> patched sub_1C0059A48) (AFD reference counting)",
+      "entry_point": "N/A - feature-staged ordering adjustment, not a demonstrated reachable vulnerability",
+      "call_chain": ["AfdAddConnectedReference: patched can increment [rbx+0x30] before the spin-lock release when EvaluateCurrentState(g_Feature_2476938553_60405306) is true, else retains the old order"],
+      "vulnerability_class": "Race condition (CWE-362) - not demonstrated",
+      "description": "The unpatched build performs lock inc [rbx+0x30] after KeReleaseInStackQueuedSpinLock. The patched build can perform the same lock inc before the release, but only when EvaluateCurrentState(g_Feature_2476938553_60405306_FeatureDescriptorDetails) is true; when false it retains the original order. The increment is an atomic lock inc in both builds and both branches, so the count is never torn regardless of lock position. This is a feature-staged ordering adjustment with the old path retained; no use-after-free is demonstrable.",
+      "trigger_conditions": "Not established. The increment is atomic in both builds; the ordering change is feature-staged.",
+      "primitive": "None demonstrated.",
+      "evidence": "Unpatched: KeReleaseInStackQueuedSpinLock at 0x1C0058F62 then lock inc [rbx+30h] at 0x1C0058F6E. Patched: EvaluateCurrentState at 0x1C0059A9B; when true, lock inc at 0x1C0059AA9 precedes release at 0x1C0059AAD; when false, release at 0x1C0059ABB precedes lock inc at 0x1C0059AC7.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [{"symbol": "afd_patched!AfdAddConnectedReference", "address": "0x1C0059A48", "why": "Observe the feature-gated increment ordering relative to the spin-lock release."}],
+        "watch": ["rbx+0x30: reference counter, incremented atomically (lock inc) in both builds"],
+        "key_offsets": ["0x30: reference counter", "0x1C0059A9B: EvaluateCurrentState gate for the ordering"],
+        "trigger_setup": "Not established.",
+        "expected_observation": "Not established; the increment is atomic regardless of ordering.",
+        "notes": "Feature-staged ordering adjustment. Reported as Low pending evidence of a concrete race."
+      }
+    }
+  ],
+  "summary": "The patch delivers two genuine hardening changes to afd.sys (Windows Ancillary Function Driver for Winsock) plus two feature-staged changes. Finding 1 (High, CWE-787): in the SuperAccept address-completion routine AfdRestartSuperAcceptGetAddress, the unpatched build gates the correct copy-length clamp behind the feature flag g_Feature_298020153_59190810; when that flag is off the code clamps only to MdlByteCount - offset and omits the 10-byte reservation needed for the +0xa memmove destination shift, allowing a bounded (up to 10 bytes) out-of-bounds write of transport-supplied address data into adjacent kernel pool. There is no out-of-bounds read. The patched build removes the gate and always clamps. Finding 3 (High, CWE-843): the unpatched accept/connect handlers can skip the IoGetDeviceAttachmentBaseRef device-stack comparison when g_Feature_1552108857_59735561 is off, allowing a handle from a different device stack to be attached to the endpoint (type confusion); the patched build removes the gate and always enforces the comparison. Findings 2 and 4 (Low): an added callback-serialization counter at endpoint+0xf8 (with an AfdTLListenComplete spin-wait) and a reference-count increment ordering tweak in AfdAddConnectedReference are both feature-staged behind WIL flags with the original behavior retained in the else-branch; the increments are atomic and no use-after-free is demonstrable in the unpatched build, so no concrete race is established."
+}

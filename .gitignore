@@ -1,0 +1,30 @@
+diff-work-finished/
+
+# Pelican build output
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# uv / virtualenv
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local env overrides
+.env
+*.local

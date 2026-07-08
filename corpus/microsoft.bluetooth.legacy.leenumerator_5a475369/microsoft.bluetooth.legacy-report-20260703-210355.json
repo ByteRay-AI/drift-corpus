@@ -1,0 +1,51 @@
+{
+  "binaries": {
+    "title": "Microsoft.Bluetooth.Legacy.LEEnumerator.sys - No security-relevant change (RootFdo::EnumerateDevices child-list enumeration refactor plus WPP trace-only updates)",
+    "id_unpatched": "microsoft.bluetooth.legacy.leenumerator_unpatched.sys",
+    "id_patched": "microsoft.bluetooth.legacy.leenumerator_patched.sys",
+    "overall_similarity": 0.9887,
+    "matched": 180,
+    "changed": 2,
+    "identical": 178,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 1
+  },
+  "changed_functions": [
+    {
+      "name": "Microsoft::Bluetooth::Legacy::LEEnumerator::RootFdo::EnumerateDevices",
+      "address_unpatched": "0x1C00017B0",
+      "address_patched": "0x1C00019B8",
+      "similarity": 0.8713,
+      "change_type": "functional_refactor",
+      "key_changes": [
+        "The WdfFdoGetDefaultChildList call (decompiled as WdfFunctions_01015 + 0x420, WDFFUNCENUM index 132), which fetches the FDO's persistent default child-list handle from the RootFdo's own WDFDEVICE at *(this+0x1c8), was moved from a late position (unpatched load at 0x1C0001AAF, after both synchronous radio queries and both pool allocations) to the function prologue (patched load at 0x1C0001A01, before the first radio query at 0x1C0001A80). The handle is valid throughout the function in both builds, so this reorder has no object-lifetime consequence.",
+        "On the path where the radio reports zero present devices, the patched build now calls WdfChildListBeginScan (+0x20, load at 0x1C0001B75) immediately followed by WdfChildListEndScan (+0x28, load at 0x1C0001B90) with no AddOrUpdate in between. An empty begin/end scan marks all previously reported child PDOs missing and removes them. The unpatched build performed no child-list update on this path (it jumped straight to cleanup), so stale child device nodes would linger. This is a PnP enumeration-correctness change, not a memory-safety fix.",
+        "WPP software-trace calls were added (a new WPP_RECORDER_SF_sL helper is invoked; WPP_RECORDER_SF_sq at entry/exit), and the auto-generated WPP trace-GUID symbol was renamed build-wide (WPP_9fc3...->WPP_5f41...). Tracing only.",
+        "Instruction count grew from 311 to 347, consistent with the hoisted fetch, the added zero-device scan pair, and the added trace calls."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a Use-After-Free or TOCTOU. WdfFunctions_01015 + 0x420 is WdfFdoGetDefaultChildList (returns the FDO's persistent child-list handle), not a reference acquisition on a peer-controlled connection object; +0x20 / +0x28 / +0x48 are WdfChildListBeginScan / WdfChildListEndScan / WdfChildListAddOrUpdateChildDescriptionAsPresent (WDFFUNCENUM indices 4 / 5 / 9), a scan/report bracket, not addref/release. The object at *(this+0x1c8) is the RootFdo's own WDFDEVICE, owned by the driver for the device-stack lifetime and not freeable by a remote Bluetooth disconnect. The preceding WdfFunctions_01015 + 0x7b8 / +0x5d0 calls are synchronous WDF I/O-target sends that query the local radio for the device list, not asynchronous request blocks racing a remote peer. There is no attacker-controlled freed pointer and no reachable memory-corruption primitive.",
+      "assembly_diff": "; === UNPATCHED @ 0x1C00017B0 : child-list handle fetched LATE ===\n00000001C000180F  mov     rax, cs:WdfFunctions_01015\n00000001C000181A  mov     rax, [rax+7B8h]        ; radio query #1 (executes first)\n00000001C0001821  call    cs:__guard_dispatch_icall_fptr\n; ... second radio query, count check, pool allocations ...\n00000001C0001AAF  mov     rax, [rax+420h]        ; WdfFdoGetDefaultChildList (executes late)\n00000001C0001AB6  call    cs:__guard_dispatch_icall_fptr\n00000001C0001C22  mov     rax, [rax+48h]         ; AddOrUpdateChildDescriptionAsPresent (loop)\n00000001C0001C4F  mov     rax, [rax+28h]         ; EndScan\n; (no child-list calls on the zero-device path; it jumps to cleanup)\n\n; === PATCHED @ 0x1C00019B8 : child-list handle fetched in PROLOGUE ===\n00000001C0001A01  mov     rax, [rax+420h]        ; WdfFdoGetDefaultChildList (executes early)\n00000001C0001A08  call    cs:__guard_dispatch_icall_fptr\n00000001C0001A80  mov     rax, [rax+7B8h]        ; radio query #1 (now after the fetch)\n; zero-device path adds an empty scan:\n00000001C0001B75  mov     rax, [rax+20h]         ; WdfChildListBeginScan\n00000001C0001B90  mov     rax, [rax+28h]         ; WdfChildListEndScan\n; populated path:\n00000001C0001EAB  mov     rax, [rax+48h]         ; AddOrUpdateChildDescriptionAsPresent (loop)\n00000001C0001ED8  mov     rax, [rax+28h]         ; EndScan"
+    },
+    {
+      "name": "WPP_RECORDER_SF_s_guid_ (unpatched @ 0x1C00015C8; note that address holds WPP_RECORDER_SF_sL in the patched build)",
+      "address_unpatched": "0x1C00015C8",
+      "similarity": 0.9836,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP software-trace recorder helper. Same instruction count (45), only register/operand differences from binary layout. Not security-relevant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "WPP_RECORDER_SF_sL - WPP software-trace recorder helper added in the patched build (tracing only). Unpatched build has 180 functions; patched build has 181."
+    ]
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. An independent per-function diff (matching by mangled symbol and by normalized instruction sequence) shows exactly two changed functions plus one added WPP trace helper. The only material change is in RootFdo::EnumerateDevices (unpatched @ 0x1C00017B0, patched @ 0x1C00019B8), which re-enumerates the driver's own child device PDOs: the patch hoists the WdfFdoGetDefaultChildList handle fetch to the prologue and adds an empty WdfChildListBeginScan/EndScan on the zero-device path so stale child PDOs are removed. The object at *(this+0x1c8) is the RootFdo's own WDFDEVICE, not a peer-freeable connection object, and the moved call is a child-list handle fetch, not a reference acquisition; there is no Use-After-Free, no TOCTOU race, and no reachable memory-corruption primitive. The remaining differences are WPP software-tracing updates (a renamed trace-GUID symbol and the added WPP_RECORDER_SF_sL helper)."
+}

@@ -1,0 +1,135 @@
+{
+  "binaries": {
+    "title": "hvcrash.sys (Hyper-V Crash Dump Driver) - Uninitialized stack bytes in crash-dump writer descriptor (CWE-908)",
+    "id_unpatched": "hvcrash_unpatched.sys",
+    "id_patched": "hvcrash_patched.sys",
+    "overall_similarity": 0.983,
+    "matched": 50,
+    "changed": 4,
+    "identical": 46,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 1
+  },
+  "changed_functions": [
+    {
+      "name": "HvCrashWriter::Initialize",
+      "address_unpatched": "0x1C0002E68",
+      "address_patched": "0x1C0002FE0",
+      "similarity": 0.983,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: 16-byte stack structure v14[4] at [rbp+0x37] is only partially initialized - dword [rbp+0x37]=6 and dword [rbp+0x3b]=0x12 are set, but the trailing 8 bytes at [rbp+0x3f] through [rbp+0x46] (v14[2]/v14[3]) are left UNINITIALIZED",
+        "PATCHED: adds 'mov qword [rbp+0x37], rax' (0x1C0003002) and 'mov qword [rbp+0x3f], rax' (0x1C0003012), rax=0 from 'xor eax,eax', zeroing the full 16-byte structure before the dword fields are set",
+        "The structure is wrapped in a WDF_MEMORY_DESCRIPTOR (type=buffer, pointer=v14, length=16) and passed as the INPUT buffer of a synchronous internal device I/O control request (control code 0x3EC080) issued through the KMDF function table (WdfFunctions_01015 + 1488, table offset 0x5d0). The I/O target handle comes from WdfFunctions_01015 + 336 (offset 0x150).",
+        "These are KMDF (Windows Driver Framework) function-table calls, not a VMBus/inter-partition interface"
+      ],
+      "security_relevant": true,
+      "security_notes": "Use of uninitialized stack memory (CWE-908 / CWE-200). HvCrashWriter::Initialize builds a 16-byte structure on the kernel stack and, in the unpatched build, initializes only the first two dwords (6 and 0x12), leaving the trailing 8 bytes stale. That structure is the input buffer of an internal device I/O control request (0x3EC080) sent to the next driver in the device stack via the KMDF I/O-target API, so the 8 uninitialized bytes travel to that lower kernel-mode driver. The patched build zero-initializes the whole structure first. Severity is Low: the routine is on the crash-dump writer setup path (reached through the driver's WDF device-control handler, not an ordinary untrusted surface), and the source and recipient of the bytes are both kernel-mode (ring 0). No cross-privilege or guest-boundary disclosure, and no specific disclosed content, is demonstrable from the binaries.",
+      "assembly_diff": "UNPATCHED HvCrashWriter::Initialize @0x1C0002E68 (frame: lea rbp,[rsp-57h], so [rbp+57h+var_XX] = rbp+0x57-0xXX):\n00000001C0002E88  xor     eax, eax\n00000001C0002E8A  mov     [rbp+57h+var_20], 6        ; dword [rbp+0x37] = 6\n00000001C0002E91  mov     [rbp+57h+var_58], rax\n00000001C0002E95  mov     [rbp+57h+var_48], rax\n00000001C0002E99  mov     [rbp+57h+var_1C], 12h      ; dword [rbp+0x3b] = 0x12\n00000001C0002EA4  mov     dword ptr [rbp+57h+var_48], 10h   ; length = 16\n00000001C0002EAB  lea     rax, [rbp+57h+var_20]      ; &struct (rbp+0x37)\n00000001C0002EB3  mov     [rbp+57h+var_50], rax      ; descriptor buffer ptr at rbp+0x7\n; bytes rbp+0x3f..rbp+0x46 (var_18) are NEVER written\n\nPATCHED HvCrashWriter::Initialize @0x1C0002FE0:\n00000001C0003000  xor     eax, eax\n00000001C0003002  mov     [rbp+57h+var_20], rax          ; NEW: qword [rbp+0x37] = 0\n00000001C0003006  mov     [rbp+57h+var_58], rax\n00000001C000300A  mov     [rbp+57h+var_48], rax\n00000001C0003012  mov     [rbp+57h+var_18], rax          ; FIX: qword [rbp+0x3f] = 0\n00000001C000301A  mov     dword ptr [rbp+57h+var_20], 6     ; dword [rbp+0x37] = 6\n00000001C0003048  mov     dword ptr [rbp+57h+var_20+4], 12h ; dword [rbp+0x3b] = 0x12\n00000001C0003053  mov     dword ptr [rbp+57h+var_48], 10h   ; length = 16"
+    },
+    {
+      "name": "CrashdumpShim::GetDumpInfo",
+      "address_unpatched": "0x1C00019E8",
+      "address_patched": "0x1C0001AF8",
+      "similarity": 0.9629,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED adds three WdfRequestComplete calls (KMDF table offset 0x838 / WdfFunctions_01015 + 2104): on the 0x148 pool-allocation failure, the HvCrashWriter::Initialize failure, and the RtlGetVersion failure paths",
+        "UNPATCHED returns from those three paths without completing the WDF request, leaving it pending (caller hang / resource leak) on those failures. The earlier input-validation and 0xC0-allocation failures, and the success path, already complete the request in both builds (6 completion calls unpatched vs 9 patched)",
+        "Global/string reference offsets shift by the newly added debug-flag globals; register allocation and debug line-number constants change (noise)",
+        "Calls HvCrashWriter::Initialize (the fixed function); request-buffer validation logic is identical between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Caller of the fixed function. The substantive change is the addition of WdfRequestComplete on three error paths (0x148 allocation failure, Initialize failure, RtlGetVersion failure) that the unpatched build left uncompleted, which would leave the request pending. This is a robustness fix on abnormal failure paths (allocation / version query), not an attacker-controlled primitive. The 0x48-byte request-buffer validation (dword[0]==0x48, dword[4]==1, dword[8] in 1..15 and != 15) is unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Diagnostics::NtStatus_ResultErrorCallback",
+      "address_unpatched": "0x1C00010BC",
+      "similarity": 0.8879,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The error DbgPrint is now guarded by 'if (Diagnostics::g_DbgPrintOnError)'; in the unpatched build it was unconditional",
+        "g_DbgPrintOnError is set from a DebugFlags registry value read by the new Diagnostics::Initialize function",
+        "Code blocks reordered; stack-cookie check target relocated (compiler noise)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error-reporting helper. The change makes debug output runtime-configurable via a DebugFlags registry value. This is a diagnostics feature, not a security fix."
+    },
+    {
+      "name": "DriverEntry",
+      "address_unpatched": "0x1C000A008",
+      "similarity": 0.9845,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds a call to the new Diagnostics::Initialize on the success path after WdfDriverCreate",
+        "Diagnostics::Initialize reads the DebugFlags registry value and sets g_DbgPrintOnError and g_DbgBreakOnError",
+        "Stack layout shift from the added Diagnostics* local; an error-path source-line constant changes representation (noise)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Driver entry point. The added call wires up the runtime-configurable diagnostics feature (reads DebugFlags from the registry). Not a security fix. (This function is the driver entry point, not a self-managed-IO-init routine.)"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      {
+        "name": "Diagnostics::Initialize",
+        "address_patched": "0x1C00011F8",
+        "security_relevant": false,
+        "notes": "New helper. Opens the driver's Parameters registry key, reads a DebugFlags DWORD, and sets g_DbgPrintOnError = flags&1 and g_DbgBreakOnError = (flags&2)!=0. Part of the runtime-configurable diagnostics feature (used by DriverEntry and Diagnostics::NtStatus_ResultErrorCallback). Not security relevant."
+      }
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "HvCrashWriter::Initialize",
+      "address_unpatched": "0x1C0002E68",
+      "address_patched": "0x1C0002FE0",
+      "entry_point": "WDF device I/O control request, control code 0x2D164B, dispatched by HvCrashDeviceControl (the driver's EvtIoDeviceControl callback)",
+      "call_chain": [
+        "Device I/O control request with control code 0x2D164B reaches the driver's WDF I/O queue",
+        "HvCrashEvtDeviceAdd (0x1C00080E0) registered HvCrashDeviceControl (0x1C00088D0) as the EvtIoDeviceControl callback",
+        "HvCrashDeviceControl switches on the control code; case 0x2D164B (decimal 2954827) calls CrashdumpShim::GetDumpInfo",
+        "CrashdumpShim::GetDumpInfo (0x1C00019E8) retrieves a 0x48-byte request input buffer, validates its fields, allocates pool, and calls HvCrashWriter::Initialize",
+        "HvCrashWriter::Initialize (0x1C0002E68) builds the partially initialized 16-byte structure and passes it as the input buffer of an internal device I/O control request (0x3EC080) sent down the device stack"
+      ],
+      "vulnerability_class": "use of uninitialized stack memory (CWE-908 / CWE-200)",
+      "description": "In the unpatched hvcrash.sys, HvCrashWriter::Initialize builds a 16-byte structure on the kernel stack (v14[4] at rbp+0x37). Only the first two dwords are written: dword [rbp+0x37]=6 and dword [rbp+0x3b]=0x12. The trailing 8 bytes at [rbp+0x3f] through [rbp+0x46] (v14[2]/v14[3]) are left uninitialized and retain stale stack contents. The structure is wrapped in a WDF_MEMORY_DESCRIPTOR (type=buffer, pointer=v14, length=16) and passed as the INPUT buffer of a synchronous internal device I/O control request (control code 0x3EC080) issued through the KMDF function table (WdfFunctions_01015 + 1488, table offset 0x5d0; the I/O target handle comes from WdfFunctions_01015 + 336, offset 0x150). The 8 uninitialized bytes therefore travel into the request sent to the next driver in the device stack. The patched HvCrashWriter::Initialize (0x1C0002FE0) adds 'mov qword [rbp+0x37], rax' and 'mov qword [rbp+0x3f], rax' (rax=0) before setting the dword fields, defining all 16 bytes.",
+      "trigger_conditions": "1. hvcrash.sys is loaded. 2. A WDF device I/O control request with control code 0x2D164B reaches the driver's I/O queue and is dispatched by HvCrashDeviceControl to CrashdumpShim::GetDumpInfo. 3. The request input buffer is 0x48 bytes and passes validation in GetDumpInfo: dword[0]==0x48, dword[4]==1, dword[8] non-zero and < 0x10 and != 0xf. 4. GetDumpInfo allocates the writer object and calls HvCrashWriter::Initialize, which builds the descriptor and issues the internal IOCTL. The input buffer of that internal IOCTL then contains the 16-byte structure whose last 8 bytes are stale stack data.",
+      "primitive": "8 bytes of uninitialized kernel-stack memory placed into the input buffer of an internal device I/O control request sent to the next driver in the device stack. Source and recipient are both kernel-mode (ring 0). No verified path makes the trigger reachable from an unprivileged user process, and no verified path returns the bytes to, or exposes them to, a lower-privileged or external party. The specific content of the 8 bytes is whatever prior stack frames left; no particular sensitive value is demonstrable.",
+      "evidence": "UNPATCHED HvCrashWriter::Initialize decompilation:\n    _DWORD v14[4];            // 16-byte struct at rbp+0x37\n    v14[0] = 6;               // rbp+0x37\n    v14[1] = 18;              // rbp+0x3b (0x12)\n    // v14[2], v14[3] (rbp+0x3f..rbp+0x46) left UNINITIALIZED\n    v8[0] = 1;                // WDF_MEMORY_DESCRIPTOR: type = buffer\n    v8[1] = v14;              // buffer pointer\n    v8[2] = 16;               // length = 16\n    v5 = (*(...)(WdfFunctions_01015 + 1488))(WdfDriverGlobals, v3, 0, 4112512, v8, v7, 0, 0);\n    // ^ internal IOCTL 0x3EC080; v8 is the INPUT memory descriptor\n\nPATCHED HvCrashWriter::Initialize decompilation:\n    _QWORD v14[2];\n    v14[1] = 0;                 // zero upper 8 bytes (the fix)\n    v14[0] = 0x1200000006LL;    // == dwords {6, 18}\n    ... (same WDF I/O target request)",
+      "assembly": "UNPATCHED HvCrashWriter::Initialize @0x1C0002E68 (frame: lea rbp,[rsp-57h]; [rbp+57h+var_XX] = rbp+0x57-0xXX):\n00000001C0002E68  mov     [rsp-8+arg_0], rbx\n00000001C0002E6D  push    rbp\n00000001C0002E6E  lea     rbp, [rsp-57h]\n00000001C0002E73  sub     rsp, 0C0h\n00000001C0002E7A  mov     rax, cs:__security_cookie\n00000001C0002E81  xor     rax, rsp\n00000001C0002E84  mov     [rbp+57h+var_10], rax\n00000001C0002E88  xor     eax, eax\n00000001C0002E8A  mov     [rbp+57h+var_20], 6         ; dword [rbp+0x37] = 6\n00000001C0002E91  mov     [rbp+57h+var_58], rax\n00000001C0002E95  mov     [rbp+57h+var_48], rax\n00000001C0002E99  mov     [rbp+57h+var_1C], 12h       ; dword [rbp+0x3b] = 0x12\n00000001C0002EA0  lea     r8d, [rax+1]\n00000001C0002EA4  mov     dword ptr [rbp+57h+var_48], 10h   ; length = 16\n00000001C0002EAB  lea     rax, [rbp+57h+var_20]       ; &struct (rbp+0x37)\n00000001C0002EAF  mov     dword ptr [rbp+57h+var_58], r8d\n00000001C0002EB3  mov     [rbp+57h+var_50], rax        ; descriptor buffer ptr at rbp+0x7\n00000001C0002ED3  mov     rax, cs:WdfFunctions_01015\n00000001C0002EE5  mov     rax, [rax+150h]             ; KMDF table entry (get I/O target)\n00000001C0002EEC  call    cs:__guard_dispatch_icall_fptr\n00000001C0002EF2  mov     rcx, cs:WdfFunctions_01015\n00000001C0002EF9  mov     r9d, 3EC080h                ; internal IOCTL control code\n00000001C0002F11  mov     r10, [rcx+5D0h]             ; KMDF table entry (send internal IOCTL)\n00000001C0002F24  lea     rcx, [rbp+57h+var_58]       ; WDF_MEMORY_DESCRIPTOR (input) -> struct\n00000001C0002F34  call    cs:__guard_dispatch_icall_fptr   ; request issued\n\nKEY: bytes [rbp+0x3f]..[rbp+0x46] (var_18) are never written in the unpatched build.\nPATCHED (0x1C0002FE0) adds at 0x1C0003002 'mov [rbp+57h+var_20], rax' (qword [rbp+0x37]=0) and at 0x1C0003012 'mov [rbp+57h+var_18], rax' (qword [rbp+0x3f]=0), zeroing the full 16 bytes before the dword fields are set.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvcrash!HvCrashWriter::Initialize",
+            "rva": "0x2E68",
+            "why": "Function entry, before the structure is initialized."
+          },
+          {
+            "symbol": "hvcrash!HvCrashWriter::Initialize+0xCC",
+            "rva": "0x2F34",
+            "why": "The KMDF call that issues the internal IOCTL. The descriptor buffer pointer is at [rbp+0x7] and points to the 16-byte structure at rbp+0x37; the trailing 8 bytes are stale in the unpatched build and zero in the patched build."
+          }
+        ],
+        "watch": [
+          "At 0x2F34: 'dq poi(rbp+7) L2' - first QWORD is 0x0000001200000006; second QWORD is the trailing 8 bytes (stale/non-zero in unpatched, zero in patched)",
+          "rbp+0x37 = structure start; rbp+0x3f = the region left uninitialized in the unpatched build",
+          "WdfFunctions_01015: KMDF function dispatch table; offset 0x150 = get I/O target, offset 0x5d0 = send internal device IOCTL"
+        ],
+        "key_offsets": [
+          "0x2E8A: 'mov dword [rbp+0x37], 6' - first dword of the structure",
+          "0x2E99: 'mov dword [rbp+0x3b], 0x12' - second dword",
+          "GAP: bytes rbp+0x3f..rbp+0x46 are never written in the unpatched build",
+          "0x2EA4: 'mov dword [rbp+0xf], 0x10' - descriptor length = 16",
+          "0x2F34: KMDF call that issues the internal IOCTL carrying the structure",
+          "PATCHED 0x3012: 'mov qword [rbp+0x3f], rax' - the fix that defines the trailing 8 bytes"
+        ],
+        "notes": "The two dword fields (6, 0x12) and the length (16) are compile-time constants. The internal IOCTL 0x3EC080 is sent via the KMDF I/O-target API to the next driver in the device stack; both endpoints are kernel-mode. RVAs are file-relative; add the driver's load base under a live debugger."
+      }
+    }
+  ],
+  "summary": "The patch zero-initializes an 8-byte tail of a 16-byte stack structure in HvCrashWriter::Initialize (unpatched 0x1C0002E68, patched 0x1C0002FE0) before that structure is handed to a WDF I/O-target request. In the unpatched build only the first two dwords (6 and 0x12) are written; the trailing 8 bytes at rbp+0x3f are left stale and are carried into the input buffer of an internal device I/O control request (control code 0x3EC080) sent to the next driver in the device stack via the KMDF function table. This is a genuine use-of-uninitialized-memory hardening fix (CWE-908 / CWE-200), but it is on the crash-dump writer setup path (reached through the driver's WDF device-control handler, control code 0x2D164B, not an ordinary untrusted surface) and the leaked bytes move between kernel-mode components, so severity is Low. There is no evidence in the binaries of a VMBus message trigger, transmission to the Hyper-V host, or disclosure of specific sensitive values. Of the other changed functions: CrashdumpShim::GetDumpInfo adds WdfRequestComplete on three error paths the unpatched build left uncompleted (a robustness fix on allocation/version-query failure paths); Diagnostics::NtStatus_ResultErrorCallback, DriverEntry, and the newly added Diagnostics::Initialize implement a runtime-configurable debug-logging feature driven by a DebugFlags registry value (not a security fix)."
+}

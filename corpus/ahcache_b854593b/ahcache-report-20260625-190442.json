@@ -1,0 +1,91 @@
+{
+  "binaries": {
+    "id_unpatched": "ahcache_unpatched.sys",
+    "id_patched": "ahcache_patched.sys",
+    "overall_similarity": 0.993,
+    "matched": 522,
+    "changed": 1,
+    "identical": 521,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AslpFileMakeStringVersionAttributes",
+      "similarity": 0.9335,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bounds check 'if (size > offset)' before computing the read pointer and remaining length after AslpFileVerBlockGetValueOffset returns. In the unpatched build, when the computed offset exceeds the version block size, 'edi = size - offset' wraps in the 32-bit register and 'rsi = buffer + offset' points a few bytes past the block.",
+        "When the check fails in the patched build, rsi is left 0 and edi is left 0, so no out-of-bounds pointer is formed before the call to AslpFileQueryVersionString.",
+        "Unpatched code at 0x1c002755c: 'mov rax, [rbp+arg_18] / add rsi, rax / sub edi, eax' with NO comparison of offset vs size before these operations.",
+        "Patched code at 0x1c0027592: 'mov rax, [rbp+arg_18] / cmp r14, rax / jbe 0x1c00275a4' — adds the comparison and skips the pointer/length computation if offset >= size."
+      ],
+      "security_relevant": true,
+      "security_notes": "AslpFileMakeStringVersionAttributes parses a file's VS_VERSION_INFO resource. It calls AslpFileVerQueryBlock to retrieve the '\\VarFileInfo\\Translation' block (buffer pointer and byte size), then AslpFileVerBlockGetValueOffset to compute a byte offset that skips past the block's value-name string. The unpatched build forms 'rsi = buffer + offset' and 'edi = size - offset' without checking offset <= size. AslpFileVerBlockGetValueOffset returns offset = align4(L + 8), where L is the value-name byte length measured by RtlStringCbLengthW with cbMax = size - 6, so L <= size - 8 and offset <= align4(size). The offset can exceed size only by the 4-byte-alignment round-up (by 1 or 2 bytes, when size mod 4 is 2 or 3). In that case the read pointer lands 1-2 bytes past the block and the 32-bit 'size - offset' wraps. Downstream, AslpFileQueryVersionString reads exactly two 16-bit words (4 bytes) at buffer + offset; the wrapped length is used only as a non-zero flag, not as a read count. The result is a small out-of-bounds read (CWE-125) in kernel mode. The patched build adds 'if (size > offset)'; when it fails, rsi stays 0 and edi stays 0.",
+      "assembly_diff": "VULNERABLE UNPATCHED CODE at 0x1c002755c (no bounds check):\n0x1c002755c: mov     rax, [rbp+arg_18]           ; offset from AslpFileVerBlockGetValueOffset\n0x1c0027560: add     rsi, rax                    ; rsi = buffer + offset (1-2 bytes past block if size%4 in {2,3})\n0x1c0027563: sub     edi, eax                    ; edi = size - offset (wraps in 32-bit)\n0x1c0027565: mov     r15d, edi\n0x1c0027568: shr     r15, 2                      ; r15 = (size - offset) >> 2 (used only as a non-zero flag downstream)\n\nPATCHED CODE at 0x1c0027592 (adds bounds check):\n0x1c0027592: mov     rax, [rbp+arg_18]           ; offset\n0x1c0027596: cmp     r14, rax                    ; compare size vs offset\n0x1c0027599: jbe     0x1c00275a4                 ; if size <= offset, SKIP pointer/length computation\n; Only reached if size > offset:\n0x1c002759b: mov     edi, r14d                   ; edi = block_size\n0x1c002759e: lea     rsi, [rax+r15]              ; rsi = offset + buffer\n0x1c00275a2: sub     edi, eax                    ; edi = size - offset\n"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "AslpFileMakeStringVersionAttributes",
+      "entry_point": "IRP_MJ_DEVICE_CONTROL to the ahcache device, via AhcDispatch cases 0 (AhcApiLookup) and 11 (AhcApiLookupAndWriteToProcess), through the shim-database exe-matching engine",
+      "call_chain": [
+        "AhcDriverDispatchDeviceControl (0x1c00217c0) — IRP_MJ_DEVICE_CONTROL handler",
+        "AhcDispatch (0x1c0021830) — dispatches by function index; cases 0 (AhcApiLookup, 0x1c00220d0) and 11 (AhcApiLookupAndWriteToProcess, 0x1c0021ed0) reach the matcher",
+        "AhcCacheLookup (0x1c0022360) -> AhcpCacheBuildSdbInfo (0x1c0020e10) -> AhcSdbQueryLookup (0x1c001f570) -> AhcpSdbQueryLookupExe (0x1c002b4cc) -> SdbGetMatchingExeEx (0x1c002aca0) -> SdbpSearchDB (0x1c0025630) -> SdbpCheckExe (0x1c00258d4) -> SdbpCheckForMatch (0x1c002599c) -> SdbpMatchList (0x1c0025f40)",
+        "SdbpMatchList invokes the file matcher via a guarded indirect call (__guard_dispatch_icall_fptr at 0x1c003a5d6, target from the matcher table via SdbpFindMatcher 0x1c00435b4): SdbpCheckMatchingFiles (0x1c0024f20) or SdbpCheckMatchingWildcardFiles (0x1c0042d70)",
+        "SdbpCheckAllAttributes (0x1c00263c0) — checks file attributes against SDB entries",
+        "AslFileAllocAndGetAttributes (0x1c00270a8) — allocates and retrieves file attributes",
+        "AslpFileGetVersionAttributes (0x1c0027460) — gets version resource attributes",
+        "AslpFileMakeStringVersionAttributes (0x1c00274d4) — parses version string attributes; read sink is AslpFileQueryVersionString"
+      ],
+      "vulnerability_class": "Out-of-bounds read (missing bounds check / CWE-125)",
+      "description": "AslpFileMakeStringVersionAttributes parses a file's VS_VERSION_INFO resource. It calls AslpFileVerQueryBlock to retrieve the '\\VarFileInfo\\Translation' block (buffer pointer and byte size), then AslpFileVerBlockGetValueOffset to compute a byte offset into that block. The UNPATCHED code at 0x1c002755c computes rsi = buffer + offset and edi = size - offset WITHOUT verifying offset <= size. AslpFileVerBlockGetValueOffset returns offset = align4(L + 8), where L is the byte length of the value-name string measured by RtlStringCbLengthW with cbMax = size - 6; therefore L <= size - 8 and offset <= align4(size). The offset can exceed the block size only through 4-byte-alignment round-up, by at most 1-2 bytes, and only when size mod 4 is 2 or 3. In that case rsi points 1-2 bytes past the block and the 32-bit 'size - offset' wraps. AslpFileQueryVersionString then reads two 16-bit words (4 bytes) at buffer + offset (at 0x1c0027838), using them as a %04X%04X language/codepage selector; the wrapped length value is only tested for non-zero (at 0x1c002782c) and is not used as a read count. The net effect is a small kernel out-of-bounds read of a few bytes past the version block. The patched build adds 'if (size > offset)'; when it fails, rsi stays 0 and edi stays 0.",
+      "trigger_conditions": "Cause the app-compat exe-matching engine to evaluate a file's version resource. From user mode this is reached via IRP_MJ_DEVICE_CONTROL to the ahcache device through AhcDispatch cases 0 (AhcApiLookup) or 11 (AhcApiLookupAndWriteToProcess), which drive SdbGetMatchingExeEx -> the SDB matcher -> SdbpCheckAllAttributes -> the version parser. The attacker crafts an .exe/.dll whose VS_VERSION_INFO resource contains a '\\VarFileInfo\\Translation' block with reported byte size such that size mod 4 is 2 or 3 (and 8 <= size <= 0x7fff), and whose value-name string (at offset +6) is null-terminated exactly at the block end so that L = size - 8 and offset = align4(size) overshoots size by 1-2 bytes. Device-object ACL should be confirmed; access may be restricted to system components.",
+      "primitive": "Kernel out-of-bounds read of 4 bytes (two 16-bit words) located 1-2 bytes past the end of the queried '\\VarFileInfo\\Translation' version block. The read position is coupled to the block size (offset = align4(L + 8), L <= size - 8), so it is not attacker-positionable further out. The wrapped 'size - offset' value is only used as a non-zero flag, so there is no large scan. The two over-read words are consumed as a %04X%04X language/codepage selector for a subsequent version sub-block lookup and are not returned to the caller. The over-read is small and typically stays within the same pool page, so a bugcheck is unlikely. This is a genuine but low-impact memory-safety defect: a small, non-positionable kernel over-read whose bytes are not directly disclosed to the caller.",
+      "evidence": "UNPATCHED (0x1c002755c) — no bounds check:\n0x1c002755c: mov  rax, [rbp+arg_18]   ; offset = align4(L + 8), L <= size - 8\n0x1c0027560: add  rsi, rax            ; rsi = buffer + offset\n0x1c0027563: sub  edi, eax            ; edi = size - offset (wraps if offset > size)\n\nRead sink inside AslpFileQueryVersionString (0x1c00276a0):\n0x1c0027822: mov   rcx, [rsp+var_170] ; rcx = buffer + offset\n0x1c0027827: test  rcx, rcx\n0x1c002782a: jz    ...\n0x1c002782c: mov   rdi, [rbp+arg_20]  ; (size-offset)>>2, tested only for non-zero\n0x1c0027833: test  rdi, rdi\n0x1c0027836: jz    ...\n0x1c0027838: movzx eax, word ptr [rcx+2]  ; OOB read (2nd word at buffer+offset)\n0x1c0027843: movzx r9d, word ptr [rcx]    ; OOB read (1st word at buffer+offset)\n\nPATCHED (0x1c0027592) — bounds check added:\n0x1c0027592: mov  rax, [rbp+arg_18]\n0x1c0027596: cmp  r14, rax            ; size vs offset\n0x1c0027599: jbe  0x1c00275a4         ; skip if size <= offset (rsi=0, edi=0)\n0x1c002759b: mov  edi, r14d\n0x1c002759e: lea  rsi, [rax+r15]\n0x1c00275a2: sub  edi, eax",
+      "assembly": "UNPATCHED AslpFileMakeStringVersionAttributes (0x1c00274d4), relevant slice:\n\n0x1c0027511: lea     r9, [rbp+arg_8]              ; &block_size\n0x1c0027515: mov     rcx, r12\n0x1c0027518: lea     r8, [rbp+arg_10]             ; &block_buffer\n0x1c002751c: lea     rdx, aVarfileinfoTra         ; \"\\VarFileInfo\\Translation\"\n0x1c0027523: call    AslpFileVerQueryBlock\n0x1c0027528: mov     edi, eax\n0x1c002752a: cmp     eax, 0c0000225h\n0x1c002752f: jz      0x1c003ba93\n0x1c0027535: test    eax, eax\n0x1c0027537: js      0x1c003ba84\n0x1c002753d: mov     rdi, [rbp+arg_8]             ; rdi = block size\n0x1c0027541: lea     rcx, [rbp+arg_18]            ; &offset\n0x1c0027545: mov     rsi, [rbp+arg_10]            ; rsi = block buffer\n0x1c0027549: mov     r8, rdi                      ; r8 = size\n0x1c002754c: mov     rdx, rsi                     ; rdx = buffer\n0x1c002754f: call    AslpFileVerBlockGetValueOffset\n0x1c0027554: test    eax, eax\n0x1c0027556: js      0x1c003ba93\n; === no bounds check ===\n0x1c002755c: mov     rax, [rbp+arg_18]            ; offset\n0x1c0027560: add     rsi, rax                     ; rsi = buffer + offset\n0x1c0027563: sub     edi, eax                     ; edi = size - offset (wraps if offset > size)\n0x1c0027565: mov     r15d, edi\n0x1c0027568: shr     r15, 2                       ; r15 = (size - offset) >> 2\n0x1c002756c: lea     rax, unk_1c00062a0\n0x1c0027573: mov     r9, rsi                      ; read pointer = buffer + offset\n0x1c0027576: movsxd  r13, dword ptr [r14+rax]\n0x1c002757a: lea     rdx, [rbp+var_8]\n0x1c002757e: mov     rax, [r14+rax+8]\n0x1c0027583: lea     rcx, [rbp+var_10]\n0x1c0027587: mov     [rsp+40h+var_18], rax\n0x1c002758c: mov     r8, r12\n0x1c002758f: mov     [rsp+40h+var_20], r15        ; 5th arg = (size-offset)>>2\n0x1c0027594: mov     dword ptr [rbp+arg_8], r13d\n0x1c0027598: call    AslpFileQueryVersionString\n\nOffset computation, AslpFileVerBlockGetValueOffset (0x1c00019d4):\n0x1c00019d4: sub     rsp, 28h\n0x1c00019d8: and     qword ptr [rcx], 0           ; *offset = 0\n0x1c00019dc: lea     rax, [r8-8]                  ; size - 8\n0x1c00019e6: cmp     rax, 7ff7h\n0x1c00019ec: ja      0x1c0001a35                  ; reject unless 8 <= size <= 0x7fff\n0x1c00019ee: lea     rdx, [r8-6]                  ; cbMax = size - 6\n0x1c00019f2: lea     r8, [rsp+28h+pcbLength]\n0x1c00019f7: lea     rcx, [r9+6]                  ; string at buffer + 6\n0x1c00019fb: call    RtlStringCbLengthW           ; L bounded by cbMax = size - 6\n0x1c0001a00: test    eax, eax\n0x1c0001a02: js      0x1c0001a27\n0x1c0001a04: mov     rax, [rsp+28h+pcbLength]     ; L\n0x1c0001a0d: lea     rcx, [rax+8]                 ; L + 8\n0x1c0001a1a: lea     rax, [rdx+3]\n0x1c0001a1e: and     rax, 0fffffffffffffffch       ; align4(L + 8)\n0x1c0001a22: mov     [r11], rax                   ; *offset = align4(L + 8)\n0x1c0001a25: xor     eax, eax                     ; STATUS_SUCCESS\n\nBecause cbMax = size - 6, L <= size - 8 and offset = align4(L + 8) <= align4(size); offset can exceed size only by the alignment round-up (1-2 bytes) when size mod 4 is 2 or 3.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ahcache_unpatched!AslpFileMakeStringVersionAttributes",
+            "address": "0x1c00274d4",
+            "why": "Entry of the version-string parser. arg1 (rcx) = output attributes struct, arg2 (rdx) = version block data from the file's VS_VERSION_INFO resource."
+          },
+          {
+            "symbol": "ahcache_unpatched!AslpFileVerBlockGetValueOffset",
+            "address": "0x1c00019d4",
+            "why": "Computes the offset used unchecked. At entry: rcx = &offset, rdx = block buffer, r8 = block size. On return read [rcx] and compare to the size in r8: offset overshoots size by 1-2 when size mod 4 is 2 or 3."
+          },
+          {
+            "symbol": "ahcache_unpatched!AslpFileQueryVersionString",
+            "address": "0x1c00276a0",
+            "why": "Read sink. It stores the buffer+offset pointer and dereferences it at 0x1c0027838 (two 16-bit words). If offset overshot the block, those 4 bytes are read past the block end."
+          }
+        ],
+        "watch": [
+          "At 0x1c002755c: rax = [rbp+arg_18] = computed offset; compare against edi (block size) — OOB when rax > edi (by 1-2).",
+          "At 0x1c0027560: rsi after 'add rsi, rax' = buffer + offset = the read pointer (1-2 bytes past block in the OOB case).",
+          "At 0x1c0027563: edi after 'sub edi, eax' = size - offset = wraps to 0xFFFFFFFE/0xFFFFFFFF; used only as a non-zero flag.",
+          "At 0x1c0027838: dw @rcx L2 = the two 16-bit words read at buffer + offset (the actual OOB bytes)."
+        ],
+        "key_offsets": [
+          "0x1c002755c: 'mov rax, [rbp+arg_18]' — loads the unchecked offset; the patch adds 'cmp r14, rax; jbe skip' here.",
+          "0x1c0027560: 'add rsi, rax' — forms buffer + offset.",
+          "0x1c0027563: 'sub edi, eax' — 32-bit size - offset (wraps; used only as a flag).",
+          "0x1c0027598: 'call AslpFileQueryVersionString' — read sink; dereference at 0x1c0027838.",
+          "0x1c0001a22: 'mov [r11], rax' — stores offset = align4(L + 8), L <= size - 8."
+        ],
+        "trigger_setup": "1. Create a PE file whose VS_VERSION_INFO resource contains a '\\VarFileInfo\\Translation' block with reported byte size such that size mod 4 is 2 or 3 (and 8 <= size <= 0x7fff), and whose value-name string (at offset +6) is null-terminated exactly at the block end so that L = size - 8 and offset = align4(size) overshoots size by 1-2 bytes. 2. Cause the app-compat exe-matching engine to evaluate the file. 3. The path is AhcDriverDispatchDeviceControl -> AhcDispatch (case 0 AhcApiLookup or case 11 AhcApiLookupAndWriteToProcess) -> AhcCacheLookup -> AhcpCacheBuildSdbInfo -> AhcSdbQueryLookup -> AhcpSdbQueryLookupExe -> SdbGetMatchingExeEx -> SdbpSearchDB -> SdbpCheckExe -> SdbpCheckForMatch -> SdbpMatchList -> (indirect matcher) SdbpCheckMatchingFiles -> SdbpCheckAllAttributes -> AslFileAllocAndGetAttributes -> AslpFileGetVersionAttributes -> AslpFileMakeStringVersionAttributes.",
+        "expected_observation": "At 0x1c002755c, rax (offset) is 1-2 greater than edi (block size). After 0x1c0027563, edi wrapped to 0xFFFFFFFE/0xFFFFFFFF, but that value is only tested for non-zero downstream. At 0x1c0027838, rcx points 1-2 bytes past the version block and the two words read there are used as the %04X%04X language/codepage selector. The over-read normally stays within the same pool page, so a bugcheck is not expected.",
+        "notes": "The version block is returned by AslpFileVerQueryBlock. Whether buffer+offset crosses a physical allocation boundary (versus staying inside the larger version-resource allocation) depends on how that block is sub-allocated, which bounds the already-small disclosure surface. The device-object ACL should be confirmed before assuming an unprivileged trigger. Driver base address is 0x1c0000000 in this analysis build; adjust for relocation on a live system via 'lm ahcache'."
+      }
+    }
+  ],
+  "summary": "The patch fixes a small out-of-bounds read (CWE-125) in ahcache.sys (Windows Application Compatibility Cache driver) in AslpFileMakeStringVersionAttributes. When parsing the '\\VarFileInfo\\Translation' block of a file's VS_VERSION_INFO resource, the function computes an offset via AslpFileVerBlockGetValueOffset and forms 'buffer + offset' and 'size - offset' without checking offset <= size. Because the offset is align4(L + 8) with L bounded to size - 8, it can exceed the block size only by 1-2 bytes via 4-byte-alignment round-up when size mod 4 is 2 or 3. In that case AslpFileQueryVersionString reads two 16-bit words a few bytes past the block; the wrapped 'size - offset' value is only used as a non-zero flag, not a read count, and the over-read bytes are consumed as a language/codepage selector rather than returned to the caller. The fix adds 'if (size > offset)'. The reachable entry is IRP_MJ_DEVICE_CONTROL via AhcDispatch cases 0 (AhcApiLookup) and 11 (AhcApiLookupAndWriteToProcess) through the SDB exe-matching engine. Impact is low: a small, non-positionable kernel over-read with no direct disclosure to the caller and low fault likelihood."
+}

@@ -1,0 +1,399 @@
+{
+  "binary": "mrxsmb.sys",
+  "kb": "KB5094126",
+  "release_date": "2026-06-09",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2025-10263",
+      "title": "ARM: CVE-2025-10263 Completion of affected memory accesses might not be guaranteed by completion of a TLBI [kernel]",
+      "cwe": [],
+      "impact": "Elevation of Privilege",
+      "cvss": 9.3
+    },
+    {
+      "id": "CVE-2026-40409",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-197",
+          "name": "Numeric Truncation Error"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40404",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-197",
+          "name": "Numeric Truncation Error"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34335",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45640",
+      "title": "Windows Bluetooth Port Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45607",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.4
+    },
+    {
+      "id": "CVE-2026-45641",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.4
+    },
+    {
+      "id": "CVE-2026-45657",
+      "title": "Windows Kernel Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 9.8
+    },
+    {
+      "id": "CVE-2026-47291",
+      "title": "HTTP.sys Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 9.8
+    },
+    {
+      "id": "CVE-2026-47652",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.2
+    },
+    {
+      "id": "CVE-2026-48583",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45601",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45598",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45636",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45596",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45600",
+      "title": "Windows Kernel-Mode Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45638",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-45603",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-45653",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-49160",
+      "title": "HTTP.sys Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-400",
+          "name": "Uncontrolled Resource Consumption"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-42904",
+      "title": "Windows TCP/IP Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 9.6
+    },
+    {
+      "id": "CVE-2026-42980",
+      "title": "NT OS Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-191",
+          "name": "Integer Underflow (Wrap or Wraparound)"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-42916",
+      "title": "NT OS Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-42911",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-42972",
+      "title": "Windows Hyper-V Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-200",
+          "name": "Exposure of Sensitive Information to an Unauthorized Actor"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    },
+    {
+      "id": "CVE-2026-42984",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-44809",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.26100.8521",
+    "sha256": "a0a533f60c2e49a23698bdeadcba25b976dbe4d29d53d04fabe30aea6829431d",
+    "file": "mrxsmb_patched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Windows NT SMB Minirdr",
+      "FileVersion": "10.0.26100.8521 (WinBuild.160101.0800)",
+      "InternalName": "MRxSmb.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MRXSMB.Sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.26100.8521"
+    }
+  },
+  "prev": {
+    "version": "10.0.26100.8457",
+    "sha256": "1a0fd87a1e8b4ac30cb08495a29539ff6cd6084fe4de120025729480d303383b",
+    "kb_numbers": [
+      "KB5089549"
+    ],
+    "win_versions": [
+      "11-24H2"
+    ],
+    "file": "mrxsmb_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Windows NT SMB Minirdr",
+      "FileVersion": "10.0.26100.8457 (WinBuild.160101.0800)",
+      "InternalName": "MRxSmb.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "MRXSMB.Sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.26100.8457"
+    },
+    "selection_tier": 1,
+    "selection_tier_description": "same Windows version (e.g. both from '10-1809')"
+  }
+}

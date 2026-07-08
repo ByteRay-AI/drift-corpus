@@ -1,0 +1,174 @@
+{
+  "binaries": {
+    "title": "intelide.sys - Uninitialized PCI-config stack buffers zero-initialized in init-only enumeration callbacks (CWE-908, not attacker-reachable)",
+    "id_unpatched": "intelide_unpatched.sys",
+    "id_patched": "intelide_patched.sys",
+    "overall_similarity": 0.7894,
+    "matched": 15,
+    "changed": 6,
+    "identical": 9,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 5,
+    "note": "The patched build is a full recompile; every function is relocated. The intentional source-level change is added zero-initialization (memset plus inlined stack-variable zeroing) in three PciIdeXInitialize enumeration callbacks. All affected routines run only during controller initialization/enumeration and read the controller's own PCI configuration space; they are not reachable from any untrusted IOCTL/user surface. Remaining differences are compiler codegen and CRT/toolchain additions."
+  },
+  "changed_functions": [
+    {
+      "name": "PiixIdeGetControllerProperties",
+      "unpatched_address": "0x1C0001040",
+      "patched_address": "0x1C0001050",
+      "similarity": 0.9122,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added memset (memset @ 0x1C0002200) to zero the 0x40-byte PCI config buffer (var_E8 unpatched / var_E0 patched) before the first PciIdeXGetBusData",
+        "Added memset to zero the 0x56-byte PCI config buffer (var_A8 unpatched / var_A0 patched) before the second PciIdeXGetBusData",
+        "Stack frame reorganization (lea rbp, [rsp-0x27]) and register reallocation to accommodate the memset calls",
+        "The read data is the IDE controller's own PCI configuration space (device ID / programming-interface classification); it is consumed only on a successful (>=0) PciIdeXGetBusData return"
+      ],
+      "security_relevant": true,
+      "security_notes": "Genuine CWE-908 zero-initialization hardening. The unpatched function passed these stack buffers to PciIdeXGetBusData without zeroing them; the patched build zeroes them first. Direction is correct (patched is stricter). Reachability: this is the GetControllerProperties callback registered with PciIdeXInitialize and invoked by the PCIIDEX port driver during controller enumeration, not from an untrusted IOCTL/user path. The buffer content is the controller's own PCI config space and is only used on success. Not attacker-reachable in the software threat model; severity informational.",
+      "assembly_diff": "UNPATCHED (no zeroing before PciIdeXGetBusData):\n  0x1C0001069: cmp     dword ptr [rdx], 50h\n  0x1C0001072: jz      0x1C000107E\n  0x1C000107E: mov     r9d, 40h\n  0x1C0001084: lea     rdx, [rsp+118h+var_E8]   ; NOT zeroed\n  0x1C0001089: xor     r8d, r8d\n  0x1C000108C: call    cs:__imp_PciIdeXGetBusData\n  ; second buffer:\n  0x1C00012D3: mov     r9d, 56h\n  0x1C00012D9: lea     rdx, [rsp+118h+var_A8]   ; NOT zeroed\n  0x1C00012E1: mov     rcx, rbx\n  0x1C00012E4: call    cs:__imp_PciIdeXGetBusData\n\nPATCHED (buffers zeroed first):\n  0x1C0001080: mov     esi, 40h\n  0x1C0001085: lea     rcx, [rsp+110h+var_E0]\n  0x1C000108A: mov     r8d, esi\n  0x1C000108D: xor     edx, edx\n  0x1C000108F: call    memset                   ; memset(&var_e0, 0, 0x40)\n  0x1C0001094: cmp     dword ptr [rdi], 50h\n  0x1C00010A3: mov     r9d, esi\n  0x1C00010A6: lea     rdx, [rsp+110h+var_E0]    ; zeroed\n  0x1C00010B1: call    cs:__imp_PciIdeXGetBusData\n  ; second buffer:\n  0x1C00012E2: mov     r14d, 56h\n  0x1C00012E8: lea     rcx, [rbp+57h+var_A0]\n  0x1C00012EC: mov     r8d, r14d\n  0x1C00012EF: xor     edx, edx\n  0x1C00012F1: call    memset                   ; memset(&var_a0, 0, 0x56)\n  0x1C00012F9: lea     rdx, [rbp+57h+var_A0]     ; zeroed\n  0x1C0001303: call    cs:__imp_PciIdeXGetBusData"
+    },
+    {
+      "name": "PiixIdeChannelEnabled",
+      "unpatched_address": "0x1C0001580",
+      "patched_address": "0x1C00015B0",
+      "similarity": 0.8723,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added memset (memset @ 0x1C0002200) to zero a 0x4c-byte stack region (var_68) before the channel-status PciIdeXGetBusData",
+        "Prologue change (push rdi added, rbx spilled) to accommodate the memset call",
+        "The 4-byte read at PCI offset 0x40 populates [rsp+0x60]; the channel-enabled bit is byte [rsp+rbx*2+0x61] shifted right by 7"
+      ],
+      "security_relevant": true,
+      "security_notes": "Genuine CWE-908 zero-initialization hardening on the ChannelEnabled callback (registered at [arg2+0x18]). The unpatched build read 4 bytes of the controller's own PCI config space into an unzeroed stack region; the patched build zeroes 0x4c bytes first. The read result is only consumed on success. Init-only enumeration path; not attacker-reachable. Severity informational.",
+      "assembly_diff": "UNPATCHED:\n  0x1C00015A6: mov     r9d, 4\n  0x1C00015AC: lea     rdx, [rsp+88h+var_28]   ; NOT zeroed\n  0x1C00015B1: lea     r8d, [r9+3Ch]           ; PCI offset 0x40\n  0x1C00015B5: call    cs:__imp_PciIdeXGetBusData\n  0x1C00015CC: movzx   eax, [rsp+rbx*2+88h+var_27]\n  0x1C00015D1: shr     eax, 7\n\nPATCHED:\n  0x1C00015D1: xor     edx, edx\n  0x1C00015D3: lea     rcx, [rsp+88h+var_68]\n  0x1C00015D8: lea     r8d, [rdx+4Ch]\n  0x1C00015DC: call    memset                  ; memset(&var_68, 0, 0x4c)\n  0x1C00015F3: lea     rdx, [rsp+88h+var_28]    ; zeroed\n  0x1C00015FF: call    cs:__imp_PciIdeXGetBusData\n  0x1C0001616: movzx   eax, [rsp+rbx*2+88h+var_27]"
+    },
+    {
+      "name": "PiixIdeTransferModeSelect",
+      "unpatched_address": "0x1C0001660",
+      "patched_address": "0x1C00016B0",
+      "similarity": 0.989,
+      "change_type": "hardening_redundant",
+      "key_changes": [
+        "Zero-initializes five timing-output stack locals at function entry (var_18/word, arg_10/byte, arg_18/byte, var_20/byte, var_14/word) via 'xor esi,esi' plus a series of stores",
+        "Register reallocation to free esi for the zeroing sequence",
+        "These locals are passed by reference to PiixIdepTransferModeSelect and later used as data buffers for PciIdeXSetBusData writes to PCI config offsets 0x44/0x48/0x4a/0x54"
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-908 zero-initialization added, but redundant: PiixIdepTransferModeSelect writes all six of its output parameters unconditionally at its tail before its single 'xor eax,eax; return 0' path, so the locals are never consumed uninitialized even in the unpatched build. The earlier claim that the callee has code paths leaving outputs unwritten is not supported by the disassembly. Init-only TransferModeSelect callback (registered at [arg2+0x28]); not attacker-reachable. Severity informational.",
+      "assembly_diff": "UNPATCHED (no local zeroing):\n  0x1C0001673: sub     rsp, 60h\n  0x1C0001677: mov     r14d, 2\n  0x1C000172E: call    PiixIdepTransferModeSelect   ; writes all outputs before returning 0\n  ; outputs later used as SetBusData buffers at 0x1C0001761/17AA/18E8/191D/1978\n\nPATCHED (locals zeroed at entry):\n  0x1C00016C3: sub     rsp, 60h\n  0x1C00016C7: xor     esi, esi\n  0x1C00016D0: mov     [rbp+var_18], si\n  0x1C00016D7: mov     [rbp+arg_10], sil\n  0x1C00016DE: mov     [rbp+arg_18], sil\n  0x1C00016E6: mov     [rbp+var_20], sil\n  0x1C00016ED: mov     [rbp+var_14], si\n  0x1C0001793: call    PiixIdepTransferModeSelect"
+    },
+    {
+      "name": "PiixIdepTransferModeSelect",
+      "unpatched_address": "0x1C00019B8",
+      "patched_address": "0x1C0001A24",
+      "similarity": 0.8585,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Control-flow restructuring (compound conditions vs goto-label patterns) and register reallocation",
+        "Loop-shape codegen differences",
+        "Logic preserved; the function writes all six output parameters unconditionally at its tail before its single 'return 0' path"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler codegen/register-allocation differences with preserved behavior. Relevant to Finding on PiixIdeTransferModeSelect: this callee always defines all outputs before returning success, which is why the caller's added zero-init is redundant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PiixIdeUdmaModesSupported",
+      "unpatched_address": "0x1C0001600",
+      "patched_address": "0x1C0001660",
+      "similarity": 0.9,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor loop-shape codegen difference in the trailing-zero counting loop for the second UDMA mode byte",
+        "Behavior verified identical across representative inputs"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler codegen difference only; not listed as security-relevant. Included for completeness of the independent diff.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon",
+      "unpatched_address": "0x1C0002004",
+      "patched_address": "0x1C0002054",
+      "similarity": 0.9883,
+      "change_type": "codegen",
+      "key_changes": [
+        "Byte load changed from 'mov dl, byte [rcx+rax+3]' (0x1C0002041) to 'movzx edx, byte [rcx+rax+3]' (0x1C0002091)",
+        "Subsequent use changed from 'movzx eax, dl' to 'mov eax, edx'"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler-generated /GS stack-cookie handler helper from the C runtime. Both sequences compute the identical masked value; the unpatched path fully consumes the byte via 'movzx eax, dl', so there is no stale-bit information leak and no behavioral difference. MSVC codegen churn from the recompile, not a security fix. The earlier CWE-197 'partial register write' characterization was unfounded.",
+      "assembly_diff": "UNPATCHED __GSHandlerCheckCommon @ 0x1C0002004:\n  0x1C0002041: mov     dl, [rcx+rax+3]\n  0x1C0002045: test    dl, 0Fh\n  0x1C000204A: movzx   eax, dl\n  0x1C000204D: and     eax, 0FFFFFFF0h\n\nPATCHED __GSHandlerCheckCommon @ 0x1C0002054:\n  0x1C0002091: movzx   edx, byte ptr [rcx+rax+3]\n  0x1C0002096: test    dl, 0Fh\n  0x1C000209B: mov     eax, edx\n  0x1C000209D: and     eax, 0FFFFFFF0h"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "memset @ 0x1C0002200 (CRT, required by the added zero-init calls)",
+      "__memset_repmovs @ 0x1C0002340 (CRT memset helper)",
+      "__memset_query @ 0x1C00023C0 (CRT memset helper)",
+      "__cpu_features_init @ 0x1C00020D0 (CRT ISA/feature detection)",
+      "_guard_xfg_dispatch_icall_nop @ 0x1C00021C0 (XFG/CFG toolchain stub)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "PiixIdeGetControllerProperties",
+      "unpatched_address": "0x1C0001040",
+      "patched_address": "0x1C0001050",
+      "entry_point": "PciIdeXInitialize GetControllerProperties callback, invoked by the PCIIDEX port driver during controller enumeration",
+      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008)", "PciIdeXInitialize(DriverObject, RegistryPath, PiixIdeGetControllerProperties, 0x41c)", "PiixIdeGetControllerProperties (0x1C0001040 unpatched / 0x1C0001050 patched)", "PciIdeXGetBusData (reads controller's own PCI config space into a stack buffer)"],
+      "vulnerability_class": "Use of potentially uninitialized memory (CWE-908)",
+      "description": "The unpatched function passes a 0x40-byte and a 0x56-byte stack buffer to PciIdeXGetBusData without zeroing them. The patched build adds memset before each read. This is genuine CWE-908 hardening with the correct direction (patched stricter). The buffers hold the IDE controller's own PCI configuration space, read during enumeration, and are consumed only on a successful (>=0) return. The zeroing guards the theoretical 'success with short read' case. The function is an init-only enumeration callback, not reachable from any untrusted IOCTL/user path, so it is not attacker-reachable in the software threat model.",
+      "trigger_conditions": "The only conceivable influence on buffer contents requires control of the physical/emulated IDE controller hardware whose PCI config space is read (a hardware threat model). The read sizes (0x40, 0x56) and offset (0) are compile-time constants, not caller-controlled.",
+      "primitive": "None demonstrable. Worst realistic effect of the unpatched state, and only under an actual short read, is mis-classification or mis-timing of the local IDE controller (robustness/DoS on attacker-controlled hardware), not memory corruption of unrelated kernel state.",
+      "evidence": "See assembly_diff for PiixIdeGetControllerProperties in changed_functions.",
+      "assembly": "See assembly_diff for PiixIdeGetControllerProperties in changed_functions."
+    },
+    {
+      "severity": "informational",
+      "function": "PiixIdeTransferModeSelect",
+      "unpatched_address": "0x1C0001660",
+      "patched_address": "0x1C00016B0",
+      "entry_point": "PciIdeX TransferModeSelect callback (registered at [arg2+0x28] by PiixIdeGetControllerProperties), invoked by the PCIIDEX framework during controller configuration",
+      "call_chain": ["PCIIDEX framework", "PiixIdeGetControllerProperties registers PiixIdeTransferModeSelect at [arg2+0x28]", "PiixIdeTransferModeSelect (0x1C0001660 unpatched / 0x1C00016B0 patched)", "PiixIdepTransferModeSelect (timing calculator)", "PciIdeXSetBusData writes to PCI config offsets 0x44/0x48/0x4a/0x54"],
+      "vulnerability_class": "Use of potentially uninitialized memory (CWE-908)",
+      "description": "The unpatched function declares five stack locals passed by reference to PiixIdepTransferModeSelect and later used as PciIdeXSetBusData data buffers. The patched build zero-initializes them at entry. This zeroing is redundant: PiixIdepTransferModeSelect writes all six output parameters unconditionally at its tail before its single 'return 0' path, so the locals are never consumed uninitialized even in the unpatched build. Init-only configuration callback; not attacker-reachable.",
+      "trigger_conditions": "Runs during IDE transfer-mode configuration under the PCIIDEX framework. No untrusted IOCTL/user input reaches this path; the SetBusData offsets and sizes are compile-time constants.",
+      "primitive": "None. Because the callee always defines the outputs, no uninitialized value flows to PciIdeXSetBusData.",
+      "evidence": "See assembly_diff for PiixIdeTransferModeSelect and the security_notes for PiixIdepTransferModeSelect in changed_functions.",
+      "assembly": "See assembly_diff for PiixIdeTransferModeSelect in changed_functions."
+    },
+    {
+      "severity": "informational",
+      "function": "PiixIdeChannelEnabled",
+      "unpatched_address": "0x1C0001580",
+      "patched_address": "0x1C00015B0",
+      "entry_point": "PciIdeX ChannelEnabled callback (registered at [arg2+0x18] by PiixIdeGetControllerProperties)",
+      "call_chain": ["PCIIDEX framework", "PiixIdeGetControllerProperties registers PiixIdeChannelEnabled at [arg2+0x18]", "PiixIdeChannelEnabled (0x1C0001580 unpatched / 0x1C00015B0 patched)", "PciIdeXGetBusData reads 4 bytes of the controller's own PCI config space"],
+      "vulnerability_class": "Use of potentially uninitialized memory (CWE-908)",
+      "description": "The unpatched function reads 4 bytes at PCI offset 0x40 into an unzeroed stack region and then reads byte [rsp+rbx*2+0x61] (>>7) for the channel-enabled state. The patched build zeroes a 0x4c-byte region first. The read result is only consumed on success. Genuine CWE-908 hardening; init-only enumeration path; not attacker-reachable.",
+      "trigger_conditions": "Called during IDE channel enumeration. Channel index arg2 is constrained to 0 or 1 ('test edx, 0xfffffffe'). Read size (4) and offset (0x40) are compile-time constants.",
+      "primitive": "None demonstrable. At most an incorrect channel-enabled report on attacker-controlled hardware under a short read.",
+      "evidence": "See assembly_diff for PiixIdeChannelEnabled in changed_functions.",
+      "assembly": "See assembly_diff for PiixIdeChannelEnabled in changed_functions."
+    },
+    {
+      "severity": "none",
+      "function": "__GSHandlerCheckCommon",
+      "unpatched_address": "0x1C0002004",
+      "patched_address": "0x1C0002054",
+      "entry_point": "Compiler-generated /GS stack-cookie handler helper (C runtime), invoked during structured exception handling of stack-protected functions",
+      "call_chain": ["__GSHandlerCheck (0x1C0001FE0 unpatched / 0x1C0002030 patched)", "__GSHandlerCheckCommon"],
+      "vulnerability_class": "No security-relevant change",
+      "description": "The byte load changed from 'mov dl, byte [rcx+rax+3]' with a later 'movzx eax, dl' to 'movzx edx, byte [rcx+rax+3]' with a later 'mov eax, edx'. Both compute the identical masked value and the unpatched path fully consumes the byte via movzx, so there is no stale-bit information leak and no behavioral difference. This is MSVC codegen churn from the recompile, not a security fix. The earlier CWE-197 'partial register write' claim was unfounded.",
+      "trigger_conditions": "None; not a vulnerability.",
+      "primitive": "None.",
+      "evidence": "See assembly_diff for __GSHandlerCheckCommon in changed_functions.",
+      "assembly": "See assembly_diff for __GSHandlerCheckCommon in changed_functions."
+    }
+  ],
+  "summary": "The patch is a full recompile whose only intentional source-level security-relevant change is the addition of zero-initialization (a CRT memset plus inlined stack-variable zeroing) before PciIdeXGetBusData/PciIdeXSetBusData in three PciIdeXInitialize enumeration callbacks: PiixIdeGetControllerProperties (0x1C0001040 -> 0x1C0001050), PiixIdeChannelEnabled (0x1C0001580 -> 0x1C00015B0), and PiixIdeTransferModeSelect (0x1C0001660 -> 0x1C00016B0). These are genuine CWE-908 hardening changes with the correct direction (patched is stricter), but all affected routines run only during controller initialization/enumeration and read the IDE controller's own PCI configuration space; none is reachable from an untrusted IOCTL/user surface, so this is defense-in-depth rather than remediation of an attacker-reachable vulnerability. For PiixIdeTransferModeSelect the zeroing is additionally redundant because the timing calculator PiixIdepTransferModeSelect writes all its output parameters before returning. The __GSHandlerCheckCommon difference (0x1C0002004 -> 0x1C0002054) is a compiler codegen change with no security relevance. The patched-only functions (memset family, __cpu_features_init, XFG stub) are CRT/toolchain support introduced by the recompile. No omitted security-relevant change was found."
+}

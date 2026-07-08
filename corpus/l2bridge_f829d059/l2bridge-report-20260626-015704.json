@@ -1,0 +1,518 @@
+{
+  "binaries": {
+    "id_unpatched": "l2bridge_unpatched.sys",
+    "id_patched": "l2bridge_patched.sys",
+    "overall_similarity": 0.4922,
+    "matched": 61,
+    "changed": 42,
+    "identical": 19,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "L2BridgeCtlBridgeInterfaces_Handler",
+      "similarity": 0.8202,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "CRITICAL: Added ProbeForRead(arg1, 0x10, 4) call when ExGetPreviousMode() is user-mode — unpatched version directly dereferences raw user-mode InputBuffer pointer at 0x1c0009c6f (movups xmm0, [rcx]) with NO ProbeForRead, NO ExGetPreviousMode check, and NO NULL check",
+        "Added NULL pointer check for arg1 (!arg1) before any dereference",
+        "Added ExGetPreviousMode() gate: only probes when previous mode is user-mode",
+        "Unpatched binary does NOT import ProbeForRead or ExGetPreviousMode at all; patched binary imports both",
+        "Moved the dereference of *arg1 to AFTER the size check (cmp edx, 0x10), NULL check, and probe",
+        "Struct offset shifts (0x84→0x8c, 0xd8→0xe0, 0x60→0x68, etc.) due to 8-byte struct layout change"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is a missing ProbeForRead vulnerability (CWE-125). The handler is serviced via the Fast I/O device-control routine (FilterFastDeviceIoControl), which passes the caller's raw user-mode InputBuffer pointer without any I/O-manager copy or probe, even though the IOCTL is METHOD_BUFFERED (which would normally be copied under IRP dispatch). The unpatched code dereferences *arg1 (movups xmm0, xmmword [rcx] at 0x1c0009c6f) BEFORE any validation, allowing a user-mode caller to pass an invalid/fake pointer. Because the read happens before the InputBufferLength check (cmp edx, 0x10 at 0x1c0009c85), even a zero-length input triggers the dereference. The demonstrable impact is a reliable kernel denial of service (BSOD) by passing an unmapped pointer. The 16 bytes read are used only as two bridge-interface lookup keys and are never returned to the caller, so this is a blind read, not a self-contained information leak. The handler never writes to the user-supplied pointer.",
+      "assembly_diff": "UNPATCHED (0x1c0009c5c):\nmov     r11, rsp\nmov     [r11+0x10], rbx\nmov     [r11+0x18], rbp\npush    rsi\npush    rdi\npush    r14\nsub     rsp, 0x40\nmovups  xmm0, xmmword ptr [rcx]    ; <<< VULNERABLE: deref user ptr BEFORE any check\nxor     eax, eax\nxor     edi, edi\nxor     esi, esi\nmov     [r11+0x8], rax\nxor     r14b, r14b\nmovdqu  xmmword ptr [rsp+0x30], xmm0\ncmp     edx, 0x10               ; length check happens AFTER deref\njb      loc_1C0009D92\n...\n\nPATCHED (0x140011a28):\nmov     [rsp+0x8], rsi\nmov     [rsp+0x18], rdi\npush    r12\npush    r14\npush    r15\nsub     rsp, 0x60\nmov     rdi, rcx                 ; save ptr, do NOT deref yet\nxor     esi, esi\ncmp     edx, 0x10               ; length check FIRST\njb      loc_140011B88\ntest    rcx, rcx                 ; <<< ADDED: NULL check\njz      loc_140011B88\ntest    r9d, r9d\njnz     loc_140011B88\ntest    r8, r8\njnz     loc_140011B88\ncall    cs:__imp_ExGetPreviousMode ; <<< ADDED: check caller mode\ntest    al, al\njz      short loc_140011A9B      ; skip probe if kernel-mode caller\nlea     edx, [rsi+0x10]          ; Length = 0x10\nlea     r8d, [rsi+0x4]           ; Alignment = 4\nmov     rcx, rdi                 ; Address = arg1\ncall    cs:__imp_ProbeForRead    ; <<< ADDED: ProbeForRead(arg1, 0x10, 4)\nmovups  xmm0, xmmword ptr [rdi]  ; deref AFTER probe\nmovdqu  [rsp+0x48], xmm0\nmov     rcx, qword ptr [rsp+0x48]\ncall    L2BridgeFindandReferenceFilterModule"
+    },
+    {
+      "name": "FilterFastDeviceIoControl",
+      "similarity": 0.9872,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Fast I/O dispatch handler for IOCTL 0x12a000 — passes raw user InputBuffer pointer (arg3/rcx) directly to L2BridgeCtlBridgeInterfaces_Handler without any probing",
+        "Both versions pass the raw pointer; the fix is in the callee",
+        "Minor reordering of result store (mov [rcx],eax before mov [rcx+8],0)"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the attacker entry point. FilterFastDeviceIoControl is registered as the Fast I/O dispatch routine for the \\Device\\l2bridge device. When a user-mode process calls DeviceIoControl with IOCTL 0x12a000, the I/O manager invokes this Fast I/O path. Unlike IRP-based IOCTL dispatch with METHOD_BUFFERED, Fast I/O passes the raw user-mode InputBuffer pointer directly. The function passes arg3 (the raw InputBuffer) directly as arg1 to L2BridgeCtlBridgeInterfaces_Handler, where it is dereferenced without probing in the unpatched version.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetLinkLayerAddressFromND",
+      "similarity": 0.8522,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed ICMPv6 type validation from an arithmetic range check (unpatched 0x1c000260f: type + 0x79 <= 1, i.e. type 0x87 or 0x88) to explicit value comparisons (patched 0x14000241b: type == 0x87 || type == 0x88)",
+        "Changed code field validation from (byte - 1 <= 1, i.e. code 1 or 2) to explicit (code == 1 || code == 2)",
+        "Both forms accept exactly the same value sets; functionally equivalent refactor"
+      ],
+      "security_relevant": false,
+      "security_notes": "ICMPv6 Neighbor Discovery type/code validation rewritten from arithmetic range checks to explicit equality checks. The accepted value sets are identical ({0x87,0x88} for type, {1,2} for code), and both operands are single bytes, so the subtraction-based form admitted no additional value. This is a functionally equivalent refactor, not a security boundary change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterRegisterDevice",
+      "similarity": 0.9816,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Device registered with characteristics 0x380185 and no security descriptor specified — relying on default NDIS device ACL",
+        "The symbolic link is \\DosDevices\\L2BRIDGE making it accessible as \\\\.\\L2BRIDGE from user mode",
+        "Minor stack variable reordering between versions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "L2BridgeCloneIPv6NBL",
+      "similarity": 0.8183,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added LookupIPv6AddressInTable call in the else branch (non-multicast, non-ND) to look up destination MAC from IPv6 rewrite table",
+        "Struct offset changes (0x60→0x68, 0x64→0x6c) due to struct layout change",
+        "Removed post-clone byte-write at offset 0x15 that was in unpatched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral change in IPv6 packet cloning logic — adds rewrite-table lookup. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ReceiveNetBufferList",
+      "similarity": 0.925,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured multicast/unicast decision logic — patched uses LookupIPv6AddressInTable and LookupMACAddressInTable with different call signatures",
+        "Struct offset shifts throughout (0x5c→0x64, 0x88→0x90, 0xa0→0xa8, 0xa1→0xa9, 0xa4→0xac, 0xd8→0xe0, etc.)",
+        "Rearranged control flow for multicast detection (0x33 multicast prefix check)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct layout and call-signature changes. No new security checks added or removed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SendNetBufferList",
+      "similarity": 0.8764,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured multicast forwarding logic to match new function signatures",
+        "Added null-clone fallback (sends original NBL if clone fails)",
+        "Struct offset shifts throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral restructuring matching new struct layout. No security boundary changes.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ForwardNBLToFilterModule",
+      "similarity": 0.9034,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added HandleRSCPacket call and RSC (Receive Segment Coalescing) handling logic",
+        "Changed NBL context allocation size from 0x20 to 0x28",
+        "Struct offset shifts throughout",
+        "New var_30 and var_20 context fields"
+      ],
+      "security_relevant": false,
+      "security_notes": "New RSC feature integration. Context size increase and new packet handling function.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.5427,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added wil_InitializeFeatureStaging and feature gate infrastructure",
+        "Added TCP segmentation library initialization (IppBatchingLibContext, IppSegLibContext, SegLibInitialized)",
+        "Added NetioCopyNetBufferListQosInformation resolution via MmGetSystemRoutineAddress",
+        "Added SegLibHeap feature (Feature_TCPIP_2025_Wave2_SegLibHeap) and MdpCreatePool",
+        "Added FilterStatus callback registration (var_78)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Major version upgrade with new TCP segmentation/RSC features. Large diff due to feature additions, not security changes.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterAttach",
+      "similarity": 0.8826,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Increased allocation size from 0xe0 to 0xe8 bytes for filter module structure",
+        "Replaced single rundown protection with two separate allocations (rax_6[0x13] and rax_6[0x14])",
+        "Added NdisAllocateRWLock stored at rax_6[2] (previously at rbx_1[2] as NDIS handle)",
+        "Better error path cleanup using DEREF_FILTER_MODULE throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct layout expansion (8 bytes) and improved error-path cleanup. The new error handling is actually better hardening but not fixing a specific exploitable bug.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "L2BridgeCloneNBL",
+      "similarity": 0.611,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Increased NBL context allocation from 0x20 to 0x28 bytes",
+        "Added new context fields at offsets 0x20 and 0x30 (was only 0x10-0x1f before)",
+        "Changed context initialization to zero 0x28 bytes instead of 0x20"
+      ],
+      "security_relevant": false,
+      "security_notes": "Context structure size increase to accommodate new fields. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AddOrUpdateIPv6RewriteTable",
+      "similarity": 0.8738,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts (rdi+0xc0→arg4+0xc8, rdi+0xc8→arg4+0xd0, rdi+0xd0→arg4+0xd8)",
+        "Changed ExAllocatePoolWithTag(NonPagedPoolNx,...) to ExAllocatePoolWithTag(0x600,...)",
+        "Variable rename (rsi→rbp for timestamp)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct offset shifts and pool flag changes. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RewritePacket",
+      "similarity": 0.9808,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct offset shifts (0x60→0x68, 0x64→0x6c, 0x20→0x28, 0x24→0x2c)",
+        "Optimized pointer arithmetic (NdisGetDataBuffer result + 6 computed once as rcx_1)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Register allocation and offset changes. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterReceiveNetBufferLists",
+      "similarity": 0.877,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts (0x88→0x90, 0xd8→0xe0, 0x10→0x18)",
+        "Reordered multicast check logic — moved 0x33/0x33/0xfb check into IsIPv6 path",
+        "Simplified the NBL splitting loop structure"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct layout and control-flow restructuring. No new security checks.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterSendNetBufferLists",
+      "similarity": 0.9201,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts (0x88→0x90, 0xd8→0xe0, 0x10→0x18)",
+        "Simplified NBL splitting loop",
+        "Changed NdisFSendNetBufferLists call signature (removed extra flag parameter)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct layout and signature changes. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterSendNetBufferListsComplete",
+      "similarity": 0.7775,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct offset shifts (0x90→0x98, 0xa4→0xac, 0x10→0x18)",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "L2BridgeFreeNBL",
+      "similarity": 0.7926,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct offset shifts and simplified call signature",
+        "Changed NdisFreeNetBufferListContext size from 0x20 to 0x28"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IsIPv6",
+      "similarity": 0.9362,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct offset shift (0x5c→0x64)",
+        "Minor type change (char→bool for return value)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterOidRequest",
+      "similarity": 0.9279,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added handling for request type 0 (set) and 2 (method) in addition to 1 (query) in OID completion",
+        "Struct offset shifts (0x10→0x18, 0xb8→0xc0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "OID request type handling expansion. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterOidRequestComplete",
+      "similarity": 0.8169,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added handling for OID request types 0 and 2 in completion path",
+        "Struct offset shift (0x10→0x18)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DEREF_FILTER_MODULE",
+      "similarity": 0.8596,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts for rundown protection and RW lock fields"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "L2BridgeDeepCopyNBL",
+      "similarity": 0.9808,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Context size increase from 0x20 to 0x28 (i[4]→i[5])",
+        "Additional zero-initialization of new context fields at offsets 0x20 and 0x30"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CreateBridge",
+      "similarity": 0.9195,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts due to 8-byte layout change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DisconnectInterfaceFromBridge",
+      "similarity": 0.8174,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FreeBridgeResources",
+      "similarity": 0.9821,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverUnload",
+      "similarity": 0.6504,
+      "change_type": "behavioral",
+      "key_changes": ["Struct offset shifts and additional cleanup for new resources"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterReturnNetBufferLists",
+      "similarity": 0.9613,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts (0x90→0x98, 0xa4→0xac, 0x10→0x18)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AddOrUpdateMACForwardingTable",
+      "similarity": 0.9891,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LookupMACAddressInTable",
+      "similarity": 0.9837,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LookupIPv6AddressInTable",
+      "similarity": 0.9837,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "LookupTable",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CleanupTable",
+      "similarity": 0.9833,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RemoveUnusedEntries",
+      "similarity": 0.9848,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "L2BridgeIssueOid",
+      "similarity": 0.983,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterDetach",
+      "similarity": 0.9883,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shifts (0x13→0x14)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterDispatchSuccess",
+      "similarity": 0.6957,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shift (0x10→0x18)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterDispatchNotSupported",
+      "similarity": 0.6965,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shift (0x10→0x18)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FilterDeregisterDevice",
+      "similarity": 0.9777,
+      "change_type": "cosmetic",
+      "key_changes": ["Struct offset shift"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memcpy",
+      "similarity": 0.3011,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler-generated intrinsics differ between versions"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset",
+      "similarity": 0.618,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler-generated intrinsics differ between versions"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon",
+      "similarity": 0.9728,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler-generated stack cookie handler differs slightly"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "L2BridgeCtlBridgeInterfaces_Handler",
+      "entry_point": "DeviceIoControl via Fast I/O dispatch on \\\\.\\L2BRIDGE with IOCTL code 0x12a000",
+      "call_chain": [
+        "DeviceIoControl(\\\\.\\L2BRIDGE, 0x12a000, InputBuffer, InputBufferLength, ...)",
+        "FilterFastDeviceIoControl (Fast I/O dispatch — passes raw user InputBuffer pointer as arg3/rcx)",
+        "L2BridgeCtlBridgeInterfaces_Handler(arg1=InputBuffer, arg2=InputBufferLength, ...) — dereferences *arg1 at entry WITHOUT ProbeForRead"
+      ],
+      "vulnerability_class": "Missing ProbeForRead on user-mode pointer dereference (CWE-125: Out-of-bounds Read)",
+      "description": "The unpatched L2BridgeCtlBridgeInterfaces_Handler receives a raw user-mode InputBuffer pointer from the Fast I/O device-control path (FilterFastDeviceIoControl). Although the IOCTL is METHOD_BUFFERED (which under normal IRP dispatch would be copied into a kernel SystemBuffer), the request is serviced by the driver's FastIoDeviceControl routine, which passes the caller's raw user-mode pointer directly with no copy. The handler immediately dereferences this pointer with 'movups xmm0, xmmword [rcx]' at 0x1c0009c6f to load 16 bytes (two 8-byte bridge-interface identifiers), BEFORE checking the InputBufferLength (cmp edx, 0x10 at 0x1c0009c85) and BEFORE any NULL check or ProbeForRead. The unpatched binary does not even import ProbeForRead or ExGetPreviousMode. The demonstrable impact is a reliable kernel BSOD (denial of service) by passing an invalid/unmapped pointer. The 16 bytes are consumed only as two lookup keys inside L2BridgeFindandReferenceFilterModule and are never returned to the caller, so the read is blind and does not by itself disclose kernel memory. The patched version adds an ExGetPreviousMode() gate, a NULL check (!arg1), and ProbeForRead(arg1, 0x10, 4) before any dereference.",
+      "trigger_conditions": "1. Open a handle to \\\\.\\L2BRIDGE device using CreateFileW. 2. Call DeviceIoControl with dwIoControlCode=0x12a000, which decodes as DeviceType=0x12 (FILE_DEVICE_NETWORK), Function=0x800, Method=0 (METHOD_BUFFERED), Access=2 (FILE_WRITE_ACCESS). Because the request is handled by the FastIoDeviceControl routine (which returns TRUE), the raw InputBuffer pointer is forwarded despite the METHOD_BUFFERED code. 3. Set lpInBuffer to ANY address — it is dereferenced as a raw pointer. 4. Set nInBufferSize to any value; the dereference at 0x1c0009c6f happens unconditionally before the cmp edx, 0x10 at 0x1c0009c85, so the read ALWAYS occurs regardless of nInBufferSize. For a BSOD: pass lpInBuffer pointing to unmapped memory (e.g. 0x1 or 0xDEADBEEF). Set nOutBufferSize and lpOutBuffer to 0 (the handler requires OutputBuffer==0 and OutputBufferLength==0 to reach the lookup path).",
+      "primitive": "Local kernel denial of service (reliable BSOD) from a caller that can open the device: an unmapped attacker-supplied pointer faults in movups xmm0, [rcx] at 0x1c0009c6f before any validation. The same instruction performs a 16-byte read from the attacker-supplied address, but that value is used only as two lookup keys in L2BridgeFindandReferenceFilterModule and is never returned to the caller, so it is a blind read, not an information-disclosure primitive.",
+      "evidence": "UNPATCHED L2BridgeCtlBridgeInterfaces_Handler (0x1c0009c5c):\n\n  uint64_t L2BridgeCtlBridgeInterfaces_Handler(int128_t* arg1, int32_t arg2, int64_t arg3, int32_t arg4)\n  {\n      int128_t zmm0 = *arg1;           // <<< VULNERABLE: dereferences raw user ptr\n      ...\n      if (arg2 < 0x10 || arg4 || arg3)  // size check happens AFTER dereference\n      {\n          rbx = -0x3ffffff3;\n          ...\n      }\n      void** rax_1 = L2BridgeFindandReferenceFilterModule(zmm0);\n      ...\n\nPATCHED L2BridgeCtlBridgeInterfaces_Handler (0x140011a28):\n\n  uint64_t L2BridgeCtlBridgeInterfaces_Handler(int128_t* arg1, int32_t arg2, int64_t arg3, int32_t arg4)\n  {\n      ...\n      if (arg2 < 0x10 || !arg1 || arg4 || arg3)   // NULL check + size check FIRST\n      {\n          rdi_1 = -0x3ffffff3;\n          ...\n      }\n      else\n      {\n          if (ExGetPreviousMode())                  // user-mode caller?\n              ProbeForRead(arg1, 0x10, 4);          // PROBE the buffer\n          int128_t zmm0 = *arg1;                    // safe dereference AFTER probe\n          ...",
+      "assembly": "L2BridgeCtlBridgeInterfaces_Handler @ 0x1c0009c5c (UNPATCHED):\n\n0x1c0009c5c  mov     r11, rsp\n0x1c0009c5f  mov     qword [r11+0x10], rbx\n0x1c0009c63  mov     qword [r11+0x18], rbp\n0x1c0009c67  push    rsi\n0x1c0009c68  push    rdi\n0x1c0009c69  push    r14\n0x1c0009c6b  sub     rsp, 0x40\n0x1c0009c6f  movups  xmm0, xmmword [rcx]     ; <<< VULN: raw user ptr deref, NO probe\n0x1c0009c72  xor     eax, eax\n0x1c0009c74  xor     edi, edi\n0x1c0009c76  xor     esi, esi\n0x1c0009c78  mov     qword [r11+0x8], rax\n0x1c0009c7c  xor     r14b, r14b\n0x1c0009c7f  movdqu  xmmword [rsp+0x30], xmm0\n0x1c0009c85  cmp     edx, 0x10               ; size check AFTER dereference\n0x1c0009c88  jb      0x1c0009d92\n0x1c0009c8e  test    r9d, r9d\n0x1c0009c91  jne     0x1c0009d92\n0x1c0009c97  test    r8, r8\n0x1c0009c9a  jne     0x1c0009d92\n0x1c0009ca0  mov     rcx, qword [r11-0x28]\n0x1c0009ca4  call    0x1c0009bb0             ; L2BridgeFindandReferenceFilterModule(zmm0)\n0x1c0009ca9  mov     rdi, rax\n0x1c0009cac  test    rax, rax\n0x1c0009caf  jne     0x1c0009cbb\n0x1c0009cb1  mov     ebx, 0xc0000225\n0x1c0009cb6  jmp     0x1c0009e1d\n0x1c0009cbb  mov     rcx, qword [rsp+0x38]\n0x1c0009cc0  call    0x1c0009bb0             ; L2BridgeFindandReferenceFilterModule(second GUID)\n0x1c0009cc5  mov     rsi, rax\n0x1c0009cc8  test    rax, rax\n0x1c0009ccb  jne     0x1c0009cd7\n0x1c0009cd7  mov     eax, dword [rax+0x84]\n0x1c0009cdd  cmp     dword [rdi+0x84], eax\n0x1c0009ce3  je      0x1c0009cef\n...\n0x1c0009e1d  mov     rbp, qword [rsp+0x70]\n0x1c0009e22  mov     eax, ebx\n0x1c0009e24  mov     rbx, qword [rsp+0x68]\n0x1c0009e29  add     rsp, 0x40\n0x1c0009e2d  pop     r14\n0x1c0009e2f  pop     rdi\n0x1c0009e30  pop     rsi\n0x1c0009e31  retn\n\nFilterFastDeviceIoControl @ 0x1c0009b40 (UNPATCHED):\n0x1c0009b40  mov     qword [rsp+0x8], rbx\n0x1c0009b45  push    rdi\n0x1c0009b46  sub     rsp, 0x20\n0x1c0009b4a  xor     ecx, ecx\n0x1c0009b4c  mov     ebx, r9d\n0x1c0009b4f  mov     rdi, r8          ; rdi = InputBuffer (raw user ptr)\n0x1c0009b52  call    qword [IoIs32bitProcess]\n0x1c0009b59  nop\n0x1c0009b5e  test    al, al\n0x1c0009b60  je      0x1c0009b69\n0x1c0009b69  cmp     dword [rsp+0x60], 0x12a000  ; check IOCTL code\n0x1c0009b71  je      0x1c0009b7a\n0x1c0009b7a  mov     r9d, dword [rsp+0x58]\n0x1c0009b7f  mov     edx, ebx          ; edx = InputBufferLength\n0x1c0009b81  mov     r8, qword [rsp+0x50]\n0x1c0009b86  mov     rcx, rdi           ; rcx = InputBuffer (RAW user ptr)\n0x1c0009b89  call    0x1c0009c5c        ; L2BridgeCtlBridgeInterfaces_Handler(InputBuffer, ...)\n...\n0x1c0009b9f  mov     al, 0x1            ; return TRUE = Fast I/O handled",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "l2bridge!L2BridgeCtlBridgeInterfaces_Handler",
+            "address": "0x1c0009c5c",
+            "why": "This is the entry point of the vulnerable function. At this point RCX contains the raw user-mode InputBuffer pointer that is about to be dereferenced at 0x1c0009c6f without probing. Set breakpoint here to inspect rcx before the vulnerable dereference."
+          },
+          {
+            "symbol": "l2bridge!FilterFastDeviceIoControl",
+            "address": "0x1c0009b40",
+            "why": "The Fast I/O dispatch entry. At 0x1c0009b86 (mov rcx, rdi) the raw InputBuffer is loaded into rcx before calling L2BridgeCtlBridgeInterfaces_Handler at 0x1c0009b89. Inspect rdi/r8 here to see the attacker-controlled pointer."
+          }
+        ],
+        "watch": [
+          "RCX at 0x1c0009c6f — this is the raw user-mode InputBuffer pointer being dereferenced by movups xmm0, [rcx]. An attacker controls this value entirely.",
+          "EDX at 0x1c0009c85 — this is InputBufferLength (arg2). Note the dereference at 0x1c0009c6f occurs BEFORE this check, so even edx=0 triggers the bug.",
+          "XMM0 after 0x1c0009c6f — contains the 16 bytes read from the attacker-controlled address. These bytes are used as a GUID for L2BridgeFindandReferenceFilterModule lookup."
+        ],
+        "key_offsets": [
+          "0x1c0009c6f — movups xmm0, xmmword [rcx]: THE VULNERABLE INSTRUCTION — unconditional dereference of raw user-mode pointer without ProbeForRead",
+          "0x1c0009c85 — cmp edx, 0x10: the InputBufferLength check that SHOULD have been before the dereference but is AFTER it",
+          "0x1c0009ca4 — call 0x1c0009bb0 (L2BridgeFindandReferenceFilterModule): uses the unprobed data as a GUID to look up bridge interfaces",
+          "0x1c0009b89 — call 0x1c0009c5c in FilterFastDeviceIoControl: the call that passes the raw user pointer to the handler"
+        ],
+        "trigger_setup": "1. Open device: HANDLE h = CreateFileW(L\"\\\\\\\\.\\\\L2BRIDGE\", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL); 2. For BSOD: DeviceIoControl(h, 0x12a000, (LPVOID)0x1, 0x10, NULL, 0, &bytesReturned, NULL); — the pointer 0x1 is unmapped, causing a kernel access violation in the movups at 0x1c0009c6f. 3. For the blind read: set lpInBuffer to a valid kernel address. The 16-byte read result flows into L2BridgeFindandReferenceFilterModule which returns STATUS_NOT_FOUND (0xc0000225) if the keys don't match; the read value is never returned to the caller, so this observes nothing about the read bytes except through a debugger.",
+        "expected_observation": "For BSOD trigger: BugCheck 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) with faulting address = the invalid pointer value passed as InputBuffer. The fault occurs at instruction 0x1c0009c6f (movups xmm0, xmmword [rcx]). For a valid mapped kernel address: no crash — the 16 bytes are read and used only internally, and are not returned to user mode. A debugger can observe XMM0 after 0x1c0009c6f to see the read bytes, but the caller cannot.",
+        "notes": "The device \\Device\\l2bridge is registered with no explicit security descriptor (SDDL), so it inherits default NDIS device permissions; the effective ACL should be verified on the target build. The symbolic link \\DosDevices\\L2BRIDGE makes it accessible as \\\\.\\L2BRIDGE. The IOCTL 0x12a000 decodes as: DeviceType=0x12 (FILE_DEVICE_NETWORK), Function=0x800, Method=0 (METHOD_BUFFERED), Access=2 (FILE_WRITE_ACCESS). Under normal IRP dispatch a METHOD_BUFFERED IOCTL would be copied into a kernel SystemBuffer, but the driver services this request through its FastIoDeviceControl routine, which forwards the caller's raw InputBuffer pointer with no copy. The 8-byte struct layout shift visible across many functions is due to a new RWLock field added in the patched FILTER_MODULE structure (the compared field moves 0x84 -> 0x8c, the bridge pointer 0xd8 -> 0xe0, the rundown 0x98 -> 0xa0)."
+      }
+    }
+  ],
+  "summary": "The patch fixes a missing ProbeForRead vulnerability (CWE-125) in the L2Bridge NDIS lightweight filter driver's IOCTL handler. The unpatched L2BridgeCtlBridgeInterfaces_Handler (reachable via the Fast I/O device-control routine on \\\\.\\L2BRIDGE with IOCTL 0x12a000, which decodes as FILE_DEVICE_NETWORK/Function 0x800/METHOD_BUFFERED but forwards the raw InputBuffer because it is serviced through Fast I/O) dereferences the raw user-mode InputBuffer pointer at 0x1c0009c6f (movups xmm0, [rcx]) BEFORE any validation or probing. The demonstrable impact is a reliable kernel denial of service (BSOD) from an unmapped attacker-supplied pointer; the 16 bytes read are used only as internal lookup keys and are never returned to the caller, so the read is blind and not a self-contained information leak. The patched version adds ExGetPreviousMode(), a NULL pointer check, and ProbeForRead(arg1, 0x10, 4). The unpatched binary does not import ProbeForRead or ExGetPreviousMode. A trigger needs only CreateFile on \\\\.\\L2BRIDGE followed by DeviceIoControl with code 0x12a000 and an attacker-controlled InputBuffer pointer."
+}

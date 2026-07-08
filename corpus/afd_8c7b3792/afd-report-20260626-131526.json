@@ -1,0 +1,262 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9888,
+    "matched": 1097,
+    "changed": 15,
+    "identical": 1082,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdRestartSuperAcceptGetAddress (sub_1C0065660)",
+      "similarity": 0.8861,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "AcceptEx (SuperAccept) address-retrieval completion routine: removed unsafe bounds-clamp path (ByteCount - offset) that allowed an up-to-10-byte OOB read past the MDL buffer; patched version always clamps copy length to (total_returned_length - 0xa)",
+        "Old code had two paths gated by feature flag EvaluateCurrentState(&g_Feature_499346745_59190809) (sub_1c0015714): default path used MdlAddress->ByteCount - offset as the copy length bound; alternate path used returned_length - 10. Patch removes the unsafe default path entirely.",
+        "The copy is sub_1c000c900(rbp_2, rbp_2 + 0xa, rbx_1) — memmove shifting the returned transport-address data backward by 10 bytes. With the old clamp, the source read extends up to 0xa bytes past the end of the MDL-mapped buffer."
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds read (CWE-125) past the end of an MDL-mapped buffer. The AcceptEx (SuperAccept) address-retrieval completion routine copies returned data backward by 10 bytes within the MDL buffer. The copy length is derived from a 16-bit field in the returned data (*(rbp_2 + 8) + 2). In the default (unpatched) code path, this length is clamped to MdlAddress->ByteCount - offset (remaining buffer space), but the source pointer rbp_2 + 0xa means the read extends up to 10 bytes past the end of the MDL mapping. This leaks adjacent kernel (system address space) memory into the AcceptEx address output returned to user mode. Reaching the vulnerable path requires the feature flag EvaluateCurrentState(&g_Feature_499346745_59190809) to return FALSE and the returned buffer's length field at offset +8 (+2) to exceed the actual returned data while remaining below the buffer capacity.",
+      "assembly_diff": "--- afd_unpatched.sys/AfdRestartSuperAcceptGetAddress (sub_1c0065660).assembly\n+++ afd_patched.sys/AfdRestartSuperAcceptGetAddress (sub_1c0065830).assembly\n@@ unpatched unsafe clamp path (feature flag OFF) @@\n-0x1c0065798: mov     rdx, qword [rdi+0x8]   ; rdx = MDL\n-0x1c006579c: movzx   eax, bx            ; rbx_1 = length field + 2\n-0x1c006579f: mov     ecx, dword [rdx+0x28]  ; ecx = MDL ByteCount (32-bit)\n-0x1c00657a2: sub     ecx, dword [rsi+0x8]   ; ecx -= offset\n-0x1c00657a5: cmp     ecx, eax           ; if ByteCount-offset >= rbx_1\n-0x1c00657a7: jae     0x1c00657b1        ; skip clamp (KEEP oversized length)\n-0x1c00657a9: movzx   ebx, word [rdx+0x28]   ; re-read ByteCount as 16-bit\n-0x1c00657ad: sub     bx, word [rsi+0x8]      ; 16-bit clamp to ByteCount - offset\n ; Then: call sub_1c000c900(rbp_2, rbp_2+0xa, rbx_1)  -- reads up to 0xa past MDL end\n\n@@ patched safe clamp (always applied, feature flag path removed) @@\n+0x1c0065928: movzx   eax, word [rbp+0x18]  ; rax = total_returned_length\n+0x1c0065934: cmp     ax, 0xa            ; if total_returned < 10\n+0x1c006593f: add     ax, cx             ; (cx=0xfff6) rax = returned - 10\n+0x1c0065944: xor     eax, eax           ; if < 10: rax = 0\n+0x1c0065946: cmp     ax, di             ; compare (returned-10) with length field\n+0x1c0065950: cmovb   di, ax             ; clamp to returned_length - 10\n+0x1c0065954: movzx   r8d, di            ; safe copy length"
+    },
+    {
+      "name": "AfdSocketTransferEnd (sub_1C005B160)",
+      "similarity": 0.6527,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured control flow to acquire a device reference (AfdGetConnectionReferenceFromEndpoint, sub_1c00544e8) before validation, added feature-flag-gated device checks, reordered condition checks for socket state validation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferBegin (sub_1C005B340)",
+      "similarity": 0.6527,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Twin of AfdSocketTransferEnd (sub_1C005B160): same restructuring pattern with device reference acquisition and feature-flag-gated validation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdQueryProviderInfo (sub_1C0036B40)",
+      "similarity": 0.4341,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added output parameter for device object, added IoGetDeviceAttachmentBaseRef + IoGetRelatedDeviceObject calls gated by feature flag to validate the underlying device"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdFreeTransportInfo (sub_1C0036BF8)",
+      "similarity": 0.4518,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added ObfDereferenceObject for a device object stored at arg1[5], gated by feature flag sub_1c001578c(&data_1c0026fe8)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetTransportInfo (sub_1C00369B0)",
+      "similarity": 0.862,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added device object storage field (P[5]), changed allocation size from *arg1+0x52 to *arg1+0x5a, added conditional refcount increment gated by feature flag"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WskTdiCreateCO (sub_1C0043978)",
+      "similarity": 0.8604,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added IoGetDeviceAttachmentBaseRef validation comparing the returned device against arg1+0x28, returns STATUS_INVALID_DEVICE_STATE on mismatch"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WskTdiCreateAO (sub_1C004359C)",
+      "similarity": 0.9489,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added IoGetDeviceAttachmentBaseRef validation, restructured error handling to validate the device before proceeding"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTdiCreateAO (sub_1C003AE08)",
+      "similarity": 0.948,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added IoGetDeviceAttachmentBaseRef + IoGetRelatedDeviceObject validation gated by feature flag, stores the validated device object instead of the raw IoGetRelatedDeviceObject result"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdWaitForListen (sub_1C00589B0)",
+      "similarity": 0.8955,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured condition ordering (inverted if-check on socket state flag) and added a feature-flag-gated error path for STATUS_INVALID_DEVICE_STATE; cancel routine remains AfdCancelWaitForListen (sub_1c0067000) in both binaries"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanConnectHandler (sub_1C00772A0)",
+      "similarity": 0.9585,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "SAN accept address handling: removed the feature flag g_Feature_232206649_59779869 that gated the destination-capacity clamp on the address copy. Unpatched default (flag OFF) took a legacy path that copied *(uint16*)Src + 2 (and a sibling *(uint16*)Src + 4) bytes into the MDL-mapped accept buffer with no clamp to buffer capacity.",
+        "Patched build (sub_1C00771B0) removes the feature flag and the unclamped legacy path entirely; the copy length is always clamped to (capacity - 2) for the address copy and (capacity - 8) for the header+address copy, guarded by an unconditional 'ByteOffset.LowPart >= 6' check."
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds write (CWE-787). In the unpatched default path the memmove length is a 16-bit length field taken from the source address data (*(uint16*)Src) with no clamp against the destination MDL-mapped accept buffer capacity, so an over-long length field drives the copy past the end of the buffer. The patch removes the g_Feature_232206649_59779869 gate and the unclamped path, always clamping to the buffer capacity.",
+      "assembly_diff": "--- afd_unpatched.sys/AfdSanConnectHandler (sub_1c00772a0).assembly\n+++ afd_patched.sys/AfdSanConnectHandler (sub_1c00771b0).assembly\n@@ unpatched: feature-gated clamp with unclamped default path @@\n-0x1c007788d: lea   rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n-0x1c0077894: call  EvaluateCurrentState\n-0x1c007789b: jz    0x1c007796a            ; flag OFF -> legacy unclamped path\n-0x1c00779ad: movzx r8d, word [r15]        ; r8 = *(uint16*)Src\n-0x1c00779b1: add   r8, 2                  ; size = *(uint16*)Src + 2 (no capacity clamp)\n-0x1c00779bc: call  memmove                ; OOB WRITE\n-0x1c00779f0: call  memmove                ; sibling unclamped copy (*(uint16*)Src + 4)\n@@ patched: feature flag removed, clamp always applied @@\n+0x1c00777bb: cmp   dword [r15+0x18], 6    ; unconditional guard (no EvaluateCurrentState)\n+0x1c0077827: mov   eax, 0xfffe            ; clamp to capacity - 2\n+0x1c007783e: call  memmove                ; clamped copy\n+0x1c0077870: mov   eax, 0xfff8            ; clamp to capacity - 8\n+0x1c007788a: call  memmove                ; clamped copy"
+    },
+    {
+      "name": "AfdGetInformation (sub_1C00360D0)",
+      "similarity": 0.9746,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Mostly address/label changes from function renumbering; no security-relevant logic changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdUnload (sub_1C003D2A0)",
+      "similarity": 0.982,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only callee address changes from renumbering; added sub_1c001578c feature flag call"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBind (sub_1C0034AD0)",
+      "similarity": 0.9861,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature flag consolidation (sub_1c0015714 -> sub_1c001578c with different data pointers), structure offset changes (0x38->0x40), label address shifts"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSanAcceptCore (sub_1C007608C)",
+      "similarity": 0.8211,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Twin of AfdSanConnectHandler: removed the same feature flag g_Feature_232206649_59779869 (referenced at 0x1c00762d8, 0x1c0076303, 0x1c007642d in the unpatched build) that gated the address-copy capacity clamp and a minimum-length guard.",
+        "Unpatched default (flag OFF) retained an unclamped legacy copy (memmove at 0x1c00765bb using *(uint16*)Src + 2/4); patched build has no reference to the feature and reaches the clamped copies unconditionally (memmove at 0x1c0076491 after 'mov eax, 0xfffe' and 0x1c00764da after 'mov eax, 0xfff8')."
+      ],
+      "security_relevant": true,
+      "security_notes": "Out-of-bounds write (CWE-787), same mechanism and fix as AfdSanConnectHandler: an attacker-influenced 16-bit source length field drove an unclamped memmove into the MDL-mapped accept buffer in the unpatched default path; the patch removes the feature gate and always clamps to the buffer capacity.",
+      "assembly_diff": "--- afd_unpatched.sys/AfdSanAcceptCore (sub_1c007608c).assembly\n+++ afd_patched.sys/AfdSanAcceptCore (sub_1c007608c).assembly\n@@ unpatched: 3x g_Feature_232206649_59779869 references + unclamped legacy copy @@\n-0x1c00762d8: lea   rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n-0x1c0076303: lea   rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n-0x1c007642d: lea   rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n-0x1c00765bb: call  memmove                ; legacy unclamped copy\n@@ patched: no feature reference, clamped copies unconditional @@\n+0x1c007647a: mov   eax, 0xfffe            ; clamp to capacity - 2\n+0x1c0076491: call  memmove\n+0x1c00764bd: mov   eax, 0xfff8            ; clamp to capacity - 8\n+0x1c00764da: call  memmove"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "AfdSanConnectHandler (sub_1C00772A0 unpatched / sub_1C00771B0 patched) and AfdSanAcceptCore (sub_1C007608C)",
+      "entry_point": "AFD SAN (switched-fabric / Winsock Direct provider) accept path; the SAN accept handlers copy the accepted connection's address data into the MDL-mapped accept output buffer.",
+      "call_chain": [
+        "AFD SAN accept processing -> AfdSanConnectHandler (sub_1c00772a0) / AfdSanAcceptCore (sub_1c007608c)",
+        "-> address copy: memmove(dst_in_mapped_buffer, Src(+2), *(uint16*)Src + 2/4) with the capacity clamp gated behind g_Feature_232206649_59779869 in the unpatched build"
+      ],
+      "vulnerability_class": "Out-of-bounds write (CWE-787)",
+      "description": "AfdSanConnectHandler and its twin AfdSanAcceptCore copy an accepted SAN connection's address data into the MDL-mapped accept output buffer. The copy length is a 16-bit length field at the start of the source data (*(uint16*)Src). In the unpatched build the clamp of this length against the destination buffer capacity is gated behind EvaluateCurrentState(&g_Feature_232206649_59779869) (sub_1c0015714). When the flag is disabled (its default state), control falls into a legacy path that issues memmove(dst, Src+2, *(uint16*)Src + 2) (and a sibling memmove(dst+8, Src, *(uint16*)Src + 4)) with no clamp against the buffer capacity, so a length field larger than the remaining capacity drives the copy past the end of the MDL-mapped buffer — a kernel out-of-bounds write of attacker-influenced data. The patched build removes the feature flag (0 references, down from 5) and the entire unclamped legacy path; the copy length is always clamped to (capacity - 2) for the address copy and (capacity - 8) for the header+address copy, guarded by an unconditional check that the field offset is >= 6.",
+      "trigger_conditions": "1) The AFD SAN accept path processes an accepted connection whose source address data carries a 16-bit length field larger than the remaining capacity of the destination MDL-mapped accept buffer. 2) The feature flag g_Feature_232206649_59779869 is disabled (the default/unpatched state), selecting the unclamped legacy copy path. 3) The memmove copies *(uint16*)Src + 2 (or + 4) bytes into the buffer without a capacity clamp, writing past its end.",
+      "primitive": "Kernel out-of-bounds write. The copy length is a 16-bit field in the source address data (up to 0xFFFF), and in the unpatched default path it is not clamped to the destination buffer capacity, so attacker-influenced data is written past the end of the MDL-mapped accept buffer. The exact reach past the buffer depends on the buffer size and the attainable value of the length field, which a researcher should confirm on a live target.",
+      "assembly": "AfdSanConnectHandler unpatched (sub_1C00772A0) key assembly:\n0x1c007788d: lea     rcx, g_Feature_232206649_59779869_FeatureDescriptorDetails\n0x1c0077894: call    EvaluateCurrentState\n0x1c0077899: test    eax, eax\n0x1c007789b: jz      0x1c007796a          ; flag OFF -> legacy UNCLAMPED path\n; flag ON (clamped): capacity = word [r12+0x18]\n0x1c00778a1: cmp     dword [r12+0x18], 6\n0x1c0077905: mov     eax, 0xfffe          ; clamp to capacity - 2\n0x1c007790a: add     si, ax\n0x1c007791d: call    memmove              ; clamped copy\n; flag OFF (legacy, no capacity clamp):\n0x1c007796a: cmp     dword [r12+0x18], r14d\n0x1c00779ad: movzx   r8d, word [r15]      ; r8 = *(uint16*)Src\n0x1c00779b1: add     r8, 2                ; size = *(uint16*)Src + 2 (unclamped)\n0x1c00779bc: call    memmove              ; OOB WRITE\n0x1c00779df: movzx   eax, word [r9]       ; sibling: size = *(uint16*)Src + 4\n0x1c00779e3: add     eax, 4\n0x1c00779f0: call    memmove              ; OOB WRITE (unclamped)\n\nAfdSanConnectHandler patched (sub_1C00771B0) key assembly:\n0x1c00777bb: cmp     dword [r15+0x18], 6  ; unconditional guard, no EvaluateCurrentState\n0x1c0077827: mov     eax, 0xfffe          ; clamp to capacity - 2\n0x1c007782c: add     si, ax\n0x1c007783e: call    memmove              ; clamped copy\n0x1c0077870: mov     eax, 0xfff8          ; clamp to capacity - 8\n0x1c0077875: add     si, ax\n0x1c007788a: call    memmove              ; clamped copy"
+    },
+    {
+      "severity": "medium",
+      "function": "AfdRestartSuperAcceptGetAddress (sub_1C0065660)",
+      "entry_point": "AcceptEx on an AFD listening socket (IRP_MJ_DEVICE_CONTROL / IOCTL_AFD_SUPER_ACCEPT on \\Device\\Afd), which drives the SuperAccept transport-address retrieval path",
+      "call_chain": [
+        "AcceptEx -> AFD IRP_MJ_DEVICE_CONTROL (AfdDispatch, sub_1c0049d90, DriverObject MajorFunction[0xe])",
+        "-> AfdWaitForListen (sub_1c00589b0) / AfdRestartSuperAccept (sub_1c00654f0) drive SuperAccept and issue a TDI query for the connection's transport address",
+        "-> AfdContinueSuperAccept (sub_1c0058170) and the restart chain register AfdRestartSuperAcceptGetAddress as the completion routine",
+        "-> AfdRestartSuperAcceptGetAddress (sub_1c0065660) (VULNERABLE completion routine — shifts the returned transport-address data backward by 10 bytes)"
+      ],
+      "vulnerability_class": "Out-of-bounds read (CWE-125) / kernel information disclosure",
+      "description": "AfdRestartSuperAcceptGetAddress (sub_1C0065660) is an IRP completion routine that runs during AcceptEx (SuperAccept) to process the transport address returned by the TDI transport provider. It performs a backward shift of the returned data by 10 bytes using memmove (sub_1c000c900): it copies from (buffer + offset + 0xa) to (buffer + offset) for rbx_1 bytes, where rbx_1 = *(data + 8) + 2 (a 16-bit length field at offset +8 in the returned data + 2). In the unpatched default code path (when feature flag EvaluateCurrentState(&g_Feature_499346745_59190809) / sub_1c0015714 returns FALSE), rbx_1 is clamped to (MdlAddress->ByteCount - offset) — the remaining space in the MDL buffer — rather than (total_returned_length - 10) — the actual returned data size. Because the source pointer starts 10 bytes ahead of the destination (rbp_2 + 0xa), the read extends up to 0xa (10) bytes past the end of the MDL-mapped buffer into adjacent kernel (system address space) memory. The copied data (including the leaked bytes) is then surfaced to the user-mode application in the AcceptEx address output. The MDL-mapped buffer is a partial MDL built via IoBuildPartialMdl in AfdContinueSuperAccept over the user-supplied AcceptEx output buffer. The patch removes the unsafe default path and always clamps to (returned_length - 0xa), keeping the source read within the valid returned data.",
+      "trigger_conditions": "1) A user-mode application performs an AcceptEx on an AFD listening socket, reaching AFD via IOCTL_AFD_SUPER_ACCEPT. 2) During SuperAccept, AFD issues a TDI query to obtain the accepted connection's transport address, placing the result in the MDL-mapped buffer. 3) The length field at offset +8 in the returned data, when +2, produces a value rbx_1 that is greater than (actual_returned_length - 10) but less than (MDL_ByteCount - offset). 4) The feature flag EvaluateCurrentState(&g_Feature_499346745_59190809) (sub_1c0015714) returns FALSE (the default/unpatched state), selecting the vulnerable path. 5) The completion routine fires and performs the OOB read.",
+      "primitive": "Kernel information disclosure — up to 10 bytes of memory adjacent to the MDL-mapped buffer are read and surfaced to user mode in the AcceptEx address output buffer. The disclosure is bounded to 10 bytes per triggering call and is repeatable across AcceptEx calls. No out-of-bounds write or memory corruption is present in this routine.",
+      "evidence": "// UNPATCHED AfdRestartSuperAcceptGetAddress (sub_1C0065660) — vulnerable completion routine\n// ...\nif (*(rbx + 0xac))  // endpoint state flag (data-processing path)\n{\n    // Map the MDL\n    MappedSystemVa_1 = MemoryDescriptorList->MappedSystemVa;\n    uint64_t r15_1 = *(Overlay_1 + 0x18);          // total_returned_length\n    void* rbp_2 = *(Overlay_1 + 8) + MappedSystemVa_1;  // buffer + offset\n    int16_t rbx_1 = *(rbp_2 + 8) + 2;               // length field from returned data + 2\n\n    if (!EvaluateCurrentState(&g_Feature_499346745_59190809))  // DEFAULT PATH (flag OFF), sub_1c0015714\n    {\n        // VULNERABLE: clamps to buffer remaining space, not returned data size\n        struct _MDL* MdlAddress_1 = arg2->MdlAddress;\n        if (MdlAddress_1->ByteCount - *(Overlay_1 + 8) < rbx_1)\n            rbx_1 = MdlAddress_1->ByteCount - *(Overlay_1 + 8);\n        // BUG: source = rbp_2 + 0xa, length up to ByteCount - offset\n        //   => reads up to (MappedSystemVa + ByteCount + 0xa) = up to 10 bytes PAST MDL end\n    }\n    else  // ALTERNATE PATH (flag ON) — safe, same as patched\n    {\n        int16_t rax_6 = *(Overlay_1 + 0x18);\n        if (rax_6 < 0xa) rax_6 = 0; else rax_6 -= 0xa;\n        if (rax_6 < rbx_1) rbx_1 = rax_6;\n    }\n\n    sub_1c000c900(rbp_2, rbp_2 + 0xa, rbx_1);  // memmove: OOB READ here\n    *(r15_1 + rbp_2 - 2) = rbx_1;               // write length field\n}\n\n// PATCHED AfdRestartSuperAcceptGetAddress (sub_1C0065830) — always uses safe clamp:\n//   rax_5 = *(Overlay_1 + 0x18);  // total_returned_length\n//   if (rax_5 < 0xa) rax_5 = 0; else rax_5 -= 0xa;\n//   if (rax_5 < rdi_1) rdi_1 = rax_5;  // clamp to returned data size\n//   sub_1c000c900(rsi_2, rsi_2 + 0xa, rdi_1);  // safe read",
+      "assembly": "AfdRestartSuperAcceptGetAddress (sub_1C0065660) (unpatched) key assembly:\n0x1c0065660: mov     qword [rsp+0x8], rbx\n0x1c0065678: mov     rsi, qword [rdx+0xb8]        ; rsi = IRP overlay/context\n0x1c006568a: mov     rax, qword [rsi+0x30]\n0x1c006568e: mov     rbx, qword [rax+0x18]        ; rbx = AFD endpoint\n0x1c0065731: cmp     byte [rbx+0xac], 0x0          ; endpoint state flag\n0x1c0065738: je      0x1c00657c7                  ; skip if not set\n; --- map the MDL and read the length field ---\n0x1c0065756: mov     ebp, dword [rsi+0x8]          ; ebp = offset into buffer\n0x1c0065759: lea     rcx, g_Feature_499346745_59190809_FeatureDescriptorDetails ; feature flag descriptor\n0x1c0065760: mov     r15d, dword [rsi+0x18]        ; r15d = total_returned_length\n0x1c0065764: add     rbp, rax                      ; rbp = MappedSystemVa + offset\n0x1c0065767: movzx   ebx, word [rbp+0x8]           ; ebx = *(data+8) = returned length field\n0x1c006576b: add     bx, 0x2                       ; rbx_1 = length + 2\n0x1c006576f: call    0x1c0015714                   ; EvaluateCurrentState (feature flag check)\n0x1c0065774: test    eax, eax\n0x1c0065776: je      0x1c0065798                   ; if flag OFF -> VULNERABLE PATH\n; --- Safe path (flag ON) ---\n0x1c0065778: movzx   eax, word [rsi+0x18]          ; rax = total_returned_length\n0x1c006577c: cmp     ax, 0xa\n0x1c0065780: jb      0x1c006578c\n0x1c0065782: mov     ecx, 0xfff6\n0x1c0065787: add     ax, cx                         ; rax -= 0xa (add 0xfff6 = -10)\n0x1c006578a: jmp     0x1c006578e\n0x1c006578c: xor     eax, eax                       ; if < 10: clamp to 0\n0x1c006578e: cmp     ax, bx                         ; compare (returned-10) with rbx_1\n0x1c0065791: jae     0x1c00657b1                   ; if returned-10 >= rbx_1: keep rbx_1\n0x1c0065793: movzx   ebx, ax                        ; else clamp rbx_1 = returned-10\n0x1c0065796: jmp     0x1c00657b1\n; --- VULNERABLE PATH (flag OFF) ---\n0x1c0065798: mov     rdx, qword [rdi+0x8]          ; rdx = MDL\n0x1c006579c: movzx   eax, bx                        ; eax = rbx_1 (length + 2)\n0x1c006579f: mov     ecx, dword [rdx+0x28]         ; ecx = MdlAddress->ByteCount (32-bit!)\n0x1c00657a2: sub     ecx, dword [rsi+0x8]          ; ecx -= offset\n0x1c00657a5: cmp     ecx, eax                       ; if ByteCount-offset >= rbx_1\n0x1c00657a7: jae     0x1c00657b1                   ;   skip clamp (KEEP OVERSIZED rbx_1)\n0x1c00657a9: movzx   ebx, word [rdx+0x28]          ; re-read ByteCount as 16-bit\n0x1c00657ad: sub     bx, word [rsi+0x8]            ; 16-bit clamp to ByteCount - offset\n; --- copy ---\n0x1c00657b1: movzx   r8d, bx                        ; r8d = final copy length\n0x1c00657b5: lea     rdx, [rbp+0xa]                ; src = rbp + 10\n0x1c00657b9: mov     rcx, rbp                       ; dst = rbp\n0x1c00657bc: call    0x1c000c900                   ; memmove(dst, src, len) — OOB READ\n0x1c00657c1: mov     word [r15+rbp-0x2], bx        ; write length at dst-2\n0x1c00657d1: call    AfdContinueSuperAccept        ; sub_1c0058170",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdRestartSuperAcceptGetAddress (sub_1c0065660)",
+            "address": "0x1c0065660",
+            "why": "Entry to the vulnerable AcceptEx (SuperAccept) address-retrieval completion routine. At entry: rdx = IRP, r8 = AFD connection/list context. rsi = IRP overlay/context (set at 0x1c0065678 from [rdx+0xb8]). rbx = AFD endpoint structure (set at 0x1c006568e from [rax+0x18])."
+          },
+          {
+            "symbol": "afd_unpatched!sub_1c0065660+0x15c",
+            "address": "0x1c00657bc",
+            "why": "The memmove call that performs the OOB read. At this point: rcx = destination (rbp = MappedSystemVa + offset), rdx = source (rbp + 0xa = MappedSystemVa + offset + 10), r8d = copy length (rbx_1). Compare r8d with (r15d - 0xa) to see the overread. If r8d > (r15d - 0xa), the copy reads past valid data. Check that [rdx + r8d] exceeds MappedSystemVa + ByteCount."
+          },
+          {
+            "symbol": "afd_unpatched!sub_1c0065660+0x10f",
+            "address": "0x1c006576f",
+            "why": "The feature flag check (call to EvaluateCurrentState / sub_1c0015714). If eax=0 after this call, the VULNERABLE path is taken (je at 0x1c0065776). The safe path returns non-zero. Watch eax to confirm which branch is selected."
+          }
+        ],
+        "watch": [
+          "rsi+0x18 = total_returned_length (r15d after 0x1c0065760) — the actual bytes returned by the transport",
+          "rsi+0x8 = offset into MDL buffer (ebp after 0x1c0065756) — where this chunk starts",
+          "rbx (after 0x1c0065767) = *(rbp+8) — the 16-bit length field in the returned data",
+          "rbx (after 0x1c006576b) = rbx_1 = length_field + 2 — the copy length before clamping",
+          "r8d at 0x1c00657b1 = final copy length after clamping — if this exceeds (r15d - 0xa), the OOB read occurs",
+          "[rdx+0x28] at 0x1c006579f = MdlAddress->ByteCount — the total MDL buffer size",
+          "rcx at 0x1c00657b9 = rbp = MappedSystemVa + offset — the copy destination (start of chunk in buffer)",
+          "rdx at 0x1c00657b5 = rbp + 0xa — the copy source (10 bytes ahead of destination)"
+        ],
+        "key_offsets": [
+          "0x1c0065767: movzx ebx, word [rbp+0x8] — reads the length field from the returned transport-address data",
+          "0x1c006576f: call 0x1c0015714 — EvaluateCurrentState feature flag check; eax=0 means VULNERABLE path taken",
+          "0x1c0065798: start of vulnerable clamp path (je from 0x1c0065776 when flag is OFF)",
+          "0x1c006579f: mov ecx, dword [rdx+0x28] — reads MDL ByteCount for the unsafe clamp",
+          "0x1c00657a7: jae 0x1c00657b1 — skip clamp if ByteCount-offset >= rbx_1 (KEEPS oversized length)",
+          "0x1c00657bc: call 0x1c000c900 — memmove that performs the OOB read (src extends up to 10 bytes past MDL)",
+          "In PATCHED binary at 0x1c0065946/0x1c0065950: cmp ax, di / cmovb di, ax — safe clamp to (returned_length - 10)"
+        ],
+        "trigger_setup": "1) On a Windows machine, set up an AFD listening socket and issue an AcceptEx, which reaches AFD via IOCTL_AFD_SUPER_ACCEPT and drives the SuperAccept path. 2) During SuperAccept, AFD issues a TDI query to obtain the accepted connection's transport address into the MDL-mapped buffer. 3) Arrange for the returned buffer's length field at offset +8 to be a value L such that (L + 2) > (actual_returned_length - 10) but (L + 2) < (MDL_ByteCount - offset). 4) When the completion routine fires, AfdRestartSuperAcceptGetAddress performs the OOB read; the AcceptEx address output surfaced to user mode contains up to 10 bytes read from beyond the mapped buffer, appended after the legitimate address data.",
+        "expected_observation": "At the breakpoint on 0x1c00657bc (memmove call), verify that r8d (copy length) > (r15d - 0xa) (returned_length - 10). The source pointer rdx + r8d will exceed MappedSystemVa + ByteCount by up to 10 bytes. After the copy completes, the AcceptEx address output buffer will contain memory read from beyond the mapped buffer in the trailing bytes. !pte on the source-plus-length address shows whether the read left the mapped region. No bugcheck is expected unless the bytes past the MDL cross a page boundary into unmapped memory.",
+        "notes": "The vulnerability is in the DEFAULT code path (feature flag EvaluateCurrentState(&g_Feature_499346745_59190809) / sub_1c0015714 returns FALSE). The feature flag gates a gradual rollout of the fix. The up-to-10-byte overread is from the MDL's mapped system virtual address space; this reads whatever lies in system address space immediately after the mapped buffer. Repeated AcceptEx operations can leak the contents that follow the buffer, bounded to the 10-byte window past its end. The AFD endpoint structure (rbx) has the state flag at +0xac (must be non-zero for the data-processing path) and a refcount at +0xe8."
+      }
+    }
+  ],
+  "summary": "The patch delivers two related kernel address-buffer bounds fixes that the unpatched build kept staged behind WIL feature flags (unsafe path taken by default) and that the patched build makes unconditional. Finding A (primary, out-of-bounds write, CWE-787): AfdSanConnectHandler (sub_1C00772A0 unpatched / sub_1C00771B0 patched) and its twin AfdSanAcceptCore (sub_1C007608C) copy an accepted SAN connection's address into the MDL-mapped accept buffer using a 16-bit length field from the source data; the unpatched default path (feature g_Feature_232206649_59779869 disabled) runs an unclamped memmove that can write past the buffer, and the patch removes the flag and the unclamped path and always clamps to the buffer capacity. Finding B (out-of-bounds read, CWE-125): AfdRestartSuperAcceptGetAddress (sub_1C0065660 unpatched / sub_1C0065830 patched) clamps a backward-shifting memmove to the MDL ByteCount rather than (returned_length - 10) in the unpatched default path (feature g_Feature_499346745_59190809 disabled), reading up to 10 bytes past the end of the MDL-mapped buffer and leaking that adjacent kernel memory into the AcceptEx address output; the patch removes the flag and always clamps to (returned_length - 10). The remaining changed functions add feature-gated device-attachment reference validation (g_Feature_3082489147_60797107, g_Feature_3420192058, old path retained) or are register/cosmetic/structural changes with no independent, unconditionally-delivered security impact."
+}

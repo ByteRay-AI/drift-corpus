@@ -1,0 +1,184 @@
+{
+  "binaries": {
+    "title": "ksrext.sys - No security-relevant change (loader-callback synchronization refactor)",
+    "id_unpatched": "ksrext_unpatched.sys",
+    "id_patched": "ksrext_patched.sys",
+    "overall_similarity": 0.3722,
+    "matched": 119,
+    "changed": 69,
+    "identical": 50,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KsrRegisterLoaderCallbacks",
+      "similarity": 0.74,
+      "change_type": "refactor",
+      "key_changes": [
+        "Unpatched teardown (arg1==NULL) clears seven named routine-pointer globals to zero via individual mov stores of a zeroed register, all under the exclusive KsrpLoaderInterfaceLock (unpatched @ 0x1C0007D40, clears at 0x1C0007EDA-0x1C0007F04). There is no memset/rep stosb.",
+        "Patched (@ 0x14000B080) adds a drain loop that checks KsrpLoaderInterfaceRefCount under the exclusive KsrpLoaderInterfaceLock and, while non-zero, releases the lock and blocks in ExBlockOnAddressPushLock on KsrpLoaderInterfaceRefCount/KsrpLoaderInterfaceEvent (0x14000B0FD-0x14000B16D).",
+        "Patched teardown stores built-in default implementations (KsrDbQueryMetadata, KsrDbPersistMemoryPartition, KsrDbUnpersistMemoryPartition, KsrDbClaimPersistedPages, KsrDbFreePersistedPages, KsrDbFreePersistedMemoryBlock, KsrDbEnumeratePersistedPages, KsrDbPersistPagesWithMetadata) into the routine pointers instead of NULL (0x14000B2D4-0x14000B34C). These are real database routines, not no-op stubs.",
+        "Registration-structure minimum size grew from 0x58 (unpatched cmp ecx,58h @ 0x1C0007D65) to 0x88 (patched cmp ecx,88h @ 0x14000B0B3); the register path reads additional callback fields at offsets 0x58-0x80."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. In the unpatched build the teardown clears the routine pointers while holding KsrpLoaderInterfaceLock exclusive, and every dispatch API reads the pointer and performs the indirect call while holding the same lock shared, so the reader/writer lock already prevents any teardown-versus-dispatch race. A NULL routine pointer in the unpatched build is a valid sentinel that routes dispatch to the built-in KsrPd* implementation, not a NULL dereference. The patched build replaces the lock-held-across-callback model with a reference-count-plus-drain model and stores built-in KsrDb* default implementations instead of NULL. Both models are race-free; this is an architecture refactor plus an expanded loader-callback contract, not a fix for a reachable vulnerability. ExBlockOnAddressPushLock is not new to the patched build: it already exists in unpatched KsrpWaitForPartitionsRestored (@ 0x1C0009230) to wait on the boot-time KsrpPartitionRestoreInProgress flag.",
+      "assembly_diff": "UNPATCHED unregister path (@ 0x1C0007D40):\n  KsrpWaitForPartitionsRestored();\n  ExAcquirePushLockExclusiveEx(&KsrpLoaderInterfaceLock, 0);   // exclusive\n  if (arg1 == NULL) {\n    if (!KsrpLoaderRegistered) KeBugCheckEx(0x70, 0x201, 0, 0, 0);\n    KsrpLoaderRegistered = 0;\n    KsrpPersistMemoryWithMetadataRoutinePointer = 0;   // seven individual\n    KsrpPersistMemoryPartitionRoutinePointer    = 0;   // mov stores of rbx (0)\n    KsrpClaimPersistentMemoryRoutinePointer     = 0;\n    KsrpFreePersistentMemoryRoutinePointer      = 0;\n    KsrpFreePersistentMemoryBlockRoutinePointer = 0;\n    KsrpEnumeratePersistentMemoryRoutinePointer = 0;\n    KsrpQueryMetadataRoutinePointer             = 0;\n  }\n  ExReleasePushLockExclusiveEx(&KsrpLoaderInterfaceLock, 0);\n\nPATCHED unregister path (@ 0x14000B080):\n  KsrpWaitForPartitionsRestored();\n  for (;;) {\n    ExAcquirePushLockExclusiveEx(&KsrpLoaderInterfaceLock, 0);\n    if (KsrpLoaderInterfaceRefCount == 0) break;\n    ExReleasePushLockExclusiveEx(&KsrpLoaderInterfaceLock, 0);\n    while (KsrpLoaderInterfaceRefCount > 0)\n      ExBlockOnAddressPushLock(&KsrpLoaderInterfaceEvent, &KsrpLoaderInterfaceRefCount, &n, 4, 0);\n  }\n  if (arg1 == NULL) {\n    KsrpLoaderRegistered = 0;\n    KsrpQueryMetadataRoutinePointer             = KsrDbQueryMetadata;       // default impl\n    KsrpPersistMemoryPartitionRoutinePointer    = KsrDbPersistMemoryPartition;\n    KsrpUnpersistMemoryPartitionRoutinePointer  = KsrDbUnpersistMemoryPartition;\n    KsrpClaimPersistentMemoryRoutinePointer     = KsrDbClaimPersistedPages;\n    KsrpFreePersistentMemoryRoutinePointer      = KsrDbFreePersistedPages;\n    KsrpFreePersistentMemoryBlockRoutinePointer = KsrDbFreePersistedMemoryBlock;\n    KsrpEnumeratePersistentMemoryRoutinePointer = KsrDbEnumeratePersistedPages;\n    KsrpPersistMemoryWithMetadataRoutinePointer = KsrDbPersistPagesWithMetadata;\n  }\n  ExReleasePushLockExclusiveEx(&KsrpLoaderInterfaceLock, 0);"
+    },
+    {
+      "name": "KsrQueryMetadata",
+      "similarity": 0.12,
+      "change_type": "refactor",
+      "key_changes": [
+        "Unpatched (@ 0x1C0007290) acquires KsrpLoaderInterfaceLock shared (0x1C00072EE), reads KsrpQueryMetadataRoutinePointer (0x1C00072FA), and either calls through it via guard_dispatch_icall (0x1C0007368) or, when NULL, falls back to the built-in KsrPdQueryRegionMetadata under KsrpPdDatabaseLock; the shared lock is released after the call (0x1C0007379). Check and call are both under the shared lock.",
+        "Patched (@ 0x14000AE40) calls KsrpAcquireLoaderInterfaceReference to increment KsrpLoaderInterfaceRefCount, performs the guarded indirect call without holding the push lock, then calls KsrpReleaseLoaderInterfaceReference. The pointer is non-NULL (defaults to KsrDbQueryMetadata), so the NULL fallback branch is removed."
+      ],
+      "security_relevant": false,
+      "security_notes": "Dispatch synchronization refactor. The unpatched check-and-call is fully serialized against teardown by the shared/exclusive KsrpLoaderInterfaceLock; no NULL dereference is reachable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrFreePersistedMemoryBlock",
+      "similarity": 0.81,
+      "change_type": "refactor",
+      "key_changes": [
+        "Same dispatch refactor. Unpatched acquires KsrpLoaderInterfaceLock shared (0x1C0007C7A), reads KsrpFreePersistentMemoryBlockRoutinePointer (0x1C0007C86), calls via guard_dispatch_icall (0x1C0007CD7) or falls back to KsrPdFreeMemoryBlock when NULL, releasing the shared lock after (0x1C0007CE8)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPersistMemoryPartition",
+      "similarity": 0.58,
+      "change_type": "refactor",
+      "key_changes": [
+        "Same dispatch refactor. Unpatched acquires KsrpLoaderInterfaceLock shared (0x1C0007437) before checking KsrpPersistMemoryPartitionRoutinePointer (0x1C0007443). Patched restructures the surrounding locking around the reference count."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrClaimPersistedMemory",
+      "similarity": 0.64,
+      "change_type": "refactor",
+      "key_changes": ["Same dispatch refactor: shared lock acquired at 0x1C00079A9, pointer read at 0x1C00079B5, guarded call at 0x1C0007A44, shared release at 0x1C0007A55; NULL falls back to KsrPdRetrieveMemoryRegion."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrFreePersistedMemory",
+      "similarity": 0.74,
+      "change_type": "refactor",
+      "key_changes": ["Same dispatch refactor: shared lock acquired at 0x1C0007B2E, pointer read at 0x1C0007B3A, guarded call at 0x1C0007B85, shared release at 0x1C0007B96; NULL falls back to KsrPdFreeMemoryRegions."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPersistMemoryWithMetadata",
+      "similarity": 0.67,
+      "change_type": "refactor",
+      "key_changes": ["Same dispatch refactor: shared lock acquired at 0x1C00071D5, pointer read at 0x1C00071E1, guarded call at 0x1C0007218, shared release at 0x1C0007229."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpDestoryPartitionList",
+      "similarity": 0.976,
+      "change_type": "refactor",
+      "key_changes": [
+        "Lock acquisition adjusted as part of the surrounding loader-interface refactor; caller-side locking changed. No reachable memory-safety impact."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpAllocatePagesFromMemoryRange",
+      "similarity": 0.83,
+      "change_type": "refactor",
+      "key_changes": ["Page-mapping loop using MmMapLockedPagesWithReservedMapping extracted to a helper in the patched build. Behavior preserved."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00084A4",
+      "similarity": 0.967,
+      "change_type": "cosmetic",
+      "key_changes": ["Flag test method change (& 0x10 -> < 0 sign check). Logically equivalent."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000BE1C",
+      "similarity": 0.967,
+      "change_type": "cosmetic",
+      "key_changes": ["SSE memset optimization replacing call to memset. Logically equivalent."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "KsrRegisterLoaderCallbacks",
+      "entry_point": "Exported kernel function KsrRegisterLoaderCallbacks (unpatched @ 0x1C0007D40, patched @ 0x14000B080); no internal callers, invoked by the Windows Soft Restart loader subsystem",
+      "call_chain": [],
+      "vulnerability_class": "No security-relevant change (loader-callback synchronization refactor)",
+      "description": "The change to the Soft Restart loader-callback interface is an architectural refactor, not a security fix, and no race condition or NULL-pointer dereference is reachable in either build. In the unpatched build, the teardown path (KsrRegisterLoaderCallbacks(NULL)) clears the seven routine-pointer globals to zero while holding KsrpLoaderInterfaceLock exclusive (individual mov stores at 0x1C0007EDA-0x1C0007F04; there is no memset/rep stosb). Every unpatched dispatch API (KsrQueryMetadata @ 0x1C0007290, KsrPersistMemoryPartition, KsrFreePersistedMemoryBlock, KsrClaimPersistedMemory, KsrFreePersistedMemory, KsrPersistMemoryWithMetadata) reads its routine pointer and performs the CFG-guarded indirect call while holding the SAME KsrpLoaderInterfaceLock shared, releasing it only after the call returns. Because a push lock's exclusive owner cannot coexist with any shared holder, the teardown cannot clear a pointer while a dispatch holds the shared lock across its check-and-call. Furthermore, a NULL routine pointer in the unpatched build is a valid sentinel that routes dispatch to the driver's built-in KsrPd* implementation (under KsrpPdDatabaseLock), not a dereference of address 0. The patched build replaces the lock-held-across-callback model with a reference count: KsrpAcquireLoaderInterfaceReference (@ 0x14000B5DC) takes the shared lock only long enough to lock-inc KsrpLoaderInterfaceRefCount, the callback runs without the lock, and KsrpReleaseLoaderInterfaceReference decrements it; the teardown drains KsrpLoaderInterfaceRefCount to zero via ExBlockOnAddressPushLock before clearing pointers, and stores built-in KsrDb* default implementations instead of NULL. Both models are race-free. The registration-structure minimum size grew from 0x58 to 0x88 with new callback fields, an expanded loader contract. ExBlockOnAddressPushLock is not new to the patched build: unpatched KsrpWaitForPartitionsRestored (@ 0x1C00091E4) already uses it (@ 0x1C0009230) to wait on the boot-time KsrpPartitionRestoreInProgress flag, which is unrelated to dispatch drain.",
+      "trigger_conditions": "None. Concurrent calls to a dispatch API and KsrRegisterLoaderCallbacks(NULL) are serialized by the shared/exclusive KsrpLoaderInterfaceLock (unpatched) or by the reference-count drain (patched). A dispatch that reads a non-NULL pointer holds the shared lock until after its indirect call returns, so teardown cannot clear that pointer mid-call. A NULL pointer routes to the built-in fallback rather than dereferencing address 0.",
+      "primitive": "None. There is no denial-of-service, information-disclosure, or code-execution primitive. The claimed teardown-versus-dispatch NULL-pointer dereference is not reachable in either build.",
+      "evidence": "UNPATCHED KsrQueryMetadata (@ 0x1C0007290) dispatch under shared lock:\n  0x1C00072EE  ExAcquirePushLockSharedEx(&KsrpLoaderInterfaceLock)   ; shared held...\n  0x1C00072FA  mov rax, KsrpQueryMetadataRoutinePointer\n  0x1C0007301  test rax, rax\n  0x1C0007304  jnz 0x1C0007352                                       ; non-NULL -> call\n  0x1C000730F  ExAcquirePushLockExclusiveEx(&KsrpPdDatabaseLock)     ; NULL -> built-in\n  0x1C0007334  call KsrPdQueryRegionMetadata\n  0x1C0007368  call guard_dispatch_icall_fptr                        ; ...call under shared lock\n  0x1C0007379  ExReleasePushLockSharedEx(&KsrpLoaderInterfaceLock)   ; released after call\n\nUNPATCHED KsrRegisterLoaderCallbacks teardown (@ 0x1C0007D40) under exclusive lock:\n  0x1C0007DB3  ExAcquirePushLockExclusiveEx(&KsrpLoaderInterfaceLock)  ; exclusive\n  0x1C0007DC2  jz  0x1C0007EA2                                         ; arg1==NULL -> unregister\n  0x1C0007EDA  mov KsrpPersistMemoryWithMetadataRoutinePointer, rbx    ; rbx=0 (seven stores)\n  0x1C0007F04  mov KsrpQueryMetadataRoutinePointer, rbx\n  0x1C0007F88  ExReleasePushLockExclusiveEx(&KsrpLoaderInterfaceLock)\n\nPATCHED KsrRegisterLoaderCallbacks (@ 0x14000B080) drain + default-impl store:\n  0x14000B126  lea rdx, KsrpLoaderInterfaceRefCount\n  0x14000B12D  lea rcx, KsrpLoaderInterfaceEvent\n  0x14000B134  call ExBlockOnAddressPushLock                           ; drain to zero\n  0x14000B156  ExAcquirePushLockExclusiveEx(&KsrpLoaderInterfaceLock)  ; exclusive after drain\n  0x14000B2D4  lea rax, KsrDbPersistPagesWithMetadata                  ; default impl, not NULL\n  0x14000B345  lea rax, KsrDbQueryMetadata\n  0x14000B34C  mov KsrpQueryMetadataRoutinePointer, rax\n\nPATCHED KsrpAcquireLoaderInterfaceReference (@ 0x14000B5DC):\n  0x14000B5E9  ExAcquirePushLockSharedEx(&KsrpLoaderInterfaceLock)\n  0x14000B5F5  lock inc KsrpLoaderInterfaceRefCount\n  0x14000B605  ExReleasePushLockSharedEx(&KsrpLoaderInterfaceLock)",
+      "assembly": "See evidence field for real address-anchored instruction sequences from both builds.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksrext!KsrRegisterLoaderCallbacks",
+            "address": "0x1C0007D40",
+            "why": "Unpatched teardown entry. With arg1 (RCX) = NULL the unregister path at 0x1C0007EA2 clears the seven routine pointers to zero via individual mov stores (0x1C0007EDA-0x1C0007F04) while holding KsrpLoaderInterfaceLock exclusive."
+          },
+          {
+            "symbol": "ksrext!KsrQueryMetadata",
+            "address": "0x1C0007290",
+            "why": "Unpatched dispatch. Confirms KsrpLoaderInterfaceLock is acquired shared (0x1C00072EE) before the routine-pointer read (0x1C00072FA) and released (0x1C0007379) only after the guarded indirect call (0x1C0007368), so check and call are both inside the shared lock. A NULL pointer routes to KsrPdQueryRegionMetadata (0x1C0007334) rather than dereferencing address 0."
+          },
+          {
+            "symbol": "ksrext!KsrpAcquireLoaderInterfaceReference",
+            "address": "0x14000B5DC",
+            "why": "Patched reference helper. Shows the shared lock is taken only to lock-inc KsrpLoaderInterfaceRefCount (0x14000B5F5), replacing the unpatched lock-held-across-callback model. The teardown at 0x14000B080 drains this counter via ExBlockOnAddressPushLock (0x14000B134) before clearing pointers."
+          }
+        ],
+        "watch": [
+          "KsrpLoaderInterfaceLock - reader/writer push lock guarding the routine-pointer globals; teardown holds it exclusive, dispatch holds it shared (unpatched) or briefly to bump the refcount (patched).",
+          "KsrpLoaderInterfaceRefCount / KsrpLoaderInterfaceEvent - patched in-flight reference count and drain wait object.",
+          "KsrpQueryMetadataRoutinePointer and the other routine-pointer globals - NULL in the unpatched build routes dispatch to the built-in KsrPd* path; patched stores KsrDb* default implementations.",
+          "KsrpLoaderRegistered - registration flag (1 registered, 0 unregistered).",
+          "KsrpPartitionRestoreInProgress - boot-time flag waited on by KsrpWaitForPartitionsRestored; unrelated to dispatch drain."
+        ],
+        "key_offsets": [
+          "0x1C0007D40 - KsrRegisterLoaderCallbacks (unpatched); unregister path 0x1C0007EA2, pointer clears 0x1C0007EDA-0x1C0007F04",
+          "0x14000B080 - KsrRegisterLoaderCallbacks (patched); drain loop 0x14000B0FD-0x14000B16D, default-impl stores 0x14000B2D4-0x14000B34C",
+          "0x1C0007290 - KsrQueryMetadata (unpatched); shared lock 0x1C00072EE, pointer read 0x1C00072FA, guarded call 0x1C0007368, release 0x1C0007379",
+          "0x14000AE40 - KsrQueryMetadata (patched); reference acquire 0x14000AE85, guarded call 0x14000AEA7, reference release 0x14000AEAE",
+          "0x14000B5DC - KsrpAcquireLoaderInterfaceReference (patched); lock inc KsrpLoaderInterfaceRefCount 0x14000B5F5",
+          "0x1C00091E4 - KsrpWaitForPartitionsRestored (unpatched); ExBlockOnAddressPushLock 0x1C0009230 waiting on KsrpPartitionRestoreInProgress"
+        ],
+        "trigger_setup": "None applicable. To confirm the serialization: disassemble any unpatched dispatch export and observe ExAcquirePushLockSharedEx(KsrpLoaderInterfaceLock) preceding the routine-pointer read and ExReleasePushLockSharedEx following the guarded indirect call, with the exclusive acquisition in KsrRegisterLoaderCallbacks targeting the same lock.",
+        "expected_observation": "No crash is reachable. The teardown-versus-dispatch race is prevented by the reader/writer push lock (unpatched) and by the reference-count drain (patched); a NULL routine pointer routes to the built-in fallback rather than dereferencing address 0.",
+        "notes": "The change is an architecture refactor of the loader-interface synchronization plus an expanded callback contract (registration struct min size 0x58 -> 0x88). It is not a security fix. KsrRegisterLoaderCallbacks is an export with no internal callers, invoked by the Windows Soft Restart loader subsystem."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The unpatched ksrext.sys already serializes the loader-callback teardown against dispatch: KsrRegisterLoaderCallbacks(NULL) clears the seven routine-pointer globals while holding KsrpLoaderInterfaceLock exclusive, and every dispatch API reads its pointer and performs the guarded indirect call while holding the same lock shared, so the reader/writer lock prevents the teardown from clearing a pointer mid-call. A NULL routine pointer is a valid sentinel routing dispatch to the built-in KsrPd* implementation, not a NULL dereference. The patched build refactors this to a reference-count-plus-drain model (KsrpAcquireLoaderInterfaceReference / KsrpReleaseLoaderInterfaceReference incrementing KsrpLoaderInterfaceRefCount, drained at teardown via ExBlockOnAddressPushLock) and stores built-in KsrDb* default implementations instead of NULL, and expands the registration contract (min size 0x58 -> 0x88). Both builds are race-free; there is no reachable race condition, NULL-pointer dereference, or exploit primitive. The earlier HIGH race-condition/NULL-dereference finding is not supported: the unpatched dispatch check-and-call is fully enclosed by the shared push lock, and the unpatched teardown clears pointers via individual mov stores under the exclusive variant of that lock (there is no memset/rep stosb), while the patched KsrDb* pointers are real database routines, not no-op stubs."
+}

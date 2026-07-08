@@ -1,0 +1,349 @@
+{
+  "binaries": {
+    "id_unpatched": "fbwf_unpatched.sys",
+    "id_patched": "fbwf_patched.sys",
+    "overall_similarity": 0.6656,
+    "matched": 173,
+    "changed": 124,
+    "identical": 49,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FbwfGenerateFileName",
+      "similarity": 0.86,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched allocates a fixed 0xfffe (65534) byte pool buffer (mov r15d,0FFFEh @ 0x1C0001E53; ExAllocatePoolWithTag @ 0x1C0001E61) for the option-byte 1/2 name-construction path",
+        "Unpatched copies the volume name (memmove @ 0x1C0001E8F), bounds the current path to the remaining space (sub r15d,esi @ 0x1C0001E94; FbwfGetCurrentPath @ 0x1C0001EAD), then when a stream is present appends a ':' at offset volume_len+path_len (mov [rax+rcx*2],dx @ 0x1C0001ECF) and memmoves the stream name at buffer+off+2 (@ 0x1C0001E1C) with NO check that off+2+stream_len <= 0xfffe -> paged-pool out-of-bounds write",
+        "Patched pre-measures the required size: FbwfGetCurrentPath in measure mode (r8d=0 @ 0x140002C2F), ebx=volume_len+path_len (@ 0x140002C42), and when a stream is present adds the colon and stream length (lea r15d,[rbx+2] @ 0x140002C6E; lea r15d,[r15+rax*2] @ 0x140002C72), then allocates exactly that with ExAllocatePool2 (@ 0x140002C8B)",
+        "The short-name (option-byte 3) path is bounded to 0x800 in both builds (0x1C0001D8A / 0x140002B62) and is unchanged in substance"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched FbwfGenerateFileName allocates a fixed 0xfffe-byte pool buffer sized only for the volume name plus the current path, then unconditionally appends a ':' separator and the alternate-data-stream name at the running offset without any bounds check. Because FbwfGetCurrentPath can fill the buffer to within volume_len of 0xfffe, a sufficiently long path leaves the colon and stream-name writes past the end of the allocation, corrupting adjacent paged pool (CWE-787 out-of-bounds write; root cause CWE-131 incorrect calculation of buffer size). The patched build computes the exact size including the colon and stream length before allocating, so the appended data always fits. This is the load-bearing security fix in the patch.",
+      "assembly_diff": "; UNPATCHED @ 0x1C0001E4D — fixed allocation, unchecked stream append:\n0x1C0001E53  mov     r15d, 0FFFEh              ; fixed buffer size\n0x1C0001E61  call    __imp_ExAllocatePoolWithTag\n0x1C0001E8F  call    memmove                  ; volume name\n0x1C0001E94  sub     r15d, esi                ; remaining = 0xFFFE - volume_len\n0x1C0001EAD  call    FbwfGetCurrentPath       ; path bounded to remaining\n0x1C0001EB2  add     si, ax                   ; si = volume_len + path_len\n0x1C0001ECF  mov     [rax+rcx*2], dx          ; ':' at offset si (NO bound check)\n0x1C0001E1C  call    memmove                  ; stream name at buffer+si+2 (NO bound check)\n\n; PATCHED @ 0x140002C21 — measure first, size includes the stream:\n0x140002C2F  call    FbwfGetCurrentPath       ; r8d=0 -> measure path length only\n0x140002C42  add     ebx, [rsp+68h+var_40]    ; ebx = volume_len + path_len\n0x140002C6E  lea     r15d, [rbx+2]            ; + ':' separator\n0x140002C72  lea     r15d, [r15+rax*2]        ; + stream_len*2\n0x140002C8B  call    __imp_ExAllocatePool2    ; allocate exactly r15d bytes"
+    },
+    {
+      "name": "DirTreeNode::AddDirEntry",
+      "similarity": 0.72,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched allocates a fixed 0xfffe (65534) byte paged-pool buffer (mov r12d,0FFFEh @ 0x1C00114B6; ExAllocatePoolWithTag @ 0x1C00114C4) for the directory-entry name-construction path (this overload: (_FbwfDirNameEntry*, wchar_t const*, _FbwfVolumeEntry*, ulong))",
+        "Unpatched fills the buffer with the current directory path via FbwfGetCurrentPath bounded to 0xfffe (mov r8d,r12d @ 0x1C00114F1; call FbwfGetCurrentPath @ 0x1C00114FA), sets r14 to the end of the path (lea r14,[rdi+rax*2] @ 0x1C001151C), then memmoves the directory-entry name at buffer+path_offset (size = name_len+2 from [rsp+Size]; memmove @ 0x1C001152C) with NO check that path_len+name_len+2 <= 0xfffe, and when a write-through/short-name entry is present appends that name at the same offset (lea r8d,[rsi+rsi] @ 0x1C001156A; add r8,2; memmove @ 0x1C001157A) with NO bounds check -> paged-pool out-of-bounds write",
+        "Patched pre-measures the exact size: FbwfGetCurrentPath in measure mode (xor r8d,r8d; lea r9,[var_58] @ 0x140014046; call @ 0x140014056), path_len+4 (add edx,4 @ 0x14001405F), max(entry_name_len, write_through_name_len) (cmp r15,rax; ja @ 0x140014088/0x14001408B), folded in (add r15d,edx @ 0x1400140A8), then allocates exactly that with ExAllocatePool2 (mov ecx,102h; call @ 0x1400140C1)",
+        "Reachable from the FbwfPreCreate minifilter pre-create callback (call sites @ 0x1C0002EDA/0x1C0002FE1/0x1C00030B8) and from FbwfRestoreDeletedFile (@ 0x1C000E002); the appended entry name (arg2) is the created entry's name, so its length is attacker-influenced"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched DirTreeNode::AddDirEntry (the (_FbwfDirNameEntry*, wchar_t const*, _FbwfVolumeEntry*, ulong) overload) allocates a fixed 0xfffe-byte paged-pool buffer sized only for the current directory path, then appends the directory-entry name and (when present) the write-through/short-name entry at the running path offset with no bounds check. Because FbwfGetCurrentPath can fill the buffer, a directory whose path nears 0xfffe leaves the appended name writes past the end of the allocation, corrupting adjacent paged pool (CWE-787 out-of-bounds write; root cause CWE-131 incorrect calculation of buffer size). The patched build pre-measures path_len + 4 + max(entry_name_len, write_through_name_len) and allocates exactly that with ExAllocatePool2 before performing the identical copies. This is a second load-bearing security fix, the same class and fix pattern as FbwfGenerateFileName, in a distinct function reached from the FbwfPreCreate create path.",
+      "assembly_diff": "; UNPATCHED @ 0x1C00114B6 — fixed allocation, unchecked name append:\n0x1C00114B6  mov     r12d, 0FFFEh\n0x1C00114C4  call    __imp_ExAllocatePoolWithTag\n0x1C00114F1  mov     r8d, r12d                ; path bound = 0xFFFE\n0x1C00114FA  call    FbwfGetCurrentPath\n0x1C001151C  lea     r14, [rdi+rax*2]         ; r14 = end of path\n0x1C0011520  mov     r8, [rsp+78h+Size]       ; size = name_len + 2\n0x1C0011525  mov     rdx, [rbx+8]             ; entry-name copy\n0x1C001152C  call    memmove                  ; append name at path end (NO bound check)\n0x1C001156A  lea     r8d, [rsi+rsi]           ; write-through name length\n0x1C0011573  add     r8, 2\n0x1C001157A  call    memmove                  ; append write-through name at path end (NO bound check)\n\n; PATCHED @ 0x140014041 — measure first, size includes the appended name:\n0x140014046  xor     r8d, r8d                 ; measure path length only\n0x140014056  call    FbwfGetCurrentPath\n0x14001405F  add     edx, 4                   ; path_len + 4\n0x140014088  cmp     r15, rax                 ; entry_name_len vs write_through_name_len\n0x14001408B  ja      loc_1400140A8            ; r15 = max(...)\n0x1400140A8  add     r15d, edx                ; + (path_len + 4)\n0x1400140BC  mov     ecx, 102h\n0x1400140C1  call    __imp_ExAllocatePool2    ; allocate exactly r15d bytes"
+    },
+    {
+      "name": "FbwfPortMessage",
+      "similarity": 0.7557,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds a scratch-space adjustment handler (reached only for IOCTL 0xfb2f0001, cmp r13d,0FB2F0001h @ 0x140004DBB) that reads a user-supplied 64-bit count and multiplies it by the volume block size (block_size = [rcx+14h] @ 0x140004E1F; mul r15 @ 0x140004E45) under an overflow test (test rdx,rdx; jnz @ 0x140004E4F); on overflow the size is forced to -1 and the request returns STATUS_INTEGER_OVERFLOW (0xC0000095 @ 0x140004E5B)",
+        "Rejects non-positive counts (test r15,r15; jle default @ 0x140004DB2) before the multiplication and special-cases the 0x7fffffffffffffff sentinel (@ 0x140004DFF)",
+        "The overflow-checked product updates the cs:TotalBytes cache-accounting counter (mov cs:TotalBytes,r9 @ 0x140004F68), compared against ZwQuerySystemInformation memory sizes (@ 0x140004DDB); it does not size a pool allocation",
+        "The unpatched FbwfPortMessage contains no 0xfb2f0001 case, no mul/imul, and no ZwQuerySystemInformation call",
+        "The IOCTL dispatch bounds check (lea eax,[reg+0x4e0fffe]; cmp eax,0xb; ja default) is present in BOTH builds (unpatched @ 0x1C000A746, patched @ 0x140004733)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The patched FbwfPortMessage adds a brand-new IOCTL 0xfb2f0001 handler that multiplies a user-supplied 64-bit count by the volume block size under an overflow test, returning STATUS_INTEGER_OVERFLOW (0xC0000095) on overflow. This is defensive CWE-190 hardening built into a new feature: the product only updates the TotalBytes cache-accounting counter compared against system memory information, not a pool allocation size, so no pool-overflow write primitive results. The unpatched build does not contain this handler at all. The IOCTL switch index is bounds-checked identically in both builds.",
+      "assembly_diff": "; IOCTL dispatch bounds check — PRESENT IN BOTH BUILDS:\n; unpatched @ 0x1C000A746:            patched @ 0x140004733:\n;   lea eax, [r15+0x4e0fffe]           lea eax, [r13+0x4e0fffe]\n;   cmp eax, 0xb                       cmp eax, 0xb\n;   ja  default_case                  ja  default_case\n\n; PATCHED-ONLY 0xfb2f0001 scratch-space overflow check:\n0x140004DBB  cmp     r13d, 0FB2F0001h\n0x140004E1F  mov     r8d, [rcx+14h]   ; block_size\n0x140004E45  mul     r15              ; count * block_size (128-bit)\n0x140004E4F  test    rdx, rdx         ; overflow if high half != 0\n0x140004E5B  mov     ebx, 0C0000095h  ; STATUS_INTEGER_OVERFLOW\n0x140004F68  mov     cs:TotalBytes, r9 ; product feeds cache accounting, not an allocation\n; No corresponding multiplication exists in the unpatched function."
+    },
+    {
+      "name": "FbwfCheckAndTranslateVolumeName",
+      "similarity": 0.902,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched computes the volume-name length with an inlined wcslen-style loop (inc r9; cmp [rbx+r9*2],r15w; jnz @ 0x1C000EAB7)",
+        "Patched replaces the loop with a call to RtlInitUnicodeString (@ 0x14000DDB5), which computes Length by scanning for the terminating null wchar with no upper bound — the same unbounded scan the loop performed, with no added bounds checking",
+        "Both builds then apply the identical Length+2 <= 0x80 check (unpatched add rsi,2; cmp rsi,0x80 @ 0x1C000EAD1; patched lea rcx,[rdx+2]; cmp rcx,0x80 @ 0x14000DDCF) and take the same downstream path (FltGetVolumeFromName, drive-letter check, memmove)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The change from an inlined length loop to RtlInitUnicodeString is a source-level refactor with no behavioral difference. RtlInitUnicodeString performs the same unbounded null-terminator scan as the manual loop and adds no bounds checking, and both builds apply the identical Length+2 <= 0x80 validation afterward. There is no out-of-bounds read introduced or removed by this change.",
+      "assembly_diff": "; UNPATCHED @ 0x1C000EAB7 — inlined wcslen loop:\nmov     r9d, 0FFFFFFFFh\ninc     r9\ncmp     [rbx+r9*2], r15w\njnz     short 0x1C000EAB7\nadd     r9d, r9d\ncmp     rsi, r12 ; 0x80 (Length+2 <= 0x80)\n\n; PATCHED @ 0x14000DDB5 — RtlInitUnicodeString (same unbounded scan internally):\ncall    __imp_RtlInitUnicodeString\nmovzx   edx, [rbp+DestinationString.Length]\nlea     rcx, [rdx+2]\ncmp     rcx, r12 ; 0x80 (identical Length+2 <= 0x80)"
+    },
+    {
+      "name": "FbwfWrite",
+      "similarity": 0.8882,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured the byte-offset sentinel handling: FILE_USE_FILE_POINTER_POSITION (QuadPart == -2) substitutes the file object CurrentByteOffset, FILE_WRITE_TO_END_OF_FILE (HighPart == -1 && LowPart == -1) substitutes the end-of-file offset",
+        "Both builds perform these substitutions and both apply the same write-range wrap guard (length + offset < length -> STATUS_INVALID_PARAMETER); the patch flattens the nested HighPart==-1 test into a direct QuadPart==-2 comparison without adding new validation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Both builds handle the two sentinel byte-offset values identically and both apply the same length+offset wrap guard before using the offset in page-index calculations (unpatched decompilation lines 3492-3513; patched 7898-7910). The change is a structural refactor of the sentinel checks with no security-relevant behavioral difference.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FbwfNormalizeNameComponent",
+      "similarity": 0.7881,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched allocates a fixed 0xfffe buffer (mov edx,0FFFEh @ 0x1C00020B5; ExAllocatePoolWithTag @ 0x1C00020C3)",
+        "Patched allocates a dynamically sized buffer of max(component_len, name_len)+1 bytes (cmovbe @ 0x140003A5D; inc edx @ 0x140003A60; ExAllocatePool2 @ 0x140003A6D)",
+        "The pool-buffer memmoves (0x140003ABE, 0x140003B44) are not newly bounds-checked; the only length check present (cmp eax,[Length] @ 0x140003B99) guards the caller's output buffer and is identical to the unpatched check at 0x1C00021F0"
+      ],
+      "security_relevant": false,
+      "security_notes": "The change is defensive fixed-to-dynamic allocation sizing (fixed 0xfffe -> max(len1,len2)+1) plus allocation-API churn (ExAllocatePoolWithTag -> ExAllocatePool2). The size is the maximum of the two copy lengths (via cmovbe), not a minimum clamp, and no new bounds check guards the pool-buffer copies. The fixed 0xfffe already accommodated realistic single-component/path inputs, so this is hardening, not a demonstrable overflow fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FbwfPreCreate",
+      "similarity": 0.729,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added STATUS_INVALID_DEVICE_REQUEST and STATUS_OBJECT_NAME_INVALID return paths for malformed file names",
+        "Added IoCheckLinkShareAccess call for proper share access validation",
+        "Added RelatedFileObject and FileName.Length validation checks",
+        "Major refactoring of the create path with additional access check (FbwfCheckAccess) calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FbwfCompress",
+      "similarity": 0.794,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced custom SLIST-based workspace management with ExAllocateFromPagedLookasideList/ExFreeToPagedLookasideList",
+        "Added explicit FinalCompressedSize >= 0x1000 bounds check before using compression result",
+        "Improved error path handling"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FbwfExtendFileSize",
+      "similarity": 0.9206,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced ExAllocatePoolWithTag with ExAllocatePool2 with flag-based allocation",
+        "Replaced custom memory functions (sub_1c0012a80, sub_1c0012dc0) with memcpy/memset",
+        "Replaced indirect function pointers (data_1c0016200, data_1c0016208) with guard_dispatch_icall patterns"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FbwfQuerySecurity",
+      "similarity": 0.9918,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Renamed internal variables and function calls from sub_ names to Fbwf names",
+        "Replaced sub_1c0012a80 (memcpy) calls with explicit memcpy",
+        "Structural field offset changes due to different struct layout between versions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "FbwfGenerateFileName",
+      "entry_point": "Minifilter name-generation path (file create / name query) on an fbwf-protected volume for a file bearing an alternate data stream",
+      "call_chain": [
+        "Open/query a file with an alternate data stream on an fbwf-monitored volume -> FbwfGenerateFileName (option-byte 1/2 path)",
+        "FbwfGenerateFileName -> fixed 0xfffe allocation -> copy volume name + current path (bounded to remaining) -> append ':' + stream name at volume_len+path_len with no bounds check -> paged-pool out-of-bounds write"
+      ],
+      "vulnerability_class": "out-of-bounds write / incorrect calculation of buffer size (CWE-787, root cause CWE-131)",
+      "description": "The unpatched FbwfGenerateFileName allocates a fixed 0xfffe-byte pool buffer, copies the volume name, and writes the current path bounded to the remaining space (0xfffe - volume_len). When the target file object has an alternate data stream, it then appends a ':' separator at byte offset volume_len+path_len and memmoves the stream name at buffer+off+2, with no check that off+2+stream_len <= 0xfffe. Because the buffer was sized only for the volume name and path, a path long enough to fill it leaves the colon and stream-name writes past the end of the allocation, corrupting adjacent paged pool. The patched build pre-measures the full required size (volume_len + path_len + 2 + stream_len*2) and allocates exactly that with ExAllocatePool2 before performing the copies.",
+      "trigger_conditions": "1. On a volume monitored by the fbwf minifilter, reference a file that carries an alternate data stream (path:stream). 2. Arrange for the file's full path to be long enough that volume_len + path_len approaches the fixed 0xfffe buffer (a deeply nested directory path). 3. Trigger the minifilter name-generation path so FbwfGenerateFileName runs on the option-byte 1/2 branch. 4. On the unpatched build the ':' and stream-name writes land past the 0xfffe allocation; on the patched build the buffer is sized to include the stream.",
+      "primitive": "Kernel paged-pool out-of-bounds linear write of 2 + stream_len bytes past a 0xfffe allocation, with attacker-influenced stream-name content. Reachability is constrained: the path (with the volume name) must nearly fill the 0xfffe buffer because FbwfGetCurrentPath is bounded to the remaining space. Under those conditions the write corrupts adjacent paged pool or bugchecks.",
+      "evidence": "UNPATCHED (FbwfGenerateFileName @ 0x1C0001CB0):\n    buffer = ExAllocatePoolWithTag(PagedPool, 0xFFFE, tag);   // fixed size @ 0x1C0001E53/0x1C0001E61\n    memmove(buffer, volume_name, volume_len);                 // @ 0x1C0001E8F\n    remaining = 0xFFFE - volume_len;                          // @ 0x1C0001E94\n    path_len  = FbwfGetCurrentPath(vol, buffer+volume_len, remaining, 0); // @ 0x1C0001EAD\n    off = volume_len + path_len;                              // si @ 0x1C0001EB2\n    if (file_object->stream != NULL) {                        // @ 0x1C0001EB5\n        buffer[off/2] = ':';                                  // @ 0x1C0001ECF (NO bound check)\n        off += 2;\n        memmove(buffer+off, stream_name, stream_len);         // @ 0x1C0001E1C (NO bound check)\n    }\n\nPATCHED (FbwfGenerateFileName @ 0x140002A80):\n    path_len = FbwfGetCurrentPath(vol, 0, 0, &len);           // measure-only @ 0x140002C2F\n    size = volume_len + path_len;                             // @ 0x140002C42\n    if (file_object->stream != NULL)\n        size = size + 2 + stream_len*2;                       // @ 0x140002C6E / 0x140002C72\n    buffer = ExAllocatePool2(0x102, size, tag);               // exact size @ 0x140002C8B",
+      "assembly": "; UNPATCHED @ 0x1C0001E4D — fixed allocation, unchecked stream append:\n0x1C0001E53  mov     r15d, 0FFFEh\n0x1C0001E61  call    __imp_ExAllocatePoolWithTag\n0x1C0001E94  sub     r15d, esi                ; remaining = 0xFFFE - volume_len\n0x1C0001EAD  call    FbwfGetCurrentPath\n0x1C0001EB2  add     si, ax                   ; si = volume_len + path_len\n0x1C0001ECF  mov     [rax+rcx*2], dx          ; ':' at offset si (NO bound check)\n0x1C0001E1C  call    memmove                  ; stream name at buffer+si+2 (NO bound check)\n\n; PATCHED @ 0x140002C21 — measure first, size includes the stream:\n0x140002C2F  call    FbwfGetCurrentPath       ; measure path length\n0x140002C42  add     ebx, [rsp+68h+var_40]    ; volume_len + path_len\n0x140002C6E  lea     r15d, [rbx+2]            ; + ':'\n0x140002C72  lea     r15d, [r15+rax*2]        ; + stream_len*2\n0x140002C8B  call    __imp_ExAllocatePool2    ; exact size",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fbwf_unpatched!FbwfGenerateFileName",
+            "address": "0x1C0001CB0",
+            "why": "Name generation entry. Follow the option-byte 1/2 path to 0x1C0001E4D. Set breakpoints at the fixed allocation (0x1C0001E61) and the stream memmove (0x1C0001E1C) to observe the destination offset (si) plus stream length exceeding 0xfffe."
+          }
+        ],
+        "watch": [
+          "size operand at 0x1C0001E53 = 0xFFFE (fixed, independent of path length)",
+          "si at 0x1C0001EB2 = volume_len + path_len; overflow occurs when si nears 0xFFFE",
+          "destination offset (si, then si+2) plus stream_len at 0x1C0001ECF / 0x1C0001E1C vs the 0xFFFE allocation size"
+        ],
+        "key_offsets": [
+          "0x1C0001E53: fixed 0xFFFE size loaded before ExAllocatePoolWithTag",
+          "0x1C0001ECF: ':' write at offset si (no bound check)",
+          "0x1C0001E1C: stream-name memmove at buffer+si+2 (no bound check)",
+          "0x140002C6E / 0x140002C72: patched size accounting for colon + stream_len*2 before ExAllocatePool2 @ 0x140002C8B"
+        ],
+        "trigger_setup": "On an fbwf-protected volume, reference a file with an alternate data stream whose full path is deeply nested so volume_len + path_len approaches 0xFFFE, then trigger the minifilter name-generation path.",
+        "expected_observation": "With Special Pool enabled for fbwf.sys, the append triggers an immediate bugcheck (SPECIAL_POOL_DETECTED_MEMORY_CORRUPTION). Without Special Pool, the colon and stream bytes silently corrupt adjacent paged pool. On the patched build the allocation is sized to include the stream, so the writes stay in bounds.",
+        "notes": "The overflow length is 2 + stream_len bytes with attacker-influenced stream content. The short-name (option-byte 3) path is bounded to 0x800 in both builds and is not affected."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "DirTreeNode::AddDirEntry",
+      "entry_point": "File/directory create on an fbwf-protected volume reaching the FbwfPreCreate minifilter pre-create callback, which calls DirTreeNode::AddDirEntry (the (_FbwfDirNameEntry*, wchar_t const*, _FbwfVolumeEntry*, ulong) overload; also reached from FbwfRestoreDeletedFile)",
+      "call_chain": [
+        "File/directory create on an fbwf-monitored volume -> FbwfPreCreate -> DirTreeNode::AddDirEntry (call sites @ 0x1C0002EDA/0x1C0002FE1/0x1C00030B8; also FbwfRestoreDeletedFile @ 0x1C000E002)",
+        "AddDirEntry -> fixed 0xfffe allocation -> fill current directory path (bounded to 0xfffe) -> append directory-entry name and (if present) write-through/short-name entry at path offset with no bounds check -> paged-pool out-of-bounds write"
+      ],
+      "vulnerability_class": "out-of-bounds write / incorrect calculation of buffer size (CWE-787, root cause CWE-131)",
+      "description": "The unpatched DirTreeNode::AddDirEntry allocates a fixed 0xfffe-byte paged-pool buffer (mov r12d,0FFFEh @ 0x1C00114B6; ExAllocatePoolWithTag @ 0x1C00114C4) and fills it with the current directory path via FbwfGetCurrentPath bounded to 0xfffe (@ 0x1C00114FA). It sets r14 to the end of the path (lea r14,[rdi+rax*2] @ 0x1C001151C) and memmoves the directory-entry name at buffer+path_offset (size = name_len+2; @ 0x1C001152C) with no check that path_len+name_len+2 <= 0xfffe. When a write-through/short-name entry is present it measures that name's length and memmoves it at the same offset (@ 0x1C001157A), again with no bounds check. Because the buffer was sized only for the path, a directory whose path fills the fixed 0xfffe buffer leaves the appended name bytes past the end of the allocation, corrupting adjacent paged pool. The patched build pre-measures path_len + 4 + max(entry_name_len, write_through_name_len) and allocates exactly that with ExAllocatePool2 (@ 0x1400140C1) before performing the identical copies. This is the same vulnerability class and fix pattern as FbwfGenerateFileName in a distinct, sibling function.",
+      "trigger_conditions": "1. On a volume monitored by the fbwf minifilter, create a file or directory whose parent directory path is deeply nested so the current path nearly fills the fixed 0xfffe buffer. 2. Give the created entry a name (and/or drive a write-through entry) so path_len + name_len exceeds 0xfffe. 3. Trigger the create so FbwfPreCreate calls DirTreeNode::AddDirEntry. 4. On the unpatched build the entry-name (@ 0x1C001152C) and, if present, write-through-name (@ 0x1C001157A) memmoves land past the 0xfffe allocation; on the patched build the buffer is pre-sized to include the appended name.",
+      "primitive": "Kernel paged-pool out-of-bounds linear write of the directory-entry name (and/or write-through-name) past a 0xfffe allocation, with attacker-influenced name content. Reachability is constrained: the current directory path must nearly fill the 0xfffe buffer because FbwfGetCurrentPath is bounded to 0xfffe. Under those conditions the write corrupts adjacent paged pool or bugchecks.",
+      "evidence": "UNPATCHED (DirTreeNode::AddDirEntry @ 0x1C00112D0):\n    buffer = ExAllocatePoolWithTag(PagedPool, 0xFFFE, tag);   // fixed size @ 0x1C00114B6/0x1C00114C4\n    path_len = FbwfGetCurrentPath(vol, buffer, 0xFFFE, 0);    // fill path, bounded @ 0x1C00114FA\n    dst = buffer + path_len;                                  // r14 @ 0x1C001151C\n    memmove(dst, entry_name, name_len + 2);                   // @ 0x1C001152C (NO bound check)\n    if (write_through_entry != NULL) {\n        wt_len = wcslen(write_through_name) * 2;              // @ 0x1C0011561\n        memmove(dst, write_through_name, wt_len + 2);        // @ 0x1C001157A (NO bound check)\n    }\n\nPATCHED (DirTreeNode::AddDirEntry @ 0x140013E0C):\n    path_len = FbwfGetCurrentPath(vol, 0, 0, &len);           // measure-only @ 0x140014046/0x140014056\n    size = path_len + 4;                                      // @ 0x14001405F\n    size += max(entry_name_len, write_through_name_len);      // @ 0x140014088 / 0x1400140A8\n    buffer = ExAllocatePool2(0x102, size, tag);               // exact size @ 0x1400140C1",
+      "assembly": "; UNPATCHED @ 0x1C00114B6 — fixed allocation, unchecked name append:\n0x1C00114B6  mov     r12d, 0FFFEh\n0x1C00114C4  call    __imp_ExAllocatePoolWithTag\n0x1C00114FA  call    FbwfGetCurrentPath       ; fill directory path\n0x1C001151C  lea     r14, [rdi+rax*2]         ; r14 = end of path\n0x1C001152C  call    memmove                  ; entry name at path end (NO bound check)\n0x1C001157A  call    memmove                  ; write-through name at path end (NO bound check)\n\n; PATCHED @ 0x140014041 — measure first, size includes the appended name:\n0x140014046  xor     r8d, r8d                 ; measure path length only\n0x140014056  call    FbwfGetCurrentPath\n0x14001405F  add     edx, 4                   ; path_len + 4\n0x140014088  cmp     r15, rax                 ; entry_name_len vs write_through_name_len\n0x1400140A8  add     r15d, edx                ; + (path_len + 4)\n0x1400140C1  call    __imp_ExAllocatePool2    ; allocate exactly r15d bytes",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fbwf_unpatched!DirTreeNode::AddDirEntry",
+            "address": "0x1C00112D0",
+            "why": "Directory-entry insertion entry (the (_FbwfDirNameEntry*, wchar_t const*, _FbwfVolumeEntry*, ulong) overload). Set breakpoints at the fixed allocation (0x1C00114C4) and the name memmoves (0x1C001152C, 0x1C001157A) to observe the destination offset (r14 = path end) plus the name length exceeding 0xfffe."
+          }
+        ],
+        "watch": [
+          "size operand at 0x1C00114B6 = 0xFFFE (fixed, independent of path length)",
+          "eax after FbwfGetCurrentPath @ 0x1C00114FA = path byte length; overflow occurs when it nears 0xFFFE",
+          "r14 (path end) at 0x1C001151C plus the memmove size ([rsp+Size] name_len+2, then wt_len+2) vs the 0xFFFE allocation size"
+        ],
+        "key_offsets": [
+          "0x1C00114B6: fixed 0xFFFE size loaded before ExAllocatePoolWithTag",
+          "0x1C001152C: directory-entry name memmove at buffer+path_offset (no bound check)",
+          "0x1C001157A: write-through/short-name memmove at buffer+path_offset (no bound check)",
+          "0x14001405F / 0x140014088 / 0x1400140A8: patched path_len+4 + max(name lengths) before ExAllocatePool2 @ 0x1400140C1"
+        ],
+        "trigger_setup": "On an fbwf-protected volume, create a file or directory whose parent path is deeply nested so the current path approaches 0xFFFE, with an entry name (and/or write-through entry) long enough to push the append past 0xFFFE, and trigger the create so FbwfPreCreate calls DirTreeNode::AddDirEntry.",
+        "expected_observation": "With Special Pool enabled for fbwf.sys, the append triggers an immediate bugcheck (SPECIAL_POOL_DETECTED_MEMORY_CORRUPTION). Without Special Pool, the entry-name/write-through-name bytes silently corrupt adjacent paged pool. On the patched build the allocation is pre-sized to path_len + 4 + max(entry_name_len, write_through_name_len), so the writes stay in bounds.",
+        "notes": "The appended entry name (arg2) is the created entry's name, so its length is attacker-influenced. Reachable from the FbwfPreCreate pre-create callback and from FbwfRestoreDeletedFile."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "FbwfPortMessage",
+      "entry_point": "FltCreateCommunicationPort user-mode message (FilterSendMessage) — new IOCTL 0xFB2F0001 scratch-space adjustment handler",
+      "call_chain": [
+        "FilterSendMessage (user mode) -> FltMgr -> FbwfPortMessage (kernel minifilter message callback)",
+        "FbwfPortMessage -> IOCTL 0xFB2F0001 scratch-space handler -> overflow-checked count * block_size multiplication -> cs:TotalBytes cache accounting (no pool allocation sized from the product)"
+      ],
+      "vulnerability_class": "integer overflow in size computation, defensively hardened (CWE-190)",
+      "description": "The patched FbwfPortMessage adds a brand-new scratch-space adjustment handler (reached only for IOCTL 0xFB2F0001) that reads a user-supplied 64-bit count from the message body and multiplies it by the volume's block size to derive a memory-size value. The multiplication is guarded by an overflow test (test rdx,rdx after mul); on overflow the size is forced to -1 and the request returns STATUS_INTEGER_OVERFLOW (0xC0000095). Non-positive counts are rejected (test r15,r15; jle) and the 0x7FFFFFFFFFFFFFFF sentinel is special-cased. The product only updates the cs:TotalBytes cache-accounting counter (compared against ZwQuerySystemInformation memory sizes); it does not size a pool allocation, so no pool-overflow write primitive results. The unpatched FbwfPortMessage does not contain this handler, any mul/imul, or any ZwQuerySystemInformation call. Both builds bound-check the IOCTL dispatch index identically.",
+      "trigger_conditions": "1. Open the fbwf minifilter communication port via FilterConnectCommunicationPort. 2. Send a message with IOCTL 0xFB2F0001 selecting the scratch-space handler. 3. Include a count field in the message body set to a large value N such that N * block_size would overflow 64-bit arithmetic (for block_size 0x1000, N >= 0x0010000000000000). 4. The input buffer length (arg3) must be >= 8 and the output buffer length (arg5) must be >= 8. 5. On the patched build the overflow test rejects the overflow with STATUS_INTEGER_OVERFLOW; the unpatched build lacks this handler.",
+      "primitive": "None. The overflow-checked multiplication updates cache/scratch memory accounting (cs:TotalBytes) rather than a pool allocation size; on the patched build any overflow is rejected with STATUS_INTEGER_OVERFLOW, and the unpatched build lacks this handler entirely. There is no undersized allocation and no pool-overflow write primitive.",
+      "evidence": "PATCHED (FbwfPortMessage @ 0x140003DB0) — 0xFB2F0001 handler:\n    0x140004DBB  cmp  r13d, 0FB2F0001h        // select scratch-space case\n    0x140004DB2  test r15, r15; jle default   // reject count <= 0\n    0x140004DFF  cmp  r15, 7FFFFFFFFFFFFFFFh   // MAX_VALUE special-case\n    0x140004E1F  mov  r8d, [rcx+14h]           // block_size from volume metadata\n    0x140004E45  mul  r15                      // count * block_size (128-bit)\n    0x140004E4F  test rdx, rdx; jnz overflow   // high half != 0 -> overflow\n    0x140004E5B  mov  ebx, 0C0000095h          // STATUS_INTEGER_OVERFLOW\n    0x140004F68  mov  cs:TotalBytes, r9        // product feeds cache accounting, not an allocation\n\nUNPATCHED (FbwfPortMessage @ 0x1C0009E00) — no 0xFB2F0001 case, no mul/imul, no ZwQuerySystemInformation call in this function",
+      "assembly": "; IOCTL dispatch bounds check — PRESENT IN BOTH BUILDS:\n; unpatched @ 0x1C000A746:            patched @ 0x140004733:\n;   lea eax, [r15+0x4e0fffe]           lea eax, [r13+0x4e0fffe]\n;   cmp eax, 0xb                       cmp eax, 0xb\n;   ja  default_case                  ja  default_case\n\n; PATCHED-ONLY 0xFB2F0001 scratch-space overflow check:\n0x140004DBB  cmp  r13d, 0FB2F0001h\n0x140004E1F  mov  r8d, [rcx+14h]   ; block_size\n0x140004E45  mul  r15              ; count * block_size (128-bit)\n0x140004E4F  test rdx, rdx         ; overflow if high half != 0\n0x140004E5B  mov  ebx, 0C0000095h  ; STATUS_INTEGER_OVERFLOW\n0x140004F68  mov  cs:TotalBytes, r9\n; The unpatched FbwfPortMessage has no such multiplication or ZwQuerySystemInformation call.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fbwf_patched!FbwfPortMessage",
+            "address": "0x140003DB0",
+            "why": "FbwfPortMessage entry (patched). rcx = arg1 (FltPort), rdx = arg2 (input buffer), r8d = arg3 (input buffer size), r9 = arg4 (output buffer). Check [rdx] for the IOCTL code (0xFB2F0001 to reach the scratch-space handler)."
+          },
+          {
+            "symbol": "fbwf_patched!FbwfPortMessage+mul",
+            "address": "0x140004E45",
+            "why": "The count * block_size multiplication. Inspect r15 (user count) and the block_size operand, then the overflow test at 0x140004E4F and STATUS_INTEGER_OVERFLOW at 0x140004E5B."
+          }
+        ],
+        "watch": [
+          "r8d (arg3) = input buffer size, must be >= 8 to pass initial check",
+          "[rdx] = IOCTL code (0xFB2F0001 to reach the scratch-space handler)",
+          "r15 = user-supplied count used in the multiplication",
+          "block_size from volume metadata ([rcx+14h]), typically 0x1000",
+          "Status after the multiplication — 0xC0000095 (STATUS_INTEGER_OVERFLOW) indicates the overflow guard fired"
+        ],
+        "key_offsets": [
+          "0x140003DB0: Function entry (FbwfPortMessage, patched)",
+          "0x140004733: IOCTL dispatch bounds check (present in both builds; unpatched @ 0x1C000A746)",
+          "0x140004DBB: 0xFB2F0001 case selector",
+          "0x140004E45: mul count * block_size; 0x140004E4F: overflow test; 0x140004E5B: STATUS_INTEGER_OVERFLOW",
+          "0x140004F68: mov cs:TotalBytes, r9 (product feeds cache accounting)"
+        ],
+        "trigger_setup": "1. Connect to the fbwf communication port via FilterConnectCommunicationPort. 2. Construct a message with the first bytes selecting IOCTL 0xFB2F0001 and a count field set to a large value that overflows when multiplied by the volume block_size. 3. Send via FilterSendMessage with input >= 8 bytes and output buffer >= 8 bytes.",
+        "expected_observation": "With an overflow-triggering count, the overflow test fails, the size is forced to -1, and the handler returns STATUS_INTEGER_OVERFLOW (0xC0000095). No allocation is sized from the product and no pool corruption occurs. The unpatched build does not reach this multiplication.",
+        "notes": "The fbwf driver is a minifilter registered via FltRegisterFilter; the communication port is created in DriverEntry via FltCreateCommunicationPort. The scratch-space multiplication handler exists only in the patched build."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "FbwfCheckAndTranslateVolumeName",
+      "entry_point": "FltCreateCommunicationPort user-mode message — volume-name arguments passed through FbwfPortMessage",
+      "call_chain": [
+        "FilterSendMessage -> FbwfPortMessage -> FbwfCheckAndTranslateVolumeName(volume_name, out, flag)",
+        "FbwfCheckAndTranslateVolumeName -> length computation (inlined loop unpatched / RtlInitUnicodeString patched) -> Length+2 <= 0x80 check"
+      ],
+      "vulnerability_class": "no security-relevant change (source-level refactor)",
+      "description": "The unpatched FbwfCheckAndTranslateVolumeName computes the volume-name length with an inlined wcslen-style loop (inc r9; cmp [rbx+r9*2],r15w; jnz @ 0x1C000EAB7). The patched build replaces that loop with a call to RtlInitUnicodeString (@ 0x14000DDB5). RtlInitUnicodeString computes Length by scanning for the terminating null wide character with no upper bound — it performs the same unbounded scan as the manual loop and adds no bounds checking. Both builds then apply the identical Length+2 <= 0x80 validation and take the same downstream path. There is no out-of-bounds read introduced or removed; this is a source-level refactor (inlined loop replaced by a library call) with no behavioral difference.",
+      "trigger_conditions": "Not applicable — the length computation behaves the same in both builds (an unbounded null-terminator scan followed by the same Length+2 <= 0x80 check).",
+      "primitive": "None. The two builds compute the string length the same way and apply the same subsequent validation.",
+      "evidence": "UNPATCHED (FbwfCheckAndTranslateVolumeName @ 0x1C000EA7C):\n    0x1C000EAAD  or   r9, -1\n    0x1C000EAB7  inc  r9; cmp [rbx+r9*2], r15w; jnz 0x1C000EAB7   // wcslen scan\n    0x1C000EAC1  add  r9d, r9d                                    // length in bytes\n    0x1C000EAD1  add  rsi, 2; cmp rsi, 0x80                       // Length+2 <= 0x80\n\nPATCHED (FbwfCheckAndTranslateVolumeName @ 0x14000DD6C):\n    0x14000DDB5  call RtlInitUnicodeString                        // same unbounded scan internally\n    0x14000DDC1  movzx edx, DestinationString.Length\n    0x14000DDCF  lea  rcx, [rdx+2]; cmp rcx, 0x80                 // identical Length+2 <= 0x80",
+      "assembly": "; UNPATCHED @ 0x1C000EAB7 — inlined wcslen loop:\nmov     r9d, 0FFFFFFFFh\ninc     r9\ncmp     [rbx+r9*2], r15w\njnz     short 0x1C000EAB7\nadd     r9d, r9d\ncmp     rsi, r12 ; 0x80\n\n; PATCHED @ 0x14000DDB5 — RtlInitUnicodeString (same unbounded scan internally):\ncall    __imp_RtlInitUnicodeString\nmovzx   edx, [rbp+DestinationString.Length]\nlea     rcx, [rdx+2]\ncmp     rcx, r12 ; 0x80",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fbwf_unpatched!FbwfCheckAndTranslateVolumeName",
+            "address": "0x1C000EA7C",
+            "why": "Entry. rcx = volume-name string. Compare the inlined loop at 0x1C000EAB7 with the patched RtlInitUnicodeString call at 0x14000DDB5 — both resolve the length the same way and both feed the same 0x80 check."
+          }
+        ],
+        "watch": [
+          "rcx = pointer to volume-name string",
+          "r9 (unpatched) / DestinationString.Length (patched) = resolved length",
+          "the Length+2 <= 0x80 check, identical in both builds"
+        ],
+        "key_offsets": [
+          "0x1C000EAB7: unpatched inlined wcslen loop",
+          "0x1C000EAD1: unpatched Length+2 <= 0x80 check",
+          "0x14000DDB5: patched RtlInitUnicodeString call",
+          "0x14000DDCF: patched Length+2 <= 0x80 check"
+        ],
+        "trigger_setup": "Not applicable — no security-relevant behavioral difference between the two builds.",
+        "expected_observation": "Identical behavior: an unbounded null-terminator scan resolves the length, then Length+2 is checked against 0x80 before the volume-name translation path.",
+        "notes": "RtlInitUnicodeString is not a bounds-checked API; it performs a plain wcslen. Replacing the inlined loop with it does not add or remove any out-of-bounds read exposure."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "FbwfWrite",
+      "entry_point": "IRP_MJ_WRITE — file write operations on volumes protected by the fbwf filter",
+      "call_chain": [
+        "NtWriteFile/WriteFile -> IO Manager -> FltMgr -> FbwfWrite (minifilter write callback) -> byte-offset sentinel handling -> RBTree block cache operations"
+      ],
+      "vulnerability_class": "no security-relevant change (structural refactor)",
+      "description": "Both builds handle the two sentinel byte-offset values identically. FILE_USE_FILE_POINTER_POSITION (QuadPart == -2) substitutes the file object CurrentByteOffset, and FILE_WRITE_TO_END_OF_FILE (HighPart == -1 && LowPart == -1) substitutes the end-of-file offset. Both builds then apply the same write-range wrap guard (length + offset < length -> STATUS_INVALID_PARAMETER) before using the offset in page-index calculations. The patched code flattens the nested HighPart==-1 test into a direct QuadPart==-2 comparison; this is a structural refactor with no new offset validation and no security-relevant behavioral difference.",
+      "trigger_conditions": "Not applicable — behavior is equivalent across both builds for the sentinel offsets (0xFFFFFFFFFFFFFFFE and 0xFFFFFFFFFFFFFFFF) and for the length+offset wrap guard.",
+      "primitive": "None. The offset handling and the wrap guard are the same in both builds.",
+      "evidence": "UNPATCHED (FbwfWrite @ 0x1C0005990, decompilation lines 3492-3513):\n    if (v26.HighPart == -1) {\n        if (v26.LowPart == -2) { /* use CurrentByteOffset */ }\n        if (QuadPart_high == -1 && CurrentByteOffset.LowPart == -1) { /* use EOF offset */ }\n    }\n    if ((__int64)&v18[v29.QuadPart] < (__int64)v18) Status = STATUS_INVALID_PARAMETER;  // wrap guard\n\nPATCHED (FbwfWrite @ 0x14000B480, decompilation lines 7898-7910):\n    if (FileOffset.QuadPart == -2) { /* use CurrentByteOffset */ }\n    if (HighPart == -1 && FileOffset.LowPart == -1) { /* use EOF offset */ }\n    if (v19 + CurrentByteOffset.QuadPart < v19) goto reject;  // same wrap guard",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fbwf_unpatched!FbwfWrite",
+            "address": "0x1C0005990",
+            "why": "FbwfWrite entry. The byte offset is read from FLT_CALLBACK_DATA. Observe that the -2 and -1 sentinel substitutions and the length+offset wrap guard are the same as the patched build at 0x14000B480."
+          }
+        ],
+        "watch": [
+          "FLT_CALLBACK_DATA->Iopb->Parameters.Write.ByteOffset — QuadPart == -2 (use position) or -1 (append)",
+          "The wrap guard: length + offset < length -> STATUS_INVALID_PARAMETER (present in both builds)"
+        ],
+        "key_offsets": [
+          "0x1C0005990: FbwfWrite function entry (unpatched)",
+          "0x14000B480: FbwfWrite function entry (patched)"
+        ],
+        "trigger_setup": "Not applicable — this function has no security-relevant behavioral difference between the two builds.",
+        "expected_observation": "Identical behavior across both builds: the sentinel offsets are substituted and the length+offset wrap guard rejects overflowing write ranges with STATUS_INVALID_PARAMETER.",
+        "notes": "The byte offset comes from the IRP/FLT_CALLBACK_DATA. The sentinel handling (FILE_USE_FILE_POINTER_POSITION, FILE_WRITE_TO_END_OF_FILE) and the wrap guard are present in both the unpatched and patched builds."
+      }
+    }
+  ],
+  "summary": "The fbwf.sys (File-Based Write Filter) minifilter driver patch's load-bearing security fix is in FbwfGenerateFileName: the unpatched build allocates a fixed 0xFFFE-byte pool buffer sized only for the volume name plus the current path, then appends a ':' separator and the alternate-data-stream name at the running offset with no bounds check, allowing a paged-pool out-of-bounds write (CWE-787, root cause CWE-131) when a long path fills the buffer. The patched build pre-measures volume_len + path_len + 2 + stream_len*2 and allocates exactly that with ExAllocatePool2. A second, sibling instance of the same bug and fix is in DirTreeNode::AddDirEntry: the unpatched build allocates the same fixed 0xFFFE paged-pool buffer, fills it with the current directory path, then appends the directory-entry name and the write-through-entry name at the running path offset with no bounds check (memmove @ 0x1C001152C and 0x1C001157A), allowing a paged-pool out-of-bounds write when the path fills the buffer; the patched build pre-measures path_len + 4 + max(entry_name_len, write_through_name_len) and allocates exactly that with ExAllocatePool2. It is reached from the FbwfPreCreate pre-create callback (CWE-787, root cause CWE-131). FbwfPortMessage adds a brand-new IOCTL 0xFB2F0001 handler with overflow-checked count * block_size arithmetic returning STATUS_INTEGER_OVERFLOW on overflow; the product only updates the TotalBytes cache-accounting counter, not a pool allocation, so this is defensive CWE-190 hardening (Low) with no exploit primitive, and the unpatched build lacks the handler. FbwfCheckAndTranslateVolumeName replaces an inlined wcslen loop with RtlInitUnicodeString, which performs the identical unbounded null-terminator scan with no added bounds checking and the same Length+2 <= 0x80 check afterward — a source-level refactor with no behavioral difference. FbwfNormalizeNameComponent converts a fixed 0xFFFE allocation to a dynamically sized max(len1,len2)+1 allocation plus allocation-API churn, with no new pre-copy bounds check — defensive hardening rather than a demonstrable overflow fix. FbwfWrite's byte-offset sentinel handling is a structural refactor with no security-relevant behavioral difference. The IOCTL dispatch bounds check is present in both builds."
+}

@@ -1,0 +1,129 @@
+{
+  "binaries": {
+    "title": "http.sys - TOCTOU Double-Fetch on User-Mode Trailer Data Pointers in UlGenerateTrailers (Arbitrary Kernel Memory Disclosure)",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9921,
+    "matched": 3587,
+    "changed": 3,
+    "identical": 3584,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlGenerateTrailers (sub_1C000CF94)",
+      "similarity": 0.7251,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Eliminated the `UxKirHttpReadingTrailersFromUm` KIR-flag-based dual code path. The unpatched version has two branches: Path A (flag==0) re-reads data pointers from the user-mode trailer array for the memmove copy operation (TOCTOU double-fetch); Path B (flag!=0) uses the already-captured and probed pointer stored in the Src stack slot. The patch removes the flag branch entirely and always uses the capture-once pattern.",
+        "Primary data pointer (offset +0x8 in trailer entry): unpatched Path A probes with the captured pointer but re-reads `*(r13 + (r12<<3) + 8)` at 0x1c000d14d for the copy call at 0x1c000d155. Patched version captures the pointer once at 0x1c0028aa8 into the Src stack slot and reuses it for both probe (0x1c0028ac1) and copy (0x1c0028afd).",
+        "Secondary data pointer (offset +0x10 in trailer entry): unpatched Path A probes with the captured pointer but re-reads `*(r13 + (rax<<3) + 0x10)` at 0x1c000d1f4 for the copy call at 0x1c000d1ff. Patched version captures once at 0x1c0028b34 and reuses for both probe (0x1c0028b4f) and copy (0x1c0028b7a)."
+      ],
+      "security_relevant": true,
+      "security_notes": "TOCTOU / double-fetch vulnerability (CWE-367). UlGenerateTrailers iterates over an array of HTTP trailer entries located in user-mode memory (pointer from arg2+0x10, count at arg2+0x8, probed at entry via UlProbeForRead / sub_1c001dfb4). Each trailer entry (24 bytes) contains name/value length fields and two data pointers at offsets +0x8 and +0x10. When the KIR feature flag UxKirHttpReadingTrailersFromUm==0, the code captures and probes each data pointer with UlProbeAnsiString (sub_1c0039318), then RE-READS the same pointer from the user-mode array before copying data via memmove (sub_1c0021640). A concurrent attacker thread can modify the pointer value between the probe and the re-read, substituting a kernel-mode address. Since the copy direction is memmove(output_buffer, data_pointer, length), this yields arbitrary kernel memory disclosure — kernel memory contents are copied into the HTTP response output buffer and returned to user mode. The patched version captures each pointer exactly once, uses that captured value for both the probe and the copy, and drops the KIR flag branch entirely, eliminating the race window.",
+      "assembly_diff": "UNPATCHED VULNERABLE PATH (flag UxKirHttpReadingTrailersFromUm == 0):\n; --- First fetch: capture pointer for probe ---\n0x1c000d0cf: mov rcx, [r13+rax*8+8]           ; capture data ptr into rcx\n0x1c000d0d4: mov [rsp+..Src], rcx             ; store to stack (Src)\n0x1c000d0e5: cmp cs:UxKirHttpReadingTrailersFromUm, 0 ; check KIR feature flag\n0x1c000d0ec: jz  0x1c000d125                    ; flag==0 => VULNERABLE Path A\n; --- Path A: probe with captured pointer ---\n0x1c000d125: call UlProbeAnsiString             ; probe captured ptr (rcx), length\n0x1c000d12a: cmp ebx, edi                       ; bounds check\n0x1c000d12c: jbe 0x1c000d13c\n0x1c000d13c: xor eax, eax\n0x1c000d142: mov rbx, r12\n0x1c000d145: mov r8, r12\n0x1c000d148: mov r12, [rsp+..var_58]           ; reload loop index*3\n0x1c000d14d: mov rdx, [r13+r12*8+8]            ; **SECOND FETCH: re-read ptr from user array**\n0x1c000d152: mov rcx, r14                       ; dest = output buffer\n0x1c000d155: call memmove                       ; memmove(out, RE-READ ptr, len) -- RACE WINDOW\n(Path B, flag != 0, reloads captured ptr: 0x1c000d111 mov rdx, [rsp+..Src]; 0x1c000d119 call memmove -- safe)\n\nPATCHED SAFE PATH (single capture, no KIR branch):\n0x1c0028aa8: mov rax, [r15+rax*8+8]           ; capture data ptr ONCE\n0x1c0028aad: mov [rsp+..Src], rax             ; store captured ptr (Src)\n0x1c0028abe: mov rcx, rax                       ; use captured ptr\n0x1c0028ac1: call UlProbeAnsiString             ; probe captured ptr\n0x1c0028ace: cmp r12d, esi                      ; bounds check\n0x1c0028ae1: xor eax, eax\n0x1c0028aed: mov rdx, [rsp+..Src]              ; **REUSE captured ptr (no re-read)**\n0x1c0028afd: call memmove                       ; memmove(out, captured ptr, len) -- SAFE"
+    },
+    {
+      "name": "UxStartEnvironmentModule (sub_1C01767B0)",
+      "similarity": 0.9516,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Initializes the driver's KIR (Known Issue Rollback) feature flags via wil_InitializeFeatureStaging followed by a sequence of Feature_*__private_IsEnabledDeviceUsage probes, each stored with setnz into a UxKir* global.",
+        "The patched build removes the Feature_2347446586__private_IsEnabledDeviceUsage call and its `setnz cs:UxKirHttpReadingTrailersFromUm` store, reducing the KIR flag set from 7 to 6. UxKirHttpReadingTrailersFromUm and the Feature_2347446586 reference are absent from the patched binary entirely.",
+        "This deletes the rollback gate that selected the trailer double-fetch path in UlGenerateTrailers, matching the finalized capture-once fix.",
+        "Remaining differences are recompilation artifacts: the WPP trace GUID block relocates and surrounding instructions reorder."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the KIR feature-staging initializer, not DriverEntry. The security-relevant change is the removal of the Feature_2347446586 -> UxKirHttpReadingTrailersFromUm gate, which is the rollback toggle for the trailer double-fetch in UlGenerateTrailers. With the flag removed, only the capture-once path remains reachable. This function itself introduces no vulnerability; the removal is consistent with finalizing the fix.",
+      "assembly_diff": "UNPATCHED (sets 7 KIR flags):\n0x1c0176836: call Feature_Servicing_ChunkExtHeaderFix... ; setnz UxKirChunkExtHeaderFix\n0x1c0176844: call Feature_2347446586...                 ; setnz UxKirHttpReadingTrailersFromUm  <-- present\n0x1c0176852: call Feature_1389320505...                 ; setnz UxKirWritingAndReadingUm\n... (UxKirHKERangeRequestH2StatusCode, UxKirMsQuic_2_5, UxKirQuicParseLengthCheck, UxKirWritingAndReadingVariant)\n\nPATCHED (sets 6 KIR flags; the Feature_2347446586/UxKirHttpReadingTrailersFromUm pair is gone):\n0x1c0176836: call Feature_Servicing_ChunkExtHeaderFix... ; setnz UxKirChunkExtHeaderFix\n0x1c0176844: call Feature_1389320505...                 ; setnz UxKirWritingAndReadingUm\n..."
+    },
+    {
+      "name": "sub_1C000D25B",
+      "similarity": 0.978,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Status-normalization tail block inside UlGenerateTrailers that maps STATUS_BUFFER_OVERFLOW (0x80000000) / 0x80000005 results to 0xC000000D. Changes are register/address shifts due to recompilation. The equivalent block is at 0x1c0028bd7 in the patched binary. No behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "UlGenerateTrailers (sub_1C000CF94)",
+      "entry_point": "HTTP Server API (Win32 HttpSendHttpResponse / HttpSendResponseEntityBody with response trailers via NtDeviceIoControlFile on \\Device\\Http\\ReqQueue)",
+      "call_chain": [
+        "User-mode HTTP Server API call (HttpSendHttpResponse or HttpSendResponseEntityBody with trailers) → NtDeviceIoControlFile on \\Device\\Http\\ReqQueue",
+        "HTTP.sys IOCTL dispatch → UlCaptureHttpResponse (sub_1C00DDA70) / sub_1c00ddff7 (response processing)",
+        "UlpPrepareHttpResponse (sub_1C00DE140) prepares the output buffer and calls UlGenerateTrailers(irp, trailer_struct, ...)",
+        "UlGenerateTrailers (sub_1C000CF94) (VULNERABLE — trailer array iteration with double-fetch)"
+      ],
+      "vulnerability_class": "TOCTOU Race Condition / Double-Fetch (CWE-367) leading to Arbitrary Kernel Memory Disclosure (CWE-200)",
+      "description": "UlGenerateTrailers (sub_1C000CF94) serializes an array of HTTP trailer entries (headers emitted after a chunked response body) into an output buffer. The trailer array (pointer at arg2+0x10, count at arg2+0x8) resides in user-mode memory and is probed via UlProbeForRead (sub_1c001dfb4) at function entry. Each 24-byte trailer entry contains two data pointers at offsets +0x8 (primary) and +0x10 (secondary). When the KIR feature flag UxKirHttpReadingTrailersFromUm == 0 (Path A), the function captures and probes each data pointer with UlProbeAnsiString (sub_1c0039318), then RE-READS the same pointer from the user-mode array before copying the pointed-to data via memmove (sub_1c0021640). A concurrent attacker thread running in the same process can modify the data pointer in the trailer array between the probe validation and the re-read, substituting a kernel-mode address. Since the copy direction is memmove(output_buffer, data_pointer, length), the kernel memory at the substituted address is copied into the HTTP response output buffer, which is then returned to user mode. This provides an arbitrary kernel memory read primitive. When the flag is non-zero (Path B) the function reloads the captured pointer from the Src stack slot for the copy and is not vulnerable.",
+      "trigger_conditions": "1. The KIR feature flag UxKirHttpReadingTrailersFromUm must be 0 (Path A is taken). This flag is set in UxStartEnvironmentModule from Feature_2347446586__private_IsEnabledDeviceUsage; 0 means the feature is rolled back / disabled.\n2. The attacker must send a response through the HTTP Server API with at least one trailer entry whose value length (uint16) is non-zero.\n3. The attacker needs a racing thread in the same process that continuously overwrites the data pointer field (trailer_entry+0x8) in the user-mode trailer array, alternating between the original valid user-mode pointer and a target kernel-mode address.\n4. The race window is between the UlProbeAnsiString call at 0x1c000d125 and the re-read at 0x1c000d14d — only a few instructions apart, but winnable with repeated attempts.\n5. The secondary data pointer (offset +0x10) has a similar race window at 0x1c000d1d1 -> 0x1c000d1f4.\n6. The trailer count (arg2+0x8) must be between 1 and 0x270F (9999) inclusive.",
+      "primitive": "Arbitrary kernel memory read (information disclosure). The attacker can read kernel memory contents by substituting a kernel-mode virtual address for the data pointer. The data at that address (up to the length field value) is copied into the output buffer and returned as part of the HTTP response trailer serialization. This can leak sensitive kernel data structures, token information, pool layout, and potentially defeat KASLR for further exploitation.",
+      "evidence": "UNPATCHED UlGenerateTrailers — Path A (UxKirHttpReadingTrailersFromUm == 0), showing the double-fetch:\n\n; Capture pointer for probe:\n0x1c000d0cf: mov rcx, [r13+rax*8+8]           ; FIRST FETCH, saved to Src\n0x1c000d0e5: cmp cs:UxKirHttpReadingTrailersFromUm, 0\n0x1c000d0ec: jz 0x1c000d125                   ; flag==0 => Path A (VULNERABLE)\n0x1c000d125: call UlProbeAnsiString           ; probe captured ptr\n0x1c000d14d: mov rdx, [r13+r12*8+8]           ; SECOND FETCH: re-read from user array\n0x1c000d155: call memmove                     ; memmove(out, re-read ptr, len)\n; ^^^ re-reads pointer from user array instead of the captured Src value\n\nPATCHED UlGenerateTrailers — single capture (safe, no KIR branch):\n0x1c0028aa8: mov rax, [r15+rax*8+8]           ; CAPTURE ONCE, saved to Src\n0x1c0028ac1: call UlProbeAnsiString           ; probe captured ptr\n0x1c0028aed: mov rdx, [rsp+..Src]             ; reuse captured ptr\n0x1c0028afd: call memmove                     ; memmove with SAME captured ptr (no re-read)",
+      "assembly": "Unpatched UlGenerateTrailers @ 0x1c000cf94 (key vulnerable blocks):\n\n; === Entry: capture arg2 (trailer struct) into rsi, arg5 (size) into rdi/edi ===\n0x1c000cfae: mov     r14, r9                     ; r14 = arg4 (output buffer)\n0x1c000cfb1: mov     rsi, rdx                    ; rsi = arg2 (trailer struct)\n0x1c000cfb8: mov     r15d, [rsp+arg_20]          ; r15d = arg5 (output size)\n0x1c000cfc0: mov     edi, r15d                   ; edi = remaining size\n\n; === Load trailer array pointer and count ===\n0x1c000d014: mov     r13, [rsi+0x10]             ; r13 = *(arg2+0x10) = trailer array ptr\n0x1c000d021: movzx   r12d, word [rsi+0x8]        ; r12 = *(arg2+0x8) = trailer count\n0x1c000d039: mov     eax, 0x2710                 ; max count check (10000)\n0x1c000d03e: cmp     r12w, ax\n0x1c000d042: jb      0x1c000d052                 ; count < 10000 => proceed\n\n; === UlProbeForRead on the entire trailer array ===\n0x1c000d06a: lea     rdx, [r12+r12*2]            ; count * 3\n0x1c000d06e: shl     rdx, 0x3                    ; * 8 = count * 24 (entry size)\n0x1c000d080: mov     rcx, r13                    ; array pointer\n0x1c000d083: call    UlProbeForRead              ; probe array, count*24, align=8\n\n; === Loop body: iterate trailer entries ===\n0x1c000d092: cmp     si, r12w                    ; loop index >= count?\n0x1c000d096: jnb     0x1c000d259                 ; done\n\n; === CRITICAL: First fetch of data pointer (for probe) ===\n0x1c000d0cf: mov     rcx, [r13+rax*8+0x8]        ; rcx = entry[idx].data_ptr (FIRST FETCH)\n0x1c000d0d4: mov     [rsp+..Src], rcx            ; save captured ptr to Src\n0x1c000d0e1: movzx   edx, r12w                   ; edx = value length\n0x1c000d0e5: cmp     cs:UxKirHttpReadingTrailersFromUm, 0 ; check KIR feature flag\n0x1c000d0ec: jz      0x1c000d125                 ; flag==0 => VULNERABLE PATH A\n\n; === VULNERABLE PATH A (flag == 0): double-fetch ===\n0x1c000d125: call    UlProbeAnsiString           ; probe captured ptr (rcx), len\n0x1c000d12a: cmp     ebx, edi                    ; length <= remaining?\n0x1c000d12c: jbe     0x1c000d13c                 ; yes => proceed to copy\n0x1c000d13c: xor     eax, eax\n0x1c000d142: mov     rbx, r12                    ; rbx = length\n0x1c000d145: mov     r8, r12                     ; r8 = length (memmove size)\n0x1c000d148: mov     r12, [rsp+..var_58]         ; r12 = saved loop index*3\n0x1c000d14d: mov     rdx, [r13+r12*8+0x8]        ; *** SECOND FETCH: re-read ptr from USER ARRAY ***\n0x1c000d152: mov     rcx, r14                    ; rcx = output buffer dest\n0x1c000d155: call    memmove                     ; memmove(out_buf, RE-READ ptr, len) -- TOCTOU!\n\n; (Path B, flag != 0: 0x1c000d111 mov rdx,[rsp+..Src]; 0x1c000d119 call memmove -- reuses captured ptr, safe)\n\n; === Secondary data pointer double-fetch (same pattern) ===\n0x1c000d1d1: call    UlProbeAnsiString           ; probe secondary ptr\n0x1c000d1d6: cmp     r12d, edi\n0x1c000d1d9: jbe     0x1c000d1e9\n0x1c000d1e9: xor     eax, eax\n0x1c000d1ef: mov     rax, [rsp+..var_58]         ; reload loop index*3\n0x1c000d1f4: mov     rdx, [r13+rax*8+0x10]       ; *** SECOND FETCH: re-read secondary ptr ***\n0x1c000d1f9: mov     r8, rbx\n0x1c000d1fc: mov     rcx, r14                    ; output buffer\n0x1c000d1ff: call    memmove                     ; memmove(out_buf, RE-READ ptr, len)\n\n; === Process entry and advance loop ===\n0x1c000d225: mov     rdx, [rsp+..Src]           ; start of this entry's copied data\n0x1c000d22a: mov     rcx, [rsp+arg_28]           ; parsed-header context\n0x1c000d232: call    UlSetParsedHeader           ; record parsed trailer\n0x1c000d243: inc     si                          ; next trailer\n0x1c000d254: jmp     0x1c000d092                 ; loop back",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlGenerateTrailers (sub_1C000CF94)",
+            "address": "0x1c000cf94",
+            "why": "Entry point of the vulnerable function. At entry: RCX=IRP, RDX=arg2 (trailer struct, user-mode ptr; [RDX+0x8]=count, [RDX+0x10]=array ptr), R8=arg3, R9=arg4 (output buffer). [RSP+arg_20]=arg5 (output buffer size). Inspect RDX to get the trailer struct pointer and verify the array at [RDX+0x10] is in user-mode address range."
+          },
+          {
+            "symbol": "UlProbeAnsiString call for primary data pointer (Path A)",
+            "address": "0x1c000d125",
+            "why": "This is the FIRST use of the data pointer — the UlProbeAnsiString validation. At this point RCX holds the captured data pointer (from [r13+rax*8+0x8]) and EDX holds the value length. This is the start of the TOCTOU race window. The SAME slot will be re-read at 0x1c000d14d for the memmove."
+          },
+          {
+            "symbol": "Double-fetch re-read of primary data pointer",
+            "address": "0x1c000d14d",
+            "why": "THIS IS THE VULNERABLE INSTRUCTION. mov rdx, [r13+r12*8+0x8] re-reads the data pointer from the user-mode trailer array instead of using the already-probed value saved in the Src stack slot. If a racing thread has modified [r13+r12*8+0x8] between 0x1c000d125 (probe) and here, RDX will hold the attacker-controlled (kernel) address. The subsequent call to memmove at 0x1c000d155 will copy from this address."
+          },
+          {
+            "symbol": "memmove (sub_1c0021640) with potentially swapped pointer",
+            "address": "0x1c000d155",
+            "why": "The copy operation: memmove(RCX=output_buf, RDX=data_ptr, R8=length). If the TOCTOU race was won, RDX is a kernel address and kernel data is copied to the output buffer. Set a breakpoint here and compare RDX against the value probed at 0x1c000d125 (saved in the Src stack slot) — if they differ, the race was won."
+          },
+          {
+            "symbol": "KIR flag check (path selector)",
+            "address": "0x1c000d0e5",
+            "why": "cmp cs:UxKirHttpReadingTrailersFromUm, 0 — this check determines whether the vulnerable Path A (JZ -> 0x1c000d125) or the safe Path B is taken. Verify this global is 0 to confirm you are on the vulnerable path. If non-zero, the safe capture-once path is taken and the TOCTOU does not exist."
+          }
+        ],
+        "watch": [
+          "R13 = trailer array base pointer (user-mode). Each entry is 24 bytes: [base + idx*24 + 0x0]=name_len(u16), [base + idx*24 + 0x2]=value_len(u16), [base + idx*24 + 0x8]=data_ptr(u64), [base + idx*24 + 0x10]=secondary_data_ptr(u64)",
+          "EDX/EBX at 0x1c000d125 = value length (uint16 from entry offset 0x0). This controls how many bytes memmove copies from the (potentially swapped) pointer.",
+          "RCX at 0x1c000d125 = captured data pointer (probed value). Compare against RDX at 0x1c000d14d to detect if the race was won.",
+          "RDX at 0x1c000d14d = re-read data pointer. If this differs from RCX at 0x1c000d125, the attacker's racing thread modified the pointer.",
+          "cs:UxKirHttpReadingTrailersFromUm = KIR feature flag. Must be 0 for vulnerable Path A.",
+          "EDI = remaining output buffer size. Decremented by each trailer's value length. Bounds check at 0x1c000d12a (cmp ebx, edi) limits total copy but does not prevent the pointer swap."
+        ],
+        "key_offsets": [
+          "0x1c000cf94: function entry (push regs, capture args)",
+          "0x1c000d014: mov r13, [rsi+0x10] — load trailer array pointer from user struct",
+          "0x1c000d083: call UlProbeForRead (sub_1c001dfb4) — probe the entire trailer array (count*24 bytes)",
+          "0x1c000d0cf: FIRST FETCH of data pointer — mov rcx, [r13+rax*8+0x8]",
+          "0x1c000d0e5: cmp cs:UxKirHttpReadingTrailersFromUm, 0 — KIR flag check (0=vulnerable)",
+          "0x1c000d125: call UlProbeAnsiString (sub_1c0039318) — probe captured data pointer",
+          "0x1c000d14d: SECOND FETCH (TOCTOU) — mov rdx, [r13+r12*8+0x8] re-reads from user array",
+          "0x1c000d155: call memmove (sub_1c0021640) — copy with re-read (potentially swapped) pointer",
+          "0x1c000d1f4: SECOND FETCH for secondary data — mov rdx, [r13+rax*8+0x10]",
+          "0x1c000d1ff: call memmove (sub_1c0021640) — copy with re-read secondary pointer"
+        ],
+        "trigger_setup": "1. Use the HTTP Server API (httpapi.dll): call HttpInitialize, HttpCreateHttpHandle, HttpCreateRequestQueue, HttpAddUrl to set up an HTTP server.\n2. Send a chunked response and supply response trailers (e.g., HttpSendResponseEntityBody with an HTTP_RESPONSE_V2 trailers array, or the trailers field of the response structure) containing at least one entry.\n3. Each trailer entry maps to the internal 24-byte structure processed by UlGenerateTrailers; the value pointers are the data pointers at entry offsets +0x8 and +0x10.\n4. Start a racing thread that continuously overwrites the value pointer field, alternating between the original user-mode pointer and a target kernel-mode address (e.g., a known pool address or token structure).\n5. Send the response in a loop from the main thread while the racing thread modifies the pointer.\n6. When the TOCTOU race is won, the kernel memory at the substituted address will be copied into the response output buffer and returned to the caller.\n7. To reach the vulnerable path, verify UxKirHttpReadingTrailersFromUm == 0 for the target build (this flag is set in UxStartEnvironmentModule from Feature_2347446586__private_IsEnabledDeviceUsage).",
+        "expected_observation": "When the TOCTOU race is won: at the memmove breakpoint (0x1c000d155), RDX will hold a kernel-mode address (high bits set, e.g., 0xFFFF...) instead of the original user-mode address that was probed at 0x1c000d125. The memmove will copy kernel memory into the output buffer. After the function returns, inspect the output buffer (arg4 from the caller) for kernel data. If the substituted address is unmapped or invalid, the system will BSOD with a bugcheck (typically PAGE_FAULT_IN_NONPAGED_AREA, 0x50) because the probe exception was already passed and the re-read pointer is used without re-validation. With a valid kernel address, the copy succeeds silently, leaking kernel data into the HTTP response.",
+        "notes": "The trailer entry structure (24 bytes = 0x18) is 3 qwords: [0x0]=lengths (packed u16 name_len + u16 value_len), [0x8]=primary data pointer, [0x10]=secondary data pointer. The loop index is multiplied by 3 and shifted left by 3 (x8) to get the byte offset. The count is limited to <10000 (0x2710) and the array is probed via UlProbeForRead at entry. The TOCTOU only affects the individual data pointers within entries, not the array itself. The race window is narrow (~6 instructions between probe and re-read) but winnable with a tight spin-loop racing thread. The flag UxKirHttpReadingTrailersFromUm is a Known Issue Rollback (KIR) gate set in UxStartEnvironmentModule from Feature_2347446586__private_IsEnabledDeviceUsage; when the feature is rolled back (flag 0) the vulnerable Path A is active. The patched build removes this flag entirely and hardcodes the capture-once path."
+      }
+    }
+  ],
+  "summary": "The patch fixes a TOCTOU double-fetch vulnerability (CWE-367) in http.sys's trailer serialization function UlGenerateTrailers (sub_1C000CF94). When the Known Issue Rollback (KIR) feature flag UxKirHttpReadingTrailersFromUm is zero, the unpatched code probes each trailer entry's data pointer via UlProbeAnsiString but then RE-READS the same pointer from the user-mode trailer array before copying — allowing a concurrent thread to swap the pointer to a kernel address between the probe and the copy. This yields arbitrary kernel memory disclosure (kernel data is memmove'd into the HTTP response output buffer). The patched version removes the KIR flag branch and always captures each pointer exactly once, using the captured value for both the UlProbeAnsiString validation and the memmove. Correspondingly, UxStartEnvironmentModule in the patched build no longer initializes UxKirHttpReadingTrailersFromUm (the Feature_2347446586 gate is removed), finalizing the fix. A PoC would use the HTTP Server API to send chunked responses with trailers while a racing thread modifies the trailer data pointer fields to substitute kernel addresses."
+}

@@ -1,0 +1,107 @@
+{
+  "binaries": {
+    "title": "ksecdd.sys - No security-relevant change: staged, feature-gated address-space check added to protected-process free paths (SecFreeForKsecCaller / SecFreeCommon)",
+    "id_unpatched": "ksecdd_unpatched.sys",
+    "id_patched": "ksecdd_patched.sys",
+    "overall_similarity": 0.9887,
+    "matched": 380,
+    "changed": 7,
+    "identical": 373,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SecFreeForKsecCaller @ 0x1C00017F0 (internal free routine reached via the SSPI FreeContextBuffer path)",
+      "similarity": 0.8619,
+      "change_type": "behavioral_feature_gated",
+      "key_changes": [
+        "PATCHED: Added a call to Feature_4099632442__private_IsEnabledDeviceUsage (0x1C0006690, a WIL velocity feature-state check) in the protected-process branch, before the KsecRemoveValidVm call.",
+        "PATCHED: When that feature is enabled AND BaseAddress > *MmHighestUserAddress, the free is routed to KsecRemoveValidAddressCommon (0x1C0001920) instead of KsecRemoveValidVm (0x1C0003EB4). When the feature is disabled, the pre-existing KsecRemoveValidVm path is retained unchanged.",
+        "UNPATCHED: The protected-process branch calls KsecRemoveValidVm(process, BaseAddress); it frees BaseAddress via ExFreePoolWithTag (kernel range) or ZwFreeVirtualMemory (user range) only when KsecRemoveValidVm returns a non-null tracked handle.",
+        "KsecRemoveValidAddressCommon relocates from 0x1C0001910 (unpatched) to 0x1C0001920 (patched)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The added check is gated behind the WIL velocity feature Feature_4099632442__private_IsEnabledDeviceUsage with the old path retained when the feature is off (staged rollout). In both builds the protected-process free is reached only when KsecRemoveValidVm returns a non-null tracked handle, so there is no attacker-controlled arbitrary ExFreePoolWithTag sink to fix. The change narrows which validation table is consulted for kernel-range addresses; it is defense-in-depth, not a fix for a demonstrable reachable primitive.",
+      "assembly_diff": "UNPATCHED protected-process branch at 0x1C0001851-0x1C0001876:\n0x1C0001851  mov     rdx, [rsp+28h+BaseAddress]\n0x1C0001856  mov     rcx, rbx                 ; process\n0x1C0001859  call    KsecRemoveValidVm\n0x1C000185E  test    rax, rax\n0x1C0001861  jz      loc_1C00018F1            ; null handle -> no free\n0x1C0001867  mov     rcx, rax\n0x1C000186A  call    cs:__imp_ZwClose\n0x1C0001876  jmp     short loc_1C0001888      ; -> free dispatcher\n\nPATCHED added sequence at 0x1C0001851-0x1C000186B:\n0x1C0001851  call    Feature_4099632442__private_IsEnabledDeviceUsage\n0x1C0001856  mov     rcx, [rsp+28h+BaseAddress]\n0x1C000185B  test    eax, eax\n0x1C000185D  jz      short loc_1C000186B      ; feature off -> old path\n0x1C000185F  mov     rax, cs:__imp_MmHighestUserAddress\n0x1C0001866  cmp     rcx, [rax]\n0x1C0001869  ja      short loc_1C0001895      ; kernel addr -> KsecRemoveValidAddressCommon\n0x1C000186B  mov     rdx, rcx                 ; old path resumes: KsecRemoveValidVm"
+    },
+    {
+      "name": "SecFreeCommon @ 0x1C00051FC (internal free routine reached via the KsecIoctlFreePool handler)",
+      "similarity": 0.8678,
+      "change_type": "behavioral_feature_gated",
+      "key_changes": [
+        "PATCHED: Identical addition to SecFreeForKsecCaller — a Feature_4099632442__private_IsEnabledDeviceUsage() gate plus a 'BaseAddress > *MmHighestUserAddress' comparison at 0x1C0005289-0x1C00052A0 that routes kernel-range protected-process frees to KsecRemoveValidAddressCommon.",
+        "UNPATCHED: Protected-process branch frees BaseAddress via ExFreePoolWithTag only when KsecRemoveValidVm returns a non-null tracked handle.",
+        "This variant is reached from KsecIoctlFreePool (0x1C000EA08) via the KsecFastIoDeviceControl dispatch (0x1C00040D0)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same feature-gated addition as SecFreeForKsecCaller, on the IOCTL-reachable free variant. Same reasoning: the free is tracking-table-gated in both builds and the addition is behind a WIL velocity feature with the old path retained. No demonstrable exploitable primitive.",
+      "assembly_diff": "PATCHED added sequence at 0x1C0005289:\n0x1C0005289  call    Feature_4099632442__private_IsEnabledDeviceUsage\n0x1C000528E  mov     rcx, [rbp+BaseAddress]\n0x1C0005292  test    eax, eax\n0x1C0005294  jz      short <old_path>\n0x1C0005296  mov     rax, cs:__imp_MmHighestUserAddress\n0x1C000529D  cmp     rcx, [rax]\n0x1C00052A0  ja      short <KsecRemoveValidAddressCommon_path>"
+    },
+    {
+      "name": "Feature_4099632442__private_IsEnabledDeviceUsage @ 0x1C0006690 (+ Feature_4099632442__private_IsEnabledFallback)",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "New WIL velocity feature-state check for feature id 4099632442: reads Feature_4099632442__private_featureState, tests bit 0x10, otherwise calls Feature_4099632442__private_IsEnabledFallback -> wil_details_IsEnabledFallback."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the WIL feature gate the two free routines call. It is a velocity/staging flag, not a VBS/HVCI runtime flag.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath @ 0x1C0006C90 (unpatched 0x1C0006C58)",
+      "similarity": 0.8176,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-staging plumbing: feature-state fast-path enable sourced from a per-instance state word instead of a global; adds handling for the new feature id."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_IsEnabledFallback @ 0x1C0006E68 (unpatched 0x1C0006E20)",
+      "similarity": 0.939,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-staging plumbing: threads the per-instance context through to the state-cache and reporting helpers."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService @ 0x1C0006A20 (unpatched 0x1C00069EC)",
+      "similarity": 0.9599,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-usage reporting: reads the reporting tag and event id from the per-instance context instead of globals."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect @ 0x1C0006AA8 (unpatched 0x1C0006A68)",
+      "similarity": 0.9699,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-usage reporting helper: tag/provider read from the per-instance context instead of a global."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_4099632442__private_IsEnabledDeviceUsage @ 0x1C0006690",
+      "Feature_4099632442__private_IsEnabledFallback @ 0x1C00066C8",
+      "KSecAllocateContextBuffer @ 0x1C001D860 (thunk tail-calling SecAllocateForcePool; not security relevant)"
+    ]
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change was delivered. The only behavioral delta between the two builds is an addition to the protected-process branch of the two internal free routines SecFreeForKsecCaller (0x1C00017F0, reached via the SSPI FreeContextBuffer path) and SecFreeCommon (0x1C00051FC, reached via KsecIoctlFreePool at 0x1C000EA08). The patched build inserts a check, gated on the WIL velocity feature Feature_4099632442__private_IsEnabledDeviceUsage (0x1C0006690), that routes protected-process frees of kernel-range addresses (BaseAddress > *MmHighestUserAddress) through KsecRemoveValidAddressCommon instead of KsecRemoveValidVm. When the feature is disabled the pre-existing path is retained unchanged, so shipping systems with the feature off behave identically. In both builds the protected-process free is reached only when KsecRemoveValidVm returns a non-null tracked handle; the IOCTL insert (KsecIoctlInsertProtectedProcessAddress, 0x1C0002CBC) records entries with a null handle, and the other insert sites record KSec's own allocations, so no caller can both choose an arbitrary kernel address and obtain a non-null handle for it. There is therefore no demonstrable attacker-controlled arbitrary ExFreePoolWithTag primitive. The remaining changed functions are WIL feature-staging plumbing (Feature_4099632442 gate and the wil_details_* reporting/state-cache helpers) plus a new allocate thunk KSecAllocateContextBuffer; all other raw-diff differences are relocation only. An independent both-directions diff confirmed the fast-I/O dispatch KsecFastIoDeviceControl (0x1C00040D0) and every KsecIoctl* handler are byte-identical apart from jump-table relocation; no ProbeForRead/double-fetch or bounds-check change was added or removed (ProbeForRead appears zero times in both builds). Note: an earlier characterization of 0x1C0006690 as a VBS/HVCI runtime flag (data_1C0017568 & 0x10) and of KsecRemoveValidVm as a handle-table lookup, together with an arbitrary-kernel-pool-free exploit chain, was not supported by the binaries and has been removed."
+}

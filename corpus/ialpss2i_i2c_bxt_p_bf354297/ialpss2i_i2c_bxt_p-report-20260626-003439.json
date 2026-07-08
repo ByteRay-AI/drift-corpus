@@ -1,0 +1,225 @@
+{
+  "binaries": {
+    "id_unpatched": "ialpss2i_i2c_bxt_p_unpatched.sys",
+    "id_patched": "ialpss2i_i2c_bxt_p_patched.sys",
+    "overall_similarity": 0.9472,
+    "matched": 170,
+    "changed": 99,
+    "identical": 71,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "verdict": "no_security_relevant_change",
+  "verdict_summary": "Routine recompile of the Intel LPSS2 DesignWare I2C driver. All 10 WPP trace-provider GUID symbols were regenerated, accounting for the large number of changed functions. The two concrete instruction-level deltas (in ControllerDoReadPrepare and ControllerInitialize) are branchless-vs-branchy compiler codegen of logic that is bit-for-bit equivalent between builds. No behavioral or security change.",
+  "changed_functions": [
+    {
+      "name": "CheckSupportedHardware",
+      "similarity": 0.7502,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler restructured switch statement tree", "WPP trace GUID regeneration", "No behavioral changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerConfigureForTransfer",
+      "similarity": 0.909,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Ordinary compiler codegen churn (register allocation, branch layout)"],
+      "security_relevant": false,
+      "security_notes": "Large function; the diff is consistent with module-wide WPP GUID rotation and recompilation. No concrete behavioral instruction-level change tying to a security fix was found.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerInitialize",
+      "similarity": 0.8664,
+      "change_type": "cosmetic",
+      "key_changes": ["RX FIFO threshold (IC_RX_TL, offset 0x38) selection rewritten from branchy cmp/jz/xor/mov to branchless dec/neg/sbb/and", "Same value written for every input (0 when [dev+0xF0]==1, else 0xF)", "WPP trace GUID regeneration"],
+      "security_relevant": false,
+      "security_notes": "Unpatched (0x14000D5EC) selects IC_RX_TL via cmp dword [dev+0xF0],1 -> writes 0 if equal else 0xF. Patched (0x14000D738) computes the same result branchlessly (dec/neg/sbb/and 0Fh). The threshold is NOT hard-coded to 0 in the patched build; the value written is identical to the unpatched build for every input. Pure codegen difference.",
+      "assembly_diff": "UNPATCHED 0x14000D6C5: mov rcx,[rsi+38h]; add rcx,38h; cmp dword [rsi+0F0h],1; jnz L; xor edx,edx; jmp W; L: mov edx,0Fh; W: call Write.\nPATCHED 0x14000D811: mov eax,[rsi+0F0h]; mov rcx,[rsi+38h]; dec eax; neg eax; sbb edx,edx; add rcx,38h; and edx,0Fh; call Write. Both: 0 if [dev+0xF0]==1 else 0xF."
+    },
+    {
+      "name": "ControllerProcessInterrupts",
+      "similarity": 0.9191,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Largest function in the driver. Diff consistent with recompilation and module-wide WPP GUID rotation. No concrete security-relevant behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerDoReadPrepare",
+      "similarity": 0.9789,
+      "change_type": "cosmetic",
+      "key_changes": ["I2C read command selection (IC_DATA_CMD, offset 0x10) rewritten from cmovz to branchless neg/sbb/and/add", "Same command word written for every input (0x500 READ|RESTART on first byte, 0x100 READ otherwise, plus 0x200 STOP on last byte)", "WPP trace GUID regeneration"],
+      "security_relevant": false,
+      "security_notes": "Unpatched (0x14000C940) composes the read command with test rdi,rdi / mov esi,100h / mov eax,500h / cmovz esi,eax, then bts esi,9 to add STOP on the last byte. Patched (0x14000CAB4) computes the same value with neg/sbb/and 0FFFFFC00h/add 500h, followed by the identical bts esi,9 STOP step. There is no missing-STOP path in either build: STOP (0x200) is asserted on the last byte identically. Register bit meanings are confirmed by the driver's own trace strings (0x200='| STOP', 0x400='| RESTART'). Pure codegen difference; the earlier missing-STOP / DMA-overrun claim was incorrect.",
+      "assembly_diff": "UNPATCHED 0x14000CAF1: test rdi,rdi; mov esi,100h; mov eax,500h; cmovz esi,eax; cmp byte [r13+78h],0; jz L; mov rax,r12; sub rax,rdi; cmp rax,1; jnz L; bts esi,9; L:... mov rcx,[r14+30h]; mov edx,esi; add rcx,10h; call Write.\nPATCHED 0x14000CC57: mov rax,rdi; neg rax; sbb ecx,ecx; and ecx,0FFFFFC00h; add ecx,500h; mov esi,ecx; cmp byte [r13+78h],0; jz L; mov rax,r12; sub rax,rdi; cmp rax,1; jnz L; bts esi,9. Same command word both builds."
+    },
+    {
+      "name": "DmaInitSw",
+      "similarity": 0.9237,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Diff consistent with recompilation. No concrete security-relevant behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FillDmaTxLliBuffer",
+      "similarity": 0.9337,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Diff consistent with recompilation. No concrete security-relevant behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FillDmaRxLliBuffer",
+      "similarity": 0.9707,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DmaTxComplete",
+      "similarity": 0.9401,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Diff consistent with recompilation. No concrete security-relevant behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DmaRxComplete",
+      "similarity": 0.9485,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Diff consistent with recompilation. No concrete security-relevant behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetCurrentDmaTransferLeft",
+      "similarity": 0.8411,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming (r14->r15 etc.)", "No behavioral changes"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnInterruptIsr",
+      "similarity": 0.9632,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerDoWrite",
+      "similarity": 0.9789,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ControllerDoRead",
+      "similarity": 0.9906,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PbcRequestDoTransfer",
+      "similarity": 0.9547,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OverrideDefaultsForHardware",
+      "similarity": 0.9737,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler restructuring of conditionals"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetHardwareVersion",
+      "similarity": 0.934,
+      "change_type": "cosmetic",
+      "key_changes": ["Register renaming", "WPP trace GUID regeneration"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EvtProgramDmaRx",
+      "similarity": 0.9257,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace caching restructure", "Register renaming"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnSequence",
+      "similarity": 0.9558,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "SpbCx sequence callback (attacker-reachable entry point). Diff consistent with recompilation; no concrete parameter-validation or behavioral change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "OnCancel",
+      "similarity": 0.9559,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP trace GUID regeneration", "Compiler codegen churn"],
+      "security_relevant": false,
+      "security_notes": "Request cancellation handler. Diff consistent with recompilation; no concrete race/lifetime behavioral change identified.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ControllerDoReadPrepare",
+      "status": "downgraded",
+      "prior_claim": "Missing I2C STOP condition allowing DMA RX kernel pool overflow (medium).",
+      "resolution": "Not a vulnerability and not a change. Both builds issue the same per-byte read commands to IC_DATA_CMD (controller_base + 0x10): 0x500 (READ|RESTART) on the first byte, 0x100 (READ) on subsequent bytes, and 0x200 (STOP) on the last byte when [req+0x78] is set. The unpatched build selects the command with cmovz; the patched build with branchless neg/sbb/and/add. The STOP-on-last-byte step (bts esi,9) is present and identical in both builds. The prior report also swapped the DesignWare bit meanings: the driver's own trace strings show 0x200=STOP and 0x400=RESTART (not 0x400=STOP). There is no missing-STOP path and no reachable overrun.",
+      "unpatched_address": "0x14000C940",
+      "patched_address": "0x14000CAB4",
+      "vulnerability_class": "none (compiler codegen refactor)",
+      "cwe": null
+    },
+    {
+      "severity": "none",
+      "function": "ControllerInitialize",
+      "status": "downgraded",
+      "prior_claim": "RX FIFO threshold changed from conditional 0xF/0 to unconditional 0 (medium).",
+      "resolution": "Not a change in written value. Both builds write 0 to IC_RX_TL (controller_base + 0x38) when [dev+0xF0]==1 and 0xF otherwise. The unpatched build expresses the select with cmp/jz/xor/mov; the patched build with branchless dec/neg/sbb/and. The threshold is NOT hard-coded to 0 in the patched build. Pure codegen difference with no behavioral effect.",
+      "unpatched_address": "0x14000D5EC",
+      "patched_address": "0x14000D738",
+      "vulnerability_class": "none (compiler codegen refactor)",
+      "cwe": null
+    }
+  ],
+  "summary": "Diff between ialpss2i_i2c_bxt_p_unpatched.sys and ialpss2i_i2c_bxt_p_patched.sys is a routine recompile. All 10 WPP trace-provider GUID symbols were regenerated, which accounts for the 99 changed functions. The two concrete non-trace deltas both reduce to the compiler emitting a branchless computation in place of a branch: (1) ControllerDoReadPrepare (unpatched 0x14000C940 / patched 0x14000CAB4) composes the IC_DATA_CMD read command word identically in both builds (0x500 first byte, 0x100 subsequent, 0x200 STOP on the last byte); the earlier missing-STOP / DMA-overrun claim was incorrect and also swapped the STOP (0x200) and RESTART (0x400) bit meanings. (2) ControllerInitialize (unpatched 0x14000D5EC / patched 0x14000D738) writes the same IC_RX_TL threshold in both builds (0 if [dev+0xF0]==1 else 0xF); it is not hard-coded to 0. No function was added or removed. No security-relevant change is present."
+}

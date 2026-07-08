@@ -1,0 +1,87 @@
+{
+  "binaries": {
+    "id_unpatched": "cdrom_unpatched.sys",
+    "id_patched": "cdrom_patched.sys",
+    "overall_similarity": 0.9928,
+    "matched": 317,
+    "changed": 1,
+    "identical": 316,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "RequestHandleVolumeOnline @ 0x1C0009328",
+      "similarity": 0.9515,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added save of the request IRP's AssociatedIrp.SystemBuffer (IRP+0x18) into local rbx before it is overwritten with device_extension+0x68",
+        "Added restore of IRP->AssociatedIrp.SystemBuffer = saved value after the synchronous RequestSend forward returns",
+        "Unpatched build overwrites IRP+0x18 with device_extension+0x68 to supply the buffer for the synchronously forwarded request but never restores the original pointer before returning",
+        "Register allocation changed: rdi now holds the IRP, rsi holds a1 (device extension), rbp holds a2 (request), rbx holds the saved SystemBuffer value"
+      ],
+      "security_relevant": true,
+      "security_notes": "RequestHandleVolumeOnline obtains the WDM IRP of the current request via WdfRequestWdmGetIrp (WDF function-table slot +0x8E8). It overwrites IRP+0x18 (AssociatedIrp.SystemBuffer) with device_extension+0x68 to provide the data buffer for the request it then forwards synchronously to the volume I/O target via RequestSend (option flag 2 = WDF_REQUEST_SEND_OPTION_SYNCHRONOUS). The unpatched build returns without restoring AssociatedIrp.SystemBuffer, so the IRP still points into the device extension when the METHOD_BUFFERED request completes. The I/O manager's buffered-completion path (deallocation and any copy-back) then acts on device-extension memory instead of the framework-owned system buffer, which can free a pointer that is not the original allocation (pool corruption / bugcheck) and expose adjacent device-extension bytes on copy-back. This is a per-request incomplete-cleanup defect, not a modification of a shared device-lifetime object. The patch adds a save (rbx = *(IRP+0x18) at 0x1C00093E7) before the overwrite and a restore (*(IRP+0x18) = rbx at 0x1C000941C) after the send.",
+      "assembly_diff": "UNPATCHED (key section 0x1C00093B7-0x1C000940C):\nmov     rax, [rax+8E8h]                ; WdfRequestWdmGetIrp slot\ncall    cs:__guard_dispatch_icall_fptr ; rax = request IRP\nand     [rsp+38h+var_18], 0\nlea     rcx, [rbx+68h]                 ; device_extension + 0x68\nmov     r9d, 2                         ; WDF_REQUEST_SEND_OPTION_SYNCHRONOUS\nmov     rdx, [rax+0B8h]                ; IRP current stack location\nmov     [rax+18h], rcx                 ; overwrite IRP->AssociatedIrp.SystemBuffer, NO SAVE\nmov     rcx, rbx\nand     dword ptr [rdx-40h], 0\nmov     dword ptr [rdx-38h], 4\nmov     dword ptr [rdx-30h], 7C220h\nmov     rdx, rdi\nmov     r8, [rbx+18h]                  ; device I/O target (devext+0x18)\ncall    RequestSend\nmov     rbx, [rsp+38h+arg_0]           ; restores callee-saved rbx only\nxor     eax, eax\nadd     rsp, 30h\npop     rdi\nretn                                   ; SystemBuffer NOT restored\n\nPATCHED (same section 0x1C00093C0-0x1C000942A):\nmov     rax, [rax+8E8h]                ; WdfRequestWdmGetIrp slot\ncall    cs:__guard_dispatch_icall_fptr ; rax = request IRP\nand     [rsp+38h+var_18], 0\nlea     rcx, [rsi+68h]                 ; device_extension + 0x68\nmov     r9d, 2\nmov     rdi, rax                       ; rdi = IRP\nmov     rdx, [rax+0B8h]\nmov     rbx, [rax+18h]                 ; SAVE original AssociatedIrp.SystemBuffer\nmov     [rax+18h], rcx                 ; overwrite (temporary)\nmov     rcx, rsi\nand     dword ptr [rdx-40h], 0\nmov     dword ptr [rdx-38h], 4\nmov     dword ptr [rdx-30h], 7C220h\nmov     rdx, rbp\nmov     r8, [rsi+18h]\ncall    RequestSend\nmov     rbp, [rsp+38h+arg_8]\nxor     eax, eax\nmov     rsi, [rsp+38h+arg_18]\nmov     [rdi+18h], rbx                 ; RESTORE original AssociatedIrp.SystemBuffer\nmov     rbx, [rsp+38h+arg_0]\nadd     rsp, 30h\npop     rdi\nretn"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "RequestHandleVolumeOnline @ 0x1C0009328",
+      "entry_point": "IOCTL codes 0x56C008 (IOCTL_VOLUME_ONLINE) and 0x56C064 (IOCTL_VOLUME_POST_ONLINE) dispatched via DeviceIoControl to \\\\Device\\CdRom%d",
+      "call_chain": [
+        "DeviceIoControl(\\\\.\\CdRom0, IOCTL 0x56C008 or 0x56C064, ...) [user mode]",
+        "IoctlWorkItemRoutine @ 0x1C00189F0 (serialized IOCTL work item)",
+        "RequestProcessSerializedIoctl @ 0x1C0018BD4 (switch on IOCTL code)",
+        "RequestHandleVolumeOnline @ 0x1C0009328 (handler for 0x56C008 / 0x56C064)",
+        "RequestSend @ 0x1C0006EA4 (synchronous forward to the volume I/O target)"
+      ],
+      "vulnerability_class": "Incomplete cleanup: temporarily overwritten IRP pointer field not restored (CWE-459: Incomplete Cleanup)",
+      "description": "In the unpatched cdrom.sys, the IOCTL handler RequestHandleVolumeOnline (handling 0x56C008 and 0x56C064) obtains the WDM IRP of the current request via WdfRequestWdmGetIrp (WDF function-table slot +0x8E8). It reads the IRP current stack location from IRP+0xB8, then overwrites IRP+0x18 (AssociatedIrp.SystemBuffer) with device_extension+0x68 to supply the buffer for the request it forwards synchronously (RequestSend option flag 2 = WDF_REQUEST_SEND_OPTION_SYNCHRONOUS). After the send returns the function returns 0 without restoring AssociatedIrp.SystemBuffer. The IRP therefore holds device_extension+0x68 in SystemBuffer when the METHOD_BUFFERED request completes, so the I/O manager's buffered-completion handling (deallocation and any copy-back) operates on device-extension memory instead of the framework-owned system buffer. Plausible outcomes are a free of a pointer that is not the original allocation (pool corruption / bugcheck) and limited exposure of adjacent device-extension bytes on copy-back. The written value (device_extension+0x68) is fixed by driver layout and not attacker-controlled, so this is not a controllable write-what-where. The patched build adds a save (rbx = *(IRP+0x18) at 0x1C00093E7) before the overwrite and a restore (*(IRP+0x18) = rbx at 0x1C000941C) after the send.",
+      "trigger_conditions": "1. Open a handle to a CD-ROM device (\\\\.\\CdRom0) with access sufficient for the volume IOCTLs (FILE_READ_ACCESS | FILE_WRITE_ACCESS). 2. Send DeviceIoControl with IOCTL code 0x56C008 or 0x56C064. 3. The request is serialized onto IoctlWorkItemRoutine, routed by RequestProcessSerializedIoctl, and handled by RequestHandleVolumeOnline, which overwrites the request IRP's AssociatedIrp.SystemBuffer and forwards it synchronously without restoring the field. 4. When the request completes, the METHOD_BUFFERED completion path uses the dangling SystemBuffer (device_extension+0x68), risking pool corruption / bugcheck and limited memory exposure. The exact outcome depends on the request's buffered-I/O completion flags and reported Information length. This is a per-request effect and does not require a race.",
+      "primitive": "Incomplete cleanup of the request IRP's AssociatedIrp.SystemBuffer (IRP+0x18). The unpatched handler leaves this pointer set to device_extension+0x68 after a synchronous forward, so the buffered-IOCTL completion path acts on device-extension memory. Reachable impact: kernel pool corruption / bugcheck from freeing a non-allocation pointer, plus limited kernel-memory exposure on copy-back. Not demonstrated: an arbitrary kernel read/write primitive, a controlled pool-spray/overwrite chain, or control-flow hijack; the overwritten pointer value is fixed by driver layout, not attacker-supplied.",
+      "evidence": "UNPATCHED decompilation of RequestHandleVolumeOnline @ 0x1C0009328:\n    v6 = WdfRequestWdmGetIrp(a2);           // request WDM IRP\n    v7 = *(_QWORD *)(v6 + 184);             // IRP current stack location (IRP+0xB8)\n    // BUG: no save of *(v6 + 24) (AssociatedIrp.SystemBuffer)\n    *(_QWORD *)(v6 + 24) = a1 + 104;        // IRP->AssociatedIrp.SystemBuffer = devext+0x68\n    *(_DWORD *)(v7 - 64) = 0;\n    *(_DWORD *)(v7 - 56) = 4;\n    *(_DWORD *)(v7 - 48) = 0x7C220;\n    RequestSend(a1, a2, *(a1 + 24), 2, 0);  // synchronous forward to volume I/O target\n    // MISSING: *(_QWORD *)(v6 + 24) = <saved value>\n    return 0;\n\nPATCHED decompilation (fix):\n    v6 = WdfRequestWdmGetIrp(a2);\n    v7 = *(_QWORD *)(v6 + 184);\n    v8 = *(_QWORD *)(v6 + 24);             // ADDED: save original SystemBuffer\n    *(_QWORD *)(v6 + 24) = a1 + 104;        // temporary overwrite\n    *(_DWORD *)(v7 - 64) = 0;\n    *(_DWORD *)(v7 - 56) = 4;\n    *(_DWORD *)(v7 - 48) = 0x7C220;\n    RequestSend(a1, a2, *(a1 + 24), 2, 0);\n    *(_QWORD *)(v6 + 24) = v8;             // ADDED: restore original SystemBuffer\n    return 0;",
+      "assembly": "RequestHandleVolumeOnline @ 0x1C0009328 (UNPATCHED) key sequence:\n0x1C00093B7: mov     rax, [rax+8E8h]                ; WdfRequestWdmGetIrp slot\n0x1C00093BE: call    cs:__guard_dispatch_icall_fptr ; rax = request IRP\n0x1C00093C4: and     [rsp+38h+var_18], 0\n0x1C00093CA: lea     rcx, [rbx+68h]                 ; device_extension + 0x68\n0x1C00093CE: mov     r9d, 2                         ; WDF_REQUEST_SEND_OPTION_SYNCHRONOUS\n0x1C00093D4: mov     rdx, [rax+0B8h]                ; IRP current stack location\n0x1C00093DB: mov     [rax+18h], rcx                 ; overwrite IRP->AssociatedIrp.SystemBuffer, NO SAVE\n0x1C00093DF: mov     rcx, rbx\n0x1C00093E2: and     dword ptr [rdx-40h], 0\n0x1C00093E6: mov     dword ptr [rdx-38h], 4\n0x1C00093ED: mov     dword ptr [rdx-30h], 7C220h\n0x1C00093F4: mov     rdx, rdi\n0x1C00093F7: mov     r8, [rbx+18h]                  ; device I/O target (devext+0x18)\n0x1C00093FB: call    RequestSend                    ; synchronous forward\n0x1C0009400: mov     rbx, [rsp+38h+arg_0]           ; restores callee-saved rbx only\n0x1C0009405: xor     eax, eax\n0x1C0009407: add     rsp, 30h\n0x1C000940B: pop     rdi\n0x1C000940C: retn                                   ; SystemBuffer NOT restored",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cdrom!RequestHandleVolumeOnline+0xB3",
+            "address": "0x1C00093DB",
+            "why": "The instruction that overwrites IRP->AssociatedIrp.SystemBuffer with device_extension+0x68. At this point rax = the request's WDM IRP and rcx = device_extension+0x68. Read *(rax+0x18) before this instruction to capture the original SystemBuffer; in the unpatched build it is never written back."
+          },
+          {
+            "symbol": "cdrom!RequestHandleVolumeOnline",
+            "address": "0x1C0009328",
+            "why": "Function entry. rcx = a1 (device extension pointer), rdx = a2 (request handle). Catches every invocation of the volume-online/post-online handler."
+          },
+          {
+            "symbol": "cdrom!RequestSend",
+            "address": "0x1C0006EA4",
+            "why": "The synchronous forward. It is called with the IRP already carrying the overwritten SystemBuffer. In the patched build the restore runs right after this returns (0x1C000941C)."
+          }
+        ],
+        "watch": [
+          "IRP->AssociatedIrp.SystemBuffer (*(IRP+0x18)) at 0x1C00093DB: before = original system buffer; after = device_extension+0x68. Unpatched never restores it; patched restores it at 0x1C000941C.",
+          "rcx at 0x1C00093CA: device_extension + 0x68, the value written into the IRP field.",
+          "rax at the WdfRequestWdmGetIrp return (0x1C00093BE): the request's WDM IRP.",
+          "rdx-0x30 at 0x1C00093ED: 0x7C220 written into the outgoing stack-location parameters."
+        ],
+        "key_offsets": [
+          "0x1C00093DB: 'mov [rax+18h], rcx' — overwrite of IRP->AssociatedIrp.SystemBuffer without a save (unpatched)",
+          "0x1C00093E7 (patched only): 'mov rbx, [rax+18h]' — added save of the original SystemBuffer",
+          "0x1C000941C (patched only): 'mov [rdi+18h], rbx' — added restore of the original SystemBuffer",
+          "0x1C0009400: 'mov rbx, [rsp+38h+arg_0]' — unpatched restores callee-saved rbx only, not the IRP field"
+        ],
+        "trigger_setup": "1. Ensure a CD-ROM device is present. 2. Open a handle to \\\\.\\CdRom0 with access sufficient for the volume IOCTLs. 3. Send DeviceIoControl with dwIoControlCode = 0x56C008 or 0x56C064 and a valid input buffer. The request is serialized onto IoctlWorkItemRoutine @ 0x1C00189F0, routed by RequestProcessSerializedIoctl @ 0x1C0018BD4, and handled by RequestHandleVolumeOnline @ 0x1C0009328. 4. With a kernel debugger, break at 0x1C00093DB, note rax (the IRP), read *(rax+0x18) before and after the write, and observe on the unpatched build that the field is not restored at function exit (0x1C000940C).",
+        "expected_observation": "On the unpatched build, at function exit the request IRP's AssociatedIrp.SystemBuffer (IRP+0x18) still holds device_extension+0x68 instead of the original system-buffer pointer. When the METHOD_BUFFERED request completes, the I/O manager's buffered-completion handling operates on this pointer, which can free a non-allocation pointer (pool corruption / bugcheck) and, where output is copied back, expose adjacent device-extension bytes. On the patched build the field is restored at 0x1C000941C before the function returns.",
+        "notes": "The object retrieved at 0x1C00093BE is the per-request WDM IRP (WdfRequestWdmGetIrp), not a shared device-lifetime I/O target object. The clobbered field IRP+0x18 is AssociatedIrp.SystemBuffer, borrowed to supply the data buffer (device_extension+0x68) for the synchronously forwarded request. The device's actual I/O target is a separate field, *(device_extension+0x18), which is read (not modified) and passed to RequestSend. The value 0x7C220 is written into the outgoing stack-location parameters prior to the send."
+      }
+    }
+  ],
+  "summary": "The patch fixes a single incomplete-cleanup defect in cdrom.sys (the Windows CD-ROM class driver). RequestHandleVolumeOnline @ 0x1C0009328 (handling IOCTL 0x56C008 IOCTL_VOLUME_ONLINE and 0x56C064 IOCTL_VOLUME_POST_ONLINE) obtains the request's WDM IRP via WdfRequestWdmGetIrp and temporarily overwrites IRP+0x18 (AssociatedIrp.SystemBuffer) with device_extension+0x68 to supply the buffer for a synchronous forward to the volume I/O target. The unpatched build returns without restoring the field, so the IRP's SystemBuffer points into the device extension when the METHOD_BUFFERED request completes; the I/O manager's buffered-completion path then acts on device-extension memory, risking pool corruption / bugcheck and limited memory exposure. The fix adds a save-before-overwrite (0x1C00093E7) and restore-after-send (0x1C000941C). Severity Medium, CWE-459."
+}

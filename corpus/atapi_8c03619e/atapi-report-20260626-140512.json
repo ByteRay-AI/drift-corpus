@@ -1,0 +1,243 @@
+{
+  "binaries": {
+    "id_unpatched": "atapi_unpatched.sys",
+    "id_patched": "atapi_patched.sys",
+    "overall_similarity": 0.9583,
+    "matched": 51,
+    "changed": 18,
+    "identical": 33,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AtapiNoDeviceConnected (sub_1C0001FC8) / AtapiNoDeviceConnected (sub_1C0001FD8)",
+      "similarity": 0.9379,
+      "change_type": "refactor",
+      "key_changes": [
+        "ADDED: 'if (*a2 == 0xFF) return true;' at function entry (asm: 0x1C0002006 'cmp bl, 0FFh' / 0x1C000200B 'mov edi, 1'). Reports device absent for a floating-bus status.",
+        "This entry check duplicates the 0xFF filtering that both callers (AtapiSendAtaIdentify, AtapiSendAtaCommand) already performed in the unpatched build before calling this function.",
+        "The rest of the function (0x7f busy-wait loop, post-loop 'cmp al,7Fh; setz dil') is unchanged between builds. The added entry check guards only the initial status, not the in-loop re-read."
+      ],
+      "security_relevant": false,
+      "security_notes": "No reachable behavior change. In the unpatched build AtapiNoDeviceConnected has exactly two callers, and each tests the status byte for 0xFF immediately before the call, using the same stack byte the callee dereferences through a2, with no port re-read in between. So the unpatched callee is never entered with an initial 0xFF status; its lack of an internal 0xFF branch is unreachable. The patch moves that filtering into the callee and removes it from the callers, producing identical result codes and IRB side effects. The in-loop case (status re-read as 0xFF during the internal busy-wait, e.g. a device removed mid-poll) is handled identically in both builds via 'return PortUchar == 127;' and is not altered by the added entry check.",
+      "assembly_diff": "UNPATCHED AtapiNoDeviceConnected (sub_1c0001fc8) entry:\n0x1c0001fe5: mov     bpl, [rdx]        ; status = *a2\n0x1c0001fe8: xor     dil, dil          ; v5 = 0\n0x1c0001ff7: cmp     bpl, 7Fh          ; 0x7F check\n0x1c0001ffb: jz      0x1c000200f       ; -> busy-wait\n0x1c0001ffd: test    r8b, r8b          ; a3 == 0 ?\n0x1c0002000: jz      0x1c0002098       ; -> return v5\n0x1c0002006: test    bpl, bpl          ; status == 0 ?\n0x1c0002009: jnz     0x1c0002098       ; -> return v5 (0xFF ends here)\n\nPATCHED AtapiNoDeviceConnected (sub_1c0001fd8) entry:\n0x1c0001ff5: mov     bl, [rdx]         ; status = *a2\n0x1c0001ff7: xor     dil, dil          ; v5 = 0\n0x1c0002006: cmp     bl, 0FFh          ; ADDED floating-bus test\n0x1c0002009: jnz     0x1c0002015       ; not 0xFF -> normal checks\n0x1c000200b: mov     edi, 1            ; 0xFF -> return true (device absent)\n0x1c0002010: jmp     0x1c00020b3\n0x1c0002015: cmp     bl, 7Fh           ; original 0x7F check\n0x1c0002018: jz      0x1c000202b"
+    },
+    {
+      "name": "AtapiSendAtaIdentify (sub_1C00020C0) / AtapiSendAtaIdentify (sub_1C00020E0)",
+      "similarity": 0.8824,
+      "change_type": "refactor",
+      "key_changes": [
+        "REMOVED the caller-level 0xFF pre-check. Unpatched: 'if ( v7 == -1 || AtapiNoDeviceConnected(...) ) result = 5;' (asm 0x1C0002164 'cmp dl, 0FFh' / 0x1C0002167 'jz' skips the call). Patched: 'v5 = AtapiNoDeviceConnected(...); if (v5) result = 5;'.",
+        "Now relies on the callee's returned value to detect 0xFF. Result code (5) and the '*(Irb+3) = status' write are identical to the unpatched build for a 0xFF status.",
+        "The pre-check and the callee both operate on the same stack byte (PortUchar / [rsp+arg_0]); moving the test does not change which byte is examined."
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched caller short-circuits on 0xFF (v7 == -1) and skips the callee entirely, so the callee never sees an initial 0xFF from this caller. The patched caller drops the pre-check and lets the callee report 0xFF, taking the same result-5 branch. There is no timing gap introduced: the byte compared by the removed pre-check is the same byte the callee reads, with no port re-read between them.",
+      "assembly_diff": "UNPATCHED AtapiSendAtaIdentify (sub_1c00020c0):\n0x1c0002164: cmp dl, 0FFh                 ; caller 0xFF pre-check\n0x1c0002167: jz  0x1c00021da              ; -> result 5, skip callee\n0x1c0002174: call AtapiNoDeviceConnected\n\nPATCHED AtapiSendAtaIdentify (sub_1c00020e0):\n0x1c0002187: call AtapiNoDeviceConnected  ; NO pre-check; callee handles 0xFF\n0x1c0002190: test al, al\n0x1c0002194: mov  al, 5                    ; same result on device-absent"
+    },
+    {
+      "name": "AtapiSendAtaCommand (sub_1C0002200) / AtapiSendAtaCommand (sub_1C0002210)",
+      "similarity": 0.9518,
+      "change_type": "refactor",
+      "key_changes": [
+        "REMOVED the caller-level 0xFF pre-check ('cmp al, 0FFh; jz 0x1C00024D1' at 0x1C000226C) and now relies on the patched callee's return value.",
+        "Result code (6) and the '*(Irb+3) = status' write are identical to the unpatched build for a 0xFF status.",
+        "The removed pre-check tested the same status byte ([rsp+arg_0]) that the callee reads via a2; no port re-read occurs between the test and the call."
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched caller filters 0xFF on the initial status read and skips the callee (result 6). The patched caller removes that pre-check; the callee now returns true for 0xFF and the caller reaches the identical result-6 path with the same IRB side effect. No behavioral difference.",
+      "assembly_diff": "UNPATCHED AtapiSendAtaCommand (sub_1c0002200):\n0x1c000226c: cmp al, 0FFh                  ; caller 0xFF pre-check\n0x1c000226e: jz  0x1c00024d1               ; -> result 6, skip callee\n0x1c000227f: call AtapiNoDeviceConnected\n\nPATCHED AtapiSendAtaCommand (sub_1c0002210):\n0x1c0002286: call AtapiNoDeviceConnected   ; NO pre-check; callee handles 0xFF\n0x1c000228b: test al, al\n0x1c0002296: mov  al, 6                     ; same result on device-absent"
+    },
+    {
+      "name": "AtapiHandleMiniportCommand (sub_1C000272C) / AtapiHandleMiniportCommand (sub_1C0002740)",
+      "similarity": 0.9143,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Control-flow restructuring of the miniport command dispatch (codes 0x401-0x405) with a shared completion tail.",
+        "The 'mov ebx, 1' set after the AtapiCompleteRequest call on code 0x404 is present in BOTH builds; per-code handling is behaviorally equivalent.",
+        "Minor jump-target and register reordering."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiProcessInterrupt (sub_1C0002AA0) / AtapiProcessInterrupt (sub_1C0002AB0)",
+      "similarity": 0.9163,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed bit test pattern from masked 'test word [rdx], cx' (cx=0x200) to 'bt word [rdx], 0x9' for ATA flag checking.",
+        "Changed bit test from 'test word [rbx], cx' (cx=0x100) to 'bt word [rbx], 0x8'.",
+        "Changed zero-extension operations and register allocation (ecx->r9d for constant 0x200)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WaitOnBusyUntil (sub_1C00012C8) / WaitOnBusyUntil (sub_1C00012CC)",
+      "similarity": 0.9184,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Loop control-flow restructuring. AtapiDeviceErrorHistoryLog is still called only when the busy bit persists until the retry count is exhausted; net behavior unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiInitializeDevice (sub_1C0001D64) / AtapiInitializeDevice (sub_1C0001D78)",
+      "similarity": 0.9338,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation for loop counter variable.",
+        "Eliminated redundant 'xor eax, eax; mov qword [rbp+0x18], rax' sequences, replaced with a direct zero-store.",
+        "Reordered argument passing for AtapiSendInternalAtaCommand (sub_1c00035a0) calls."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSendAtapiCommand (sub_1C0002500) / AtapiSendAtapiCommand (sub_1C0002510)",
+      "similarity": 0.9397,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed 'movzx eax, al' to direct use of 'al' byte.",
+        "Changed 'mov al, byte [rcx+rdi+0xb4]' / 'test al, 0x2' to 'test byte [rcx+rdi+0xb4], 0x2' (in-place test).",
+        "Register allocation changes for sector count handling."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwStartIo (sub_1C0001700) / AtapiHwStartIo (sub_1C0001710)",
+      "similarity": 0.9694,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed masked 'test cx, ax' (cx=0x200/0x100) to 'bt ax, 0x9' / 'bt ax, 0x8' bit-test.",
+        "Register allocation: uses 'rcx' instead of 'rdi' for device extension pointer."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiCompleteRequest (sub_1C0002DDC) / AtapiCompleteRequest (sub_1C0002DE8)",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed masked 'test cx, ax' (cx=0x200) to 'bt ax, 0x9' for IRB flag checking.",
+        "Register allocation changes for ebx constant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiWaitStatusAsync (sub_1C0003730) / AtapiWaitStatusAsync (sub_1C0003740)",
+      "similarity": 0.9808,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Reordered AtaPortStallExecution call relative to AtaPortRequestCallback.",
+        "Register allocation changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiResetAtapiDevices (sub_1C00039C0) / AtapiResetAtapiDevices (sub_1C00039D0)",
+      "similarity": 0.9676,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed 'xor eax, eax' / 'mov dword [rcx+0xa4], eax' to 'and dword [rcx+0xa4], 0x0' (direct AND-zero).",
+        "Changed 'mov qword [rsp+0x30], rax' (rax=0) to 'and qword [rsp+0x30], 0x0'.",
+        "Register allocation changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetDmaTransferModeAsync (sub_1C0003C80) / AtapiSetDmaTransferModeAsync (sub_1C0003CA0)",
+      "similarity": 0.972,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation for device index and loop counter.",
+        "Loop counter arithmetic restructured (increment before shift vs after)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwBuildIo (sub_1C0001690) / AtapiHwBuildIo (sub_1C00016A0)",
+      "similarity": 0.9744,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed masked '*arg2 & 0x200' test to a single-bit test (bit 9).",
+        "Same change for the 0x10 flag check path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetBlockSizeAsync (sub_1C0003EC0) / AtapiSetBlockSizeAsync (sub_1C0003ED0)",
+      "similarity": 0.9823,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed zeroing sequence to direct stores using a zero register.",
+        "Register allocation changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetupGeometryAsync (sub_1C0003DF0) / AtapiSetupGeometryAsync (sub_1C0003E10)",
+      "similarity": 0.9835,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation: added a saved register for arg1.",
+        "Restructured 'rcx - 1' into 'arg1 - 1' for command byte calculation."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetPioTransferModeAsync (sub_1C0003BD0) / AtapiSetPioTransferModeAsync (sub_1C0003BE0)",
+      "similarity": 0.9864,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed initialization to an explicit store.",
+        "Register allocation changes for struct field stores."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon (sub_1C0003FFC) / __GSHandlerCheckCommon (sub_1C000401C)",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Introduced an intermediate variable for a 32-bit read.",
+        "Call target shifted from __security_check_cookie (sub_1c0003f80) to __security_check_cookie (sub_1c0003f90) due to relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The patch relocates an ATA/ATAPI device-status check for the value 0xFF (floating bus / device absent). In the unpatched build, the two — and only two — callers of AtapiNoDeviceConnected (AtapiSendAtaIdentify and AtapiSendAtaCommand) each test the status byte for 0xFF immediately before the call and short-circuit past it when the byte is 0xFF, using the same stack byte the callee dereferences (no port re-read in between). The patched build removes both caller-level pre-checks and instead adds 'if (*a2 == 0xFF) return true;' at the entry of AtapiNoDeviceConnected. For every status value the observable result — the returned status code (5 for Identify, 6 for Command) and the byte written to *(Irb+3) — is identical in both builds, so the unpatched callee's missing internal 0xFF branch was unreachable. The internal busy-wait re-read case (a device removed mid-poll) resolves through 'return PortUchar == 127;' identically in both builds and is not affected by the added entry check. This is a code-consolidation/defense-in-depth relocation, not a fix for any reachable defect. The other changed functions are compiler codegen and control-flow churn (bit-test instruction selection, and-zero stores, register reallocation, shared-tail restructuring) with no security impact."
+}

@@ -1,0 +1,221 @@
+{
+  "binaries": {
+    "title": "msisadrv.sys - No security-relevant change (KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths)",
+    "id_unpatched": "msisadrv_unpatched.sys",
+    "id_patched": "msisadrv_patched.sys",
+    "overall_similarity": 0.7282,
+    "matched": 18,
+    "changed": 9,
+    "identical": 9,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 2
+  },
+  "changed_functions": [
+    {
+      "name": "MsIsaEvtDeviceProcessQueryInterface (unpatched 0x1C00062A0 / patched 0x1C00062B0)",
+      "similarity": 0.9757,
+      "change_type": "defensive_init",
+      "key_changes": [
+        "UNPATCHED: the 4-byte stack slot [rsp+0x44] (var_14), used as the ResultLength output pointer (6th argument) of WdfDeviceQueryProperty, is not written before the first call. PATCHED: both stack slots are zeroed at entry (xor esi,esi; mov dword [rsp+0x40], esi; mov dword [rsp+0x44], esi).",
+        "PATCHED swaps which slot is the PropertyBuffer (5th arg) versus ResultLength (6th arg): unpatched passes &var_18 as buffer and &var_14 as ResultLength; patched passes &var_14 as buffer and &var_18 as ResultLength. The property-value buffer is zeroed in both builds.",
+        "The uninitialized slot in the unpatched build is the ResultLength output parameter, which WdfDeviceQueryProperty writes and never reads, and which the driver never reads back. No behavioural difference results."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the driver's EvtDeviceProcessQueryInterfaceRequest callback, registered in MsIsaEvtDeviceAdd via WdfDeviceAddQueryInterface (WDF function table offset 0x720) with a WDF_QUERY_INTERFACE_CONFIG for GUID_TRANSLATOR_INTERFACE_STANDARD ({6C154A92-AACF-11D0-8D2A-00A0C906B244}, symbolized as GUID_TRANSLATOR_INTERFACE_STANDARD at .rdata:0x1C0002110 in both builds). It is invoked only by a kernel-mode IRP_MN_QUERY_INTERFACE from the PnP/bus stack, not from user mode; the driver exposes no WMI provider. The callback reads DevicePropertyLegacyBusType (0xd) and DevicePropertyBusNumber (0xe) via WdfDeviceQueryProperty (WDF offset 0x288) and calls HalDispatchTable->HalGetInterruptTranslator (HalDispatchTable+0x78) to return a translator. The changed slot is the write-only ResultLength output of WdfDeviceQueryProperty; it is written by the framework and never read by the driver, so zeroing it is defensive initialization with no reachable impact. No information disclosure or corruption results (BufferLength is the compile-time constant 4, the property-value buffer is zeroed in both builds, and nothing uninitialized is read).",
+      "assembly_diff": "UNPATCHED (0x1C00062A0) key block:\n0x1C00062E9: mov [rsp+58h+var_18], eax       ; property-value buffer var_18 = 0\n0x1C00062ED: lea rcx, [rsp+58h+var_14]        ; &var_14 (ResultLength output; not pre-zeroed)\n0x1C00062FF: mov [rsp+58h+var_30], rcx        ; arg6 = &var_14\n0x1C0006307: lea rcx, [rsp+58h+var_18]\n0x1C000630C: mov [rsp+58h+var_38], rcx        ; arg5 = &var_18 (buffer)\n0x1C0006311: mov rax, [rax+288h]              ; WdfDeviceQueryProperty\n0x1C0006318: lea r8d, [r9+9]                  ; DevicePropertyLegacyBusType = 0xd\n0x1C0006323: call cs:__guard_dispatch_icall_fptr\n\nPATCHED (0x1C00062B0) key block:\n0x1C00062BF: xor esi, esi\n0x1C00062C4: mov [rsp+58h+var_18], esi        ; var_18 = 0\n0x1C0006311: lea rcx, [rsp+58h+var_18]\n0x1C0006316: mov [rsp+58h+var_30], rcx        ; arg6 (ResultLength) = &var_18\n0x1C0006321: lea rcx, [rsp+58h+var_14]\n0x1C0006326: mov [rsp+58h+var_14], esi        ; var_14 = 0 (newly zeroed)\n0x1C000632A: mov [rsp+58h+var_38], rcx        ; arg5 (buffer) = &var_14"
+    },
+    {
+      "name": "FxStubInitTypes (unpatched 0x1C0001334 / patched 0x1C000147C)",
+      "similarity": 0.6419,
+      "change_type": "static_stub_rebuild",
+      "key_changes": [
+        "Patched delegates iteration to the new shared helper FxGetNextClassBindInfo (0x1C000143C), which skips null entries and checks that a full entry fits before dereferencing.",
+        "Patched uses variable-size stepping (ptr += *ptr) instead of a fixed 0x28 stride.",
+        "Patched adds DbgPrintEx diagnostics and returns STATUS_INVALID_IMAGE_FORMAT (0xc000007b) instead of STATUS_INFO_LENGTH_MISMATCH (0xc0000004)."
+      ],
+      "security_relevant": false,
+      "security_notes": "KMDF static-stub library function that runs at DriverEntry to initialize object type-info. It iterates the driver's own build-time linker section (__KMDF_TYPE_INIT_START/END), which is not attacker-controlled and is empty in msisadrv.sys, so no iteration occurs at runtime in either build. This is a framework static-stub rebuild, not a fix for a defect reachable in this driver.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FxStubBindClasses (unpatched 0x1C00011F4 / patched 0x1C0001224)",
+      "similarity": 0.4428,
+      "change_type": "static_stub_rebuild",
+      "key_changes": [
+        "Patched delegates bounds-checked iteration to the new helper FxGetNextClassBindInfo (0x1C000143C).",
+        "Patched uses variable-size stepping ((char*)v4 + *v4) instead of a fixed 0x50 stride.",
+        "Patched adds DbgPrintEx logging for VersionBindClass and ClientBindClass failures and an inner null-skip loop."
+      ],
+      "security_relevant": false,
+      "security_notes": "KMDF static-stub library function that runs at DriverEntry to bind WDF classes. It iterates the driver's own build-time linker section (__KMDF_CLASS_BIND_START/END), which is not attacker-controlled and is empty in msisadrv.sys, so no iteration occurs at runtime in either build. Framework static-stub rebuild, not a reachable fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FxStubUnbindClasses (unpatched 0x1C00012B0 / patched 0x1C0001384)",
+      "similarity": 0.7785,
+      "change_type": "static_stub_rebuild",
+      "key_changes": [
+        "Patched uses the FxGetNextClassBindInfo (0x1C000143C) helper for iteration instead of manual pointer arithmetic.",
+        "Patched uses variable-size stepping ((char*)v5 + *v5) instead of a fixed 0x50 stride.",
+        "Patched adds DbgPrintEx logging on failure."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same framework static-stub rebuild pattern as FxStubBindClasses; iterates the empty build-time class-bind section. Not attacker-reachable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsIsaPnPIrpPreProcessingCallback (unpatched 0x1C00063D0 / patched 0x1C00063F0)",
+      "similarity": 0.9857,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pool-init instruction ordering changed; the 24-byte ISA-PnP bus-info structure (GUID_BUS_TYPE_ISAPNP, flag 1, bus number from context+4) is written with the same final values in both builds.",
+        "Status variable set earlier in the patched version.",
+        "Instruction reordering around the CurrentStackLocation advance. Semantically equivalent."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FxDriverEntryWorker (0x1C00010C4)",
+      "similarity": 0.9203,
+      "change_type": "diagnostic",
+      "key_changes": [
+        "Added DbgPrintEx(0x4d, 0, \"DriverEntry failed 0x%x for driver %wZ\\n\", ...) on the device-add error path.",
+        "Added an extra callee-saved register save/restore (stack frame grew from 0x20 to 0x30)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Diagnostic logging added on an error path. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MsIsaEvtDeviceAdd (0x1C0006010)",
+      "similarity": 0.9075,
+      "change_type": "codegen_refresh",
+      "key_changes": [
+        "Patched uses xorps xmm0,xmm0 + movdqu/movups for bulk zero-initialization of the WDF_IO_QUEUE_CONFIG and WDF_QUERY_INTERFACE_CONFIG structures instead of individual mov stores from a zeroed register.",
+        "Patched additionally zeroes a few trailing stack bytes that fall outside the declared config sizes.",
+        "Both builds produce identical, fully-populated configs (WDF_IO_QUEUE_CONFIG Size=0x38 with EvtCleanupCallback and dispatch flags; WDF_QUERY_INTERFACE_CONFIG Size=0x30 with Interface, InterfaceType=&GUID_TRANSLATOR_INTERFACE_STANDARD, EvtDeviceProcessQueryInterfaceRequest, ImportInterface=1)."
+      ],
+      "security_relevant": false,
+      "security_notes": "EvtDriverDeviceAdd callback, reached only during PnP device enumeration (init-only). Both builds construct the same WDF configuration structures and populate every field the framework reads; the extra zeroed bytes in the patched build lie outside the declared config Size fields and are not consumed. Codegen refresh, not a security fix.",
+      "assembly_diff": "UNPATCHED (individual stores):\n0x1C0006093: mov [rbp+57h+var_48], rax     ; zero\n0x1C000609B: mov [rbp+57h+var_60], rax     ; zero\n0x1C000609F: mov [rbp+57h+var_50], rax     ; zero\n0x1C00060A3: mov [rbp+57h+var_40], rax     ; zero\n0x1C00060A7: mov [rbp+57h+var_38], rax     ; zero\n0x1C00060C8: mov dword [rbp+57h+var_60], 38h\n0x1C00060CF: mov dword [rbp+57h+var_48], 1\n0x1C00060D6: mov dword [rbp+57h+var_48+4], 1\n\nPATCHED (bulk zero + selective writes, same resulting config):\n0x1C00060D1: xorps xmm0, xmm0\n0x1C00060DF: movdqu [rbp+57h+var_40], xmm0\n0x1C00060C5: mov [rbp+57h+var_60], 38h\n0x1C00060E4: mov [rbp+57h+var_48], 1\n0x1C00060EB: mov [rbp+57h+var_44], 1"
+    },
+    {
+      "name": "DriverEntry (0x1C0007040)",
+      "similarity": 0.6485,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Patched uses xorps xmm0,xmm0 + movdqu for zero-initialization of the driver-config buffer instead of individual mov zeros.",
+        "Data references shifted (e.g. WdfFunctions/WdfDriverGlobals rdata slots) due to section growth from added format strings.",
+        "Same WdfDriverCreate setup (config Size 32, EvtDriverDeviceAdd = MsIsaEvtDeviceAdd) and bus-number bitmap initialization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset (unpatched 0x1C0001400 / patched 0x1C00015A0)",
+      "similarity": 0.1401,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Unpatched has an inline SSE memset implementation. Patched replaces it with a tail-call to the imported memset.",
+        "Functionality identical - a code-generation strategy difference."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "FxGetNextClassBindInfo (0x1C000143C) - KMDF static-stub bounds-checking helper introduced by the framework-stub rebuild",
+      "_guard_xfg_dispatch_icall_nop (0x1C00015A0) - XFG dispatch thunk introduced by the rebuild"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "MsIsaEvtDeviceProcessQueryInterface (unpatched 0x1C00062A0 / patched 0x1C00062B0)",
+      "entry_point": "Kernel-mode IRP_MN_QUERY_INTERFACE for GUID_TRANSLATOR_INTERFACE_STANDARD from the PnP/bus stack (not user-mode reachable)",
+      "call_chain": [
+        "PnP manager / adjacent bus or child driver issues IRP_MN_QUERY_INTERFACE for GUID_TRANSLATOR_INTERFACE_STANDARD",
+        "WDF query-interface dispatch (config registered via WdfDeviceAddQueryInterface, WDF table offset 0x720)",
+        "MsIsaEvtDeviceProcessQueryInterface (EvtDeviceProcessQueryInterfaceRequest callback)",
+        "WdfDeviceQueryProperty (WDF table offset 0x288) for DevicePropertyLegacyBusType (0xd) and DevicePropertyBusNumber (0xe)",
+        "HalDispatchTable->HalGetInterruptTranslator (HalDispatchTable+0x78) to obtain the translator returned to the requester"
+      ],
+      "vulnerability_class": "Use of Uninitialized Variable (CWE-457) - technically present, no reachable impact",
+      "description": "In the unpatched build the 4-byte stack slot at [rsp+0x44] (var_14) is passed as the ResultLength output pointer (6th argument) of WdfDeviceQueryProperty without being written first. The property-value buffer slot (5th argument, var_18 at [rsp+0x40]) is zeroed. The patched build zeroes both slots at entry (xor esi,esi; stores to [rsp+0x40] and [rsp+0x44]) and swaps which slot is the buffer versus the ResultLength output. ResultLength is a pure output parameter: WdfDeviceQueryProperty writes the produced length there and never reads the incoming value, and the driver never reads var_14 back. Only the zeroed property-value buffer and the fixed 4-byte results are consumed by the subsequent HalGetInterruptTranslator call. Passing the address of an uninitialized write-only slot therefore has no observable effect. There is no information disclosure (nothing uninitialized is read), no size confusion (BufferLength is the compile-time constant 4), and the callback is not reachable from user mode. The change is defensive stack-slot initialization, not a fix for a reachable defect.",
+      "trigger_conditions": "Reached only by a kernel-mode IRP_MN_QUERY_INTERFACE requesting GUID_TRANSLATOR_INTERFACE_STANDARD from the PnP/bus stack during device enumeration and resource translation. The guard conditions in the callback (action == 2, *a3 >= 0x30, GUID match) operate on the kernel-supplied query-interface request, not on attacker-controlled input. There is no user-mode (WMI or IOCTL) path to this callback.",
+      "primitive": "None. The only changed data flow is a write-only ResultLength slot that the framework writes and the driver never reads; no value derived from uninitialized memory reaches any sink.",
+      "evidence": "Decompiled bodies are equivalent in both builds; the property-value local is initialized to 0 in both. The distinguishing change exists only at the assembly level: unpatched leaves the ResultLength output slot ([rsp+0x44]) unwritten, patched zeroes it. The GUID at .rdata:0x1C0002110 is symbolized as GUID_TRANSLATOR_INTERFACE_STANDARD in both builds; the config is registered via WdfDeviceAddQueryInterface (WDF offset 0x720), confirming there is no WMI provider.",
+      "assembly": "sub_1C00062A0 (UNPATCHED) - relevant block:\n0x1C00062A0: mov [rsp+arg_0], rbx\n0x1C00062A6: sub rsp, 0x50\n0x1C00062B0: cmp r9d, 2                     ; action == 2 ?\n0x1C00062C6: cmp word [r8], 0x30            ; *a3 >= 0x30 ?\n0x1C00062CD: mov rax, [rdx]                 ; GUID_TRANSLATOR_INTERFACE_STANDARD match\n0x1C00062D0: sub rax, qword cs:GUID_TRANSLATOR_INTERFACE_STANDARD.Data1\n0x1C00062DD: sub rax, qword cs:GUID_TRANSLATOR_INTERFACE_STANDARD.Data4\n0x1C00062E9: mov [rsp+58h+var_18], eax      ; property-value buffer var_18 = 0\n0x1C00062ED: lea rcx, [rsp+58h+var_14]      ; &var_14 (ResultLength out; not pre-zeroed)\n0x1C00062FF: mov [rsp+58h+var_30], rcx      ; arg6 = &var_14\n0x1C0006307: lea rcx, [rsp+58h+var_18]\n0x1C000630C: mov [rsp+58h+var_38], rcx      ; arg5 = &var_18 (buffer)\n0x1C0006311: mov rax, [rax+288h]            ; WdfDeviceQueryProperty\n0x1C0006318: lea r8d, [r9+9]                ; DevicePropertyLegacyBusType = 0xd\n0x1C0006323: call cs:__guard_dispatch_icall_fptr\n0x1C0006331: ...                            ; second query: DevicePropertyBusNumber = 0xe\n0x1C000637D: mov rax, cs:__imp_HalDispatchTable\n0x1C00063A0: mov rax, [rax+78h]            ; HalGetInterruptTranslator\n0x1C00063B2: call cs:__guard_dispatch_icall_fptr\n0x1C00063C2: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "msisadrv!MsIsaEvtDeviceProcessQueryInterface",
+            "address": "0x1C00062A0",
+            "why": "Query-interface callback entry. rcx = WDFDEVICE, rdx = query-interface request (GUID at offset 0), r8 = interface buffer, r9d = action (2). Confirms reachability only via kernel IRP_MN_QUERY_INTERFACE."
+          },
+          {
+            "symbol": "msisadrv!MsIsaEvtDeviceProcessQueryInterface+0x83",
+            "address": "0x1C0006323",
+            "why": "First WdfDeviceQueryProperty call. Inspecting 'dd rsp+0x44 L1' shows uninitialized residue in the unpatched build and 0x00000000 in the patched build. Because the slot is the write-only ResultLength output and is never read back, this difference is not observable in the callback output or return value."
+          }
+        ],
+        "watch": [
+          "[rsp+0x44] (var_14) = ResultLength output slot; uninitialized in unpatched, zeroed in patched; never read by the driver",
+          "[rsp+0x40] (var_18) = property-value buffer; zeroed in both builds before the first query"
+        ],
+        "key_offsets": [
+          "0x1C00062E9: 'mov [rsp+58h+var_18], eax' - zeroes the property-value buffer (var_18)",
+          "0x1C00062ED: 'lea rcx, [rsp+58h+var_14]' - takes address of the ResultLength output slot (unpatched: not pre-zeroed)",
+          "0x1C0006323: 'call __guard_dispatch_icall_fptr' - WdfDeviceQueryProperty (WDF offset 0x288) with ResultLength = &var_14",
+          "0x1C0006326 (patched only): 'mov [rsp+58h+var_14], esi' - zeroes the slot"
+        ],
+        "trigger_setup": "Reached only by a kernel IRP_MN_QUERY_INTERFACE for GUID_TRANSLATOR_INTERFACE_STANDARD during PnP enumeration/resource translation. No user-mode path exists.",
+        "expected_observation": "At 0x1C0006323 the [rsp+0x44] slot holds residue in the unpatched build and 0 in the patched build, but the value is never consumed. The property-value buffer is zeroed in both builds, so HalGetInterruptTranslator receives identical inputs in both.",
+        "notes": "Registered as EvtDeviceProcessQueryInterfaceRequest via WdfDeviceAddQueryInterface (WDF table offset 0x720) in MsIsaEvtDeviceAdd. The GUID_TRANSLATOR_INTERFACE_STANDARD ({6C154A92-AACF-11D0-8D2A-00A0C906B244}) is at .rdata:0x1C0002110. Device property queries use WdfDeviceQueryProperty (WDF offset 0x288) for DevicePropertyLegacyBusType (0xd) and DevicePropertyBusNumber (0xe). HalDispatchTable+0x78 is HalGetInterruptTranslator. CFG is enabled - indirect calls go through __guard_dispatch_icall_fptr."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "MsIsaEvtDeviceAdd (0x1C0006010) - WDF configuration structure initialization",
+      "entry_point": "Driver load / PnP device enumeration (EvtDriverDeviceAdd callback) - init-only, not attacker-reachable",
+      "call_chain": [
+        "PnP manager device enumeration for the ISA bus",
+        "WDF EvtDriverDeviceAdd dispatch",
+        "MsIsaEvtDeviceAdd builds WDF_IO_QUEUE_CONFIG and WDF_QUERY_INTERFACE_CONFIG on the stack and passes them to WDF functions 0x258 and 0x720"
+      ],
+      "vulnerability_class": "Use of Uninitialized Resource (CWE-908) - no demonstrable impact",
+      "description": "The unpatched build zeroes the WDF_IO_QUEUE_CONFIG and WDF_QUERY_INTERFACE_CONFIG structures with individual mov stores from a zeroed register; the patched build uses xorps xmm0,xmm0 with movdqu/movups bulk stores and adds a few extra byte/dword zero writes for trailing stack slots. Both builds fully populate every field the framework reads (WDF_IO_QUEUE_CONFIG Size=0x38 with EvtCleanupCallback and dispatch flags; WDF_QUERY_INTERFACE_CONFIG Size=0x30 with Interface pointer, InterfaceType=&GUID_TRANSLATOR_INTERFACE_STANDARD, EvtDeviceProcessQueryInterfaceRequest=MsIsaEvtDeviceProcessQueryInterface, ImportInterface=1, plus the 48-byte translator INTERFACE template). The extra zeroed bytes in the patched build fall outside the declared config Size fields and are not consumed.",
+      "trigger_conditions": "Runs during driver initialization when the ISA bus device is enumerated by the PnP manager. Init-only; not reachable from any untrusted input surface.",
+      "primitive": "None. Both builds construct identical, fully-populated WDF configuration structures.",
+      "evidence": "UNPATCHED - individual zero stores:\n0x1C0006093: mov [rbp+57h+var_48], rax\n0x1C000609B: mov [rbp+57h+var_60], rax\n0x1C000609F: mov [rbp+57h+var_50], rax\n0x1C00060A3: mov [rbp+57h+var_40], rax\n0x1C00060A7: mov [rbp+57h+var_38], rax\n\nPATCHED - bulk zero + selective writes (same resulting config):\n0x1C00060D1: xorps xmm0, xmm0\n0x1C00060DF: movdqu [rbp+57h+var_40], xmm0\n0x1C00060C5: mov [rbp+57h+var_60], 38h\n0x1C00060E4: mov [rbp+57h+var_48], 1\n0x1C00060EB: mov [rbp+57h+var_44], 1",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "msisadrv!MsIsaEvtDeviceAdd",
+            "address": "0x1C0006010",
+            "why": "EvtDriverDeviceAdd entry. Set during ISA bus device enumeration to inspect the WDF config structures on the stack before they are passed to the WDF queue-create (0x258) and add-query-interface (0x720) calls."
+          }
+        ],
+        "watch": [
+          "WDF_IO_QUEUE_CONFIG region (Size=0x38) before the WDF 0x258 call - fully populated in both builds",
+          "WDF_QUERY_INTERFACE_CONFIG region (Size=0x30) before the WDF 0x720 call - fully populated in both builds"
+        ],
+        "key_offsets": [
+          "0x1C00060E4 (unpatched) / 0x1C00060F9 (patched): call to WDF queue-create (WDF table offset 0x258)",
+          "0x1C000627B (unpatched) / 0x1C0006282 (patched): call to WdfDeviceAddQueryInterface (WDF table offset 0x720)"
+        ],
+        "trigger_setup": "Triggered by loading/enabling the driver during PnP ISA bus enumeration.",
+        "expected_observation": "In both builds the WDF config structures are fully populated with the same field values before each WDF call; the patched build differs only in how it zeroes the surrounding stack (bulk vs individual) and in zeroing a few dead trailing bytes.",
+        "notes": "Init-only path. Both builds produce identical configs; the difference is a code-generation refresh, not a security fix."
+      }
+    }
+  ],
+  "summary": "The diff between msisadrv_unpatched.sys and msisadrv_patched.sys contains no attacker-reachable security fix. The patched build is a routine KMDF static-stub library rebuild layered on the same driver logic: the framework binding/type-init stub functions (FxStubBindClasses, FxStubInitTypes, FxStubUnbindClasses) were regenerated to use a shared bounds-checking helper (FxGetNextClassBindInfo) and to emit DbgPrintEx diagnostics while iterating the driver's empty, build-time linker sections; memset was changed from an inlined SSE body to a tail-call into the imported memset; and the device-add and query-interface callbacks pick up bulk xorps/movdqu zero-initialization instead of scattered stores. The only data-flow change with a security flavour is in MsIsaEvtDeviceProcessQueryInterface, the driver's EvtDeviceProcessQueryInterfaceRequest callback (registered via WdfDeviceAddQueryInterface for GUID_TRANSLATOR_INTERFACE_STANDARD, reached only by a kernel IRP_MN_QUERY_INTERFACE, not user-mode WMI): the unpatched build passes an uninitialized stack slot as the write-only ResultLength output of WdfDeviceQueryProperty, and the patched build zeroes it. Because ResultLength is written by the framework and never read by the driver, this is defensive initialization with no reachable impact. MsIsaEvtDeviceAdd is an init-only callback that builds identical, fully-populated WDF configuration structures in both builds. No information leak, memory corruption, or privilege-escalation primitive is present."
+}

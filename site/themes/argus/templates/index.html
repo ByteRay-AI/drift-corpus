@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block body %}
+{% set posts = articles_page.object_list if articles_page else articles %}
+
+<header class="hero">
+    <div class="hero-eye"></div>
+    <div class="hero-bg"></div>
+    <div class="container">
+        <p class="eyebrow">{{ SITESUBTITLE }}</p>
+        <h1>The Argus <span class="accent">Blog.</span></h1>
+    </div>
+</header>
+
+<section class="section">
+    <div class="container">
+        <div class="section-head">
+            <h2>All posts</h2>
+        </div>
+
+        {% if posts %}
+        <ul class="post-list">
+            {% for article in posts %}
+            <li class="post-row">
+                <div class="post-meta">
+                    <time datetime="{{ article.date.isoformat() }}">{{ article.date|strftime('%Y-%m-%d') }}</time>
+                    {% if article.category %}<span class="state">{{ article.category }}</span>{% endif %}
+                </div>
+                <div class="post-body">
+                    <h3 class="post-title"><a href="{{ SITEURL }}/{{ article.url }}">{{ article.title }}</a></h3>
+                    {% if article.summary %}<p class="post-summary">{{ article.summary|striptags }}</p>{% endif %}
+                    <div class="chips">
+                        {% if article.author %}<span class="chip chip-author">{{ article.author }}</span>{% endif %}
+                        {% for tag in article.tags %}<a class="chip" href="{{ SITEURL }}/{{ tag.url }}">#{{ tag }}</a>{% endfor %}
+                    </div>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="empty">// No posts yet. Drop a Markdown file into content/posts/ to publish one.</p>
+        {% endif %}
+
+        {% if articles_page and articles_paginator.num_pages > 1 %}
+        <nav class="pagination">
+            {% if articles_page.has_previous() %}<a href="{{ SITEURL }}/{{ articles_previous_page.url }}">&larr; Newer</a>{% endif %}
+            <span>Page {{ articles_page.number }} / {{ articles_paginator.num_pages }}</span>
+            {% if articles_page.has_next() %}<a href="{{ SITEURL }}/{{ articles_next_page.url }}">Older &rarr;</a>{% endif %}
+        </nav>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

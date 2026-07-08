@@ -1,0 +1,312 @@
+{
+  "binaries": {
+    "title": "http.sys (Windows HTTP Protocol Stack) - No security-relevant change: Known-Issue-Rollback gate for channel-binding hardening graduated to permanent",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9908,
+    "matched": 3585,
+    "changed": 21,
+    "identical": 3564,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlpAdjustSspChannelBindParamsForDigestChallenge (0x1C01553B8 -> 0x1C0154B88)",
+      "similarity": 0.3522,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Digest-challenge SSP channel-binding setup. Unpatched selects the setup routine on the KIR gate UxKirSetCbtHardeningAsMedium: 'cmp cs:UxKirSetCbtHardeningAsMedium, bpl' @0x1C01553DB; gate!=0 -> UlpAdjustSspChannelBindParameters (passing DefaultAuthHardeningLevel [rdi+0x418]); gate==0 -> legacy UlpAdjustSspChannelBindParameters_Old @0x1C01554D7.",
+        "Both branches write the same context fields (+0x88, +0x8C, +0x90) before their call; the difference is the callee and the level source. The legacy routine reads its hardening level from ctx+0x8C internally rather than from the registry DefaultAuthHardeningLevel parameter.",
+        "Patched (@0x1C0154B88) removes the gate and the legacy branch, always calling UlpAdjustSspChannelBindParameters (0x1C0154A7C) with edx=[rsi+0x418]. The legacy UlpAdjustSspChannelBindParameters_Old is deleted."
+      ],
+      "security_relevant": false,
+      "security_notes": "UxKirSetCbtHardeningAsMedium is a Known-Issue-Rollback (UxKir*) gate set at module init from WIL feature-staging (Feature_2058039610__private_IsEnabledDeviceUsage). The old path is retained in the else branch (staged-rollout pattern). Removing the gate and hardcoding the enabled behavior is a KIR graduating to permanent, not the elimination of an attacker-reachable vulnerability. Both routines perform channel-binding enforcement via UlQueryChannelBindToken and the same flag bit-setting; the diff does not show the legacy path accepting authentication the new path rejects. Path selection is not attacker-controlled.",
+      "assembly_diff": "0x1C01553D5 : mov     eax, [r8+50h]                        ; auth flags\n0x1C01553DB : cmp     cs:UxKirSetCbtHardeningAsMedium, bpl ; KIR gate (removed in patch)\n0x1C01553EB : jz      0x1C01554A3                          ; gate==0 -> legacy branch\n; --- gate != 0 branch ---\n0x1C01553FD : mov     [rcx+88h], eax\n0x1C015540A : mov     [rcx+90h], eax\n0x1C0155417 : mov     [rcx+8Ch], eax\n0x1C015541D : mov     edx, [rdi+418h]                      ; edx = DefaultAuthHardeningLevel\n0x1C0155423 : call    UlpAdjustSspChannelBindParameters\n; --- gate == 0 branch (legacy) ---\n0x1C01554A3 : test    al, 1\n0x1C01554B7 : mov     [rcx+88h], eax                       ; same context fields written\n0x1C01554C4 : mov     [rcx+90h], eax\n0x1C01554D1 : mov     [rcx+8Ch], eax                       ; _Old reads its level from ctx+0x8C\n0x1C01554D7 : call    UlpAdjustSspChannelBindParameters_Old"
+    },
+    {
+      "name": "WPP_SF_qiqi (sub_1C00B57EC)",
+      "similarity": 0.6747,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Small ETW/trace wrapper. Argument changed from int16_t arg1 to a hardcoded constant 0x111; callee sub_1c006d27c -> sub_1c006d2cc (relocated trace helper). Pure telemetry/register-allocation difference."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpQuicParseHeadersFrame (sub_1C0054E58)",
+      "similarity": 0.709,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace GUID (data_1c0081370 -> data_1c0081360) and message-ID renumbering. Function body logic (struct/version handling) restructured but no new bounds/security checks. Recompilation artifact."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpQuicParseDataFrame (sub_1C0054CE0)",
+      "similarity": 0.7638,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Counterpart of UxpQuicParseHeadersFrame (sub_1C0054E58); ETW GUID/message-ID shift and renumbered callees. No security-relevant change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpQuicParseCancelPushFrame (sub_1C0054C0C)",
+      "similarity": 0.7987,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW GUID/message-ID shift and renumbered callees (sub_1c00b51f8/sub_1c0054f20 -> relocated equivalents). No security-relevant change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpSspiAuthenticationHandler (0x1C0157F40 -> 0x1C0157650)",
+      "similarity": 0.8139,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Main SSPI authentication handler (calls AcceptSecurityContext in a loop). Unpatched selects auth-init via the KIR gate UxKirSetCbtHardeningAsMedium @0x1C01580D2: gate set -> UlpAdjustSspChannelBindParameters (hardened); else if (r14[0x22]&1) -> UlpAdjustSspChannelBindParameters_Old (legacy).",
+        "Patched removes the gate and the r14[0x22]&1 fallback, always calling UlpAdjustSspChannelBindParameters (0x1C0154A7C). The legacy call is removed."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same KIR-gate consolidation as the Digest-challenge site. Path selection is fixed at module init by the UxKir* gate, not by the HTTP Authorization header. This is servicing churn, not an attacker-reachable auth boundary change.",
+      "assembly_diff": "Unpatched auth-init selection: if (UxKirSetCbtHardeningAsMedium) UlpAdjustSspChannelBindParameters(r14, *(rax_2+0x418), ...); else if (r14[0x22]&1) UlpAdjustSspChannelBindParameters_Old(r14, ...).\nPatched: unconditional UlpAdjustSspChannelBindParameters (0x1C0154A7C)(r14, *(rax_2+0x418), ...)."
+    },
+    {
+      "name": "UlpDigestAuthenticationHandler (0x1C0067D20 -> 0x1C0067E20)",
+      "similarity": 0.8354,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Digest auth channel-binding setup. Unpatched gates on 'cmp cs:UxKirSetCbtHardeningAsMedium' @0x1C0067DD1: gate set -> UlpAdjustSspChannelBindParameters (passes *(v7+0x418)=DefaultAuthHardeningLevel); gate clear && (*(v6+0x88)&1) -> legacy UlpAdjustSspChannelBindParameters_Old.",
+        "Patched removes the gate and always calls UlpAdjustSspChannelBindParameters; the legacy branch is deleted."
+      ],
+      "security_relevant": false,
+      "security_notes": "One of the parallel KIR-gated SSP channel-binding sites. Path selection is fixed by the UxKir* gate, not attacker-controlled. Both routines enforce channel binding; the difference is the source of the default hardening level.",
+      "assembly_diff": "Unpatched: if (UxKirSetCbtHardeningAsMedium) v12 = UlpAdjustSspChannelBindParameters(v6, *(v7+0x418), ...); else if (*(v6+0x88)&1) v12 = UlpAdjustSspChannelBindParameters_Old(v6, ...);\nPatched: v13 = UlpAdjustSspChannelBindParameters(v6, *(v7+0x418), ...);  // unconditional"
+    },
+    {
+      "name": "UxQuicGetStatsV2MinimumSize (sub_1C001FF60)",
+      "similarity": 0.8849,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Output-size negotiation. Unpatched returns sizes in {0xbc,0xc0,0xc4} (max 0xc4). Patched adds a 0xd0 option behind a second feature flag data_1c009aaac (when arg1>=0xd0). Accommodates the larger (0xd0) struct version."
+      ],
+      "security_relevant": false,
+      "security_notes": "Pure size-negotiation version bump (struct grew 0xc8->0xd0). The unpatched maximum (0xc4) is internally consistent with its smaller struct; no overflow introduced or fixed here.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxQuicConnectionQueryRemoteCertificates (sub_1C0048C6C)",
+      "similarity": 0.8902,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Property copy under ExReleasePushLockExclusiveEx. Copy helper sub_1c0021580 -> sub_1c0021640 (relocated). Added feature-flag no-op branch (data_1c009aaae). No security-relevant change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentFacet (sub_1C0127CB0)",
+      "similarity": 0.9195,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Registry/config reader for HTTP parameters. Unpatched reads 'DefaultAuthHardeningLevel' into arg1+0x418 ONLY 'if (UxKirSetCbtHardeningAsMedium)' (gate check @0x1C01285D4). Patched removes the gate so the policy is always read (default 1, range 0-2).",
+        "All other registry reads (TLS/HTTP2/HTTP3 tuning values) unchanged except relocated callees."
+      ],
+      "security_relevant": false,
+      "security_notes": "The registry read is on the same KIR gate as the setup-routine selection. Reading the policy unconditionally is part of the same servicing consolidation. Not attacker-controlled.",
+      "assembly_diff": "Unpatched: if (UxKirSetCbtHardeningAsMedium) UxReadBoundedULongSetting(KeyHandle, u\"DefaultAuthHardeningLevel\", 1, 0, 2, 0, arg1+0x418);\nPatched:   UxReadBoundedULongSetting(KeyHandle, u\"DefaultAuthHardeningLevel\", 1, 0, 2, 0, arg1+0x418);  // unconditional"
+    },
+    {
+      "name": "UlDelegateRequest (sub_1C010E1EC)",
+      "similarity": 0.94,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Large auth/property-dispatch function. References UxKirSetCbtHardeningAsMedium (at 0x1C010E395/0x1C010E50F/0x1C010E843) and the legacy UlpAdjustSspChannelBindParameters_Old. Stack frame grew +8 for the larger struct.",
+        "Patched consolidates to the single channel-binding setup path and drops the legacy branch, consistent with the other sites."
+      ],
+      "security_relevant": false,
+      "security_notes": "Another KIR-gated selection site. Selection fixed at module init; not attacker-reachable.",
+      "assembly_diff": "Stack frame: lea rax,[rbp-0x19] -> lea rax,[rbp-0x21]; new local (rbp-0x31) initialized. References to UxKirSetCbtHardeningAsMedium and calls to UlpAdjustSspChannelBindParameters_Old removed in patch."
+    },
+    {
+      "name": "UxQuicParseFrame (sub_1C00542D4)",
+      "similarity": 0.9448,
+      "change_type": "behavioral",
+      "key_changes": [
+        "High-similarity change; consistent with the bulk struct-version offset shift (+8) and renumbered callees observed across the property-handling cluster. No distinct bounds/security change identified."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule (sub_1C01767B0)",
+      "similarity": 0.9509,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Module-init routine. Unpatched materializes the KIR gate: UxKirSetCbtHardeningAsMedium = Feature_2058039610__private_IsEnabledDeviceUsage() != 0, compiled to 'setnz cs:UxKirSetCbtHardeningAsMedium' @0x1C017684B (and reads it back @0x1C01768A4 for a WPP trace). wil_InitializeFeatureStaging is called at 0x1C0176831; sibling UxKir* gates are set the same way in the same block.",
+        "Patched drops the feature-staging write; the global no longer exists, so all downstream channel-binding sites use the single hardened setup path."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is where the UxKir* Known-Issue-Rollback gate is materialized from WIL feature-staging. Removing the write graduates the KIR to permanent. It sits among sibling servicing gates (UxKirChunkExtHeaderFix, UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, UxKirHKERangeRequestH2StatusCode), confirming the servicing-churn nature.",
+      "assembly_diff": "Unpatched @0x1C017684B: setnz cs:UxKirSetCbtHardeningAsMedium  ; = (Feature_2058039610 enabled)\nUnpatched @0x1C01768A4: cmp cs:UxKirSetCbtHardeningAsMedium, sil  ; WPP trace gate\nPatched: both removed (no feature-staging gate)."
+    },
+    {
+      "name": "UlGetServerSessionProperty (sub_1C0120D74)",
+      "similarity": 0.9672,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "HTTP query-property handler (IRP* arg1, arg4=info class). For info class 0xa: unpatched does 'if(!UxKirSetCbtHardeningAsMedium) UlCopyChannelBindConfigToIrp_Old(...) else UlCopyChannelBindConfigToIrp(...)' (gate @0x1C0120EA6); patched always calls UlCopyChannelBindConfigToIrp.",
+        "Renumbered callees (sub_1c00f25c8->sub_1c00f1ef8, UlCopyAuthConfigToIrp->sub_1c0066dd0, sub_1c012ca60->sub_1c012c280)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same KIR-gate consolidation as the auth-init sites, applied to the channel-bind config query (info class 0xa). The legacy UlCopyChannelBindConfigToIrp_Old path is the rolled-back side of the gate; removing it is servicing churn.",
+      "assembly_diff": "Unpatched arg4==0xa: if (!UxKirSetCbtHardeningAsMedium) rax=UlCopyChannelBindConfigToIrp_Old(rax_3+0x178,arg1,arg8); else rax=UlCopyChannelBindConfigToIrp(...);\nPatched:   rdi=UlCopyChannelBindConfigToIrp(*(*(rax_3+0x18)+0x38), rax_3+0x178, arg1, arg8);  // always"
+    },
+    {
+      "name": "UlQueryConfigGroupProperty (sub_1C011B4F8)",
+      "similarity": 0.9678,
+      "change_type": "servicing_churn",
+      "key_changes": [
+        "Counterpart query-property handler. info class 0xa: unpatched 'if(!UxKirSetCbtHardeningAsMedium) UlCopyChannelBindConfigToIrp_Old(...) else UlCopyChannelBindConfigToIrp(...)' (gate @0x1C011B658); patched always UlCopyChannelBindConfigToIrp.",
+        "Calls to UlCopyAuthConfigToIrp(1,...) changed to sub_1c0066dd0(0,...) (arg reflects the +8 struct / recompile)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same KIR-gated (0xa) consolidation as UlGetServerSessionProperty.",
+      "assembly_diff": "Unpatched arg4==0xa: if(!UxKirSetCbtHardeningAsMedium) rax_8=UlCopyChannelBindConfigToIrp_Old(&rax_2[0x60],arg1,r14); else rax_8=UlCopyChannelBindConfigToIrp(*(arg2+0x38),&rax_2[0x60],arg1,r14);\nPatched: rdi=UlCopyChannelBindConfigToIrp(*(arg2+0x38),&rax_2[0x60],arg1,r14);"
+    },
+    {
+      "name": "UlQueryRequestProperty (sub_1C012DA28)",
+      "similarity": 0.9786,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large property serializer. Local/stack layout and struct-field offsets shifted +8; renumbered copy/alloc helpers (sub_1c0021580->sub_1c0021640, sub_1c00f2050->sub_1c00f1980). No new bounds checks added."
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct version bump only; unpatched serialization is internally consistent with its 0xc8 struct.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UcQueryClientConnectionFastIo (sub_1C0070E40)",
+      "similarity": 0.9848,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Property handler. case 0xa serialize size 0xc8 -> 0xd0; size validation var_338<=0xc8 -> <=0xd0. case 8 size 0xc8->0xd0. Consistent struct-version bump."
+      ],
+      "security_relevant": false,
+      "security_notes": "Size constants moved together with the struct growth; no mismatch introduced.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlQueryRequestFastIo (sub_1C00392F0)",
+      "similarity": 0.9852,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Property handler. case 8 source size 0xc8 -> 0xd0; output-size ceiling var_288<=0xc8 -> <=0xd0. Consistent struct-version bump."
+      ],
+      "security_relevant": false,
+      "security_notes": "Size constants moved together with the struct growth; no mismatch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCopyAuthConfigToIrp (sub_1C0066CD0)",
+      "similarity": 0.9923,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable-length property serializer (copies strings into output buffer with length checks). Only renumbered callees (sub_1c00f2050->sub_1c00f1980, sub_1c0021580->sub_1c0021640) and trace ID/GUID shifts. Existing bounds checks (r14_2 <= arg_18) unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UcQueryClientConnectionProperty (sub_1C0071284)",
+      "similarity": 0.9927,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Query handler. Property 0xa gate arg5>=0xc8 -> >=0xd0 and field offset rsi_1+0x980 -> +0x988 (+8). QUIC connection struct field at +0x980 -> +0x988. Struct-version bump."
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct field offset shift (+8) is the version bump; the size gate moved in lockstep.",
+      "assembly_diff": "Unpatched: rcx_6==0xa && arg5>=0xc8 -> sub_1c001fc74(...);  *(rsi_1+0x980)\nPatched:   rcx_6==0xa && arg5>=0xd0 -> sub_1c001fd1c(...);  *(rsi_1+0x988)"
+    },
+    {
+      "name": "UxQuicStreamConnectionControl (sub_1C0056FB0)",
+      "similarity": 0.9928,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large query-property dispatcher. Nearly every connection-state field read shifted +8 bytes (e.g. case 0x40: 0x4f8->0x500; case 0x42: 0x460->0x468; case 0x21: 0x9b0->0x9b8, 0x468->0x470; case 0x19: 0x988->0x990, 0x980->0x988).",
+        "Renumbered helpers throughout. Confirms an 8-byte field was inserted into the connection/request info struct."
+      ],
+      "security_relevant": false,
+      "security_notes": "Pure struct-layout version change; reads move in lockstep with the new field, no out-of-bounds access.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "UlpAdjustSspChannelBindParamsForDigestChallenge (0x1C01553B8 -> 0x1C0154B88) / UlpSspiAuthenticationHandler (0x1C0157F40 -> 0x1C0157650) and related channel-binding sites",
+      "entry_point": "None attacker-reachable for the change itself. Path selection is fixed at module init by the KIR gate UxKirSetCbtHardeningAsMedium, not by any HTTP request field.",
+      "call_chain": [
+        "Module init: UxStartEnvironmentModule -> wil_InitializeFeatureStaging (0x1C0176831) -> Feature_2058039610__private_IsEnabledDeviceUsage() -> setnz cs:UxKirSetCbtHardeningAsMedium (0x1C017684B). This value, not client input, selects the setup routine.",
+        "At each auth site (UlpAdjustSspChannelBindParamsForDigestChallenge @0x1C01553DB, UlpSspiAuthenticationHandler @0x1C01580D2, UlpDigestAuthenticationHandler @0x1C0067DD1, UlDelegateRequest, UlGetServerSessionProperty @0x1C0120EA6, UlQueryConfigGroupProperty @0x1C011B658), the gate selects UlpAdjustSspChannelBindParameters (gate set) vs the legacy UlpAdjustSspChannelBindParameters_Old / UlCopyChannelBindConfigToIrp_Old (gate clear)."
+      ],
+      "vulnerability_class": "No security-relevant change. Known-Issue-Rollback (UxKir*) gate removal / servicing churn. The old channel-binding path was retained in the else branch (staged rollout); the patch removes the rollback capability and hardcodes the enabled behavior.",
+      "description": "In the unpatched http.sys, a global byte UxKirSetCbtHardeningAsMedium selects between two channel-binding setup routines at each SSP auth site. The UxKir* naming and the materialization pattern identify it as a Known-Issue-Rollback gate: UxStartEnvironmentModule calls wil_InitializeFeatureStaging (0x1C0176831) then sets UxKirSetCbtHardeningAsMedium = (Feature_2058039610__private_IsEnabledDeviceUsage() != 0) via 'setnz cs:UxKirSetCbtHardeningAsMedium' at 0x1C017684B, alongside sibling gates UxKirChunkExtHeaderFix, UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, and UxKirHKERangeRequestH2StatusCode set the same way in the same block. When the gate is non-zero, sites call UlpAdjustSspChannelBindParameters (0x1C01552AC) passing the registry-configured DefaultAuthHardeningLevel (*(cfg+0x418)) as a default hardening level; when zero, they call the legacy UlpAdjustSspChannelBindParameters_Old (0x1C00C69DC), which sources the hardening level from the per-connection context field *(ctx+0x8C) instead. In UlpAdjustSspChannelBindParamsForDigestChallenge both branches write the same context fields (+0x88, +0x8C, +0x90) before their call; the difference is limited to the callee and the level source. Both routines call UlQueryChannelBindToken and perform the same channel-binding flag bit-setting. The config reader UxStartEnvironmentFacet reads DefaultAuthHardeningLevel from the registry only when the gate is set (gate check at 0x1C01285D4). The patched binary removes the gate at every site, reads the policy unconditionally, always uses UlpAdjustSspChannelBindParameters, and deletes the legacy UlpAdjustSspChannelBindParameters_Old and UlCopyChannelBindConfigToIrp_Old functions (their unpatched addresses are reused by unrelated code in the patched build, e.g. 0x1C00C6400 becomes UlConstructFileName). Because path selection is fixed by a servicing rollback gate rather than by attacker-controlled request data, and because the retained legacy path still performs channel-binding enforcement, this diff does not deliver a fix for an attacker-reachable vulnerability. No differential authentication decision attributable to client input is demonstrable from these binaries.",
+      "trigger_conditions": "None attacker-reachable. Selecting the legacy routine requires the KIR gate UxKirSetCbtHardeningAsMedium to be in its rolled-back (zero) state, an administrative/servicing condition set at module init and not influenced by any HTTP request. No demonstration exists in these binaries that the legacy routine accepts authentication the new routine rejects.",
+      "primitive": "None. No memory-corruption, read/write/execute, or demonstrated authentication-bypass primitive. The diff is a servicing consolidation of a KIR gate.",
+      "evidence": "// UlpAdjustSspChannelBindParamsForDigestChallenge (unpatched @0x1C01553B8): both branches write the same context fields; differ only in callee and level source.\nint32_t authFlags = *(arg3 + 0x50);\nif (UxKirSetCbtHardeningAsMedium) {                       // KIR gate (removed in patch)\n    ctx->_88 = authFlags; ctx->_90 = *(arg3+0x58); ctx->_8C = *(arg3+0x54);\n    rc = UlpAdjustSspChannelBindParameters(ctx, *(cfg+0x418), arg4, arg5);   // level default from DefaultAuthHardeningLevel\n} else if (authFlags & 1) {\n    ctx->_88 = authFlags; ctx->_90 = *(arg3+0x58); ctx->_8C = *(arg3+0x54);  // SAME fields written\n    rc = UlpAdjustSspChannelBindParameters_Old(ctx, arg4, arg5);             // level sourced from ctx->_8C internally\n}\n// Patched (@0x1C0154B88): unconditional\nrc = UlpAdjustSspChannelBindParameters(ctx, *(cfg+0x418), arg4, arg5);\n\n// UxStartEnvironmentModule: gate is a WIL feature-staging KIR value, not attacker input\nwil_InitializeFeatureStaging();\nUxKirSetCbtHardeningAsMedium = (Feature_2058039610__private_IsEnabledDeviceUsage() != 0);  // setnz @0x1C017684B",
+      "assembly": "UlpAdjustSspChannelBindParamsForDigestChallenge (UNPATCHED, http_unpatched.sys @0x1C01553B8):\n0x1C01553D5 : mov     eax, [r8+50h]                        ; auth flags\n0x1C01553D9 : xor     ebp, ebp\n0x1C01553DB : cmp     cs:UxKirSetCbtHardeningAsMedium, bpl  ; KIR gate (removed in patch)\n0x1C01553E8 : mov     rdi, rcx\n0x1C01553EB : jz      0x1C01554A3                          ; gate==0 -> legacy branch\n; ---- gate != 0 branch ----\n0x1C01553F6 : lea     rcx, [r8+318h]\n0x1C01553FD : mov     [rcx+88h], eax                       ; ctx+0x88\n0x1C0155406 : mov     eax, [r8+58h]\n0x1C015540A : mov     [rcx+90h], eax                       ; ctx+0x90\n0x1C0155410 : mov     eax, [r8+54h]\n0x1C0155417 : mov     [rcx+8Ch], eax                       ; ctx+0x8C\n0x1C015541D : mov     edx, [rdi+418h]                      ; edx = DefaultAuthHardeningLevel\n0x1C0155423 : call    UlpAdjustSspChannelBindParameters\n; ---- gate == 0 branch (legacy) ----\n0x1C01554A3 : test    al, 1\n0x1C01554A5 : jz      0x1C015555D\n0x1C01554B0 : lea     rcx, [r8+318h]\n0x1C01554B7 : mov     [rcx+88h], eax                       ; ctx+0x88 (same)\n0x1C01554BD : mov     rdx, rsi                             ; 3rd arg to _Old\n0x1C01554C0 : mov     eax, [r8+58h]\n0x1C01554C4 : mov     [rcx+90h], eax                       ; ctx+0x90 (same)\n0x1C01554CA : mov     eax, [r8+54h]\n0x1C01554CE : mov     r8, r15\n0x1C01554D1 : mov     [rcx+8Ch], eax                       ; ctx+0x8C (same; _Old reads level from here)\n0x1C01554D7 : call    UlpAdjustSspChannelBindParameters_Old",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlpAdjustSspChannelBindParamsForDigestChallenge",
+            "address": "0x1C01553B8",
+            "why": "Observe which setup routine the build uses. Whether the branch at 0x1C01553EB is taken depends solely on the KIR gate value, not on request contents. This is a configuration observation, not an exploit condition."
+          },
+          {
+            "symbol": "http!UlpAdjustSspChannelBindParameters_Old (legacy routine, removed in patch)",
+            "address": "0x1C00C69DC",
+            "why": "Reached only when the KIR gate is in its rolled-back (zero) state. The routine still performs channel-binding enforcement (UlQueryChannelBindToken + flag bit-setting), sourcing its hardening level from ctx+0x8C."
+          },
+          {
+            "symbol": "global UxKirSetCbtHardeningAsMedium (KIR gate)",
+            "address": "0x1C009AAC2",
+            "why": "Read this byte to see which path the build selects. Its value is fixed at module init by setnz @0x1C017684B from Feature_2058039610__private_IsEnabledDeviceUsage(); it is not attacker-controlled."
+          }
+        ],
+        "watch": [
+          "byte at [0x1C009AAC2] (UxKirSetCbtHardeningAsMedium) selects the setup routine; set at module init, not by request data",
+          "ctx+0x88 / ctx+0x8C / ctx+0x90 are written identically in both branches before the call",
+          "edx at 0x1C015541D = DefaultAuthHardeningLevel default passed to the new routine; the legacy routine reads its level from ctx+0x8C instead"
+        ],
+        "key_offsets": [
+          "0x1C01553DB : 'cmp cs:UxKirSetCbtHardeningAsMedium, bpl' - the removed KIR gate",
+          "0x1C01553EB : 'jz 0x1C01554A3' - branch to the legacy setup routine when the gate is 0",
+          "0x1C017684B : 'setnz cs:UxKirSetCbtHardeningAsMedium' - where the KIR gate is materialized from WIL feature-staging",
+          "0x1C01285D4 : 'cmp cs:UxKirSetCbtHardeningAsMedium, sil' - gate on the DefaultAuthHardeningLevel registry read in UxStartEnvironmentFacet",
+          "+0x418 : DefaultAuthHardeningLevel field on the server-config object"
+        ],
+        "trigger_setup": "None. The path is selected by the KIR gate value fixed at module init, not by any HTTP request. There is no client-supplied input that changes which setup routine runs.",
+        "expected_observation": "No crash, corruption, or client-attributable authentication-decision differential. The observable difference between builds is structural (gate removed, single setup routine) and, at most, the source of the default hardening level, gated behind a servicing rollback switch.",
+        "notes": "This is servicing churn: a UxKir* Known-Issue-Rollback gate for channel-binding hardening graduating to permanent, with the retained legacy path deleted. The hardened setup routine UlpAdjustSspChannelBindParameters is byte-identical between builds (matched 0x1C01552AC <-> 0x1C0154A7C, similarity 1.0). The numerous other changes are an unrelated connection-info struct version bump (0xc8->0xd0 with a +8 field) and recompilation artifacts. Symbol names are present in the disassembly; load http.sys and use the listed RVAs/VAs."
+      }
+    }
+  ],
+  "summary": "The patch removes a Known-Issue-Rollback gate, UxKirSetCbtHardeningAsMedium, and the legacy channel-binding routines it selected. The gate is a UxKir* servicing switch materialized at module init from WIL feature-staging (wil_InitializeFeatureStaging at 0x1C0176831, then Feature_2058039610__private_IsEnabledDeviceUsage() -> setnz @0x1C017684B), sitting among sibling UxKir* gates. At each SSP auth site the gate selected UlpAdjustSspChannelBindParameters (passing the registry DefaultAuthHardeningLevel) versus the legacy UlpAdjustSspChannelBindParameters_Old (which reads its hardening level from the per-connection field ctx+0x8C). In UlpAdjustSspChannelBindParamsForDigestChallenge both branches write the same context fields (+0x88/+0x8C/+0x90); both routines call UlQueryChannelBindToken and set the same channel-binding flag bits. The patch removes the gate everywhere, reads the policy unconditionally (UxStartEnvironmentFacet), always uses the single setup routine, and deletes the legacy UlpAdjustSspChannelBindParameters_Old and UlCopyChannelBindConfigToIrp_Old functions. Because path selection is fixed by a servicing rollback gate rather than by attacker-controlled request data, and the retained legacy path still enforces channel binding, this diff is a KIR graduation / servicing consolidation, not a fix for an attacker-reachable vulnerability. No differential authentication decision attributable to client input is demonstrable from these binaries. The remaining changed functions are an unrelated connection-info struct version bump (sizes/constants moving 0xc8->0xd0 with a +8 field) and recompilation artifacts (renamed helpers, ETW/WPP GUID/message-ID shifts). Severity: none (informational)."
+}

@@ -1,0 +1,167 @@
+{
+  "binaries": {
+    "title": "ksrext.sys - No security-relevant change (memory-partition-list ownership and reference counting refactored into KsrPersistMemoryPartition)",
+    "id_unpatched": "ksrext_unpatched.sys",
+    "id_patched": "ksrext_patched.sys",
+    "overall_similarity": 0.4998,
+    "matched": 149,
+    "changed": 74,
+    "identical": 75,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KsrPersistMemoryPartition",
+      "similarity": 0.8637,
+      "change_type": "refactor",
+      "key_changes": [
+        "Added ObReferenceObjectByHandle(Handle, 2, PsPartitionType, 0, &Object, nullptr) after ObOpenObjectByPointerWithTag; all subsequent queries (ObQueryNameString, ObGetObjectSecurity, KsrpQueryMemoryRuns, KsrpQueryIoSpaceRuns) now use the referenced Object instead of the caller pointer a2",
+        "Object and handle fields of the descriptor passed to the external routine KsrpPersistMemoryPartitionRoutinePointer are now cleared (unpatched set descriptor[3]=a2 and descriptor[9]=Handle; patched sets both to 0)",
+        "List insertion is now performed inline by the new helper KsrpAddPartitionToList(Handle, Object, arg1); on success the handle and reference are transferred to the list entry (both set to NULL)",
+        "Reference released on failure via ObfDereferenceObjectWithTag(Object, 0x2072734B)",
+        "Partition-list lock changed from shared (ExAcquirePushLockSharedEx / KsrpPdDatabaseLock) to exclusive (ExAcquirePushLockExclusiveEx / KsrpPartitionLock) because the driver now writes the list"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security-relevant fix. In the unpatched build the driver does not store the caller's raw partition pointer in its own persistent list and does not take its own object reference; it hands the raw object pointer and the opened handle to an externally registered loader routine (KsrpPersistMemoryPartitionRoutinePointer) that owns the insertion and lifetime. During the call the PsPartitionType object is kept alive by the caller's reference and by the freshly opened handle, so the in-function uses of a2 are not use-after-free. The patched build takes over persisted-partition-list ownership: it takes its own reference through the handle, uses the referenced pointer for all queries, performs the insertion inline via the new KsrpAddPartitionToList, and releases the reference in error paths. The added ObReferenceObjectByHandle/ObfDereferenceObjectWithTag are the natural consequence of moving insertion and ownership into the driver (matching the ObfDereferenceObject/ZwClose teardown already present in KsrpDestoryPartitionList), not a repair of a dangling pointer present in the unpatched driver. No attacker-reachable use-after-free is demonstrable from these binaries.",
+      "assembly_diff": "UNPATCHED (0x1C0008780):\n  0x1C00088D7: mov rcx, r12                 ; Object = a2\n  0x1C00088DA: call ObOpenObjectByPointerWithTag\n  0x1C0008907: mov rcx, r12 ; -> ObQueryNameString(a2,...)\n  0x1C000897D: mov rcx, r12 ; -> ObGetObjectSecurity(a2,...)\n  0x1C000899B: mov rcx, r12 ; -> KsrpQueryMemoryRuns(a2,...)\n  0x1C00089B6: mov rcx, r12 ; -> KsrpQueryIoSpaceRuns(a2,...)\n  0x1C00089F1: mov [rbp+var_118], r12       ; descriptor object field = a2\n  0x1C0008A01: mov [rbp+var_E8], rax        ; descriptor handle field\n  0x1C0008A45: call __guard_dispatch_icall_fptr ; external KsrpPersistMemoryPartitionRoutinePointer(descriptor)\n  0x1C0008A83: call ZwClose                 ; failure cleanup, handle only; no object deref; no KsrpAddPartitionToList\n\nPATCHED (0x14000A820):\n  0x14000A94F: call ObOpenObjectByPointerWithTag\n  0x14000A98D: call ObReferenceObjectByHandle ; ADDED (Handle, 2, PsPartitionType, 0, &Object)\n  0x14000A999: mov rsi, [rbp+Object]         ; rsi = referenced object, used for all queries\n  0x14000AA99: and [rbp+var_118], r12        ; descriptor object field cleared (r12=0)\n  0x14000AA9D: and [rbp+var_E8], r12         ; descriptor handle field cleared\n  0x14000AAF3: call _guard_dispatch_icall     ; external routine(descriptor)\n  0x14000AB0A: call KsrpAddPartitionToList    ; ADDED inline insertion (Handle, rsi, arg1)\n  0x14000AB15/AB1B: handle and object set to 0 on success (ownership transferred)\n  0x14000AB64: call ObfDereferenceObjectWithTag ; ADDED release on failure"
+    },
+    {
+      "name": "KsrRegisterLoaderCallbacks",
+      "similarity": 0.7649,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Context/registration structure expanded to accommodate soft-restart persistence callback slots"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrConnectSecureLoader",
+      "similarity": 0.7788,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Migrated ExAllocatePoolWithTag to ExAllocatePool2 (API modernization)",
+        "Allocation-failure error path adjusted"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrMmAllocatePagesForMdlEx",
+      "similarity": 0.8,
+      "change_type": "behavioral",
+      "key_changes": [
+        "arg6/a8 masked with 0x7FFFFFFF before use (mask present only in the patched build)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Minor hardening: the masked value flows into MmAllocatePagesForMdlEx, which validates its own inputs. Not an exploitable condition in the unpatched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrQueryPersistedMemoryPartition",
+      "similarity": 0.88,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Read-path lock changed from exclusive (ExAcquirePushLockExclusiveEx @0x1C0008BF7) to shared (ExAcquirePushLockSharedEx @0x14000AF0F)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrQueryMetadata",
+      "similarity": 0.1225,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Global function-pointer indirection refactored into a wrapper call"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrInitPageDatabase",
+      "similarity": 0.5657,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added soft-restart persistence / state-restoration code path"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrEnumeratePersistedMemoryPartitions",
+      "similarity": 0.85,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added soft-restart partition enumeration path with active/persisted filtering"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "KsrPersistMemoryPartition",
+      "entry_point": "Internal driver routine registered through the KSR loader interface (guard: KsrpPersistMemoryPartitionRoutinePointer). No unprivileged user-mode path to this routine is demonstrated by these binaries.",
+      "call_chain": [
+        "KSR loader-interface registration -> KsrpPersistMemoryPartitionRoutinePointer",
+        "ksrext.sys!KsrPersistMemoryPartition",
+        "unpatched: external KsrpPersistMemoryPartitionRoutinePointer(descriptor) owns list insertion and object lifetime",
+        "patched: ksrext.sys!KsrpAddPartitionToList (inline insertion with driver-held reference)"
+      ],
+      "vulnerability_class": "None (object-lifetime/ownership refactor)",
+      "description": "Prior classification as a Use-After-Free / missing reference count is not supported by the binaries. The unpatched KsrPersistMemoryPartition opens a handle to the caller-supplied PsPartitionType object, queries its name/security/memory-runs using the caller pointer while the object is kept alive by the caller's reference and the open handle, and hands the raw object pointer and handle to an externally registered loader routine (KsrpPersistMemoryPartitionRoutinePointer) via a stack descriptor (descriptor[3]=a2, descriptor[9]=Handle). The driver itself performs no persistent list insertion and takes no independent reference in the unpatched build; the persisted-partition list is populated/owned elsewhere. The patched build moves that ownership into the driver: it adds ObReferenceObjectByHandle to obtain an independently referenced object, uses it for all queries, clears the object/handle fields in the descriptor passed to the external routine, inserts into KsrpMemoryPartitionList inline via the new KsrpAddPartitionToList, transfers ownership of the reference and handle to the list entry on success, and releases the reference via ObfDereferenceObjectWithTag on failure. This matches the teardown already present in both builds (KsrpDestoryPartitionList dereferences [entry+0x10] and closes [entry+0x18]). No dangling pointer exists in the unpatched driver and no attacker-reachable memory-safety fault is demonstrable.",
+      "trigger_conditions": "No reachable trigger established. Within KsrPersistMemoryPartition the object is referenced by both the caller and an open handle for the duration of the call. The unpatched driver does not store an unreferenced raw pointer in its own list, and no function in these images is shown to dereference a list-stored raw pointer after the object could be freed.",
+      "primitive": "None demonstrable. The unpatched driver does not persist a raw, unreferenced object pointer in its own list; the lifetime/insertion behavior that the patched build brings inline is performed by an external loader routine that is not part of these binaries and cannot be shown to omit a reference.",
+      "evidence": "UNPATCHED KsrPersistMemoryPartition (0x1C0008780):\n  ObjectSecurity = ObOpenObjectByPointerWithTag(a2, 0x200u, nullptr, 1u, PsPartitionType, 0, 0x2072734Bu, &Handle);\n  ObQueryNameString(a2, ...); ObGetObjectSecurity(a2, ...);\n  KsrpQueryMemoryRuns((__int64)a2, &P, &v33); KsrpQueryIoSpaceRuns((__int64)a2, &v36, &v34);\n  v40[3] = a2; v40[9] = Handle;                 // raw object + handle handed to external routine\n  ObjectSecurity = ((...)KsrpPersistMemoryPartitionRoutinePointer)(v40);\n  if (ObjectSecurity < 0 && Handle) ZwClose(Handle);   // no driver-held reference exists\n\nPATCHED KsrPersistMemoryPartition (0x14000A820):\n  ObReferenceObjectByHandle(Handle, 2u, PsPartitionType, 0, &Object, nullptr); v8 = Object;\n  // ObQueryNameString(v8,...), ObGetObjectSecurity(v8,...), KsrpQueryMemoryRuns(v8,...), KsrpQueryIoSpaceRuns(v8,...)\n  v39[3] = 0; v39[9] = 0;                        // object/handle no longer passed to external routine\n  ((...)KsrpPersistMemoryPartitionRoutinePointer[0])(v39);\n  KsrpAddPartitionToList(Handle, v8, v34);        // inline insertion; on success Handle=0, v8=0\n  if (v8) ObfDereferenceObjectWithTag(v8, 0x2072734Bu);\n\nKsrpDestoryPartitionList (unpatched 0x1C000BF68) already derefs [entry+0x10] (ObfDereferenceObject) and closes [entry+0x18] (ZwClose), confirming list entries are designed to own a reference and handle in both builds.",
+      "assembly": "; UNPATCHED KsrPersistMemoryPartition @ 0x1C0008780\n0x1C0008856: call ExAcquirePushLockSharedEx        ; KsrpPdDatabaseLock (read path)\n0x1C0008862: mov rax, cs:KsrpMemoryPartitionList\n0x1C0008872: cmp [rax+10h], r12                    ; entry object == a2 ?\n0x1C00088D7: mov rcx, r12                           ; Object = a2\n0x1C00088DA: call ObOpenObjectByPointerWithTag\n0x1C0008907: mov rcx, r12 ; 0x1C000890A: call ObQueryNameString\n0x1C000897D: mov rcx, r12 ; 0x1C0008980: call ObGetObjectSecurity\n0x1C000899B: mov rcx, r12 ; 0x1C00089A2: call KsrpQueryMemoryRuns\n0x1C00089B6: mov rcx, r12 ; 0x1C00089BD: call KsrpQueryIoSpaceRuns\n0x1C00089F1: mov [rbp+var_118], r12                ; descriptor object field = a2\n0x1C0008A01: mov [rbp+var_E8], rax                 ; descriptor handle field\n0x1C0008A45: call __guard_dispatch_icall_fptr       ; KsrpPersistMemoryPartitionRoutinePointer(descriptor)\n0x1C0008A83: call ZwClose                          ; failure cleanup, handle only\n\n; PATCHED KsrPersistMemoryPartition @ 0x14000A820\n0x14000A8EA: call ExAcquirePushLockExclusiveEx     ; KsrpPartitionLock (write path)\n0x14000A94F: call ObOpenObjectByPointerWithTag\n0x14000A98D: call ObReferenceObjectByHandle        ; ADDED\n0x14000A999: mov rsi, [rbp+Object]                 ; referenced object used for all queries\n0x14000AA99: and [rbp+var_118], r12                ; descriptor object field cleared\n0x14000AA9D: and [rbp+var_E8], r12                 ; descriptor handle field cleared\n0x14000AAF3: call _guard_dispatch_icall             ; external routine(descriptor)\n0x14000AB0A: call KsrpAddPartitionToList           ; ADDED inline insertion\n0x14000AB64: call ObfDereferenceObjectWithTag      ; ADDED release on failure\n0x14000AB7A: call ZwClose",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksrext_unpatched!KsrPersistMemoryPartition",
+            "address": "0x1C0008780",
+            "why": "Entry to the routine under review. rdx (a2) is the caller-supplied PsPartitionType object pointer; it is referenced by the caller and by the handle opened at 0x1C00088DA for the duration of the call."
+          },
+          {
+            "symbol": "ksrext_unpatched!KsrpDestoryPartitionList",
+            "address": "0x1C000BF68",
+            "why": "Teardown path that dereferences [entry+0x10] (ObfDereferenceObject) and closes [entry+0x18] (ZwClose), confirming list entries own a reference and handle in both builds."
+          },
+          {
+            "symbol": "ksrext_patched!KsrpAddPartitionToList",
+            "address": "0x14000D58C",
+            "why": "New in the patched build: allocates the 0x30-byte list entry and stores the referenced object at +0x10 and the handle at +0x18 before linking it into KsrpMemoryPartitionList."
+          }
+        ],
+        "watch": [
+          "unpatched 0x1C00089F1: [rbp+var_118] = a2 (raw object handed to the external routine)",
+          "unpatched 0x1C0008A45: KsrpPersistMemoryPartitionRoutinePointer dispatch (external routine owns insertion/lifetime)",
+          "patched 0x14000A98D: ObReferenceObjectByHandle result (driver-held reference)",
+          "patched 0x14000AB0A: KsrpAddPartitionToList (inline insertion, ownership transfer)"
+        ],
+        "key_offsets": [
+          "0x1C00088DA: ObOpenObjectByPointerWithTag(a2, ...) - opens handle that keeps the object alive during the call",
+          "0x1C0008A45: external KsrpPersistMemoryPartitionRoutinePointer dispatch (unpatched owner of persistent insertion)",
+          "0x14000A98D: ObReferenceObjectByHandle - added driver-held reference (patched)",
+          "0x14000AB0A: KsrpAddPartitionToList - added inline insertion (patched)",
+          "0x14000AB64: ObfDereferenceObjectWithTag - added reference release (patched)"
+        ],
+        "trigger_setup": "Not applicable. No attacker-reachable trigger for a memory-safety fault is demonstrated by these binaries; the object is referenced throughout the call and the driver stores no unreferenced raw pointer in its own list.",
+        "expected_observation": "None. No fault path is reachable in the unpatched build from the evidence available.",
+        "notes": "The partition object is a PsPartitionType object. KsrpMemoryPartitionList entries hold the object at +0x10 and the handle at +0x18. The unpatched base is 0x1C0000000; the patched base is 0x140000000 (addresses are not directly comparable between builds). The external KsrpPersistMemoryPartitionRoutinePointer routine is registered from a separate loader module and is not present in these binaries, so its reference handling cannot be observed here."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The most substantive difference, in KsrPersistMemoryPartition, moves ownership of the persisted memory-partition list from an externally registered loader routine (KsrpPersistMemoryPartitionRoutinePointer) into ksrext.sys itself. The unpatched driver opens a handle to the caller-supplied PsPartitionType object, queries it while the object is kept alive by the caller's reference and the open handle, and hands the raw object pointer and handle to the external routine, which owns the persistent insertion and lifetime; the driver takes no independent reference and stores nothing in its own list. The patched driver adds ObReferenceObjectByHandle to hold its own reference, uses the referenced pointer for all queries, clears the object/handle fields passed to the external routine, performs the list insertion inline via the new KsrpAddPartitionToList, transfers ownership on success, and releases the reference via ObfDereferenceObjectWithTag on failure. This matches the teardown already present in both builds (KsrpDestoryPartitionList). No dangling pointer exists in the unpatched driver and no attacker-reachable use-after-free or other primitive is demonstrable. The remaining changed functions are renames/relocations, pool-API modernization, lock-scope adjustments, tracing changes, and soft-restart feature paths."
+}

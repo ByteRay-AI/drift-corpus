@@ -1,0 +1,261 @@
+{
+  "binaries": {
+    "id_unpatched": "dxgkrnl_unpatched.sys",
+    "id_patched": "dxgkrnl_patched.sys",
+    "overall_similarity": 0.9918,
+    "matched": 6888,
+    "changed": 16,
+    "identical": 6872,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DXGSYNCOBJECT::AddReference",
+      "similarity": 0.683,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed feature-flag gate (Feature_2066527547__private_IsEnabledDeviceUsage) from AddReference — now ALWAYS uses the overflow-checked atomic cmpxchg loop",
+        "Unpatched flag-disabled path does 'lock inc dword [rbx+0x18]' with NO upper-bound check — a count already at 0xFFFFFFFF would wrap to 0",
+        "Unpatched flag-enabled path uses a cmpxchg loop that rejects the increment when refcount == 0xFFFFFFFF (returns STATUS_INTEGER_OVERFLOW 0xC0000017)",
+        "Patched version unconditionally applies the overflow-checked cmpxchg increment path"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched AddReference has a feature-gated path that increments the refcount at offset 0x18 without an upper-bound check. If the 32-bit count were already at 0xFFFFFFFF, the bare 'lock inc' would wrap it to 0. The patch makes the overflow check mandatory. This is defense-in-depth: the wrap is not reachable because each increment is tied to a live handle/object and ~4.29 billion concurrent references are not attainable within process handle-table and memory limits, so no premature free / UAF is demonstrable.",
+      "assembly_diff": "UNPATCHED (0x1c0026804):\n  push    rbx\n  sub     rsp, 0x20\n  mov     rbx, rcx\n  call    0x1c0026914          ; Feature_2066527547__private_IsEnabledDeviceUsage\n  test    eax, eax\n  je      0x1c0026858          ; FLAG DISABLED → fast unsafe path\n  ; --- SAFE PATH (flag enabled) ---\n  mov     eax, dword [rbx+0x18]  ; read refcount\n  cmp     eax, 0xffffffff        ; OVERFLOW CHECK\n  je      0x1c002682a            ; reject if max → return error\n  lea     ecx, [rax+0x1]\n  lock cmpxchg dword [rbx+0x18], ecx ; atomic increment\n  je      0x1c002685c\n  ; --- UNSAFE FAST PATH (flag disabled, default) ---\n  0x1c0026858: lock inc dword [rbx+0x18]  ; NO OVERFLOW CHECK!\n  xor     eax, eax\n  add     rsp, 0x20\n  pop     rbx\n  retn\n\nPATCHED (0x1c00267a4):\n  push    rbx\n  sub     rsp, 0x20\n  mov     rbx, rcx\n  mov     eax, dword [rbx+0x18]  ; read refcount\n  cmp     eax, 0xffffffff        ; ALWAYS checks overflow\n  je      overflow_error\n  lea     edx, [rax+0x1]\n  lock cmpxchg dword [rbx+0x18], edx ; atomic increment always\n  jne     retry_loop\n  xor     eax, eax\n  add     rsp, 0x20\n  pop     rbx\n  retn"
+    },
+    {
+      "name": "DXGSYNCOBJECT::Open",
+      "similarity": 0.9526,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed Feature_2066527547 gate around the refcount increment logic",
+        "Unpatched flag-disabled path takes the reference with a single bare 'lock inc dword [rdi+0x18]' at 0x1c010e125 on the success path, instead of the overflow-checked AddReference used on the flag-enabled path",
+        "Unpatched error-rollback 'lock dec' sites (0x1c010e001, 0x1c010e111) are the flag-enabled rollbacks of the early AddReference; they are correctly skipped when the flag is disabled because that path takes no reference until the success site, so accounting is balanced in both states",
+        "Patched version always calls AddReference() (overflow-checked) and always decrements on error paths"
+      ],
+      "security_relevant": true,
+      "security_notes": "The only security-relevant difference in Open is that the flag-disabled increment (bare 'lock inc dword [rdi+0x18]' at 0x1c010e125) lacks the upper-bound check that the flag-enabled AddReference applies. The reference accounting is balanced in both flag states — the disabled path defers its single increment to the success path and takes no reference to roll back on error, so there is no underflow or rollback imbalance. The patch makes the overflow-checked path unconditional. Not reachably exploitable (see AddReference notes).",
+      "assembly_diff": "Unpatched flag-disabled increment (success path):\n  0x1c010e11c: call Feature_2066527547__private_IsEnabledDeviceUsage\n  0x1c010e121: test eax, eax\n  0x1c010e123: jnz  0x1c010e129   ; flag enabled: ref already taken via AddReference\n  0x1c010e125: lock inc dword [rdi+0x18]  ; flag disabled: single bare increment, no upper-bound check\n\nUnpatched flag-enabled early reference + rollbacks:\n  0x1c010de65: call Feature_2066527547\n  0x1c010de74: call AddReference (overflow-checked)\n  0x1c010e001: lock dec dword [rdi+0x18]  ; rollback of the early AddReference (flag enabled only)\n  0x1c010e111: lock dec dword [rdi+0x18]  ; rollback of the early AddReference (flag enabled only)"
+    },
+    {
+      "name": "DXGDEVICESYNCOBJECT::Initialize",
+      "similarity": 0.9691,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed Feature_2066527547 gate around AddReference call",
+        "Unpatched: when feature disabled, calls AddReference but IGNORES the return value (treats overflow error as success)",
+        "Patched: always calls AddReference and checks return value before proceeding"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same theme as AddReference/Open: the Feature_2066527547 gate around the AddReference call is removed so the overflow-checked increment and its return-status handling are used unconditionally. Defense-in-depth hardening; not reachably exploitable for the same reason (the guarded 32-bit refcount wrap is not attainable).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkDestroySynchronizationObjectImpl",
+      "similarity": 0.9367,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_202674488 gate around device sync object validation check — unpatched only validates P->device match when feature enabled",
+        "Removed Feature_202674488 gate around conditional device destruction path",
+        "Added unconditional reference count decrement at end of device sync object destroy path: *(rbx_1 + 0x40) -= 1 with DestroyDeviceNoLocks when count reaches zero",
+        "Mostly register renaming (rbx→rdi, etc.) and cleanup"
+      ],
+      "security_relevant": false,
+      "security_notes": "The changes are primarily about removing a different feature flag (Feature_202674488) that gates an object ownership validation check. While this removes a security-relevant gating pattern, it appears to be a secondary hardening change associated with the same patch series, not the primary vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_GLOBAL_VMBUS::VmBusCreateProcess",
+      "similarity": 0.9178,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed Feature_530541883 gates around process refcounting (AcquireReference/ReleaseProcessCalloutMutex)",
+        "Removed Feature_530541883 conditional decrement of process count on error path",
+        "Register renaming throughout (rsi↔rdi swap)"
+      ],
+      "security_relevant": false,
+      "security_notes": "These are another set of feature-flag removals (Feature_530541883) related to VM process reference counting. This appears to be part of the same patch series but is a separate code path (VM bus host-side process creation) not directly exploitable from user-mode like the sync object refcount bug.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusCreateAllocation",
+      "similarity": 0.9679,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes and minor structural refactoring, no security-relevant changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusCddGdiCommand",
+      "similarity": 0.9789,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes and minor structural refactoring, no feature flags or security checks changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::CreateAllocation",
+      "similarity": 0.9687,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor structural changes, no feature flags, refcount changes, or security checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusMapGpuVirtualAddress",
+      "similarity": 0.909,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes and minor refactoring"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusMakeResident",
+      "similarity": 0.9125,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes and minor refactoring"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C012BD68",
+      "similarity": 0.9493,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup of error return path, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C015B983",
+      "similarity": 0.9493,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0117B64",
+      "similarity": 0.9542,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C015BB7D",
+      "similarity": 0.9542,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0107232",
+      "similarity": 0.9616,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C012D660",
+      "similarity": 0.9616,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor cleanup, register renaming"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "DXGSYNCOBJECT::AddReference / DXGSYNCOBJECT::Open",
+      "entry_point": "DxgkOpenSyncObjectFromNtHandle2Impl (0x1C00E1138), reachable from user mode via D3DKMTOpenSyncObjectFromNtHandle2",
+      "call_chain": [
+        "D3DKMTOpenSyncObjectFromNtHandle2 (user-mode runtime API)",
+        "DxgkOpenSyncObjectFromNtHandle2Impl (0x1C00E1138)",
+        "DXGSYNCOBJECT::Open (0x1C010DAE0)",
+        "refcount increment at [obj+0x18] (flag-disabled: bare 'lock inc' at 0x1C010E125; flag-enabled: via AddReference)"
+      ],
+      "vulnerability_class": "Missing upper-bound check on a reference-count increment (CWE-190, Integer Overflow)",
+      "description": "The DXGSYNCOBJECT holds a 32-bit reference count at offset 0x18. In the unpatched binary the feature flag Feature_2066527547__private_IsEnabledDeviceUsage gates how the count is incremented. When it resolves to enabled, AddReference (0x1c0026804) compares the count to 0xFFFFFFFF and rejects the increment with STATUS_INTEGER_OVERFLOW if already at the maximum, otherwise doing an atomic cmpxchg; DXGSYNCOBJECT::Open (0x1c010dae0) takes the reference early via AddReference and rolls it back with 'lock dec' on error. When the flag resolves to disabled, AddReference does a bare 'lock inc dword [rbx+0x18]' (0x1c0026858) with no upper-bound check, and Open defers a single bare 'lock inc dword [rdi+0x18]' (0x1c010e125) to its success path. The reference accounting is balanced in both flag states; the only security-relevant difference is the missing upper-bound check on the increment. The patch removes the gate so the overflow-checked path is unconditional. The guarded condition (the 32-bit count wrapping from 0xFFFFFFFF to 0) is not reachable: each increment is tied to a live handle/object (Open allocates a handle via HMGRTABLE::AllocHandle at 0x1c010dfc1), and ~4.29 billion concurrent references exceed process handle-table and memory limits, so no premature free or Use-After-Free can be produced. This is defense-in-depth hardening, not a demonstrable UAF.",
+      "trigger_conditions": "To reach the unpatched flag-disabled increment: create a DXG sync object via D3DKMTCreateSynchronizationObject, then call D3DKMTOpenSyncObjectFromNtHandle2 on its NT handle, which reaches DxgkOpenSyncObjectFromNtHandle2Impl -> DXGSYNCOBJECT::Open -> 'lock inc dword [rdi+0x18]' at 0x1c010e125 when Feature_2066527547 resolves to disabled. Driving the count to the 0xFFFFFFFF wrap the patch guards against is not achievable because each increment is pinned by a live handle/object and ~4.29 billion concurrent references are not attainable.",
+      "primitive": "None demonstrable against the unpatched build. The change adds a mandatory upper-bound check on a reference-count increment; the count cannot be driven to 0xFFFFFFFF, so no premature free, UAF, read/write, info-leak, or code-execution primitive follows from this diff.",
+      "evidence": "UNPATCHED DXGSYNCOBJECT::AddReference (0x1c0026804):\n  0x1c002680d: call Feature_2066527547__private_IsEnabledDeviceUsage\n  0x1c0026812: test eax, eax\n  0x1c0026814: jz 0x1c0026858      ; flag disabled -> bare-increment path\n  0x1c0026819: cmp eax, 0xffffffff ; flag-enabled upper-bound check\n  0x1c0026858: lock inc dword [rbx+0x18]  ; flag-disabled: no upper-bound check\n\nUNPATCHED DXGSYNCOBJECT::Open (0x1c010dae0):\n  0x1c010e123: jnz 0x1c010e129     ; flag enabled: ref already taken via AddReference\n  0x1c010e125: lock inc dword [rdi+0x18]  ; flag-disabled single increment (balanced), no upper-bound check\n  0x1c010e001 / 0x1c010e111: lock dec dword [rdi+0x18]  ; flag-enabled rollbacks of the early AddReference (balanced)\n\nPATCHED AddReference (0x1c00267a4) — gate removed, check unconditional:\n  0x1c00267ad: mov eax, [rcx+0x18]\n  0x1c00267b0: cmp eax, 0xffffffff\n  0x1c00267b8: lock cmpxchg [rcx+0x18], edx\n\nPATCHED Open (0x1c0110550) — gate removed; always AddReference (0x1c01108d8) with unconditional 'lock dec' rollback (0x1c0110a5f, 0x1c0110b5c); bare success-path 'lock inc' removed.",
+      "assembly": "=== DXGSYNCOBJECT::AddReference (UNPATCHED, 0x1C0026804) ===\n  00000001C0026804  push    rbx\n  00000001C0026806  sub     rsp, 20h\n  00000001C002680A  mov     rbx, rcx\n  00000001C002680D  call    Feature_2066527547__private_IsEnabledDeviceUsage\n  00000001C0026812  test    eax, eax\n  00000001C0026814  jz      short loc_1C0026858     ; flag disabled -> bare-increment path\n  ; --- overflow-checked path (flag enabled) ---\n  00000001C0026816  mov     eax, [rbx+18h]\n  00000001C0026819  cmp     eax, 0FFFFFFFFh         ; upper-bound check\n  00000001C002681C  jz      short loc_1C002682A     ; reject at max -> STATUS_INTEGER_OVERFLOW\n  00000001C002681E  lea     ecx, [rax+1]\n  00000001C0026821  lock cmpxchg [rbx+18h], ecx\n  00000001C0026826  jz      short loc_1C002685C\n  00000001C0026828  jmp     short loc_1C0026816     ; retry on contention\n  ; --- bare-increment path (flag disabled) ---\n  00000001C0026858  lock inc dword ptr [rbx+18h]    ; no upper-bound check\n  00000001C002685C  xor     eax, eax\n  00000001C002685E  add     rsp, 20h\n  00000001C0026862  pop     rbx\n  00000001C0026863  retn\n\n=== DXGSYNCOBJECT::Open (UNPATCHED, 0x1C010DAE0) — flag-disabled increment ===\n  00000001C010E11C  call    Feature_2066527547__private_IsEnabledDeviceUsage\n  00000001C010E121  test    eax, eax\n  00000001C010E123  jnz     short loc_1C010E129     ; flag enabled: ref already taken via AddReference\n  00000001C010E125  lock inc dword ptr [rdi+18h]    ; flag disabled: single bare increment on success\n  ; flag-enabled early reference and its rollbacks (balanced):\n  00000001C010DE74  call    DXGSYNCOBJECT::AddReference (overflow-checked, flag enabled)\n  00000001C010E001  lock dec dword ptr [rdi+18h]     ; rollback of the early AddReference (flag enabled only)\n  00000001C010E111  lock dec dword ptr [rdi+18h]     ; rollback of the early AddReference (flag enabled only)\n\n=== DXGSYNCOBJECT::AddReference (PATCHED, 0x1C00267A4) — gate removed ===\n  00000001C00267AA  mov     rbx, rcx\n  00000001C00267AD  mov     eax, [rcx+18h]\n  00000001C00267B0  cmp     eax, 0FFFFFFFFh          ; upper-bound check now unconditional\n  00000001C00267B3  jz      short loc_1C00267C3\n  00000001C00267B5  lea     edx, [rax+1]\n  00000001C00267B8  lock cmpxchg [rcx+18h], edx\n  00000001C00267BD  jnz     short loc_1C00267AD      ; retry on contention\n\n=== DXGSYNCOBJECT::Close (UNPATCHED, 0x1C0107068) — ordinary decrement, unchanged ===\n  00000001C01070BE  cmp     dword ptr [rdi+18h], 0\n  00000001C01070F7  lock add dword ptr [rdi+18h], 0FFFFFFFFh  ; refcount -= 1\n  00000001C0107101  setz    al                        ; true if result == 0",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dxgkrnl_unpatched!DXGSYNCOBJECT::AddReference",
+            "address": "0x1c0026804",
+            "why": "Observe the refcount increment. rcx = DXGSYNCOBJECT* this; refcount is dword [rcx+0x18]. The flag-disabled bare increment is 'lock inc dword [rbx+0x18]' at 0x1c0026858; the flag-enabled upper-bound check is 'cmp eax, 0xFFFFFFFF' at 0x1c0026819."
+          },
+          {
+            "symbol": "dxgkrnl_unpatched!DXGSYNCOBJECT::Close",
+            "address": "0x1c0107068",
+            "why": "Ordinary reference-count decrement, unchanged by the patch. rdi = DXGSYNCOBJECT*. 'lock add dword [rdi+0x18], 0xffffffff' at 0x1c01070f7 decrements; 'setz al' at 0x1c0107101 reports whether it reached 0."
+          },
+          {
+            "symbol": "Feature_2066527547__private_IsEnabledDeviceUsage",
+            "address": "0x1c0026914",
+            "why": "The WIL feature gate that selects the checked vs. bare increment path. It reads Feature_2066527547__private_featureState and tests bit 0x10 (override-present bit); if clear it falls back to the feature descriptor default. Runtime enablement is resolved from servicing configuration and is not fixed by the static diff."
+          }
+        ],
+        "watch": [
+          "DXGSYNCOBJECT refcount at [object+0x18] — the 32-bit reference count the upper-bound check guards",
+          "Feature_2066527547__private_featureState — bit 0x10 is the WIL override-present bit; selects checked vs. bare increment path",
+          "rcx at AddReference entry / rdi in Open = DXGSYNCOBJECT pointer"
+        ],
+        "key_offsets": [
+          "0x1c0026858: 'lock inc dword [rbx+0x18]' — the flag-disabled bare increment in AddReference (no upper-bound check)",
+          "0x1c0026819: 'cmp eax, 0xFFFFFFFF' — the flag-enabled upper-bound check in AddReference",
+          "0x1c0026914: Feature_2066527547__private_IsEnabledDeviceUsage — the WIL gate controlling checked vs. bare increment",
+          "0x1c010e125: 'lock inc dword [rdi+0x18]' — the flag-disabled bare increment in Open (balanced single increment on success)",
+          "0x1c01070f7: 'lock add dword [rdi+0x18], 0xffffffff' — ordinary decrement in Close (unchanged)"
+        ],
+        "trigger_setup": "To reach the flag-disabled increment: 1. Open a D3D adapter handle (D3DKMTOpenAdapterFromLuid). 2. Create a synchronization object via D3DKMTCreateSynchronizationObject. 3. Call D3DKMTOpenSyncObjectFromNtHandle2 on its NT handle — reaches DxgkOpenSyncObjectFromNtHandle2Impl -> DXGSYNCOBJECT::Open -> 'lock inc dword [rdi+0x18]' at 0x1c010e125 when Feature_2066527547 resolves to disabled. Driving the count to the 0xFFFFFFFF wrap is not achievable: each increment is pinned by a live handle/object and ~4.29 billion concurrent references exceed handle-table and memory limits.",
+        "expected_observation": "The 'lock inc' at 0x1c0026858 / 0x1c010e125 increments [object+0x18] by 1 per call. The upper-bound check the patch makes unconditional (cmp against 0xFFFFFFFF) is only exercised at the maximum count, which is not reachable in practice, so no premature free is observable against the unpatched build.",
+        "notes": "DXGSYNCOBJECT layout observed: refcount at +0x18 (4 bytes), sync object type at +0xC0. In Open, 'mov eax,[rdi+0xC0]; sub eax,5; cmp eax,1; jbe loc_1C010E1A9' at 0x1c010de53 branches types 5 and 6 AWAY from the feature-gated refcount path; other types fall through to it. The patch removes the Feature_2066527547 gate so the overflow-checked increment is used for all types unconditionally."
+      }
+    }
+  ],
+  "summary": "The patch removes a WIL feature-flag gate (Feature_2066527547__private_IsEnabledDeviceUsage) around the DXGSYNCOBJECT reference-count increment in DirectX Graphics Kernel (dxgkrnl.sys). In the unpatched binary, when the flag resolves to disabled, the increment is a bare 'lock inc dword [obj+0x18]' with no upper-bound check (in AddReference at 0x1c0026858 and in Open at 0x1c010e125); when enabled it goes through an overflow-checked atomic path that rejects the increment at 0xFFFFFFFF. The reference accounting is balanced in both flag states — the 'lock dec' sites in Open are the flag-enabled rollbacks of the early AddReference and are correctly skipped when disabled, so there is no rollback imbalance or underflow. The patch makes the overflow-checked path unconditional. This is directionally-correct defense-in-depth hardening (CWE-190), rated Low: the guarded condition (a 32-bit refcount wrapping) is not reachable because each increment is pinned by a live handle/object and ~4.29 billion concurrent references exceed process handle-table and memory limits. No Use-After-Free, pool-spray reclamation, or code-execution primitive is demonstrable from this diff; CWE-416 does not apply."
+}

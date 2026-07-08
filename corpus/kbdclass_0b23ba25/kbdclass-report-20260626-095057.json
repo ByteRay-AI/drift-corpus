@@ -1,0 +1,256 @@
+{
+  "binaries": {
+    "id_unpatched": "kbdclass_unpatched.sys",
+    "id_patched": "kbdclass_patched.sys",
+    "overall_similarity": 0.6565,
+    "matched": 91,
+    "changed": 71,
+    "identical": 20,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KeyboardClassCreate",
+      "patched_equivalent": "sub_1400039F0 @ 0x1400039F0",
+      "similarity": 0.4716,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched calls SeSinglePrivilegeCheck(SeTcbPrivilege=7, IRP->RequestorMode). When RequestorMode==KernelMode(0), SeSinglePrivilegeCheck returns TRUE without checking the caller's token, so the 'trusted' marker (FileObject->FsContext2 = DriverEntry sentinel) is granted without authorization",
+        "Patched version isolates SL_FORCE_ACCESS_CHECK (IO_STACK_LOCATION.Flags bit 0) and forces the privilege check to run as UserMode (mov dl,1 at 0x140003D2B) when that flag is set, so the caller's effective token is validated",
+        "Patched version extends the pre-existing exclusive-open denial to kernel-mode callers that set SL_FORCE_ACCESS_CHECK and calls a new audit helper sub_140005AB0 (0x140003C47) before returning STATUS_ACCESS_DENIED (0xC0000022)"
+      ],
+      "security_relevant": true,
+      "security_notes": "SeTcbPrivilege (privilege 7) check bypass for kernel-mode callers. In the unpatched build, SeSinglePrivilegeCheck is called with the IRP's actual RequestorMode; for KernelMode(0) it returns TRUE without examining the token. A kernel-mode component that opens the keyboard device on behalf of a lower-privileged user with OBJ_FORCE_ACCESS_CHECK (SL_FORCE_ACCESS_CHECK set) still passes the check and receives the trusted marker, which gates access to keyboard input via IRP_MJ_READ (KeyboardClassRead returns STATUS_PRIVILEGE_NOT_HELD without it). The patched build honors SL_FORCE_ACCESS_CHECK by forcing UserMode for the privilege check.",
+      "assembly_diff": "; --- UNPATCHED KeyboardClassCreate @ 0x1C0001CA0 ---\n; 0x1C0001D49: movzx edx, byte [rbx+40h]    ; IRP->RequestorMode (0=Kernel, 1=User)\n; 0x1C0001D61: call SeSinglePrivilegeCheck  ; KernelMode -> returns TRUE (no token check)\n; 0x1C0001D88: lea rcx, DriverEntry         ; trusted marker (0x1C000F080)\n; 0x1C0001D8F: mov [rdx+20h], rcx           ; FileObject->FsContext2 := marker\n;\n; --- PATCHED sub_1400039F0 @ 0x1400039F0 (the fix) ---\n; 0x140003A3F: movzx edi, byte [r14+2]       ; current stack location Flags\n; 0x140003A44: and dil, 1                     ; SL_FORCE_ACCESS_CHECK\n; 0x140003ABE: test dil, dil\n; 0x140003AC1: jnz 0x140003D2B                 ; if flag set -> force UserMode\n; 0x140003D2B: mov dl, 1                       ; PreviousMode = UserMode\n; 0x140003AD3: call SeSinglePrivilegeCheck     ; now validates the token"
+    },
+    {
+      "name": "KeyboardClassRemoveDevice",
+      "patched_equivalent": "sub_140001C60 @ 0x140001C60",
+      "similarity": 0.8382,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "The wait-wake IRP cancel sequence (read pointer at dev_ext+0x128 under the spinlock at dev_ext+0x48, set cancel flag at dev_ext+0x130, release lock, IoCancelIrp, xchg state at dev_ext+0x140 to 2, conditional IofCompleteRequest when old state was 3) is logically identical in both builds",
+        "The final call at 0x1C0004FBC is IofCompleteRequest (complete the IRP), not IoFreeIrp; no IRP is freed here and there is no double-free site",
+        "The only difference in patched sub_140001C60 is a De Morgan inversion of one if-branch; the locking, calls, and state transitions are unchanged. No work-item deferral is introduced"
+      ],
+      "security_relevant": false,
+      "security_notes": "Investigated for a use-after-free / TOCTOU race across the spinlock release. The read-under-lock / use-after-release pattern is the standard wait-wake cancellation idiom; ownership of the IRP is arbitrated by the dev_ext+0x140 state machine (1/2/3) plus the dev_ext+0x130 cancel flag. The sequence is behaviorally identical between the two builds, so the patch delivers no change and no fix applies here.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassWaitWakeComplete",
+      "patched_equivalent": "sub_140004B80 @ 0x140004B80",
+      "similarity": 0.6726,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "Same spinlock, same two-slot pending-IRP match at dev_ext+0x138 and dev_ext+0x128 (the latter also clears the cancel flag at dev_ext+0x130), same status-code dispatch to PoRequestPowerIrp / KeyboardToggleWaitWake",
+        "Unpatched uses a compound if-chain; patched uses an equivalent goto chain. Behavior is identical; only tracing gating differs"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassPowerComplete",
+      "patched_equivalent": "sub_1400018B0 @ 0x1400018B0",
+      "similarity": 0.2377,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "The inline 'cancel and free the previously pending SetLEDs IRP' block (IoCancelIrp then conditional IoFreeIrp when the state exchange returns 3) is lifted verbatim into helper sub_140001B70; the helper is byte-for-byte equivalent to the unpatched inline code",
+        "Return values (0 / 0xC0000116) and remove-lock release conditions match exactly; control flow is flattened but behavior is unchanged",
+        "No IoAllocateWorkItem/IoQueueWorkItem conversion is introduced; the low similarity is helper extraction plus tracing gating"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassWWPowerUpComplete",
+      "patched_equivalent": "sub_140004F50 @ 0x140004F50",
+      "similarity": 0.0,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNx, 0x20, 'KbdC') -> ExAllocatePool2(0x40, 0x20, 'KbdC') (same size and tag)",
+        "Error path (KeyboardClassLogError) inlined as IoAllocateErrorLogEntry/IoWriteErrorLogEntry with identical error codes; work-item allocation and IoQueueWorkItem unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassServiceCallback",
+      "patched_equivalent": "sub_1400022F0 @ 0x1400022F0",
+      "similarity": 0.2006,
+      "change_type": "behavioral",
+      "key_changes": [
+        "KeyboardClassDequeueRead helper inlined into both dequeue loops; the cancel-safe check (_InterlockedExchange64(entry-8, 0) skips already-cancelled IRPs) and list-integrity __fastfail(3) guards are preserved",
+        "Ring-buffer bounds arithmetic (+104/+112/+140 pointers, wrap-around reset) is unchanged; low similarity is inlining plus tracing reformatting"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassPower",
+      "patched_equivalent": "sub_1400031D0 @ 0x1400031D0",
+      "similarity": 0.0,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "Same device-removed guard, same MinorFunction 0/2/3 handling and wait-wake arming on the S1 path, same completion-routine wiring; heavy control-flow churn only",
+        "The apparent double IoReleaseRemoveLockEx on the PoRequestPowerIrp-failure tail is present identically in the unpatched build, so it is a pre-existing rendered pattern, not a new bug or fix"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassDeviceControl",
+      "similarity": 0.8412,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "API modernization: ExAllocatePoolWithTag -> ExAllocatePool2",
+        "WPP tracing reformatting",
+        "Switch table reorganization",
+        "IOCTL codes and core dispatch logic functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassRead",
+      "similarity": 0.7261,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP tracing changes and code structure reorganization",
+        "Core read logic equivalent: gates on the trusted marker (DriverEntry == FileObject->FsContext2) and queues read IRPs",
+        "No behavioral security change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassClose",
+      "similarity": 0.5004,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Decrements trusted counter and clears marker - functionally equivalent",
+        "Changes are WPP tracing and variable layout"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassCleanup",
+      "similarity": 0.8392,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renaming and WPP tracing only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KbdEnableDisablePort",
+      "similarity": 0.8316,
+      "change_type": "cosmetic",
+      "key_changes": ["ExAllocatePoolWithTag -> ExAllocatePool2 modernization"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KbdInitializeDataQueue",
+      "similarity": 0.1439,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP tracing reformatting only - core queue initialization logic identical"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KeyboardClassReadCopyData",
+      "similarity": 0.4826,
+      "change_type": "cosmetic",
+      "key_changes": ["WPP tracing reformatting - memcpy calls and buffer arithmetic functionally equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-863",
+      "function": "KeyboardClassCreate",
+      "patched_equivalent": "sub_1400039F0 @ 0x1400039F0",
+      "entry_point": "IRP_MJ_CREATE (open of \\Device\\KeyboardClassN)",
+      "call_chain": ["Kernel-mode deputy issues IRP_MJ_CREATE with OBJ_FORCE_ACCESS_CHECK", "I/O Manager", "KeyboardClassCreate @ 0x1C0001CA0", "SeSinglePrivilegeCheck @ 0x1C0001D61 (returns TRUE for KernelMode)", "FileObject->FsContext2 := trusted marker @ 0x1C0001D8F"],
+      "vulnerability_class": "incorrect authorization / privilege-check bypass via RequestorMode confusion for kernel-mode callers",
+      "description": "The unpatched KeyboardClassCreate calls SeSinglePrivilegeCheck(SeTcbPrivilege=7, IRP->RequestorMode) using the IRP's actual RequestorMode (IRP+0x40). When RequestorMode is KernelMode (0), SeSinglePrivilegeCheck returns TRUE without examining the caller's token. Consequently a kernel-mode component that opens the keyboard device on behalf of a lower-privileged user with OBJ_FORCE_ACCESS_CHECK (SL_FORCE_ACCESS_CHECK set in the create stack location) still passes the SeTcbPrivilege gate and receives the 'trusted' marker (FileObject->FsContext2 set to the DriverEntry sentinel 0x1C000F080). That marker controls access to keyboard input via IRP_MJ_READ: KeyboardClassRead (0x1C0001410) returns STATUS_PRIVILEGE_NOT_HELD (0xC0000061) unless FsContext2 equals the marker. The patched build (sub_1400039F0) reads SL_FORCE_ACCESS_CHECK (IO_STACK_LOCATION.Flags bit 0) and forces the privilege check to run as UserMode (mov dl,1 at 0x140003D2B) when that flag is set, so the effective token is validated; it also audits (sub_140005AB0) and denies (STATUS_ACCESS_DENIED, 0xC0000022) such kernel-mode callers.",
+      "trigger_conditions": "1. A kernel-mode component opens \\Device\\KeyboardClassN on behalf of a user with OBJ_FORCE_ACCESS_CHECK, so the create arrives with RequestorMode==KernelMode(0) and SL_FORCE_ACCESS_CHECK set. 2. The device-extension precondition *(dev_ext) == *(dev_ext+8) holds (the branch reaching the privilege check). 3. On the unpatched build SeSinglePrivilegeCheck(7, KernelMode) returns TRUE and FileObject->FsContext2 is set to the marker; on the patched build the same create returns STATUS_ACCESS_DENIED and the marker is not set. Ordinary user-mode CreateFile arrives as UserMode and was always checked correctly.",
+      "primitive": "Information disclosure: unauthorized access to keyboard input (keylogging). The trusted marker lets the handle receive KEYBOARD_INPUT_DATA scan codes through IRP_MJ_READ without the requesting user holding SeTcbPrivilege. No memory-corruption or escalation primitive is associated with this finding.",
+      "evidence": "// UNPATCHED KeyboardClassCreate (key section):\nCurrentStackLocation->Parameters.Create.Options &= ~1u;\nif ( *(_QWORD *)v5 == *(_QWORD *)(v5 + 8)\n     && SeSinglePrivilegeCheck((LUID)7LL, v2->RequestorMode) != 0 )  // KernelMode -> TRUE\n{\n    v9 = KeAcquireSpinLockRaiseToDpc((PKSPIN_LOCK)(v5 + 160));\n    CurrentStackLocation->FileObject->FsContext2 = DriverEntry;      // trusted marker\n    ++*(_DWORD *)(v5 + 80);\n    KeReleaseSpinLock((PKSPIN_LOCK)(v5 + 160), v9);\n}\n\n// PATCHED sub_1400039F0 (the fix):\nv9 = CurrentStackLocation->Flags & 1;                                // SL_FORCE_ACCESS_CHECK\nif ( *(_QWORD *)v8 == *(_QWORD *)(v8 + 8) )\n{\n    if ( v9 != 0 )  RequestorMode = 1;                              // force UserMode\n    else            RequestorMode = v4->RequestorMode;\n    if ( SeSinglePrivilegeCheck((LUID)7LL, RequestorMode) != 0 )    // token actually checked\n    { ... FileObject->FsContext2 = sub_140011080; ... }\n}",
+      "assembly": "; UNPATCHED KeyboardClassCreate @ 0x1C0001CA0 (kbdclass_unpatched.sys)\n0x1C0001D49: movzx edx, byte ptr [rbx+40h]        ; IRP->RequestorMode (0=Kernel, 1=User)\n0x1C0001D4D: mov   qword ptr [rsp+..], 7           ; SeTcbPrivilege LUID (7)\n0x1C0001D59: mov   rcx, qword ptr [rsp+..]         ; PrivilegeValue\n0x1C0001D61: call  cs:__imp_SeSinglePrivilegeCheck ; KernelMode -> TRUE (no token check)\n0x1C0001D6D: test  al, al\n0x1C0001D6F: jz    loc_1C0001DAC\n0x1C0001D84: mov   rdx, [r15+30h]                  ; FileObject\n0x1C0001D88: lea   rcx, DriverEntry                ; trusted marker (0x1C000F080)\n0x1C0001D8F: mov   [rdx+20h], rcx                  ; FileObject->FsContext2 := marker\n\n; PATCHED sub_1400039F0 @ 0x1400039F0 (kbdclass_patched.sys)\n0x140003A3F: movzx edi, byte ptr [r14+2]           ; current stack location Flags\n0x140003A44: and   dil, 1                           ; SL_FORCE_ACCESS_CHECK\n0x140003ABE: test  dil, dil\n0x140003AC1: jnz   loc_140003D2B                     ; if flag set -> force UserMode\n0x140003AC7: movzx edx, byte ptr [rbx+40h]          ; else actual RequestorMode\n0x140003AD3: call  cs:SeSinglePrivilegeCheck\n0x140003D2B: mov   dl, 1                              ; PreviousMode = UserMode\n0x140003D2D: jmp   loc_140003ACB\n0x140003C1A: mov   r15d, 0C0000022h                  ; STATUS_ACCESS_DENIED\n0x140003C47: call  sub_140005AB0                       ; audit",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "kbdclass_unpatched!KeyboardClassCreate",
+            "address": "0x1C0001D49",
+            "why": "Break where RequestorMode is loaded for the privilege check. byte [rbx+0x40] is RequestorMode; if 0 (KernelMode) the unpatched check will pass unconditionally."
+          },
+          {
+            "symbol": "kbdclass_unpatched!KeyboardClassCreate",
+            "address": "0x1C0001D61",
+            "why": "Break at SeSinglePrivilegeCheck. For KernelMode this returns TRUE regardless of the token; AL==1 on return means the trusted marker will be granted."
+          },
+          {
+            "symbol": "kbdclass_unpatched!KeyboardClassCreate",
+            "address": "0x1C0001D8F",
+            "why": "Break at the trusted-marker write. After this, FileObject->FsContext2 (FileObject+0x20) equals the DriverEntry sentinel 0x1C000F080."
+          },
+          {
+            "symbol": "kbdclass_patched!sub_1400039F0",
+            "address": "0x140003D2B",
+            "why": "Patched build: this is where PreviousMode is forced to UserMode (mov dl,1) when SL_FORCE_ACCESS_CHECK is set, before SeSinglePrivilegeCheck at 0x140003AD3."
+          }
+        ],
+        "watch": [
+          "byte [rbx+0x40]: IRP RequestorMode - 0=KernelMode (bypass triggers on unpatched), 1=UserMode",
+          "al after SeSinglePrivilegeCheck: 1=granted, 0=denied",
+          "FileObject->FsContext2 (FileObject+0x20): equals the marker sentinel when granted",
+          "patched dil (byte [r14+2] & 1): SL_FORCE_ACCESS_CHECK from the current create stack location"
+        ],
+        "key_offsets": [
+          "0x1C0001D49: movzx edx,[rbx+0x40] - loads RequestorMode for the privilege check",
+          "0x1C0001D61: call SeSinglePrivilegeCheck - passes for KernelMode without token check",
+          "0x1C0001D8F: mov [rdx+0x20],rcx - writes the trusted marker to FsContext2",
+          "0x140003A3F/0x140003A44: patched reads SL_FORCE_ACCESS_CHECK",
+          "0x140003D2B: patched forces UserMode for the check"
+        ],
+        "trigger_setup": "Open \\Device\\KeyboardClassN from a kernel-mode context with OBJ_FORCE_ACCESS_CHECK on behalf of a user without SeTcbPrivilege. On the unpatched build, FileObject->FsContext2 is set to the DriverEntry sentinel (0x1C000F080) and IRP_MJ_READ returns keyboard input. On the patched build the create returns STATUS_ACCESS_DENIED.",
+        "expected_observation": "Unpatched: FileObject->FsContext2 == 0x1C000F080 after the create; subsequent IRP_MJ_READ returns KEYBOARD_INPUT_DATA without the caller holding SeTcbPrivilege. Patched: STATUS_ACCESS_DENIED, marker not set.",
+        "notes": "The bypass is only relevant for kernel-mode callers or confused-deputy scenarios; ordinary user-mode CreateFile arrives as UserMode and was always checked correctly. The relevant flag is IO_STACK_LOCATION.Flags bit 0 (SL_FORCE_ACCESS_CHECK for a create IRP), not a FileObject QoS flag."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "KeyboardClassRemoveDevice",
+      "patched_equivalent": "sub_140001C60 @ 0x140001C60",
+      "entry_point": "IRP_MJ_PNP / IRP_MN_REMOVE_DEVICE",
+      "vulnerability_class": "no security-relevant change (wait-wake IRP cancel sequence identical in both builds)",
+      "description": "Investigated for a use-after-free / TOCTOU race across the spinlock release. The unpatched KeyboardClassRemoveDevice reads the wait-wake IRP at dev_ext+0x128 under the spinlock at dev_ext+0x48, sets the cancel flag at dev_ext+0x130, releases the lock, calls IoCancelIrp on the kept pointer, then xchg's the state at dev_ext+0x140 to 2 and, if the old value was 3, calls IofCompleteRequest (complete, not free). The patched equivalent sub_140001C60 performs the same reads, lock release, IoCancelIrp, state exchange, and conditional IofCompleteRequest; the only difference is a De Morgan inversion of one if-branch. The read-under-lock / use-after-release is the standard wait-wake cancellation idiom, arbitrated by the dev_ext+0x140 state machine (1/2/3) and the dev_ext+0x130 cancel flag. Because the two builds are behaviorally identical here, no fix is delivered and there is no reachable UAF/double-free in this function. The call at 0x1C0004FBC is IofCompleteRequest, not IoFreeIrp.",
+      "trigger_conditions": "None - the code is identical across builds; there is no behavioral change to exercise.",
+      "primitive": "None.",
+      "evidence": "// UNPATCHED KeyboardClassRemoveDevice == PATCHED sub_140001C60 (logically identical):\nif ( _InterlockedExchange((volatile __int32 *)(a1 + 320), 1) == 0 ) {   // +0x140 state\n    v3 = KeAcquireSpinLockRaiseToDpc((PKSPIN_LOCK)(a1 + 72));           // +0x48\n    v4 = *(IRP **)(a1 + 296);                                          // +0x128 WW IRP\n    if ( v4 != nullptr && *(_BYTE *)(a1 + 304) == 0 ) {                 // +0x130 cancel flag\n        *(_BYTE *)(a1 + 304) = 1;\n        v1 = v4;\n    }\n    KeReleaseSpinLock((PKSPIN_LOCK)(a1 + 72), v3);\n    if ( v1 != nullptr )\n        IoCancelIrp(v1);\n    v5 = _InterlockedExchange((volatile __int32 *)(a1 + 320), 2);\n    if ( v1 != nullptr && v5 == 3 )\n        IofCompleteRequest(v1, 0);                                      // COMPLETE (not free)\n}",
+      "assembly": "; KeyboardClassRemoveDevice @ 0x1C0004F2C (UNPATCHED kbdclass_unpatched.sys)\n0x1C0004F43: xchg  eax, [rcx+140h]                 ; state := 1, eax := old state\n0x1C0004F49: test  eax, eax\n0x1C0004F4B: jnz   loc_1C0004FC8\n0x1C0004F51: call  cs:__imp_KeAcquireSpinLockRaiseToDpc\n0x1C0004F5D: mov   rdx, [rbx+128h]                 ; read wait-wake IRP under lock\n0x1C0004F72: mov   byte ptr [rbx+130h], 1          ; set cancel flag\n0x1C0004F79: mov   rdi, rdx                        ; keep the pointer\n0x1C0004F82: call  cs:__imp_KeReleaseSpinLock\n0x1C0004F96: call  cs:__imp_IoCancelIrp            ; IoCancelIrp(kept ptr)\n0x1C0004FA7: xchg  eax, [rbx+140h]                 ; state := 2, eax := old state\n0x1C0004FB2: cmp   eax, 3\n0x1C0004FB5: jnz   loc_1C0004FC8\n0x1C0004FBC: call  cs:__imp_IofCompleteRequest     ; COMPLETE the IRP (not IoFreeIrp)\n; Patched sub_140001C60 @ 0x140001C60 performs the same operations (only branch structure differs)."
+    }
+  ],
+  "summary": "The patched kbdclass.sys is a broad recompile; the overwhelming majority of the 71 changed functions differ only by WPP tracing reformatting, ExAllocatePoolWithTag -> ExAllocatePool2 modernization, helper extraction/inlining, and control-flow churn. Exactly one security-relevant behavioral change was delivered: an incorrect-authorization fix (CWE-863, Medium) in KeyboardClassCreate (0x1C0001CA0; patched sub_1400039F0). The unpatched build passes IRP->RequestorMode to SeSinglePrivilegeCheck(SeTcbPrivilege); for KernelMode this succeeds without a token check, so a kernel-mode confused deputy that opens the keyboard device with SL_FORCE_ACCESS_CHECK on behalf of a user is granted the 'trusted' marker that gates keyboard-input reads. The patch forces the privilege check to run as UserMode when SL_FORCE_ACCESS_CHECK is set, adds an audit call (sub_140005AB0) and a STATUS_ACCESS_DENIED path. The previously-suspected use-after-free / TOCTOU race in KeyboardClassRemoveDevice is not a real change: its wait-wake IRP cancel sequence is logically identical to the patched equivalent sub_140001C60, it completes (IofCompleteRequest) rather than frees the IRP, and the entire wait-wake/power IRP lifecycle (WaitWakeComplete, PowerComplete, WWPowerUpComplete, Power) is cosmetic/refactor with no delivered security change."
+}

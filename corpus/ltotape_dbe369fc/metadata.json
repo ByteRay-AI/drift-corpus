@@ -1,0 +1,233 @@
+{
+  "binary": "ltotape.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.17763.1613",
+    "sha256": "dbe369fc1c962fc9c8663d58de138b778518568ab6008c7470c343fb651e2fa3",
+    "file": "ltotape_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "b762775534b21a1edbf3ed711abcddfadabc6a17c3f94dec3d9a2e333af1b0a0",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "SCSI Tape Driver",
+      "FileVersion": "10.0.17763.1613 (WinBuild.160101.0800)",
+      "InternalName": "ltotape.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "ltotape.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.1613"
+    }
+  },
+  "prev": {
+    "version": "10.0.17763.292",
+    "sha256": "db40f471eb17f6ad3ba4a2916e0fe2288525d5c04ea6534b115069e03e43dd95",
+    "kb_numbers": [
+      "KB4482887",
+      "KB4487044",
+      "KB4489899",
+      "KB4490481",
+      "KB4493509",
+      "KB4494441",
+      "KB4495667",
+      "KB4497934",
+      "KB4501371",
+      "KB4501835",
+      "KB4503327",
+      "KB4505056",
+      "KB4505658",
+      "KB4507469",
+      "KB4509479",
+      "KB4511553",
+      "KB4512534",
+      "KB4512578",
+      "KB4516077",
+      "KB4519338",
+      "KB4520062",
+      "KB4522015",
+      "KB4523205",
+      "KB4524148",
+      "KB4530715",
+      "KB4532691",
+      "KB4534273",
+      "KB4534321",
+      "KB4537818",
+      "KB4538461",
+      "KB4541331",
+      "KB4549949",
+      "KB4550969",
+      "KB4551853",
+      "KB4554354",
+      "KB4558998",
+      "KB4559003",
+      "KB4561608",
+      "KB4567513",
+      "KB4565349",
+      "KB4571748",
+      "KB4570333",
+      "KB4577069",
+      "KB4577668",
+      "KB4580390",
+      "KB4586793",
+      "KB4594442",
+      "KB4476976"
+    ],
+    "win_versions": [],
+    "file": "ltotape_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "SCSI Tape Driver",
+      "FileVersion": "10.0.17763.292 (WinBuild.160101.0800)",
+      "InternalName": "ltotape.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "ltotape.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.292"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

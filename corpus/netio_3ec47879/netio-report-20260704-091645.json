@@ -1,0 +1,69 @@
+{
+  "binaries": {
+    "title": "netio.sys - No security-relevant change (staged iBFT WIL feature-gate removal in NsipInitializeBootFirmwareTableData)",
+    "id_unpatched": "netio_unpatched.sys",
+    "id_patched": "netio_patched.sys",
+    "overall_similarity": 0.9914,
+    "matched": 1901,
+    "changed": 1,
+    "identical": 1900,
+    "unmatched_unpatched": 2,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NsipInitializeBootFirmwareTableData",
+      "address_unpatched": "0x140049B20",
+      "address_patched": "0x140049B20",
+      "similarity": 0.8083,
+      "change_type": "feature_gate_removal",
+      "key_changes": [
+        "Removed the WIL feature-staging gate for Feature_TCPIP_2025_Wave2_NsiIbftFix: the load of __private_featureState (0x140097370), the test al,0x10 / and eax,1 cached-state check, and the call to __private_IsEnabledDeviceUsageNoInline (0x140064BD4)",
+        "Removed the feature-enabled branch (0x140049B46-0x140049B8E): the precondition check that both counters dword_140096CF8 and dword_140096CFC are non-zero before allocating, and its extra clearing of the init flag byte_140096CD8 when they are zero",
+        "Reverted to the unpatched feature-off path: on query success, proceed directly to allocation via a single test eax,eax / jns on the status",
+        "Dropped the second status copy in rdi (no longer needed)",
+        "Allocation block (two ExAllocatePool2 sized counter<<3 with tag 0x7249534E), the two NsipInitializeBootNicAndTargets parser calls, and the cleanup block are functionally unchanged between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a WIL feature-staging change, not a security fix. In the unpatched build NsipInitializeBootFirmwareTableData selects between a feature-on and a feature-off path using Feature_TCPIP_2025_Wave2_NsiIbftFix (both paths present = staged rollout with the pre-existing path retained). The patched build removes the gate and retains the feature-off path. The iBFT query function (NsipGetBootFirmwareTableFromSystemInformation), the parser (NsipInitializeBootNicAndTargets, which writes dword_140096CF8/CFC), the allocation/cleanup blocks, and the caller/reader (NsipReadBootFirmwareTableData) are byte-identical between the two builds (only relocated). The patch adds no counter reset, no bounds check, and no memory zeroing, and does not change allocation sizes, tag, or pool flags. The only behavioral delta is the presence/absence of the feature-enabled counter-precondition guard and its extra init-flag clear, which sits behind a default-off staged feature. No reachable information-disclosure or denial-of-service primitive is attributable to this diff.",
+      "assembly_diff": "UNPATCHED NsipInitializeBootFirmwareTableData (0x140049B20):\n0000000140049B20  mov     [rsp+arg_8], rbx\n0000000140049B25  push    rdi\n0000000140049B26  sub     rsp, 20h\n0000000140049B2A  cmp     cs:byte_140096CD8, 0\n0000000140049B31  jnz     short loc_140049B3D\n0000000140049B33  mov     eax, 0C0000225h\n0000000140049B38  jmp     loc_140049C60\n0000000140049B3D  call    NsipGetBootFirmwareTableFromSystemInformation\n0000000140049B42  mov     ebx, eax\n0000000140049B44  mov     edi, eax\n0000000140049B46  mov     eax, cs:Feature_TCPIP_2025_Wave2_NsiIbftFix__private_featureState\n0000000140049B4C  test    al, 10h\n0000000140049B4E  jz      short loc_140049B55\n0000000140049B50  and     eax, 1\n0000000140049B53  jmp     short loc_140049B5A\n0000000140049B55  call    Feature_TCPIP_2025_Wave2_NsiIbftFix__private_IsEnabledDeviceUsageNoInline\n0000000140049B5A  test    eax, eax\n0000000140049B5C  jz      short loc_140049B7B\n0000000140049B5E  test    ebx, ebx\n0000000140049B60  js      short loc_140049B7F\n0000000140049B62  cmp     cs:dword_140096CF8, 0\n0000000140049B69  jz      short loc_140049B74\n0000000140049B6B  cmp     cs:dword_140096CFC, 0\n0000000140049B72  jnz     short loc_140049B90\n0000000140049B74  mov     ebx, 0C0000225h\n0000000140049B79  jmp     short loc_140049B87\n0000000140049B7B  test    edi, edi\n0000000140049B7D  jns     short loc_140049B90\n0000000140049B7F  cmp     ebx, 0C0000225h\n0000000140049B85  jnz     short loc_140049BF1\n0000000140049B87  mov     cs:byte_140096CD8, 0\n0000000140049B8E  jmp     short loc_140049BF1\n0000000140049B90  call    NsipInitializeBootNicAndTargets\n0000000140049B95  mov     edx, cs:dword_140096CF8\n0000000140049B9B  mov     edi, 7249534Eh\n0000000140049BA0  shl     edx, 3\n0000000140049BA3  mov     r8d, edi\n0000000140049BA6  mov     ecx, 40h\n0000000140049BAB  call    cs:__imp_ExAllocatePool2\n0000000140049BB7  mov     cs:qword_140096CE8, rax\n... (secondary allocation sized dword_140096CFC<<3, then cleanup and population pass) ...\n\nPATCHED NsipInitializeBootFirmwareTableData (0x140049B20):\n0000000140049B20  push    rbx\n0000000140049B22  sub     rsp, 20h\n0000000140049B26  cmp     cs:byte_140096CD8, 0\n0000000140049B2D  jnz     short loc_140049B39\n0000000140049B2F  mov     eax, 0C0000225h\n0000000140049B34  jmp     loc_140049C25\n0000000140049B39  call    NsipGetBootFirmwareTableFromSystemInformation\n0000000140049B3E  mov     ebx, eax\n0000000140049B40  test    eax, eax\n0000000140049B42  jns     short loc_140049B54\n0000000140049B44  cmp     eax, 0C0000225h\n0000000140049B49  jnz     short loc_140049BB6\n0000000140049B4B  mov     cs:byte_140096CD8, 0\n0000000140049B52  jmp     short loc_140049BB6\n0000000140049B54  call    NsipInitializeBootNicAndTargets\n0000000140049B59  mov     edx, cs:dword_140096CF8\n0000000140049B5F  mov     ecx, 40h\n0000000140049B64  shl     edx, 3\n0000000140049B67  mov     r8d, 7249534Eh\n0000000140049B6D  call    cs:__imp_ExAllocatePool2\n... (secondary allocation sized dword_140096CFC<<3, then cleanup and population pass) ...\n\nDIRECTION: the patched build retains the unpatched feature-off path; the removed code is the staged Feature_TCPIP_2025_Wave2_NsiIbftFix branch. The allocation/parse/cleanup logic is functionally identical in both builds."
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      {
+        "name": "Feature_TCPIP_2025_Wave2_NsiIbftFix__private_IsEnabledDeviceUsageNoInline",
+        "address": "0x140064BD4",
+        "note": "Generated WIL feature-check helper for the retired feature; removed with the gate."
+      },
+      {
+        "name": "Feature_TCPIP_2025_Wave2_NsiIbftFix__private_IsEnabledFallback",
+        "address": "0x140064C0C",
+        "note": "Generated WIL feature fallback helper for the retired feature; removed with the gate."
+      }
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "NsipInitializeBootFirmwareTableData",
+      "address": "0x140049B20",
+      "entry_point": "iBFT retrieval reachable via NSI parameter queries; unchanged between builds and not altered by the patch (context only, not an exploit chain)",
+      "call_chain": [
+        "NsipReadBootFirmwareTableData (0x1400498A0) - iBFT reader/caller, byte-identical between builds",
+        "NsipInitializeBootFirmwareTableData (0x140049B20) - lazy iBFT initialization (the changed function)",
+        "NsipGetBootFirmwareTableFromSystemInformation (unpatched 0x140064C28 / patched 0x140064B94, same function relocated) - queries the boot firmware table",
+        "NsipInitializeBootNicAndTargets (unpatched 0x140064D54 / patched 0x140064CC0, same function relocated) - iBFT parser; writes dword_140096CF8/CFC, identical logic in both builds"
+      ],
+      "vulnerability_class": "No security-relevant change (staged WIL feature-gate removal / servicing churn)",
+      "description": "The unpatched NsipInitializeBootFirmwareTableData contains a WIL feature-staging gate for Feature_TCPIP_2025_Wave2_NsiIbftFix. It loads __private_featureState (0x140097370); if the cached-state bit 0x10 is set it uses the cached enabled bit (& 1), otherwise it calls the generated helper __private_IsEnabledDeviceUsageNoInline (0x140064BD4). This is standard WIL inline feature-check code, not a validation routine. When the feature is enabled, an extra precondition guard requires both counters dword_140096CF8 and dword_140096CFC to be non-zero before allocation, and clears the init flag byte_140096CD8 if either is zero. When the feature is off, the function proceeds directly to allocation on query success. The patched build removes the feature-state load, the helper call, and the entire feature-enabled branch, retaining the feature-off path. The iBFT query, parse, count, allocate, cleanup, and read-out logic is byte-identical between the two builds; the patch adds no counter reset, bounds check, or zeroing. There is no delivered memory-safety change and no reachable information-disclosure or denial-of-service primitive attributable to this diff. Both builds already clear the init flag on the STATUS_NOT_FOUND path; the only extra init-flag clear removed by the patch is inside the default-off feature-enabled branch.",
+      "trigger_conditions": "Not applicable. The change is the removal of a default-off staged WIL feature gate. No security condition is introduced or removed in any delivered code path.",
+      "primitive": "None. The allocation and read-out code the diff might appear to touch is unchanged between builds.",
+      "evidence": "UNPATCHED (feature gate, removed in patch):\n  int32_t fs = Feature_TCPIP_2025_Wave2_NsiIbftFix__private_featureState;\n  int32_t enabled = (fs & 0x10) ? (fs & 1)\n                                : Feature_..._NsiIbftFix__private_IsEnabledDeviceUsageNoInline();\n  if (enabled) {\n      if (status < 0) goto error;\n      if (dword_140096CF8 != 0 && dword_140096CFC != 0) goto allocate;\n      status = STATUS_NOT_FOUND; byte_140096CD8 = 0; goto cleanup;\n  }\n  // feature-off path: if (status >= 0) goto allocate; ...\n\nPATCHED (feature-off path retained, gate removed):\n  status = NsipGetBootFirmwareTableFromSystemInformation();\n  if (status < 0) { if (status == STATUS_NOT_FOUND) byte_140096CD8 = 0; goto cleanup; }\n  // proceed directly to allocation (identical to unpatched feature-off path)\n\nAllocation block (identical behavior in both builds):\n  NsipInitializeBootNicAndTargets();\n  qword_140096CE8 = ExAllocatePool2(0x40, dword_140096CF8 << 3, 0x7249534E);\n  qword_140096CF0 = ExAllocatePool2(0x40, dword_140096CFC << 3, 0x7249534E);\n  NsipInitializeBootNicAndTargets();\n\nRemoved WIL helpers (unpatched only): 0x140064BD4 __private_IsEnabledDeviceUsageNoInline, 0x140064C0C __private_IsEnabledFallback.",
+      "assembly": "See changed_functions[0].assembly_diff for the full unpatched and patched disassembly of NsipInitializeBootFirmwareTableData at 0x140049B20. The removed region is 0x140049B46-0x140049B8E (feature-state load, WIL helper call, feature-enabled counter guard, and its extra init-flag clear).",
+      "notes": "Feature_TCPIP_2025_Wave2_NsiIbftFix is a WIL feature-staging gate; the unpatched build carries both the feature-on and feature-off paths (staged rollout with the pre-existing path retained), and the patched build removes the gate. An independent content diff of both builds shows that all other flagged functions (NsiGetParameterEx, NsiEnumerateObjectsAllParametersEx, the NsipValidate*Request family, various Stream*/Wfp*/Kfd* routines, and WIL staging infrastructure) differ only in disassembler labeling of the same WPP_MAIN_CB structure fields and in jump-table/data addresses shifted by the small data-section move from removing the two helpers; none are code changes."
+    }
+  ],
+  "summary": "The patch changes one function, NsipInitializeBootFirmwareTableData (0x140049B20), in netio.sys. It removes a WIL feature-staging gate for Feature_TCPIP_2025_Wave2_NsiIbftFix and reverts the function to its single unconditional feature-off path; the two generated WIL helper functions for that feature (0x140064BD4, 0x140064C0C) are dropped from the build. The iBFT query (NsipGetBootFirmwareTableFromSystemInformation), parser (NsipInitializeBootNicAndTargets, which writes the counters dword_140096CF8/CFC), allocation/cleanup blocks, and the reader NsipReadBootFirmwareTableData are byte-identical between the two builds (only relocated). No counter reset, bounds check, or memory zeroing is added, and allocation sizes, tag, and pool flags are unchanged. This is staged feature-gate servicing churn with no delivered security-relevant change; the earlier information-disclosure and denial-of-service framing is not supported because the allocation and read-out logic is identical in both builds and untouched by the patch. All other flagged function deltas are cosmetic (WPP_MAIN_CB field relabeling and address shifts from the data-section move)."
+}

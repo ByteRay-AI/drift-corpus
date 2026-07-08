@@ -1,0 +1,390 @@
+{
+  "binary": "iorate.sys",
+  "kb": "KB5073723",
+  "release_date": "2026-01-13",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-20809",
+      "title": "Windows Kernel Memory Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20810",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-590",
+          "name": "Free of Memory not on the Heap"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20814",
+      "title": "DirectX Graphics Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-20818",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 6.2
+    },
+    {
+      "id": "CVE-2026-20820",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20825",
+      "title": "Windows Hyper-V Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 4.4
+    },
+    {
+      "id": "CVE-2026-20831",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20836",
+      "title": "DirectX Graphics Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-20840",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2023-31096",
+      "title": "MITRE: CVE-2023-31096 Windows Agere Soft Modem Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-121",
+          "name": "Stack-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20857",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20860",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20919",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20921",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20922",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20926",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20927",
+      "title": "Windows SMB Server Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 5.3
+    },
+    {
+      "id": "CVE-2026-20934",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20940",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20848",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2024-55414",
+      "title": "Windows Motorola Soft Modem Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20929",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20936",
+      "title": "Windows NDIS Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 4.3
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.17763.1999",
+    "sha256": "aa6f06d60f048cf029a06572f0e2ed1ec811fb18b116e0dd3b85531416f1e90b",
+    "file": "iorate_patched.sys",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "I/O rate control Filter",
+      "FileVersion": "10.0.17763.1999 (WinBuild.160101.0800)",
+      "InternalName": "iorate.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "iorate.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.1999"
+    }
+  },
+  "prev": {
+    "version": "10.0.17763.194",
+    "sha256": "9435fa1257a3f148c65125c1e15ba813b492cd4a413da5337c6c7df55a8a89ca",
+    "kb_numbers": [
+      "KB4471332",
+      "KB4480116",
+      "KB4482887",
+      "KB4483235",
+      "KB4487044",
+      "KB4489899",
+      "KB4490481",
+      "KB4493509",
+      "KB4494441",
+      "KB4495667",
+      "KB4497934",
+      "KB4501371",
+      "KB4501835",
+      "KB4503327",
+      "KB4505056",
+      "KB4505658",
+      "KB4507469",
+      "KB4509479",
+      "KB4511553",
+      "KB4512534",
+      "KB4512578",
+      "KB4516077",
+      "KB4519338",
+      "KB4520062",
+      "KB4522015",
+      "KB4523205",
+      "KB4524148",
+      "KB4530715",
+      "KB4532691",
+      "KB4534273",
+      "KB4534321",
+      "KB4537818",
+      "KB4538461",
+      "KB4541331",
+      "KB4549949",
+      "KB4550969",
+      "KB4551853",
+      "KB4554354",
+      "KB4558998",
+      "KB4559003",
+      "KB4561608",
+      "KB4567513",
+      "KB4565349",
+      "KB4571748",
+      "KB4570333",
+      "KB4577069",
+      "KB4577668",
+      "KB4580390",
+      "KB4586793",
+      "KB4594442",
+      "KB4586839",
+      "KB4592440",
+      "KB4598230",
+      "KB4476976",
+      "KB4598296",
+      "KB4601345",
+      "KB4601383",
+      "KB5000822",
+      "KB5001568",
+      "KB5001638",
+      "KB5000854",
+      "KB5001342",
+      "KB5001384",
+      "KB5003171",
+      "KB5003217"
+    ],
+    "win_versions": [],
+    "file": "iorate_unpatched.sys",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "I/O rate control Filter",
+      "FileVersion": "10.0.17763.194 (WinBuild.160101.0800)",
+      "InternalName": "iorate.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "iorate.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.194"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

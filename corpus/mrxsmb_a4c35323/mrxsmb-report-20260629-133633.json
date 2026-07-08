@@ -1,0 +1,71 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - No security-relevant change (WIL feature-flag graduation in SMB negotiate)",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9917,
+    "matched": 1228,
+    "changed": 2,
+    "identical": 1226,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmbNegotiate_Continue",
+      "address": "0x14008E800",
+      "similarity": 0.9528,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "REMOVED: the call to Feature_2990496056__private_IsEnabledDeviceUsageNoInline() at 0x14008EA88 (unpatched). This is a WIL/Velocity feature-staging flag, not a policy or registry gate.",
+        "The unpatched function contained both feature-off and feature-on code paths for this feature. The patch keeps only the feature-on behavior (compute the security-mode word at [rdi+0x5C4] from the already-set encryption byte [rsi+0x26F] via setnz/inc) and deletes the feature-off path.",
+        "The separate gate Feature_Servicing_SMBFixS2DAccessDeniedIssues__private_IsEnabledDeviceUsageNoInline (a DIFFERENT feature) is present and unchanged in both builds; it was merely relocated from 0x140049140 to 0x1400490DC. The report's earlier claim that this function was 'renamed' and 'reads a different global' is incorrect: it is the same S2D feature in both builds.",
+        "Register reallocation only (the constant 2 moves from bx to r14d; 1 becomes an immediate)."
+      ],
+      "security_relevant": false,
+      "security_notes": "In every feature state (feature on or off, S2D on or off) the negotiated security-mode word at [rdi+0x5C4] is set to 2 (encrypted) exactly when the per-server instance configuration byte at MRxSmbGetInstanceConfigurationBlock()+0x38 requires encryption, and to 1 otherwise. The feature only changes whether the intermediate encryption byte at [rsi+0x26F] is written by this function and which field feeds the security-mode word; the observable negotiated security mode is preserved. No plaintext-to-encryption-required downgrade is demonstrable, and the gate is a Microsoft-managed feature flag, not an attacker- or admin-controllable input.",
+      "assembly_diff": "UNPATCHED critical section (0x14008EA88, Feature_2990496056 gate):\n  0x14008EA88  call    Feature_2990496056__private_IsEnabledDeviceUsageNoInline\n  0x14008EA8D  test    eax, eax\n  0x14008EA8F  jnz     0x14008EABB          ; feature-on path\n  ; feature-off path:\n  0x14008EA91  mov     rcx, r15\n  0x14008EA94  call    MRxSmbGetInstanceConfigurationBlock\n  0x14008EA99  movzx   eax, byte [rax+38h]  ; server encryption-required byte\n  0x14008EA9D  test    al, al\n  0x14008EA9F  jz      0x14008EAB1\n  0x14008EAA1  mov     [rdi+5C4h], bx       ; security mode = 2\n  0x14008EAA8  mov     [rsi+26Fh], r14b     ; encryption byte = 1\n  0x14008EAB1  mov     [rdi+5C4h], r14w     ; security mode = 1\n  ; feature-on path:\n  0x14008EABB  xor     eax, eax\n  0x14008EABD  cmp     [rsi+26Fh], al\n  0x14008EAC3  setnz   al\n  0x14008EAC6  inc     ax\n  0x14008EAC9  mov     [rdi+5C4h], ax       ; security mode = (26F!=0)?2:1\n\nPATCHED (feature-off path deleted; feature-on behavior kept unconditionally):\n  0x14008EA86  xor     ebp, ebp\n  0x14008EA88  cmp     [rsi+26Fh], bpl\n  0x14008EA8F  mov     eax, ebp\n  0x14008EA91  setnz   al\n  0x14008EA94  inc     ax\n  0x14008EA97  mov     [rdi+5C4h], ax\n\nWIL feature helper (unpatched), 0x1400490EC:\n  0x1400490F6  mov     eax, cs:Feature_2990496056__private_featureState\n  0x140049100  test    al, 10h              ; WIL cached-state check\n  0x140049102  jz      fallback\n  0x140049104  and     eax, 1\n  0x140049113  call    Feature_2990496056__private_IsEnabledFallback ; -> wil_details_IsEnabledFallback\n\nBoth Feature_2990496056 helper functions are removed from the patched build because both call sites are gone; this is the source of the .text/.data relocation churn seen across ~180 otherwise-identical functions."
+    },
+    {
+      "name": "SmbNegotiate_Start",
+      "address": "0x140038400",
+      "similarity": 0.9722,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "REMOVED: the call to Feature_2990496056__private_IsEnabledDeviceUsageNoInline() at 0x14003844C (unpatched) that gated writing byte [rcx+0x26F]=1.",
+        "In unpatched: the byte at server-extension+0x26F is written to 1 only when the feature is enabled AND MRxSmbGetInstanceConfigurationBlock()+0x38 is non-zero.",
+        "In patched: the feature gate is removed; the +0x26F byte is written to 1 whenever MRxSmbGetInstanceConfigurationBlock()+0x38 is non-zero.",
+        "SmbNegotiate_Start is the SMB negotiate connection-setup routine; the rest of the function (MDL/pool allocation, buffer-context submission, WPP tracing) is unchanged apart from address relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "The change graduates the Feature_2990496056 WIL feature to always-on so that the +0x26F byte is set from the server configuration byte (+0x38) without the feature check. The downstream negotiated security mode reflects the same server configuration byte in both feature states (see SmbNegotiate_Continue), so this is a feature-staging refactor centralizing the flag write, not a delivered security fix or a fix for a reachable downgrade.",
+      "assembly_diff": "UNPATCHED at 0x14003844C:\n  0x14003844C  call    Feature_2990496056__private_IsEnabledDeviceUsageNoInline\n  0x140038451  test    eax, eax\n  0x140038453  jz      0x140038477           ; skip +0x26F write when feature disabled\n  0x140038455  mov     rcx, [rbx+18h]\n  0x140038459  call    MRxSmbGetInstanceConfigurationBlock\n  0x14003845E  mov     al, [rax+38h]         ; server encryption-required byte\n  0x140038461  test    al, al\n  0x140038463  jz      0x140038477\n  0x140038465  mov     rax, [rdi+60h]\n  0x140038469  mov     rcx, [rax+188h]\n  0x140038470  mov     byte ptr [rcx+26Fh], 1\n\nPATCHED (feature gate removed):\n  0x14003844C  mov     rcx, [rbx+18h]\n  0x140038450  call    MRxSmbGetInstanceConfigurationBlock\n  0x140038455  mov     al, [rax+38h]\n  0x140038458  test    al, al\n  0x14003845A  jz      0x14003846E\n  0x14003845C  mov     rax, [rdi+60h]\n  0x140038460  mov     rcx, [rax+188h]\n  0x140038467  mov     byte ptr [rcx+26Fh], 1"
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Feature_2990496056__private_IsEnabledDeviceUsageNoInline (0x1400490EC) - WIL feature helper, dead after both call sites removed",
+      "Feature_2990496056__private_IsEnabledFallback (0x140049124) - WIL feature fallback helper, dead after both call sites removed"
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SmbNegotiate_Start / SmbNegotiate_Continue",
+      "entry_point": "SMB negotiate path reached when a client establishes a connection to a server (e.g. opening a UNC path). Not attacker-controllable at the point of the change.",
+      "call_chain": [
+        "SMB connection establishment -> SmbNegotiate_Start (0x140038400)",
+        "SmbNegotiate_Start -> Feature_2990496056__private_IsEnabledDeviceUsageNoInline (removed in patch)",
+        "SmbNegotiate_Continue (0x14008E800) -> Feature_2990496056__private_IsEnabledDeviceUsageNoInline (removed in patch)"
+      ],
+      "vulnerability_class": "None - WIL/Velocity feature-flag graduation (staged rollout removed, feature made permanent)",
+      "description": "The patch removes calls to the WIL feature-staging flag Feature_2990496056 from two SMB negotiate functions and strips the now-dead feature helper functions. The helper reads Feature_2990496056__private_featureState and, on a cache miss, delegates to wil_details_IsEnabledFallback with Feature_2990496056__private_descriptor - the standard Windows feature-management pattern, not a registry/Group-Policy policy gate. In both feature states the negotiated security-mode word (server-extension+0x5C4) is set to encrypted (2) when the per-server instance configuration byte (MRxSmbGetInstanceConfigurationBlock()+0x38) requires encryption, and to unencrypted (1) otherwise. The feature only affects whether the intermediate encryption byte (+0x26F) is written and which field feeds the security-mode word; it does not change the observable negotiated security mode. No plaintext-to-encryption-required downgrade is demonstrable, and the feature flag is Microsoft-managed, not attacker- or admin-controllable. A separate, unrelated feature (Feature_Servicing_SMBFixS2DAccessDeniedIssues) is present unchanged in both builds and was only relocated.",
+      "trigger_conditions": "Not applicable - no reachable security-relevant behavior change.",
+      "primitive": "None demonstrable.",
+      "evidence": "SmbNegotiate_Start unpatched vs patched: the only logic difference is the deletion of the 'call Feature_2990496056__private_IsEnabledDeviceUsageNoInline / test eax,eax / jz' gate before the +0x26F write; the config-driven write itself (call MRxSmbGetInstanceConfigurationBlock; test byte[rax+38h]; mov byte[rcx+26Fh],1) is identical in both builds. SmbNegotiate_Continue: the feature-off branch is deleted and the feature-on branch (security mode = (byte[rsi+26Fh]!=0)?2:1) is kept unconditionally. In both builds every code path sets [rdi+5C4h]=2 exactly when byte[config+38h] requires encryption.",
+      "assembly": "Feature_2990496056__private_IsEnabledDeviceUsageNoInline (unpatched, 0x1400490EC):\n  0x1400490EC  sub     rsp, 28h\n  0x1400490F0  and     [rsp+28h+arg_0], 0\n  0x1400490F6  mov     eax, cs:Feature_2990496056__private_featureState\n  0x1400490FC  mov     dword ptr [rsp+28h+arg_0], eax\n  0x140049100  test    al, 10h\n  0x140049102  jz      0x140049109\n  0x140049104  and     eax, 1\n  0x140049107  jmp     0x140049118\n  0x140049109  mov     rcx, [rsp+28h+arg_0]\n  0x14004910E  mov     edx, 3\n  0x140049113  call    Feature_2990496056__private_IsEnabledFallback\n  0x140049118  add     rsp, 28h\n  0x14004911C  retn\n\nFeature_2990496056__private_IsEnabledFallback (unpatched, 0x140049124):\n  0x140049124  sub     rsp, 28h\n  0x140049128  lea     r8, Feature_2990496056__private_descriptor\n  0x14004912F  call    wil_details_IsEnabledFallback\n  0x140049134  add     rsp, 28h\n  0x140049138  retn"
+    }
+  ],
+  "summary": "No security-relevant change. The patch graduates the WIL/Velocity feature-staging flag Feature_2990496056 to always-on in two SMB negotiate functions (SmbNegotiate_Start at 0x140038400 and SmbNegotiate_Continue at 0x14008E800) and removes the two now-dead feature helper functions. The removed helpers use the standard Windows feature-management pattern (Feature_2990496056__private_featureState plus wil_details_IsEnabledFallback), not a registry or Group-Policy gate. In every feature state the SMB negotiate security mode is derived from the per-server instance configuration encryption-required byte, so the observable negotiation is unchanged and no plaintext downgrade is demonstrable. The remaining ~180 functions flagged by a raw diff differ only by relocated code/data addresses (locret_ labels, byte_14007... data symbols, string-literal addresses) caused by stripping the two feature helpers; none contain a logic change. A separate feature (Feature_Servicing_SMBFixS2DAccessDeniedIssues) is present unchanged in both builds. There is no exploitable primitive; the earlier High-severity encryption-bypass/MITM description was not supported by the binaries."
+}

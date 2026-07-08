@@ -1,0 +1,133 @@
+{
+  "binaries": {
+    "title": "fileinfo.sys (Windows Prefetch FileInfo Minifilter) - RB-tree root pointer-encoding completed (encoding disabled on all reachable paths; no security-relevant change)",
+    "id_unpatched": "fileinfo_unpatched.sys",
+    "id_patched": "fileinfo_patched.sys",
+    "overall_similarity": 0.9854,
+    "matched": 173,
+    "changed": 4,
+    "identical": 169,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FIPfOpenListNotifyConflictStart (@0x1C0013D34 unpatched, @0x1C0013D04 patched)",
+      "similarity": 0.8892,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched version adds XOR-decode of the red-black tree ROOT pointer (*arg4) at two sites: before the search loop ('if (Encoded && root) root ^= arg4;') and before the insertion-position traversal ('if (Encoded && root) root ^= arg4;').",
+        "In the unpatched version the root pointer is read plainly ('root = *arg4;') with no decode.",
+        "Child node pointers (node[0], node[1]) are XOR-decoded in BOTH builds, gated on the same flag; the patch simply extends that decode to the root pointer.",
+        "The gating flag is bit 0 of the RTL_RB_TREE field at +0x08 (the Min/Encoded union). For these trees it is always 0, so both the pre-existing child decode and the new root decode are dead branches. Remaining delta is register reallocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "arg4 is a standard RTL_RB_TREE (passed as the first argument to RtlRbInsertNodeEx): Root at +0x00, Min/Encoded union at +0x08. The kernel RB-tree routines support an 'encoded' mode where stored pointers are XOR-obfuscated against the address of their containing slot; the driver mirrors that decode when it walks the tree by hand. The unpatched walk decoded child pointers but read the root plainly; the patch completes the scheme by also decoding the root. However, in this driver every such tree is a zero-initialized, per-call LOCAL STACK structure that is built and fully torn down within the same function call, and the Encoded bit is never set: the driver never writes tree+0x08 (that field is written only by RtlRbInsertNodeEx, which stores an 8-byte-aligned Min node whose bit 0 is 0), there is no RtlRbInitializeTree, and no RtlRbRemoveNode. Encoded is therefore always 0, so neither the child decode nor the new root decode ever executes at run time. Pointer encoding is a defense-in-depth mitigation, not a lifetime fix; the unpatched code has no premature free, no missing refcount, and no dangling pointer. This is a dormant correctness/defense-in-depth change, not a use-after-free fix.",
+      "assembly_diff": "UNPATCHED FIPfOpenListNotifyConflictStart @0x1C0013D34 - root read used as-is (flag bit always 0):\n  0x1c0013de2: movzx edx, byte ptr [r15+8]   ; Encoded/Min union byte\n  0x1c0013deb: and   edx, 1                    ; flag (always 0 here)\n  0x1c0013dfa: mov   rax, [r15]                ; root read #1 (no XOR)\n  0x1c0013e14: mov   rcx, [rax]                ; child ptr\n  0x1c0013e20: xor   rax, rcx                  ; child decode (present in BOTH builds; dead: flag==0)\n  0x1c0013ea1: mov   rdx, [r15]                ; root read #2 (no XOR)\n  ; the driver never writes [r15+8]; only store is to the new node: 0x1c0013e8f mov [rdi+18h], r9\n\nPATCHED FIPfOpenListNotifyConflictStart @0x1C0013D04 - root decode added (guard never satisfied):\n  0x1c0013db2: mov   rcx, [rdi+8]              ; flag byte (rdi = tree)\n  0x1c0013dc6: mov   rax, [rdi]                ; root\n  0x1c0013dcd: test  cl, 1                     ; if (Encoded)\n  0x1c0013dd0: je    0x1c0013dda\n  0x1c0013dd2: test  rax, rax\n  0x1c0013dd5: je    0x1c0013dda\n  0x1c0013dd7: xor   rax, rdi                  ; NEW root decode (dead: flag==0)\n  0x1c0013e76: mov   rax, [rdi+8]              ; flag byte\n  0x1c0013e7a: mov   rdx, [rdi]                ; root\n  0x1c0013e7d: test  al, 1                     ; if (Encoded)\n  0x1c0013e7f: je    0x1c0013e89\n  0x1c0013e81: test  rdx, rdx\n  0x1c0013e84: je    0x1c0013e89\n  0x1c0013e86: xor   rdx, rdi                  ; NEW root decode (dead: flag==0)"
+    },
+    {
+      "name": "FIPfFileFSOpStart (@0x1C000C9D0 unpatched, @0x1C000C1F0 patched)",
+      "similarity": 0.8261,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched version adds the same 'if (Encoded) root ^= &tree' decode to the root pointer before the local-tree teardown walk.",
+        "The tree is a zero-initialized local stack structure (the 'P' slot); the flag byte is read from tree+0x08 and is never set.",
+        "Child links in the teardown walk are decoded in both builds under the same never-set flag."
+      ],
+      "security_relevant": false,
+      "security_notes": "Stream-context helper reached from the post-create callback (FIPfFileFSOpPostCreate). It builds and tears down a per-call local RB tree for prefetch tracking. The added root decode mirrors the child decode already present and, like it, never runs because the tree's Encoded flag is never set. No cross-call sharing, no lifetime bug.",
+      "assembly_diff": "UNPATCHED: local tree at [rsp+178h+P], zero-initialized (movdqu [P], xmm0). Teardown reads flag byte [P+8] and root [P] plainly:\n  0x1c000ca7a: movzx eax, byte ptr [rsp+178h+P+8]   ; flag (always 0)\n  0x1c000ca7f: mov   rcx, [rsp+178h+P]              ; root (no XOR)\n  0x1c0011ba0: lea   r9, [rsp+178h+P]               ; &tree passed to conflict-start\nPATCHED: adds 'if (Encoded && root) root ^= &tree' before the same teardown walk (dead: flag==0)."
+    },
+    {
+      "name": "FIPfVolumeRundownFilePrefetchStart (@0x1C000FBEC unpatched, @0x1C00110CC patched)",
+      "similarity": 0.9305,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched version adds 'if (Encoded) root ^= &tree' decode for the root pointer in the teardown/cleanup walk.",
+        "The tree is a zero-initialized local stack structure (tree base at P+8); the cached flag (var_190 = tree+0x08 bit 0) is never set.",
+        "Minor local-variable layout shuffle from inserting the decode block."
+      ],
+      "security_relevant": false,
+      "security_notes": "Iterates volume/context structures and calls FIPfOpenListNotifyConflictStart for each, then frees the local RB tree by hand. The root decode added here matches the child decode already present and never executes (Encoded never set). Local per-call tree; no stale-root UAF.",
+      "assembly_diff": "UNPATCHED: tree base at [rsp+1D0h+P+8], zero-initialized (movdqu [P+8], xmm0); r9 = lea [P+8] to conflict-start (0x1c00113e3). Teardown caches flag in edi from var_190 and reads root plainly:\n  0x1c000fcfa: movzx edi, [rsp+1D0h+var_190]   ; flag (always 0)\n  0x1c000fcff: mov   rcx, [rsp+1D0h+P+8]        ; root (no XOR)\nPATCHED: adds 'if (Encoded && root) root ^= &tree' before the walk (dead: flag==0)."
+    },
+    {
+      "name": "FIPfVolumeRundownAllPrefetchStart (@0x1C001462C unpatched, @0x1C001461C patched)",
+      "similarity": 0.9109,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched version adds 'if (Encoded) root ^= &tree' decode for the root pointer before the cleanup walk.",
+        "The tree is a zero-initialized local stack structure (tree base at P+8); flag never set.",
+        "Minor local-variable layout shuffle."
+      ],
+      "security_relevant": false,
+      "security_notes": "Processes a file context: calls FIPfVolumeRundownFilePrefetchStart and FIPfOpenListNotifyConflictStart, then frees the local RB tree in a by-hand walk (0x1c001485a) that reads the root plainly and decodes children under the never-set flag. Same dormant root-decode addition. No reachable UAF.",
+      "assembly_diff": "UNPATCHED teardown walk (0x1c001484b): 'mov rcx, [rsp+1D0h+P+8]' reads root plainly; child decode 'xor rcx, rax' (0x1c0014869) gated on edi (flag, always 0); nodes freed via FIPfNotifiedContextsDelete (0x1c00148aa). tree base P+8 zero-initialized (movdqu [P+8], xmm0 at 0x1c00146b1).\nPATCHED: adds root decode before the walk (dead: flag==0)."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "FIPfOpenListNotifyConflictStart (RB-tree search/insert) and its callers FIPfFileFSOpStart, FIPfVolumeRundownFilePrefetchStart, FIPfVolumeRundownAllPrefetchStart",
+      "entry_point": "File create/open handled by the FileInfo minifilter (FIPfFileFSOpPostCreate on IRP_MJ_CREATE post-operation), which builds and tears down a per-call local RB tree for prefetch tracking. Reachable, but the change on this path is a no-op.",
+      "call_chain": [
+        "User-mode file open (NtCreateFile/CreateFile) -> IRP_MJ_CREATE handled by fileinfo.sys minifilter",
+        "FIPfFileFSOpPostCreate (@0x1C000DF80) -> FIPfFileFSOpStart (0x1C000E257) and FIPfVolumeRundownFilePrefetchStart (0x1C000E31A)",
+        "FIPfVolumeRundownAllPrefetchStart -> FIPfVolumeRundownFilePrefetchStart",
+        "These callers build/tear down a LOCAL stack RB tree and call FIPfOpenListNotifyConflictStart (@0x1C0013D34) to search/insert",
+        "FIPfOpenListNotifyConflictStart reads the tree root and (only if Encoded is set, which it never is) decodes it"
+      ],
+      "vulnerability_class": "No security-relevant change. The edit completes the RTL_RB_TREE encoded-pointer decode for the root pointer (defense-in-depth / correctness), but encoding is never enabled for these trees, so the new code is a dead branch. Not a demonstrable CWE-416 use-after-free.",
+      "description": "The FileInfo minifilter builds small red-black trees (via RtlRbInsertNodeEx) keyed by an int64 at node+0x18; nodes are 0x30-byte NonPagedPoolNx allocations tagged 'FINc' (0x634E4946). The tree header is a standard RTL_RB_TREE: Root at +0x00, the Min/Encoded union at +0x08. The kernel RB-tree routines support an 'encoded' mode that XOR-obfuscates stored pointers against their containing slot; the driver mirrors that decode when it walks the tree by hand. In the unpatched build the by-hand walk decodes child pointers but reads the root plainly; the patch adds 'if (Encoded && root) root ^= &tree' at every root read, in the search/insert function and in each caller's teardown walk. The direction is correct (patched is stricter), but the change has no reachable effect: every one of these trees is a zero-initialized per-call local stack structure whose Encoded flag (bit 0 of tree+0x08) is never set. The driver never writes tree+0x08 (only RtlRbInsertNodeEx does, storing an aligned Min pointer with bit 0 clear), there is no RtlRbInitializeTree and no RtlRbRemoveNode, and the trees are created, populated, and fully freed within a single call with no cross-context sharing. Both the pre-existing child decode and the new root decode are therefore dead branches. Pointer encoding is a mitigation that only matters after an independent corruption primitive; the unpatched code has no premature free, no missing refcount, and no dangling pointer.",
+      "trigger_conditions": "None that produces a memory-safety fault. The code path is reachable during ordinary file I/O, but the tree is a per-call local built and destroyed in the same call, and the encoded-pointer decode branches never execute (Encoded is always 0). There is no free-then-reuse window, no shared tree, and no attacker-controlled dereference introduced or removed by this change.",
+      "primitive": "None. The RB-tree nodes hold only a key (+0x18), two child pointers (+0x00/+0x08), and a 16-byte data blob (+0x20); they contain no function pointer. The single indirect call on this path (0x1C0013E46, __guard_dispatch_icall_fptr) takes its target from the input work-item ([rbx+0x28]), not from any tree node, and is kCFG-validated. There is no pool-spray/reclaim primitive, no info leak, and no code-execution or data-only primitive attributable to this change.",
+      "evidence": "UNPATCHED FIPfOpenListNotifyConflictStart @0x1C0013D34 (root read used as-is; flag always 0):\n    uint8_t flag = *(uint8_t*)(arg4 + 8) & 1;   // Encoded bit, always 0\n    int64_t* root = *arg4;                       // read plainly\n    // child pointers decoded only when flag is set (never here)\n\nPATCHED FIPfOpenListNotifyConflictStart @0x1C0013D04 (root decode added, guard never satisfied):\n    uint8_t flag = *(uint8_t*)(arg4 + 8);\n    int64_t* root = *arg4;\n    if ((flag & 1) && root) root ^= arg4;        // NEW; dead because flag == 0\n\nThe tree header is passed as arg1 to RtlRbInsertNodeEx (0x1C0013EEE / 0x1C0013ED9), confirming RTL_RB_TREE. The driver never stores to [tree+8]; the only store in the function is to the freshly allocated node (mov [rdi+18h], r9 at 0x1C0013E8F). Every caller zero-initializes its local tree (movdqu [P...], xmm0) and never sets the Encoded bit.",
+      "assembly": "=== UNPATCHED FIPfOpenListNotifyConflictStart @0x1C0013D34 ===\n0x1c0013de2: movzx edx, byte ptr [r15+8]   ; Encoded/Min union byte\n0x1c0013deb: and   edx, 1                    ; flag = bit 0 (always 0)\n0x1c0013dfa: mov   rax, [r15]                ; root read #1 (no XOR)\n0x1c0013e03: mov   rcx, [rax+18h]            ; node key\n0x1c0013e14: mov   rcx, [rax]                ; child ptr\n0x1c0013e20: xor   rax, rcx                  ; child decode (BOTH builds; dead: flag==0)\n0x1c0013ea1: mov   rdx, [r15]                ; root read #2 (no XOR)\n0x1c0013e46: call  cs:__guard_dispatch_icall_fptr ; kCFG call; target from work-item [rsi]=[rbx+0x28]\n0x1c0013e4c: mov   edx, 30h                  ; size 0x30\n0x1c0013e51: mov   ecx, 200h                 ; NonPagedPoolNx\n0x1c0013e58: mov   r8d, 634E4946h            ; tag 'FINc'\n0x1c0013e62: call  cs:__imp_ExAllocatePoolWithTag\n0x1c0013e8f: mov   [rdi+18h], r9             ; only store is to the new node, not [r15+8]\n0x1c0013eee: call  cs:__imp_RtlRbInsertNodeEx ; rcx=r15 (tree), r9=new node\n\n=== PATCHED FIPfOpenListNotifyConflictStart @0x1C0013D04 (root decode added) ===\n0x1c0013db2: mov   rcx, [rdi+8]              ; flag byte (rdi = tree)\n0x1c0013dc6: mov   rax, [rdi]                ; root\n0x1c0013dcd: test  cl, 1                     ; if (Encoded)\n0x1c0013dd7: xor   rax, rdi                  ; NEW root decode (dead: flag==0)\n0x1c0013e76: mov   rax, [rdi+8]              ; flag byte\n0x1c0013e7a: mov   rdx, [rdi]                ; root\n0x1c0013e7d: test  al, 1                     ; if (Encoded)\n0x1c0013e86: xor   rdx, rdi                  ; NEW root decode (dead: flag==0)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fileinfo!FIPfOpenListNotifyConflictStart",
+            "address": "0x1c0013d34",
+            "why": "RB-tree search/insert. Break here to observe local-tree construction during file I/O. No fault occurs here."
+          },
+          {
+            "symbol": "fileinfo+0x13dfa",
+            "address": "0x1c0013dfa",
+            "why": "Unpatched root read #1 ('mov rax,[r15]'). r15 = tree header. Inspect 'db @r15+8 L1': the byte is bit-0-clear (an aligned Min pointer), confirming Encoded is off and the root is read plainly only because encoding is disabled."
+          },
+          {
+            "symbol": "fileinfo+0x13e62",
+            "address": "0x1c0013e62",
+            "why": "ExAllocatePoolWithTag(NonPagedPoolNx, 0x30, 'FINc') node allocation site."
+          },
+          {
+            "symbol": "fileinfo!FIPfNotifiedContextsDelete",
+            "address": "0x1c0013cfc",
+            "why": "Per-node free during the local-tree teardown. Every node is freed within the same call that built it; no node outlives the walk."
+          }
+        ],
+        "watch": [
+          "byte [r15+8] at 0x1c0013dfa - the RTL_RB_TREE Min/Encoded union. Bit 0 is the Encoded flag; it is always 0 for these trees, so the encode/decode branches are dead.",
+          "r15[0] at 0x1c0013dfa - the root pointer; belongs to the live local tree the same function is about to walk and free.",
+          "Pool tag 0x634E4946 ('FINc') - the 0x30-byte NonPagedPoolNx node tag."
+        ],
+        "key_offsets": [
+          "0x1c0013dfa: 'mov rax,[r15]' - unpatched root read #1 (plain, because Encoded is off).",
+          "0x1c0013ea1: 'mov rdx,[r15]' - unpatched root read #2 (plain).",
+          "0x1c0013e20: 'xor rax,rcx' - child decode, present in BOTH builds, gated on the never-set Encoded flag.",
+          "0x1c0013dd7 / 0x1c0013e86 (patched): 'xor rax/rdx, rdi' - the NEW root decode; never reached because Encoded is 0.",
+          "0x1c0013e46: kCFG call whose target comes from the input work-item ([rbx+0x28]), not from a tree node.",
+          "0x1c0013e62: ExAllocatePoolWithTag(NonPagedPoolNx, 0x30, 'FINc')."
+        ],
+        "trigger_setup": "File open/create operations on a monitored volume reach FIPfFileFSOpPostCreate and drive the RB-tree code, but this only builds and tears down a per-call local tree. No sequence of operations turns the change into a memory-safety fault, because the encoded-pointer decode branches never execute and the tree is not shared across calls.",
+        "expected_observation": "No fault attributable to this change. The added root-decode instructions are never executed (Encoded flag is 0). Normal operation is identical between the two builds on every reachable path.",
+        "notes": "RTL_RB_TREE layout: +0x00 Root, +0x08 Min/Encoded union (bit 0 = Encoded, always 0 here). RB-tree node (0x30 bytes, tag 'FINc'): +0x00 left child, +0x08 right child, +0x18 key (int64), +0x20 16-byte data blob; no function pointer. The encoded-pointer scheme (child ^ &node, root ^ &tree) is only active when Encoded is set; these zero-initialized local trees never set it. Symbols: PDB 'fileinfo.pdb'; '.reload /f fileinfo.sys'."
+      }
+    }
+  ],
+  "summary": "The patch teaches four related functions in fileinfo.sys to XOR-decode the ROOT pointer of an RTL_RB_TREE, matching the encoded-pointer decode both builds already apply to the tree's child pointers. The direction is correct (the patched build is stricter), but the change has no reachable security effect. Encoding is a standard RTL_RB_TREE feature gated by the Encoded bit (bit 0 of the Min/Encoded union at tree+0x08), and in this driver every such tree is a zero-initialized, per-call LOCAL STACK structure whose Encoded bit is never set: the driver never writes tree+0x08, there is no RtlRbInitializeTree and no RtlRbRemoveNode, and each tree is built and fully torn down within a single call with no cross-context sharing. Both the pre-existing child decode and the newly added root decode are therefore dead branches. Pointer encoding is a defense-in-depth mitigation, not a lifetime fix, and the unpatched code exhibits no premature free, missing refcount, or dangling pointer. Verdict: no security-relevant change (dormant defense-in-depth / correctness completion), downgraded from the previously asserted high-severity CWE-416 use-after-free, which is not supported by the binaries."
+}

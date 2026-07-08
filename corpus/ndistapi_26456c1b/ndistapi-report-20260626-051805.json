@@ -1,0 +1,349 @@
+{
+  "binaries": {
+    "id_unpatched": "ndistapi_unpatched.sys",
+    "id_patched": "ndistapi_patched.sys",
+    "overall_similarity": 0.8228,
+    "matched": 49,
+    "changed": 40,
+    "identical": 9,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DoIoctlQuerySetWork",
+      "similarity": 0.9304,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "ExAllocatePoolWithTag(516 /* NonPagedPoolNxCacheAligned */, arg2[0xC]+0xEC, 'TAPI') replaced with ExAllocatePool2(0x48, arg2[0xC]+0xEC, 'TAPI'). The old allocator does NOT zero-initialize; the new one zero-initializes by default. In the unpatched build the request structure's header gaps at offsets 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 are uninitialized when the structure is passed to the TAPI provider callback at offset 0x30",
+        "The indirect call to the provider request handler is Control-Flow-Guard protected in BOTH builds (unpatched __guard_dispatch_icall_fptr at 0x1C00027B2, patched out-of-line _guard_dispatch_icall thunk at 0x1400016DD). CFG was not added by this patch",
+        "Allocation size validation restructured from a sbb/cmov overflow pattern to an explicit branch; the validated range (arg2[0xC]+0x13 must not wrap, arg2[0xC] <= 0x10000000, InputBufferLength/OutputBufferLength >= arg2[0xC]+0x13) is unchanged"
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched DoIoctlQuerySetWork the request buffer is allocated by ExAllocatePoolWithTag((POOL_TYPE)516, arg2[0xC]+0xEC, 'TAPI') which does not zero memory. The header fields the driver uses are set (offsets 0x00/0x08 at list insertion, 0x10 IRP, 0x18 provider, 0x20 request ID, 0x24=0, 0x50 flag, 0x58 sub-code, 0x60 data pointer, 0x68 data size) and the data region at 0xE8 is filled from user input via memmove, but the header gaps at 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 remain uninitialized. The structure at offset 0x30 is then handed to the in-kernel TAPI provider's request-handler callback, exposing uninitialized non-paged pool bytes to the provider (CWE-908). This is NOT a user-mode information disclosure: the only data copied back to the user SystemBuffer on synchronous success is the P+0xE8 data region, which was fully initialized from the caller's own input before the callback. The patched build allocates with ExAllocatePool2(0x48 = POOL_FLAG_NON_PAGED|POOL_FLAG_CACHE_ALIGNED) which zero-initializes, so the header gaps are zero when the provider is called. Severity: low.",
+      "assembly_diff": "; Unpatched allocation (does NOT zero):\n; 0x1C0002626: mov edx, ecx            ; NumberOfBytes = arg2[0xC]+0xEC\n; 0x1C0002628: mov r8d, 49504154h      ; tag 'TAPI'\n; 0x1C000262E: mov ecx, 204h           ; NonPagedPoolNxCacheAligned\n; 0x1C0002633: call ExAllocatePoolWithTag\n; 0x1C000263F: mov r14, rax            ; r14 = P\n; Header fields set: [r14+24h]=0, [r14+10h]=IRP, [r14+18h]=provider, [r14+20h]=reqID,\n;   memmove([r14+0E8h], user, size) at 0x1C00026F2, [r14+50h], [r14+58h], [r14+60h], [r14+68h]\n; Gaps left uninitialized: [r14+28h..4Fh], [r14+54h..57h], [r14+5Ch..5Fh], [r14+6Ch..E7h]\n; Provider callback (CFG-guarded) with structure at r14+30h:\n; 0x1C00027AA: lea rdx, [r14+30h]\n; 0x1C00027B2: call cs:__guard_dispatch_icall_fptr\n; Copy-back to user reads the DATA region only:\n; 0x1C00028B7: lea rdx, [r14+0E8h]\n; 0x1C00028BE: call memmove\n;\n; Patched allocation (zero-initialized):\n; 0x140001559: mov ecx, 48h           ; POOL_FLAG_NON_PAGED|POOL_FLAG_CACHE_ALIGNED\n; 0x140001564: call ExAllocatePool2\n; Provider callback still CFG-guarded at 0x1400016DD (_guard_dispatch_icall)"
+    },
+    {
+      "name": "SendProviderShutdown",
+      "similarity": 0.5648,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Allocation moved from the callers (DoIrpMjCloseWork, NdisTapiDeregisterProvider) into SendProviderShutdown itself",
+        "Unpatched: caller allocates 0xF0 bytes via ExAllocatePoolWithTag(516, 0xF0, 'TAPI') and passes it as arg3 with NO zero-initialization",
+        "Patched: SendProviderShutdown allocates internally via ExAllocatePool2(0x48, 0xF0, 'TAPI') which zero-initializes, and adds a null-check returning STATUS_INSUFFICIENT_RESOURCES",
+        "The indirect call to the provider handler is CFG-guarded in BOTH builds (unpatched __guard_dispatch_icall_fptr at 0x1C000215B, patched _guard_dispatch_icall at 0x140002C2D). CFG was not added by this patch"
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched build the caller allocates a 0xF0-byte buffer with ExAllocatePoolWithTag(516, 0xF0, 'TAPI') (not zeroed) and passes it to SendProviderShutdown, which sets only offsets 0x10, 0x18, 0x20, 0x24, 0x50, 0x58, 0x60, 0x68, 0xE8 before passing the structure at offset 0x30 to the provider request handler. Header gaps at 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 are uninitialized non-paged pool data exposed to the in-kernel provider callback (CWE-908). This path runs during handle close / provider deregistration and returns nothing to user mode. The patched build allocates internally with the zero-initializing ExAllocatePool2. Severity: low.",
+      "assembly_diff": "; Unpatched caller DoIrpMjCloseWork allocates the unzeroed buffer:\n; 0x1C0002222: mov edx, 0F0h\n; 0x1C000222A: mov r8d, 49504154h\n; 0x1C0002233: mov ecx, 204h           ; NonPagedPoolNxCacheAligned\n; 0x1C0002238: call ExAllocatePoolWithTag\n; 0x1C0002254: call SendProviderShutdown   ; r8 = buffer (arg3)\n; Inside SendProviderShutdown (arg3 = r8):\n; 0x1C00020ED: and qword [r8+10h], 0\n; 0x1C00020F9: mov [r8+18h], rcx\n; 0x1C0002102: mov [r8+24h], eax        ; = 1\n; 0x1C0002118: mov [r8+50h], eax        ; = 1\n; 0x1C000211C: mov dword [r8+58h], 7030119h\n; 0x1C0002124: mov [r8+60h], r9         ; -> r8+0E8h\n; 0x1C0002128: mov dword [r8+68h], 4\n; Gaps left uninitialized: [r8+28h..4Fh], [r8+54h..57h], [r8+5Ch..5Fh], [r8+6Ch..E7h]\n; Provider callback (CFG-guarded) with structure at r8+30h (rsi==r8):\n; 0x1C0002153: lea rdx, [rsi+30h]\n; 0x1C000215B: call cs:__guard_dispatch_icall_fptr\n;\n; Patched SendProviderShutdown allocates internally (zero-initialized):\n; 0x140002B9E: mov edx, 0F0h\n; 0x140002BA3: mov ecx, 48h\n; 0x140002BAE: call ExAllocatePool2\n; 0x140002BC0: jnz ...                    ; else return STATUS_INSUFFICIENT_RESOURCES\n; Provider callback still CFG-guarded at 0x140002C2D"
+    },
+    {
+      "name": "DoProviderInitComplete",
+      "similarity": 0.9519,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNx, size, 'TAPI') -> ExAllocatePool2(POOL_FLAG_NON_PAGED, size, 'TAPI')",
+        "memset after allocation retained in both builds (redundant in patched but harmless); same integer-overflow guard 24*count <= 0xFFFFFFFF before allocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SendProviderInitRequest",
+      "similarity": 0.9855,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(516, 0x104, 'TAPI') -> ExAllocatePool2(0x48, 0x104, 'TAPI')",
+        "Indirect call to the provider handler is CFG-guarded in both builds (not added by this patch)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiRegisterProvider",
+      "similarity": 0.944,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(516, 0x70, 'TAPI') -> ExAllocatePool2(0x48, 0x70, 'TAPI'); removed the now-redundant memset of the zeroed allocation",
+        "Match condition unchanged: state==1 AND RtlCompareMemory(provider+0x2C, arg2+8, 0x10)==0x10",
+        "Control flow restructured"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.6978,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(PagedPool, size, 'TAPI') -> ExAllocatePool2(POOL_FLAG_PAGED, size, 'TAPI'); removed redundant memset",
+        "RegistryPath buffer allocation size (Length+2) and copy length (Length) unchanged",
+        "Lookaside list cleanup on error: manual SLIST with depth check -> ExFreeToNPagedLookasideList"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiUnload",
+      "similarity": 0.7264,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Manual SLIST lookaside cleanup -> ExFreeToNPagedLookasideList",
+        "Counter/statistics variables removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiDeregisterProvider",
+      "similarity": 0.841,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The shutdown-buffer ExAllocatePoolWithTag removed here; allocation moved into SendProviderShutdown",
+        "Control flow restructured; the state field and the DeviceExtension+0x1C counter it decrements are distinct, so the re-read is harmless"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DoIrpMjCloseWork",
+      "similarity": 0.7512,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed ExAllocatePoolWithTag(516, 0xF0, 'TAPI') in this caller; allocation moved into SendProviderShutdown",
+        "Control flow restructured from while-continue to if-else chain"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DoGetProviderEventsWork",
+      "similarity": 0.9271,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Manual lookaside free -> ExFreeToNPagedLookasideList",
+        "Bounds checks unchanged (a3<0xC || a4<0xC || a4-8 < *a2; per-iteration guard v11<0x30 with fixed 0x30 copy)",
+        "Removed statistics counters"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiIndicateStatus",
+      "similarity": 0.8733,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Manual lookaside alloc -> ExAllocateFromNPagedLookasideList",
+        "IRP copy clamp min(a3, *outbuf_len) and lookaside-path 0x30 guard unchanged",
+        "Removed statistics counters"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiDispatch",
+      "similarity": 0.8603,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "STATUS_PENDING (0x103) check restructured from centralized label to per-case check",
+        "IRP_MJ_DEVICE_CONTROL IOCTL routing unchanged: 0x8FFF23C0, 0x8FFF23C8/CC, 0x8FFF23D0, 0x8FFF23D4"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiCompleteRequest",
+      "similarity": 0.9649,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and field-assignment ordering",
+        "Condition for DoProviderInitComplete rewritten from (state & 0xFFFFFFFD)==0 to state==0 || state==2 (equivalent); copy length *(v10+0xC) unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiCleanup",
+      "similarity": 0.9627,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and field-assignment ordering; equivalent file-object match and IRP-completion logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NdisTapiCancel",
+      "similarity": 0.8436,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Linked-list traversal restructured from do-while to while(true) with explicit break/continue; equivalent unlink and sentinel logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DoIoctlConnectWork",
+      "similarity": 0.9562,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Provider-state check rewritten from 'state-2 <= 2' to 'state==2 || state-3 <= 1' on the same field [rbx+8]; both accept states {2,3,4}",
+        "Leading bounds checks (a3<8, a4<4) byte-identical; register allocation differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DoLineCreateWork",
+      "similarity": 0.8988,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "a3>=0x10 guard and all struct field comparisons unchanged; lock re-acquire / counter re-read restructured but logically equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memcpy",
+      "similarity": 0.3011,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Different code generation (compiler rebuild) - same semantics"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset",
+      "similarity": 0.618,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Different code generation (compiler rebuild), including CPU-feature-dispatched memset variants"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "DoIoctlQuerySetWork",
+      "entry_point": "IOCTL 0x8FFF23C8/0x8FFF23CC via IRP_MJ_DEVICE_CONTROL (METHOD_BUFFERED) on \\Device\\NdisTapi",
+      "call_chain": [
+        "NdisTapiDispatch (IRP_MJ_DEVICE_CONTROL handler at 0x1C0001340)",
+        "DoIoctlQuerySetWork (0x1C000247C) - validates the TAPI sub-code 0x7030101-0x7030124, allocates request buffer P, initializes used header fields and the P+0xE8 data region (from user input)",
+        "Provider request handler called via CFG-guarded indirect call at 0x1C00027B2 with the structure at P+0x30, whose header gaps (0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7) are uninitialized pool data in the unpatched build",
+        "On synchronous success, memmove(SystemBuffer+0x10, P+0xE8, size) at 0x1C00028BE copies back only the initialized data region"
+      ],
+      "vulnerability_class": "Use of Uninitialized Memory (CWE-908)",
+      "description": "In the unpatched DoIoctlQuerySetWork the request buffer P is allocated by ExAllocatePoolWithTag((POOL_TYPE)516 /* NonPagedPoolNxCacheAligned */, arg2[0xC]+0xEC, 'TAPI') which does not zero-initialize. The driver sets the header fields it uses (0x00/0x08 LIST_ENTRY at list insertion, 0x10 IRP, 0x18 provider, 0x20 request ID, 0x24=0, 0x50 flag, 0x58 sub-code, 0x60 data pointer, 0x68 data size) and fills the data region at 0xE8 from user input via memmove, but leaves the header gaps at 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 uninitialized. The structure at offset 0x30 is then passed to the in-kernel TAPI provider's request-handler callback via a CFG-guarded indirect call, exposing uninitialized non-paged pool bytes to the provider (CWE-908). This is not a user-mode information disclosure: the only bytes copied back to the user SystemBuffer on synchronous success come from the P+0xE8 data region, which was fully initialized from the caller's own input before the callback. The patched build allocates with ExAllocatePool2(0x48, arg2[0xC]+0xEC, 'TAPI'), which zero-initializes by default, so the header gaps are zero when the provider is called. The indirect call is CFG-guarded in both builds; CFG was not added by this patch.",
+      "trigger_conditions": "1. Open a handle to \\Device\\NdisTapi (created via WdmlibIoCreateDeviceSecure; the device SDDL governs who may open it). 2. Send IOCTL 0x8FFF23C8 or 0x8FFF23CC (METHOD_BUFFERED) via DeviceIoControl. 3. SystemBuffer >= 0x14 bytes with arg2[1] a valid TAPI sub-code in 0x7030101-0x7030124. 4. arg2[3] (data size) must pass validation: >= the sub-code minimum (lookup table at dword_1C0005094), arg2[3]+0x13 must not wrap 32-bit, arg2[3] <= 0x10000000, and InputBufferLength/OutputBufferLength >= arg2[3]+0x13. 5. A TAPI provider must be registered and matched by device ID; otherwise the IOCTL fails before the allocation. The uninitialized header gaps are exposed to the provider callback, not returned to the user output buffer.",
+      "primitive": "None demonstrable from this driver. Uninitialized non-paged pool bytes in the request structure are read only by the in-kernel TAPI provider callback; the driver does not copy any uninitialized header bytes back to the user-mode caller. Any onward propagation is provider-dependent and outside this binary.",
+      "evidence": "// Unpatched DoIoctlQuerySetWork (decompilation, 0x1C000247C):\nPoolWithTag = ExAllocatePoolWithTag((POOL_TYPE)516, *(_DWORD *)(a2 + 12) + 236, 'IPAT'); // NOT zeroed\nv23 = PoolWithTag;\nv23[9] = 0;                 // offset 0x24\n*((_QWORD *)v23 + 2) = a1;  // offset 0x10 (IRP)\n*((_QWORD *)v23 + 3) = v13; // offset 0x18 (provider)\nv23[8] = requestId;         // offset 0x20\nmemmove(v23 + 58, (a2 + 16), *(a2 + 12));  // offset 0xE8: user data (data region)\nv23[20] = boolFlag;         // offset 0x50\nv23[22] = *(_DWORD *)(a2 + 4);  // offset 0x58 (sub-code)\n*((_QWORD *)v23 + 12) = v23 + 58;  // offset 0x60 -> data region\nv23[26] = *(_DWORD *)(a2 + 12); // offset 0x68 (size)\n// GAPS uninitialized: [0x28-0x4F], [0x54-0x57], [0x5C-0x5F], [0x6C-0xE7]\nv33 = ((__int64 (__fastcall *)(__int64, _DWORD *))v13[3])(v13[2], v23 + 12); // v23+12 == P+0x30\n// Copy-back to user reads the DATA region only:\nmemmove(v37 + 4, v23 + 58, (unsigned int)v37[3]);  // src = P+0xE8\n\n// Patched version uses the zero-initializing allocator:\nv23 = ExAllocatePool2(0x48, *(_DWORD *)(a2 + 12) + 236, 'IPAT');",
+      "assembly": "; Unpatched allocation (does NOT zero):\n0x1C0002626: mov edx, ecx            ; NumberOfBytes = arg2[0xC]+0xEC\n0x1C0002628: mov r8d, 49504154h      ; tag 'TAPI'\n0x1C000262E: mov ecx, 204h           ; NonPagedPoolNxCacheAligned\n0x1C0002633: call cs:__imp_ExAllocatePoolWithTag\n0x1C000263F: mov r14, rax            ; r14 = P\n; Header fields set:\n0x1C00026C9: mov [r14+24h], edi      ; = 0\n0x1C00026CD: mov [r14+10h], r13      ; IRP\n0x1C00026D1: mov [r14+18h], r15      ; provider\n0x1C00026EA: mov [r14+20h], eax      ; request ID\n0x1C00026F2: call memmove            ; user data -> [r14+0E8h]\n0x1C0002711: mov [r14+50h], eax\n0x1C0002718: mov [r14+58h], eax      ; sub-code\n0x1C0002723: mov [r14+60h], rax      ; -> [r14+0E8h]\n0x1C000272F: mov [r14+68h], eax      ; size\n; Gaps uninitialized: [r14+28h..4Fh], [r14+54h..57h], [r14+5Ch..5Fh], [r14+6Ch..E7h]\n; Provider callback (CFG-guarded) with structure at r14+30h:\n0x1C00027AA: lea rdx, [r14+30h]\n0x1C00027B2: call cs:__guard_dispatch_icall_fptr\n; Copy-back to user reads the DATA region only:\n0x1C00028B7: lea rdx, [r14+0E8h]\n0x1C00028BE: call memmove\n;\n; Patched allocation (zero-initialized):\n0x140001559: mov ecx, 48h           ; POOL_FLAG_NON_PAGED|POOL_FLAG_CACHE_ALIGNED\n0x140001564: call cs:__imp_ExAllocatePool2\n0x1400016DD: call _guard_dispatch_icall  ; provider callback, still CFG-guarded",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndistapi!DoIoctlQuerySetWork",
+            "address": "0x1C000247C",
+            "why": "Function entry. rdx (arg2) = SystemBuffer, r8d (arg3) = InputBufferLength, r9d (arg4) = OutputBufferLength. rdx+4 = TAPI sub-code, rdx+8 = device ID, rdx+0xC = data size."
+          },
+          {
+            "symbol": "ndistapi!DoIoctlQuerySetWork+0x1B7",
+            "address": "0x1C0002633",
+            "why": "ExAllocatePoolWithTag call. The return value (rax, moved to r14) is the non-zeroed buffer P. Dump P+0x28..0x4F and P+0x6C..0xE7 to see uninitialized pool residue."
+          },
+          {
+            "symbol": "ndistapi!DoIoctlQuerySetWork+0x336",
+            "address": "0x1C00027B2",
+            "why": "CFG-guarded indirect call to the provider request handler. rdx = P+0x30 is the structure the provider receives; its header gaps are uninitialized in the unpatched build."
+          }
+        ],
+        "watch": [
+          "rdx at function entry = SystemBuffer (IOCTL input): rdx+4 sub-code, rdx+8 device ID, rdx+0xC data size",
+          "r14 after 0x1C0002633 = pool buffer P (non-zeroed in unpatched)",
+          "Memory at P+0x28..0x4F and P+0x6C..0xE7 = uninitialized pool residue exposed to the provider (unpatched)",
+          "Memory at P+0xE8 = data region, initialized from user input before the callback",
+          "r15 = provider object; r15+0x18 = provider request handler function pointer"
+        ],
+        "key_offsets": [
+          "0x1C00024C2: sub-code validation - arg2[1] - 0x7030101 must be < 0x24",
+          "0x1C00024DA: minimum size check against lookup table dword_1C0005094",
+          "0x1C00026F2: memmove of user data into P+0xE8 (data region)",
+          "0x1C0002633: ExAllocatePoolWithTag - the non-zeroing allocation (patched: ExAllocatePool2 at 0x140001564)",
+          "0x1C00027B2: CFG-guarded indirect call to provider handler with P+0x30 (uninitialized header gaps)",
+          "0x1C00028BE: memmove of the P+0xE8 data region back to the user buffer"
+        ],
+        "trigger_setup": "1. Ensure a TAPI provider is registered by a WAN miniport (NdisTapiRegisterProvider). 2. CreateFileW(L\"\\\\.\\NdisTapi\", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL). 3. Input buffer: 20-byte header + data; buffer[0x04] = a valid sub-code (e.g. 0x7030101), buffer[0x0C] = data size (e.g. 0x40), buffer[0x08] = a valid device ID. 4. DeviceIoControl(handle, 0x8FFF23C8, inputBuffer, inputSize, outputBuffer, outputSize, &bytesReturned, NULL). 5. To observe the uninitialized bytes, break at the provider callback (0x1C00027B2) and dump P+0x30..0xE7.",
+        "expected_observation": "On the unpatched binary, the header gaps at P+0x28..0xE7 hold non-zero non-paged pool residue when the provider callback runs; on the patched binary those bytes are zero. The user-mode output buffer reflects only what the provider wrote into the data region, not the uninitialized header bytes.",
+        "notes": "The IOCTL uses METHOD_BUFFERED, so SystemBuffer is kernel-copied (no double-fetch). The device is created via WdmlibIoCreateDeviceSecure with an SDDL security descriptor that governs which callers may open it. The uninitialized header gaps total roughly 0xB0 bytes across several ranges and are exposed to the in-kernel provider callback, not returned to user mode."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SendProviderShutdown",
+      "entry_point": "IRP_MJ_CLOSE on \\Device\\NdisTapi (via DoIrpMjCloseWork) or NdisTapiDeregisterProvider",
+      "call_chain": [
+        "DoIrpMjCloseWork (0x1C00021B4) - called during IRP_MJ_CLOSE when the reference count drops",
+        "ExAllocatePoolWithTag(516, 0xF0, 'TAPI') at 0x1C0002238 - non-zeroed buffer passed as arg3",
+        "SendProviderShutdown (0x1C00020D8) - populates selective fields and passes the structure at 0x30 to the provider callback (CFG-guarded, 0x1C000215B)"
+      ],
+      "vulnerability_class": "Use of Uninitialized Memory (CWE-908)",
+      "description": "In the unpatched build the caller (DoIrpMjCloseWork, and the NdisTapiDeregisterProvider path) allocates a 0xF0-byte buffer via ExAllocatePoolWithTag((POOL_TYPE)516, 0xF0, 'TAPI') which is not zeroed, and passes it to SendProviderShutdown. That function sets only offsets 0x10, 0x18, 0x20, 0x24, 0x50, 0x58, 0x60, 0x68, 0xE8, then passes the structure at offset 0x30 to the provider's request-handler callback. Header gaps at 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 remain uninitialized non-paged pool data exposed to the in-kernel provider (CWE-908). This path runs during handle close / provider deregistration and returns nothing to user mode. The patched build moves the allocation inside SendProviderShutdown and uses the zero-initializing ExAllocatePool2(0x48, 0xF0, 'TAPI') with a null-check. The provider callback is CFG-guarded in both builds.",
+      "trigger_conditions": "Close the last handle to \\Device\\NdisTapi while a provider is in the online state. This triggers DoIrpMjCloseWork, which walks the provider list and calls SendProviderShutdown for each active provider.",
+      "primitive": "None demonstrable to user mode. Uninitialized pool bytes are exposed only to the in-kernel TAPI provider callback during shutdown/deregistration.",
+      "evidence": "// Unpatched DoIrpMjCloseWork:\nvoid *P = ExAllocatePoolWithTag((POOL_TYPE)516, 0xF0, 'IPAT'); // NOT zeroed\nif (P) SendProviderShutdown(Provider, &NewIrql, P);\n\n// Unpatched SendProviderShutdown(arg1=provider, arg2=&irql, arg3=P):\n*(arg3 + 0x10) = 0;\n*(arg3 + 0x18) = arg1;\n*(arg3 + 0x24) = 1;\n*(arg3 + 0x50) = 1;\n*(arg3 + 0x58) = 0x7030119;\n*(arg3 + 0x60) = arg3 + 0xE8;\n*(arg3 + 0x68) = 4;\n// gaps 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 NOT set\nrax = (*(arg1 + 0x18))(*(arg1 + 0x10), arg3 + 0x30);  // provider callback, CFG-guarded\n\n// Patched SendProviderShutdown(arg1=provider, arg2=&irql):\nvoid *P = ExAllocatePool2(0x48, 0xF0, 'IPAT');  // zero-initialized\nif (!P) return 0xC000009A;",
+      "assembly": "; Unpatched caller DoIrpMjCloseWork allocates the unzeroed buffer:\n0x1C0002222: mov edx, 0F0h\n0x1C000222A: mov r8d, 49504154h\n0x1C0002233: mov ecx, 204h              ; NonPagedPoolNxCacheAligned\n0x1C0002238: call cs:__imp_ExAllocatePoolWithTag\n0x1C0002254: call SendProviderShutdown   ; r8 = buffer (arg3)\n; Inside SendProviderShutdown (arg3 = r8):\n0x1C00020ED: and qword [r8+10h], 0\n0x1C00020F9: mov [r8+18h], rcx\n0x1C0002102: mov [r8+24h], eax           ; = 1\n0x1C0002118: mov [r8+50h], eax           ; = 1\n0x1C000211C: mov dword [r8+58h], 7030119h\n0x1C0002124: mov [r8+60h], r9            ; -> r8+0E8h\n0x1C0002128: mov dword [r8+68h], 4\n; gaps [r8+28h..4Fh], [r8+54h..57h], [r8+5Ch..5Fh], [r8+6Ch..E7h] left uninitialized\n; Provider callback (CFG-guarded), structure at r8+30h (rsi==r8):\n0x1C0002153: lea rdx, [rsi+30h]\n0x1C000215B: call cs:__guard_dispatch_icall_fptr\n;\n; Patched SendProviderShutdown allocates internally (zero-initialized):\n0x140002B9E: mov edx, 0F0h\n0x140002BA3: mov ecx, 48h                 ; POOL_FLAG_NON_PAGED|POOL_FLAG_CACHE_ALIGNED\n0x140002BAE: call cs:__imp_ExAllocatePool2\n0x140002BC0: jnz short loc_140002BCC      ; else return STATUS_INSUFFICIENT_RESOURCES\n0x140002C2D: call _guard_dispatch_icall   ; provider callback, still CFG-guarded",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ndistapi!SendProviderShutdown",
+            "address": "0x1C00020D8",
+            "why": "Function entry (unpatched). r8 = arg3 = the non-zeroed 0xF0-byte buffer. Dump r8+0x28..0x4F and r8+0x6C..0xE7 for stale pool data. The provider callback at rdi+0x18 is invoked with rdx = r8+0x30."
+          },
+          {
+            "symbol": "ndistapi!DoIrpMjCloseWork+0x84",
+            "address": "0x1C0002238",
+            "why": "ExAllocatePoolWithTag call for the 0xF0-byte buffer; rax is passed as arg3 to SendProviderShutdown."
+          }
+        ],
+        "watch": [
+          "r8 at SendProviderShutdown entry = allocated buffer (non-zeroed in unpatched)",
+          "Memory at r8+0x28..0x4F and r8+0x6C..0xE7 = uninitialized pool residue exposed to the provider",
+          "rdi = provider object; rdi+0x18 = provider callback function pointer"
+        ],
+        "key_offsets": [
+          "0x1C00020ED: and qword [r8+0x10], 0 - first field set",
+          "0x1C0002102: mov [r8+0x24], eax - offset 0x24 set",
+          "0x1C000215B: CFG-guarded call to provider handler with rdx = r8+0x30 (uninitialized gaps)",
+          "0x1C0002238: caller ExAllocatePoolWithTag for the 0xF0 buffer (patched: ExAllocatePool2 at 0x140002BAE, inside SendProviderShutdown)"
+        ],
+        "trigger_setup": "1. Ensure a TAPI provider is registered and online. 2. Open \\Device\\NdisTapi. 3. Close the last handle; DoIrpMjCloseWork walks the provider list and calls SendProviderShutdown for each online provider.",
+        "expected_observation": "The provider callback receives a buffer at P+0x30 whose header gaps contain non-zero pool residue in the unpatched build and zero in the patched build. Nothing is returned to user mode on this path.",
+        "notes": "This is a second instance of the same CWE-908 class as DoIoctlQuerySetWork, on the shutdown/deregistration path. It is not a user-mode disclosure; the uninitialized bytes are only visible to the in-kernel provider callback."
+      }
+    }
+  ],
+  "summary": "The patch to ndistapi.sys (NDIS TAPI / WAN dial-up proxy driver) migrates the driver's own non-paged pool allocations from the non-zeroing ExAllocatePoolWithTag to the zero-initializing ExAllocatePool2, drops the now-redundant memset calls that followed those allocations, moves the provider-shutdown buffer allocation inside SendProviderShutdown, modernizes lookaside-list handling, and uses out-of-line CFG dispatch thunks. The security-relevant part is a use-of-uninitialized-memory hardening (CWE-908): at two sites (DoIoctlQuerySetWork and SendProviderShutdown) the driver builds a request structure, leaves header fields at offsets 0x28-0x4F, 0x54-0x57, 0x5C-0x5F, 0x6C-0xE7 uninitialized, and hands the structure at offset 0x30 to an in-kernel TAPI provider's request-handler callback, so uninitialized non-paged pool bytes are exposed to the provider. Zero-initialization removes that exposure. This is low severity: no path in the driver returns the uninitialized header bytes to the user-mode caller (in DoIoctlQuerySetWork the only bytes copied back come from the P+0xE8 data region, which is initialized from the caller's own input before the callback), and the SendProviderShutdown path returns nothing to user mode. The indirect provider calls are Control-Flow-Guard protected in both builds; CFG was not added by this patch. An independent function-by-function diff found no other security-relevant logic change: all remaining differences are the pool-API swap, removed redundant memsets, lookaside-list modernization, removed statistics counters, CFG thunk code generation, and logically equivalent control-flow restructuring."
+}

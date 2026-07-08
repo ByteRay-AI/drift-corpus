@@ -1,0 +1,169 @@
+{
+  "binaries": {
+    "title": "dxgmms2.sys - VIDMM_GLOBAL_ALLOC pushlock reentrancy deadlock (CWE-662), fix feature-staged behind Feature_Servicing_PteDeadLock, in VIDMM/CVirtualAddressAllocator VA-range paths",
+    "id_unpatched": "dxgmms2_unpatched.sys",
+    "id_patched": "dxgmms2_patched.sys",
+    "overall_similarity": 0.991,
+    "matched": 2033,
+    "changed": 7,
+    "identical": 2026,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VIDMM_GLOBAL::CreateOneAllocation (sub_1c005d34c)",
+      "similarity": 0.9864,
+      "change_type": "behavioral",
+      "key_changes": [
+        "VIDMM_GLOBAL_ALLOC allocation size grew from 0x1f8 (504) to 0x208 (520) bytes; the operator new size operand changes from 504 to 520 (address 0x1c005d34c in both builds)",
+        "Unpatched zeroes discrete fields obj[43]=0 (pushlock at +0x158, index 0x2b) and obj[59]=0 (+0x1d8, index 0x3b); patched keeps obj[43]=0 and adds new-field init obj[44]=0 (owner-thread field at +0x160, index 0x2c) and *((_DWORD*)obj+90)=0 (+0x168). No literal memset appears in the decompilation; the zeroing is discrete field stores.",
+        "New field initialization: *((_DWORD*)obj + 91) = 53 (0x35) at byte offset +0x16c (object type/state tag)",
+        "Tail field relocates with the struct growth: obj[59] (+0x1d8) becomes obj[61] (+0x1e8), a +0x10 shift",
+        "The new owner-thread slot at +0x160 that the acquiring functions read/write is now zero-initialized here"
+      ],
+      "security_relevant": true,
+      "security_notes": "VIDMM_GLOBAL_ALLOC object constructor. The struct size increase and the added zero-init of the +0x160 slot back the owner-thread tracking the acquiring functions use. Without initialization the owner-thread field could hold stale pool data and defeat the ownership check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CVirtualAddressAllocator::AddVaRangeToVadRangeListWithFix (sub_1c005f13c; patched relocated to 0x1c005f15c)",
+      "similarity": 0.9229,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Two distinct locks are held here. (a) The CVirtualAddressAllocator's own DXGPUSHLOCK at this+7 is guarded by an owner check in BOTH builds: if(*(this+8)!=KeGetCurrentThread()){DXGPUSHLOCK::AcquireExclusive(this+7);v64=1;}. This is unchanged. (b) The VIDMM_GLOBAL_ALLOC pushlock returned by GetVidMmGlobalAllocFromOwner, at owner+0x158 (offset 344), is the one the patch hardens.",
+        "Unpatched acquires the VIDMM_GLOBAL_ALLOC lock without an owner check: if(VidMmGlobalAllocFromOwner!=0){KeEnterCriticalRegion();ExAcquirePushLockExclusiveEx(owner+344,0);}",
+        "Patched gates that acquire behind the WIL feature-staging flag Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage() (this is sub_1c0018990, NOT a bespoke reentrancy routine). When the feature is DISABLED the original unconditional acquire path is preserved. When ENABLED it acquires only if owner!=0 AND *(owner+0x160)!=KeGetCurrentThread(), sets v68=1 to record that THIS call acquired, and writes *(owner+0x160)=KeGetCurrentThread() as the owner tag.",
+        "Patched conditionally releases the VIDMM_GLOBAL_ALLOC lock: clears *(owner+0x160)=0 and releases only when this call acquired it (feature-off: gated on owner!=0; feature-on: gated on v68).",
+        "The inner CVirtualAddressAllocator::RemoveVaRangeFromVad(this,...,1) call passes its a5 argument = 1 in BOTH builds, which already tells RemoveVaRangeFromVad to skip re-acquiring owner+344; so that specific edge is not the self-deadlock source."
+      ],
+      "security_relevant": true,
+      "security_notes": "PRIMARY CHANGE: the VIDMM_GLOBAL_ALLOC EX_PUSH_LOCK at owner+0x158 is acquired without a self-ownership check in the unpatched build. EX_PUSH_LOCKs are not recursive, so a thread that already holds this lock and reenters an acquiring path blocks on itself (self-deadlock). The patch adds an owner-thread tag at owner+0x160 and, gated by the Feature_Servicing_PteDeadLock feature flag, skips re-acquisition when the current thread is already the owner and only releases on the acquiring call. Because the fix is feature-staged, the patched binary still contains the old unconditional path selected when the flag is off. The premature-release / memory-corruption escalation is speculative: in the unpatched build the release only runs on a call that actually acquired, so concurrent-manipulation UAF is not demonstrated; the concrete, verified primitive is the DoS self-deadlock.",
+      "assembly_diff": "UNPATCHED AddVaRangeToVadRangeListWithFix (0x1c005f13c), VIDMM_GLOBAL_ALLOC lock path:\n  if (VidMmGlobalAllocFromOwner != 0) {\n    KeEnterCriticalRegion();\n    ExAcquirePushLockExclusiveEx(owner+344, 0);   // no owner check\n  }\n  ... work ...\n  // release later, gated only on owner!=0\n\nPATCHED AddVaRangeToVadRangeListWithFix (0x1c005f15c):\n  if (Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage() == 0) {\n    if (owner) { KeEnterCriticalRegion(); ExAcquirePushLockExclusiveEx(owner+344,0);\n                 *(owner+352)=KeGetCurrentThread(); }        // old path preserved\n  } else if (owner && *(owner+352) != KeGetCurrentThread()) {  // NEW owner gate\n    KeEnterCriticalRegion(); ExAcquirePushLockExclusiveEx(owner+344,0);\n    v68 = 1;                                                   // this call acquired\n    *(owner+352) = KeGetCurrentThread();                       // owner tag at +0x160\n  }\n  ... work ...\n  // release clears *(owner+352)=0 and only fires when this call acquired\n  //   (feature-off: owner!=0 ; feature-on: v68)"
+    },
+    {
+      "name": "VIDMM_GLOBAL::CloseOneAllocation (sub_1c0069f40; patched relocated to 0x1c006a030)",
+      "similarity": 0.92,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The call to VIDMM_GLOBAL::TerminateOneAllocation (unpatched 0x1c0089b08, patched relocated to 0x1c0089ca8) is UNCHANGED: both builds call TerminateOneAllocation(this, a2, (unsigned int)Flink, a5, nullptr). There is no arg2->0 change.",
+        "Real change: patched adds a new branch gated by the WIL feature flag Feature_Servicing_VARangeRaceCondition__private_IsEnabledDeviceUsage(). When that feature is off and the VA-range list is empty on a non-worker thread, it queues cleanup via VIDMM_GLOBAL::QueueSystemCleanupCommandAndWait instead of freeing inline, addressing a VA-range race condition (distinct from the PteDeadLock owner-tracking fix).",
+        "Struct field offsets shift by +0x10 (e.g. +0x1f0 read of segment flags becomes +0x200; +0x168 becomes +0x178) reflecting the VIDMM_GLOBAL_ALLOC growth 0x1f8->0x208.",
+        "The Feature_3895685435 / Feature_Servicing_VARangeHoldReference staging flags referenced here are the SAME functions in both builds (relocated addresses), not changed reentrancy helpers."
+      ],
+      "security_relevant": true,
+      "security_notes": "Allocation close/cleanup path. The material change is a Feature_Servicing_VARangeRaceCondition-gated deferred-cleanup path (QueueSystemCleanupCommandAndWait) plus struct-offset shifts from the VIDMM_GLOBAL_ALLOC growth. This is a separate servicing hardening from the PteDeadLock pushlock owner-tracking; the previously reported arg2->0 cross-process-context change is not present.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VIDMM_GLOBAL::MemoryTransferInternal (sub_1c008bd80; patched relocated to 0x1c008bf20)",
+      "similarity": 0.9753,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added owner-thread tag write after acquiring the VIDMM_GLOBAL_ALLOC pushlock: *(pushlock+8) = KeGetCurrentThread(), i.e. *(a3+0x160) where the pushlock is a3+0x158 (offset 344)",
+        "Added owner-thread clear before release: *(pushlock+8) = 0 in the release paths",
+        "The set/clear appears on the acquire/release paths in this function; the acquire itself is not feature-gated here (unlike AddVaRangeToVadRangeListWithFix). Remaining diffs are register/stack reallocation and parameter retyping (a3 -> void**, a5 -> char*)."
+      ],
+      "security_relevant": true,
+      "security_notes": "Memory-transfer path that acquires the VIDMM_GLOBAL_ALLOC pushlock at owner+0x158. The patch adds the owner-thread tag at owner+0x160 that the reentrancy gate in the acquiring functions relies on to detect self-ownership.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VIDMM_MAPPED_VA_RANGE::~VIDMM_MAPPED_VA_RANGE (sub_1c000136c; same address both builds)",
+      "similarity": 0.9805,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added owner-thread tag: *(pushlock+8) = KeGetCurrentThread() after acquiring the VIDMM_GLOBAL_ALLOC pushlock (v10 = owner+344), cleared to 0 before ExReleasePushLockExclusiveEx",
+        "The two staging-flag calls Feature_3895685435__private_IsEnabledDeviceUsage (unpatched 0x1c00179a4, patched 0x1c00179ec) and Feature_Servicing_VARangeHoldReference__private_IsEnabledDeviceUsage (unpatched 0x1c00179f8, patched 0x1c0017a40) are the SAME WIL feature-staging functions in both builds; only their addresses relocated. They are not new or changed reentrancy checks."
+      ],
+      "security_relevant": true,
+      "security_notes": "VIDMM_MAPPED_VA_RANGE destructor that acquires the VIDMM_GLOBAL_ALLOC pushlock (owner+0x158) for list removal. The patch adds the owner-thread tag at owner+0x160, the same hardening as the other acquiring functions.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CVirtualAddressAllocator::RemoveVaRangeFromVad (sub_1c006029c; patched relocated to 0x1c0060348)",
+      "similarity": 0.9428,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added owner-thread tag write for the VIDMM_GLOBAL_ALLOC pushlock: *(owner+0x160) = KeGetCurrentThread() after ExAcquirePushLockExclusiveEx(owner+0x158) (owner = **VidMmAllocFromOwner, v19)",
+        "Added *(owner+0x160) = 0 before ExReleasePushLockExclusiveEx",
+        "The a5 (reentrant/caller-holds-lock) argument already gates acquisition in BOTH builds: when a5 != 0 this function skips acquire/release entirely (the caller AddVaRangeToVadRangeListWithFix passes a5 = 1). The patch adds only the owner-thread tag inside the existing a5==0 acquire path.",
+        "Both the Feature_3895685435-enabled branch and the fallback branch add the owner-thread set/clear."
+      ],
+      "security_relevant": true,
+      "security_notes": "VA-range removal function. Acquires the VIDMM_GLOBAL_ALLOC pushlock at owner+0x158 only when a5==0. The patch adds the owner-thread tag at owner+0x160; the acquisition gating via the a5 flag already existed in the unpatched build for the AddVaRangeToVadRangeListWithFix call edge.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CheckUniqueGpuVaMapping (sub_1c00875b4; patched relocated to 0x1c0087744)",
+      "similarity": 0.9868,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added owner-thread tag: *(a1+0x160) = KeGetCurrentThread() after ExAcquirePushLockExclusiveEx(a1+0x158) (v3 = a1+344)",
+        "Added *(a1+0x160) = 0 before ExReleasePushLockExclusiveEx"
+      ],
+      "security_relevant": true,
+      "security_notes": "GPU-VA uniqueness check that acquires the VIDMM_GLOBAL_ALLOC pushlock at +0x158. The patch adds the same owner-thread tag at +0x160 used by the reentrancy gate.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "CVirtualAddressAllocator::AddVaRangeToVadRangeListWithFix (sub_1c005f13c; patched 0x1c005f15c)",
+      "entry_point": "DirectX/Direct3D graphics API → WDDM memory management IOCTL/dispatch → dxgmms2.sys VIDMM allocation / VA-range operations",
+      "call_chain": ["Direct3D API (user mode)", "dxgkrnl.sys dispatch", "CVirtualAddressAllocator::AddVaRangeToVadRangeList (sub_1c0087078; patched 0x1c0087208)", "CVirtualAddressAllocator::AddVaRangeToVadRangeListWithFix (sub_1c005f13c; patched 0x1c005f15c) acquires VIDMM_GLOBAL_ALLOC pushlock at owner+0x158", "reentrant acquire of the same VIDMM_GLOBAL_ALLOC pushlock from another VIDMM path on the same thread"],
+      "vulnerability_class": "Improper synchronization / EX_PUSH_LOCK self-deadlock (CWE-662). The premature-release/memory-corruption angle is speculative and not demonstrated in the binaries.",
+      "description": "In the unpatched dxgmms2.sys the VIDMM_GLOBAL_ALLOC EX_PUSH_LOCK (at owner+0x158, where owner is the object returned by GetVidMmGlobalAllocFromOwner) is acquired without a self-ownership check in several functions: AddVaRangeToVadRangeListWithFix (0x1c005f13c), RemoveVaRangeFromVad (0x1c006029c), VIDMM_MAPPED_VA_RANGE::~ (0x1c000136c), MemoryTransferInternal (0x1c008bd80), CheckUniqueGpuVaMapping (0x1c00875b4). Windows EX_PUSH_LOCKs are not recursive, so a thread that already holds this lock and reenters an acquiring path blocks on itself (self-deadlock). Note two things the earlier writeup got wrong: (1) the separate CVirtualAddressAllocator DXGPUSHLOCK at this+7 already has an owner check (*(this+8)!=KeGetCurrentThread) in BOTH builds; only the VIDMM_GLOBAL_ALLOC lock lacked one. (2) The AddVaRangeToVadRangeListWithFix -> RemoveVaRangeFromVad edge passes a5=1 in both builds, so RemoveVaRangeFromVad skips re-acquiring the lock on that edge; it is therefore not the deadlock source. The patch adds an owner-thread tag at owner+0x160 (set to KeGetCurrentThread after acquire, cleared before release) and, in AddVaRangeToVadRangeListWithFix, gates the acquire behind the WIL feature-staging flag Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage (address 0x1c0018990, present only in the patched build). When that flag is on, the lock is acquired only if the current thread is not already the owner, and released only by the call that acquired it; when the flag is off the original unconditional path runs. The fix is thus feature-staged, and both code paths ship in the patched binary.",
+      "trigger_conditions": "1. Create a Direct3D device and drive VIDMM allocation / GPU-VA mapping operations that reach CVirtualAddressAllocator::AddVaRangeToVadRangeList (0x1c0087078). 2. Arrange a call path in which the same thread reenters one of the VIDMM_GLOBAL_ALLOC-pushlock acquiring functions while it already holds that pushlock for the same VIDMM_GLOBAL_ALLOC object. 3. In the unpatched build the second ExAcquirePushLockExclusiveEx(owner+0x158) blocks the thread on itself. The exact user-mode sequence that produces the reentrant acquisition was not isolated from the binaries and must be confirmed dynamically.",
+      "primitive": "Denial of Service: deterministic kernel-thread self-deadlock on the VIDMM_GLOBAL_ALLOC EX_PUSH_LOCK, leading to BSOD via DPC watchdog timeout. A memory-corruption escalation is not established: in the unpatched build the release runs only on a call that actually acquired, so no premature-release UAF is demonstrated.",
+      "evidence": "UNPATCHED AddVaRangeToVadRangeListWithFix (0x1c005f13c) — VIDMM_GLOBAL_ALLOC lock, no self-ownership check:\n    // (separate DXGPUSHLOCK at this+7 is already owner-checked in both builds)\n    if (*(this + 8) != KeGetCurrentThread()) { DXGPUSHLOCK::AcquireExclusive(this + 7); v64 = 1; }\n    if (VidMmGlobalAllocFromOwner != 0) {\n        KeEnterCriticalRegion();\n        ExAcquirePushLockExclusiveEx(VidMmGlobalAllocFromOwner + 344, 0);  // owner+0x158, no owner check\n    }\n    // ... work ; release later gated only on owner != 0 ...\n\nPATCHED AddVaRangeToVadRangeListWithFix (0x1c005f15c) — feature-staged owner gate:\n    v68 = 0;\n    if (Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage() == 0) {   // 0x1c0018990\n        if (VidMmGlobalAllocFromOwner != 0) {\n            KeEnterCriticalRegion();\n            ExAcquirePushLockExclusiveEx(VidMmGlobalAllocFromOwner + 344, 0);\n            *(VidMmGlobalAllocFromOwner + 352) = KeGetCurrentThread();       // old path preserved\n        }\n    } else if (VidMmGlobalAllocFromOwner != 0 && *(VidMmGlobalAllocFromOwner + 352) != KeGetCurrentThread()) {\n        KeEnterCriticalRegion();\n        ExAcquirePushLockExclusiveEx(VidMmGlobalAllocFromOwner + 344, 0);\n        v68 = 1;                                                             // this call acquired\n        *(VidMmGlobalAllocFromOwner + 352) = KeGetCurrentThread();           // owner tag at +0x160\n    }\n    // ... work ...\n    // release clears *(owner+352)=0 and fires only when this call acquired (feature-off: owner!=0 ; feature-on: v68)",
+      "assembly": "AddVaRangeToVadRangeListWithFix (UNPATCHED 0x1c005f13c) — VIDMM_GLOBAL_ALLOC pushlock acquire without owner check:\n  lea   rcx, [owner+0x158]     ; owner+344, the EX_PUSH_LOCK\n  xor   edx, edx\n  call  ExAcquirePushLockExclusiveEx   ; no owner-thread comparison beforehand\n; later, release gated only on owner!=0:\n  lea   rcx, [owner+0x158]\n  call  ExReleasePushLockExclusiveEx\n\nAddVaRangeToVadRangeListWithFix (PATCHED 0x1c005f15c) — Feature_Servicing_PteDeadLock gate:\n  call  Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage   ; 0x1c0018990 (WIL staging flag)\n  test  eax, eax\n  ; feature-off branch keeps the old unconditional acquire\n  ; feature-on branch:\n  cmp   [owner+0x160], rax     ; rax = KeGetCurrentThread (gs:[0x188]); already owner?\n  je    skip_acquire          ; SKIP if this thread already owns it\n  call  ExAcquirePushLockExclusiveEx\n  mov   [owner+0x160], rax     ; owner tag\n; RemoveVaRangeFromVad (0x1c006029c) is called with a5=1 from here in BOTH builds, so it does NOT re-acquire owner+0x158.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dxgmms2!CVirtualAddressAllocator::AddVaRangeToVadRangeListWithFix (sub_1c005f13c)",
+            "address": "0x1c005f13c (patched 0x1c005f15c)",
+            "why": "Acquires the VIDMM_GLOBAL_ALLOC pushlock (owner = GetVidMmGlobalAllocFromOwner(...), lock at owner+0x158). The owner-thread tag is at owner+0x160. To catch a reentrant self-acquire, break at the ExAcquirePushLockExclusiveEx call and check whether owner+0x160 already equals gs:[0x188] (current ETHREAD)."
+          },
+          {
+            "symbol": "dxgmms2!CVirtualAddressAllocator::RemoveVaRangeFromVad (sub_1c006029c)",
+            "address": "0x1c006029c (patched 0x1c0060348)",
+            "why": "Acquires the same VIDMM_GLOBAL_ALLOC pushlock (owner+0x158) only when its a5 argument is 0. When called from AddVaRangeToVadRangeListWithFix it receives a5=1 and skips the acquire, so this edge does not itself deadlock."
+          },
+          {
+            "symbol": "dxgmms2!ExAcquirePushLockExclusiveEx",
+            "address": "see ntoskrnl export",
+            "why": "Watch for calls where the pushlock being acquired (rcx) is already held by the current thread. The lock value will have the exclusive bit set and the wait bit set with the current thread as owner."
+          },
+          {
+            "symbol": "dxgmms2!VIDMM_GLOBAL::CreateOneAllocation (sub_1c005d34c)",
+            "address": "0x1c005d34c (same in both builds)",
+            "why": "Allocates the VIDMM_GLOBAL_ALLOC object. The operator new size operand is 504 (0x1f8) unpatched vs 520 (0x208) patched. The patched constructor zero-inits the owner-thread slot at object+0x160 and writes the type tag 0x35 at object+0x16c."
+          }
+        ],
+        "watch": [
+          "VidMmGlobalAllocFromOwner = GetVidMmGlobalAllocFromOwner(...) in AddVaRangeToVadRangeListWithFix; VIDMM_GLOBAL_ALLOC pushlock at owner+0x158, owner-thread tag at owner+0x160",
+          "gs:[0x188] = KeGetCurrentThread (ETHREAD*) — compare against owner+0x160 to detect a self-owned reentrant acquire",
+          "The EX_PUSH_LOCK value at [owner+0x158]: bit 0 = locked, bit 1 = shared waiters, bit 2 = exclusive waiters, bits 3+ = waiter count",
+          "v68 (stack var) in patched AddVaRangeToVadRangeListWithFix: set to 1 only when this call acquired owner+0x158; gates the conditional release",
+          "The separate CVirtualAddressAllocator DXGPUSHLOCK at this+7 (owner tag at this+8) is already owner-checked in both builds and is not the fixed lock"
+        ],
+        "key_offsets": [
+          "AddVaRangeToVadRangeListWithFix (unpatched 0x1c005f13c): ExAcquirePushLockExclusiveEx(owner+0x158) with no self-ownership check",
+          "AddVaRangeToVadRangeListWithFix (patched 0x1c005f15c): call Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage (0x1c0018990) then owner-tag compare at owner+0x160 before acquire",
+          "RemoveVaRangeFromVad (unpatched 0x1c006029c): ExAcquirePushLockExclusiveEx(owner+0x158) reached only when a5==0",
+          "Struct layout: VIDMM_GLOBAL_ALLOC pushlock at object+0x158 (index 0x2b), owner-thread tag at object+0x160 (index 0x2c). In unpatched the +0x160 slot is not used; the patched build (0x208-byte object) zero-inits it in CreateOneAllocation and writes KeGetCurrentThread on acquire."
+        ],
+        "trigger_setup": "From a user-mode application with access to DirectX/Direct3D APIs: 1) Create a D3D11/D3D12 device and immediate context. 2) Drive VIDMM allocation / GPU-VA mapping operations that reach CVirtualAddressAllocator::AddVaRangeToVadRangeList (0x1c0087078) and the VIDMM_GLOBAL_ALLOC-pushlock acquiring functions. 3) The bug requires the same thread to reenter one of those acquiring functions while it already holds the VIDMM_GLOBAL_ALLOC pushlock (owner+0x158) for the same object; the exact D3DKMT sequence that produces this reentrancy was not isolated statically and must be confirmed dynamically. Note the AddVaRangeToVadRangeListWithFix -> RemoveVaRangeFromVad edge passes a5=1 and does not re-acquire, so it is not the reentrancy source.",
+        "expected_observation": "System hang / BSOD with bug check 0x133 (DPC_WATCHDOG_VIOLATION) or 0x9F (DRIVER_POWER_STATE_FAILURE) due to the kernel thread deadlocking on itself waiting for the VIDMM_GLOBAL_ALLOC EX_PUSH_LOCK. A kernel debugger will show the thread blocked in KeWaitForSingleObject/ExfAcquirePushLockExclusive on the lock at owner+0x158. The pool-corruption bug checks (0xC2/0x19) are not established from the binaries and should be treated as speculative.",
+        "notes": "The VIDMM_GLOBAL_ALLOC pushlock at owner+0x158 (index 0x2b) guards VA-range/allocation list state. In the patched CreateOneAllocation (0x1c005d34c) the object grows from 0x1f8 to 0x208 bytes and the constructor zero-inits the new owner-thread slot at +0x160 (obj[44]=0) and writes the type tag 0x35 at +0x16c (*((_DWORD*)obj+91)=53); this is discrete field initialization, not a literal memset. The reentrancy gate itself is feature-staged: sub_1c0018990 is the WIL feature flag Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage, so the patched binary keeps the old unconditional-acquire path for when the flag is off. The AddVaRangeToVadRangeListWithFix -> RemoveVaRangeFromVad edge passes a5=1 in both builds, so RemoveVaRangeFromVad does not re-acquire owner+0x158 on that edge. ASLR note: dxgmms2.sys loads at a random base; use !devnode, lm, or !for_each_module to find the base, then add offsets."
+      }
+    }
+  ],
+  "summary": "The patch hardens the VIDMM_GLOBAL_ALLOC EX_PUSH_LOCK (at owner+0x158) in dxgmms2.sys against reentrant self-acquisition (CWE-662). In the unpatched build several VIDMM/CVirtualAddressAllocator functions - AddVaRangeToVadRangeListWithFix (0x1c005f13c), RemoveVaRangeFromVad (0x1c006029c), VIDMM_MAPPED_VA_RANGE::~ (0x1c000136c), MemoryTransferInternal (0x1c008bd80), CheckUniqueGpuVaMapping (0x1c00875b4) - acquire this lock without a self-ownership check; a thread that reenters an acquiring path while already holding the lock blocks on itself (deterministic self-deadlock / DoS BSOD). The patch adds an owner-thread tag at owner+0x160 (KeGetCurrentThread on acquire, cleared on release) and, in AddVaRangeToVadRangeListWithFix, gates the acquire so it is skipped when the current thread already owns the lock. That gate is feature-staged behind the WIL flag Feature_Servicing_PteDeadLock__private_IsEnabledDeviceUsage (0x1c0018990, patched-only), so the old unconditional path still ships for when the flag is off. CreateOneAllocation (0x1c005d34c) grows the object 0x1f8->0x208 and zero-inits the +0x160 slot. Corrections vs the initial writeup: the separate CVirtualAddressAllocator DXGPUSHLOCK (this+7) was already owner-checked in both builds; the AddVaRange->RemoveVaRange edge passes a5=1 and does not re-acquire; sub_1c0018990 and the sub_1c00179a4/sub_1c00179ec and sub_1c00179f8/sub_1c0017a40 pairs are WIL feature-staging flags (the latter two are the SAME functions merely relocated, present in both builds); CloseOneAllocation's change is a separate Feature_Servicing_VARangeRaceCondition-gated cleanup path, not an arg2->0 fix; and the premature-release/memory-corruption escalation is speculative, not demonstrated."
+}

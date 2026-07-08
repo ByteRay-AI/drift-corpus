@@ -1,0 +1,251 @@
+{
+  "binaries": {
+    "title": "cng.sys - Defensive iteration caps on two ML-DSA rejection-sampling loops, SymCryptMlDsaRejBoundedPoly and SymCryptMlDsaRejNttPoly (SymCrypt hardening, CWE-835)",
+    "id_unpatched": "cng_unpatched.sys",
+    "id_patched": "cng_patched.sys",
+    "overall_similarity": 0.9625,
+    "matched": 1552,
+    "changed": 85,
+    "identical": 1467,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (sub_180096b4c)",
+      "similarity": 0.9187,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added iteration counter 'esi' initialized to 0 before the main loop (mov esi, edi at 0x18009A93C)",
+        "Added 'if (esi >= 0x1e1) bail' check at loop head (cmp esi,1E1h at 0x18009A93E, jnb loc_18009AA41) to cap total iterations at 481",
+        "esi is incremented unconditionally every iteration (inc esi at 0x18009A9E7)",
+        "On the capped path the function returns SymCrypt error 0x8008 (mov edi,8008h at 0x18009AA41), not looping forever",
+        "Output index moved from edi (unpatched) to ebx (patched), inc ebx at 0x18009AA05 / 0x18009AA2D"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched function (0x180096B4C) runs a rejection-sampling loop that squeezes bytes from a SHAKE/Keccak sponge to produce the 256 bounded coefficients of an ML-DSA secret polynomial. The loop condition is 'while (edi < 0x100)' (back-edge jb loc_180096BCB at 0x180096CAC) where edi counts accepted coefficients and only increments on an accepted sample (0x180096C7F, 0x180096CA4, each guarded by a != 0x80 test). Rejected samples are marked with the 0x80 sentinel (first nibble at 0x180096C2E, second nibble at 0x180096C60). Acceptance is gated by the ML-DSA eta bound read at [r14+0x16] (0x180096BE5), compared only against 2 and 4. If eta were any other value, every sample would be rejected, edi would never advance, and the loop would not terminate (CWE-835). CRITICAL: eta is NOT attacker-controlled. It is a compile-time constant taken from one of three static tables (SymCryptMlDsaInternalParams44/65/87) selected by a validated parameter-set index in SymCryptMlDsaGetInternalParamsFromParams (sub_180096074); an invalid index returns 0x800E/0x8011 before any sampling. Reachable eta values are only 2 (ML-DSA-44/87) and 4 (ML-DSA-65), for which the loop terminates with overwhelming probability. The patched build (0x18009A8C0) adds an independent iteration counter capped at 481 (0x1E1) as defensive robustness hardening, consistent with the statically-linked SymCrypt library. Severity: low.",
+      "assembly_diff": "UNPATCHED @ 0x180096B4C (loop head 0x180096BCB, back-edge 0x180096CAC):\nlea     ebx, [rdi+4]              ; 0x180096BC8 bl = 4 (edi==0) : eta==4 compare value\nxor     r9d, r9d                  ; 0x180096BCB loop head, NO iteration counter\ncall    SymCryptKeccakExtract     ; squeeze next SHAKE byte\nmov     cl, [rsp+140h+var_11F]    ; current byte\nmov     al, [r14+16h]             ; 0x180096BE5 eta bound\nand     dl, 0Fh                   ; low nibble\ncmp     al, 2\njnz     loc_180096C17             ; if eta != 2, test eta == 4\ncmp     al, bl                    ; 0x180096C17 eta == 4 ?\njnz     loc_180096C2B             ; eta neither 2 nor 4 -> reject\nmov     r8b, 80h                  ; 0x180096C2E first-nibble sentinel\nmov     dl, 80h                   ; 0x180096C60 second-nibble sentinel\ninc     edi                       ; 0x180096C7F / 0x180096CA4 : ONLY on accepted sample\ncmp     edi, 100h\njb      loc_180096BCB             ; 0x180096CAC loop back while edi < 0x100 (no progress => no exit)\n\nPATCHED @ 0x18009A8C0 (loop head 0x18009A93E, back-edge 0x18009AA39):\nmov     ebx, edi                  ; 0x18009A93A output index (was edi)\nmov     esi, edi                  ; 0x18009A93C ADDED iteration counter = 0\ncmp     esi, 1E1h                 ; 0x18009A93E ADDED cap check (481)\njnb     loc_18009AA41             ; 0x18009A944 bail out if esi >= 481\ninc     esi                       ; 0x18009A9E7 unconditional per-iteration increment\ninc     ebx                       ; 0x18009AA05 / 0x18009AA2D on accepted sample\ncmp     ebx, 100h\njb      loc_18009A93E             ; 0x18009AA39 loop back while ebx < 0x100\nmov     edi, 8008h                ; 0x18009AA41 cap hit -> SymCrypt error 0x8008"
+    },
+    {
+      "name": "SymCryptMlDsaRejNttPoly (sub_180096cec)",
+      "similarity": 0.9,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added iteration counter 'r14d' initialized to 0 before the main loop (mov r14d, edi at 0x18009AAC1, edi==0)",
+        "Added 'if (r14d >= 0x12A) bail' check at loop head (cmp r14d,12Ah at 0x18009AB01, jnb loc_18009AB45) to cap total squeeze iterations at 298",
+        "r14d is incremented unconditionally every iteration (inc r14d at 0x18009AB25), before the reject test",
+        "On the capped path the function returns SymCrypt error 0x8008 (mov edi,8008h at 0x18009AB45), not looping forever",
+        "Unpatched loop (0x180096CEC) has NO iteration counter: output count rbx=0x100 (mov ebx,100h at 0x180096D69) decrements only on accept (sub rbx,1 at 0x180096D9A, jnz loc_180096D6E at 0x180096D9E); reject takes back-edge jnb loc_180096D6E at 0x180096D92 with no counter"
+      ],
+      "security_relevant": true,
+      "security_notes": "SymCryptMlDsaRejNttPoly rejection-samples the 256 NTT-domain coefficients of one entry of the ML-DSA public matrix A from a SHAKE-128 (Keccak) stream keyed by a 34-byte seed (rho||i||j) appended at 0x180096D5C. Each iteration squeezes 3 bytes, masks the top bit of the third (and byte ptr [...+2],7Fh at 0x180096D84) to form a 23-bit value, and rejects any value >= 0x7FE001 (the ML-DSA prime q=8380417, cmp eax,7FE001h at 0x180096D8D). In the unpatched build (0x180096CEC) the loop has no iteration counter; the only exit is the output count rbx reaching 0 after accepting 256 coefficients, and a rejected sample loops back via jnb loc_180096D6E (0x180096D92) without advancing any counter, so a stream of only out-of-range values would not terminate (CWE-835). Unlike eta in SymCryptMlDsaRejBoundedPoly, the rho seed IS attacker-controlled: it is the public-key material parsed by SymCryptMlDsaPkDecode (copied to [rbx+56h] at 0x1800963FD) and passed to SymCryptMlDsaExpandA (0x18009653C) which calls this function (0x180095E44) per matrix cell, reachable from BCryptImportKeyPair via SymCryptMlDsakeySetValue (sub_18008a47c). Triggering pathological rejection nonetheless requires biasing the SHAKE-128 output distribution to hit the tiny reject window (0x1FFF/0x800000, about 0.098% per sample) more than the 298-iteration cap tolerates, which is computationally infeasible. The patched build (0x18009AA84) adds an independent counter r14d capped at 298 (0x12A) that increments every iteration and returns SymCrypt error 0x8008 if exceeded. Same CWE-835 defensive hardening as SymCryptMlDsaRejBoundedPoly. Severity: low.",
+      "assembly_diff": "UNPATCHED @ 0x180096CEC (loop head 0x180096D6E, no iteration counter):\ncall    SymCryptKeccakAppend      ; 0x180096D5C append 0x22-byte seed (rho||i||j)\nmov     ebx, 100h                 ; 0x180096D69 output count = 256\nxor     r9d, r9d                  ; 0x180096D6E loop head (NO iteration counter)\ncall    SymCryptKeccakExtract     ; 0x180096D7F squeeze 3 bytes\nand     byte ptr [rsp+130h+var_110+2], 7Fh ; 0x180096D84 mask top bit -> 23-bit value\nmov     eax, [rsp+130h+var_110]   ; 0x180096D89\ncmp     eax, 7FE001h              ; 0x180096D8D compare against q = 8380417\njnb     loc_180096D6E             ; 0x180096D92 value >= q -> reject, loop back (no counter)\nmov     [rdi], eax                ; 0x180096D94 store accepted coefficient\nsub     rbx, 1                    ; 0x180096D9A decrement output count ONLY on accept\njnz     loc_180096D6E             ; 0x180096D9E loop back while count != 0 (only exit is count==0)\n\nPATCHED @ 0x18009AA84 (loop head 0x18009AB01, cap 298):\nmov     r14d, edi                 ; 0x18009AAC1 r14d = 0 ADDED iteration counter\nmov     ebx, edi                  ; 0x18009AAFF output index = 0\ncmp     r14d, 12Ah                ; 0x18009AB01 ADDED cap check (298)\njnb     loc_18009AB45             ; 0x18009AB08 if r14d >= 0x12A -> bail out\ncall    SymCryptKeccakExtract     ; 0x18009AB1B squeeze 3 bytes\ninc     r14d                      ; 0x18009AB25 r14d++ EVERY iteration (unconditional)\ncmp     eax, 7FE001h              ; 0x18009AB2C compare against q\njnb     loc_18009AB01             ; 0x18009AB31 value >= q -> reject, back to cap check\ninc     ebx                       ; 0x18009AB35 on accept\ncmp     ebx, 100h                 ; 0x18009AB3B\njb      loc_18009AB01             ; 0x18009AB41 loop back while ebx < 0x100\nmov     edi, 8008h                ; 0x18009AB45 cap hit -> SymCrypt error 0x8008"
+    },
+    {
+      "name": "SymCryptMlDsaPkDecode (sub_18009632c)",
+      "similarity": 0.938,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added bounds check on the count field at *(arg4+0xc0) before entering the loop",
+        "Added error return check after the call to SymCryptMlDsaExpandA (unpatched sub_180095dd8; patched sub_180099b14): test eax,eax / jne error_path",
+        "Added cleanup (SymCryptMlDsaTemporariesFree, sub_180090ed8) before error propagation when the ExpandA call fails",
+        "Restructured loop control: unpatched uses while(true) with break; patched uses conditional entry with goto-based exit"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function decodes ML-DSA key data. The unpatched version does not check the return value of SymCryptMlDsaExpandA (the ML-DSA matrix A expansion routine) nor validate the count field at *(arg4+0xc0) before entering the loop. The patched version validates the count and checks the error return, preventing use of uninitialized or corrupt cryptographic state. Behavioral hardening.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (sub_180089d9c)",
+      "similarity": 0.9221,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured key validation: replaced inline 'if (arg9 == *(rsi+0x34))' size check with dedicated validation function SymCryptMlDsaSigDecode (sub_18009acd8)",
+        "Added explicit modular reduction check via SymCryptMlDsaVectorInfinityNorm (sub_18009b850) comparing against ((rbx_1+1) << *(rsi+0x1a)) - r12_1",
+        "Removed direct 'else rdi_1 = 0x8003' early-return path, folding into the new validation flow"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of ML-DSA signature verification to centralize parameter validation (signature decode plus infinity-norm bound check). Not a direct security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaVerifySignature (sub_180074a60) / MSCryptMlDsaSignHash (sub_180074800)",
+      "similarity": 0.7368,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced string-based mode lookup (hashAlgorithmStringToEnum, sub_180074e20) with direct type code comparison (0x3000c/0x3000d)",
+        "Added type field checks: 'if (rcx_2 == 0x3000c)' / 'if (rcx_2 != 0x3000d)' for algorithm dispatch",
+        "Added bounds check 'if (r8_1 > *(*(rax_1+0x18)+0x14))' for RSA key operations comparing arg6 against max key size"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of dispatch to use integer type codes instead of string comparison. The added RSA key-size bounds check is hardening, not a direct vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetBlobInfo (sub_180075114)",
+      "similarity": 0.0937,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Rewrite: replaced string table iteration with magic value comparison",
+        "Patched version checks for magic values 0x4d534541 ('AESM') and 0x4d53454b ('KSEM') at offset +4 of arg1",
+        "Returns STATUS_INVALID_PARAMETER (0xc0000008) for unrecognized types instead of STATUS_NOT_FOUND (0xc00000bb)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Algorithm type validation rewrite. Cosmetic/refactoring change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptRsakeyGenerate (sub_1800860e8)",
+      "similarity": 0.9933,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Call target address changes due to function relocation between builds",
+        "Added argument 0 to the call to SymCryptRsakeyCalculatePrivateFields (patched sub_1800460f4; unpatched sub_18002ce54 with one fewer argument)"
+      ],
+      "security_relevant": false,
+      "security_notes": "RSA key generation function. Changes are primarily call-target relocations. The extra argument 0 corresponds to the new flags parameter in SymCryptRsakeyCalculatePrivateFields.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields (sub_18002ce54)",
+      "similarity": 0.7495,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new parameter arg7 (flags) validated with 'if (arg7 & 0xfffffdff)' check at function entry",
+        "Added trailing block 'if (!(arg7 & 0x200))' with additional validation comparing processed points",
+        "If arg7 flags are set outside the allowed mask, returns SymCrypt error 0x800e (invalid argument) immediately"
+      ],
+      "security_relevant": false,
+      "security_notes": "RSA private-field computation. New flags parameter adds validation of caller context. Not directly exploitable.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaRejBoundedPoly (sub_180096b4c)",
+      "entry_point": "CNG ML-DSA key generation (reachable via BCryptGenerateKeyPair / BCryptImportKeyPair on an ML-DSA algorithm provider), but the gating eta value is a fixed internal constant, not caller input",
+      "call_chain": [
+        "BCryptGenerateKeyPair / BCryptImportKeyPair (user-mode bcrypt.dll -> kernel cng.sys)",
+        "SymCryptMlDsaExpandS (sub_180095f78) (ML-DSA secret vector expansion - calls SymCryptMlDsaRejBoundedPoly at 0x180095FF9 / 0x18009602D)",
+        "SymCryptMlDsaRejBoundedPoly (sub_180096b4c) (SHAKE/Keccak squeeze -> bounded coefficient rejection sampling)",
+        "params pointer for the above comes from SymCryptMlDsaGetInternalParamsFromParams (sub_180096074), which selects static tables SymCryptMlDsaInternalParams44/65/87 by a validated index, so eta is always 2 or 4"
+      ],
+      "vulnerability_class": "CWE-835 Loop with unreachable exit condition (potential infinite loop) - defensive hardening",
+      "description": "SymCryptMlDsaRejBoundedPoly generates the 256 bounded coefficients of an ML-DSA secret polynomial by rejection sampling. It squeezes bytes from a SHAKE/Keccak sponge, splits each byte into two nibbles, and maps each nibble to a centered coefficient in [-eta, eta]; out-of-range nibbles are set to the 0x80 sentinel (rejected). In the unpatched build (0x180096B4C) the loop exits only when the accepted-coefficient counter edi reaches 0x100, and edi advances only on an accepted sample (0x180096C7F / 0x180096CA4). If eta ([r14+0x16], read at 0x180096BE5) were neither 2 nor 4, every sample would be rejected, edi would never advance, and the loop (back-edge jb loc_180096BCB at 0x180096CAC) would not terminate. This pattern genuinely exists, but eta is NOT attacker-controlled: it is a compile-time constant sourced from one of three static tables (SymCryptMlDsaInternalParams44/65/87) chosen by a validated parameter-set index in SymCryptMlDsaGetInternalParamsFromParams (sub_180096074), which rejects unknown indices with 0x800E/0x8011 before any sampling. On every reachable path eta is 2 or 4, for which the loop terminates with overwhelming probability. The patched build (0x18009A8C0) adds an independent iteration counter esi hard-capped at 481 (0x1E1) that increments every iteration and returns SymCrypt error 0x8008 if the cap is hit - a defensive robustness bound on the rejection-sampling loop.",
+      "trigger_conditions": "The non-terminating branch is not reachable through the CNG/BCrypt API. Reaching it would require eta at params+0x16 to hold a value other than 2 or 4, but eta is a static per-parameter-set constant (2 for ML-DSA-44/87, 4 for ML-DSA-65) selected after index validation; no documented interface lets a caller supply an arbitrary eta. The alternative of forcing all sampled nibbles to reject with a valid eta would require controlling the SHAKE output stream for hundreds of bytes, which is computationally infeasible. Only an out-of-band corruption of the parameters structure from a separate defect could drive the loop past its bound.",
+      "primitive": "None reachable through the CNG API. If the eta byte were corrupted by an unrelated bug, the pattern would be a kernel-thread livelock (no memory corruption, no read/write/execute primitive). Not attacker-triggerable as-is.",
+      "evidence": "// UNPATCHED SymCryptMlDsaRejBoundedPoly (sub_180096b4c) - key loop logic:\nuint32_t edi = 0;                              // output index\ndo {\n    SymCryptKeccakExtract(&sponge, &b, 1, 0);  // next SHAKE byte\n    uint8_t al = *(uint8_t*)(params + 0x16);   // eta (constant 2 or 4)\n    uint8_t dl = b & 0xf;                        // low nibble\n    uint8_t r8;\n    if (al == 2) { r8 = (dl >= 0xf) ? 0x80 : ((dl*0xd)>>6)*5 - dl + 2; }\n    else if (al == 4 && dl < 9) { r8 = 4 - dl; }\n    else { r8 = 0x80; }                          // reject\n    // second nibble -> dl or 0x80\n    if (r8 != 0x80) { out[edi] = ...; edi++; }   // advance only on accept\n    if (dl != 0x80) { if (edi >= 0x100) break; out[edi] = ...; edi++; }\n} while (edi < 0x100);                          // exit depends solely on edi advancing (CWE-835)\n\n// PATCHED (sub_18009a8c0) adds an independent bound:\n// uint32_t esi = 0;\n// do {\n//     if (esi >= 0x1e1) { ret = 0x8008; break; }  // cap at 481 iterations\n//     esi++;                                        // unconditional\n//     ... same sampling, out[ebx], ebx++ on accept ...\n// } while (ebx < 0x100);\n\n// eta is fixed: SymCryptMlDsaGetInternalParamsFromParams (sub_180096074) picks\n// SymCryptMlDsaInternalParams44/65/87 by validated index; bad index -> 0x800E/0x8011.",
+      "assembly": "UNPATCHED @ 0x180096B4C:\nlea     ebx, [rdi+4]              ; 0x180096BC8 bl=4 (edi==0) eta==4 compare value\nxor     r9d, r9d                  ; 0x180096BCB loop head (no iteration counter)\ncall    SymCryptKeccakExtract     ; squeeze next SHAKE byte\nmov     al, [r14+16h]             ; 0x180096BE5 eta bound\ncmp     al, 2\njnz     loc_180096C17             ; if eta != 2, test eta == 4\ncmp     al, bl                    ; 0x180096C17 eta == 4 ?\njnz     loc_180096C2B             ; eta neither 2 nor 4 -> reject\nmov     r8b, 80h                  ; 0x180096C2E first-nibble sentinel\nmov     dl, 80h                   ; 0x180096C60 second-nibble sentinel\ninc     edi                       ; 0x180096C7F / 0x180096CA4 ONLY on accepted sample\ncmp     edi, 100h\njb      loc_180096BCB             ; 0x180096CAC loop back while edi < 0x100\n\nPATCHED @ 0x18009A8C0:\nmov     ebx, edi                  ; 0x18009A93A output index (was edi)\nmov     esi, edi                  ; 0x18009A93C ADDED iteration counter = 0\ncmp     esi, 1E1h                 ; 0x18009A93E ADDED cap (481)\njnb     loc_18009AA41             ; 0x18009A944 bail if esi >= 481\ninc     esi                       ; 0x18009A9E7 unconditional increment\ninc     ebx                       ; 0x18009AA05 / 0x18009AA2D on accepted sample\njb      loc_18009A93E             ; 0x18009AA39 loop back while ebx < 0x100\nmov     edi, 8008h                ; 0x18009AA41 cap hit -> SymCrypt error 0x8008",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly",
+            "address": "0x180096b4c",
+            "why": "Function entry. RCX = params pointer (eta at +0x16), RDX = input, R9 = output buffer. 'db rcx+0x16 l1' shows the eta byte; on any reachable call it is 02 or 04 because it is a static per-parameter-set constant."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly+0x99",
+            "address": "0x180096be5",
+            "why": "'mov al, [r14+16h]' reads eta. Reachable values are only 2 and 4; the code compares eta against exactly these two."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejBoundedPoly+0x160",
+            "address": "0x180096cac",
+            "why": "'jb loc_180096BCB' loop back-edge. Output index edi advances on every accepted sample; with a valid eta it reaches 0x100 and the loop exits."
+          },
+          {
+            "symbol": "cng_patched!SymCryptMlDsaRejBoundedPoly+0x7e",
+            "address": "0x18009a93e",
+            "why": "'cmp esi, 1E1h' - the added iteration cap check in the patched build. esi increments every iteration (0x18009A9E7) and the loop bails to 0x18009AA41 (mov edi,8008h) if the cap is hit."
+          }
+        ],
+        "watch": [
+          "AL at 0x180096be5: eta bound from [r14+0x16]. On reachable paths only 2 or 4 (static constant).",
+          "EDI at 0x180096cac (unpatched): accepted-coefficient counter; advances with valid eta.",
+          "ESI at 0x18009a93e (patched): independent iteration counter capped at 0x1E1 (481).",
+          "[R14+0x16] / [R15+0x16]: the eta field, sourced from SymCryptMlDsaInternalParams44/65/87 (not caller-controlled)."
+        ],
+        "key_offsets": [
+          "0x180096be5 (unpatched): 'mov al, [r14+16h]' reads eta.",
+          "0x180096c2e (unpatched): 'mov r8b, 80h' first-nibble reject sentinel.",
+          "0x180096c60 (unpatched): 'mov dl, 80h' second-nibble reject sentinel.",
+          "0x180096cac (unpatched): 'jb loc_180096BCB' loop back-edge (edi < 0x100).",
+          "0x18009a93e (patched): 'cmp esi, 1E1h' added iteration cap.",
+          "0x18009a9e7 (patched): 'inc esi' unconditional per-iteration increment.",
+          "0x18009aa41 (patched): 'mov edi, 8008h' bail-out error return when cap is hit."
+        ],
+        "trigger_setup": "The non-terminating path cannot be driven through the CNG API. eta at params+0x16 is a static constant selected (2 for ML-DSA-44/87, 4 for ML-DSA-65) by SymCryptMlDsaGetInternalParamsFromParams (sub_180096074) after validating the parameter-set index; an unknown index returns 0x800E/0x8011 before any sampling. To observe the added cap, load the patched cng.sys and single-step SymCryptMlDsaRejBoundedPoly (0x18009A8C0) to watch esi advance to its 0x1E1 bound under normal ML-DSA key generation.",
+        "expected_observation": "Under normal ML-DSA key generation with a valid eta (2 or 4) the loop terminates well within 481 iterations in both builds. The patched build additionally enforces the bound explicitly via the esi counter, returning error 0x8008 on the (unreachable-via-API) path where progress stalls.",
+        "notes": "eta at offset +0x16 is a compile-time constant in SymCryptMlDsaInternalParams44/65/87; ML-DSA-44/87 use eta=2 and ML-DSA-65 uses eta=4. The 0x80 value marks a rejected sample. 0x1E1 (481) bounds the total squeeze iterations, above the 0x100 (256) accepted outputs needed, leaving margin for rejected samples. 0x8008 is a SymCrypt error code (not an NTSTATUS). The change is defensive hardening: the loop exit depends only on making progress (CWE-835), and the patch adds an explicit iteration bound."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaRejNttPoly (sub_180096cec)",
+      "entry_point": "CNG ML-DSA public-key import (reachable via BCryptImportKeyPair on an ML-DSA algorithm provider). The SHAKE-128 seed (rho) driving the loop is attacker-controlled public-key material, unlike the fixed eta constant in SymCryptMlDsaRejBoundedPoly.",
+      "call_chain": [
+        "BCryptImportKeyPair on an ML-DSA public-key blob (user-mode bcrypt.dll -> kernel cng.sys)",
+        "SymCryptMlDsakeySetValue (sub_18008a47c) -> calls SymCryptMlDsaPkDecode at 0x18008A4E5",
+        "SymCryptMlDsaPkDecode (sub_18009632c): copies the 32-byte rho from the parsed public key to the key object at [rbx+56h] (movups [r12] at 0x1800963FD) and calls SymCryptMlDsaExpandA at 0x18009653C with rcx = rho pointer",
+        "SymCryptMlDsaExpandA (sub_180095dd8): copies rho into a local buffer (movups from [rcx]/[rcx+10h] at 0x180095DF3/0x180095DFB), appends the 2-byte matrix index, and calls SymCryptMlDsaRejNttPoly at 0x180095E44 per matrix cell",
+        "SymCryptMlDsaRejNttPoly (sub_180096cec): appends rho||i||j (0x22 bytes) to SHAKE-128 and rejection-samples the NTT-domain coefficients"
+      ],
+      "vulnerability_class": "CWE-835 Loop with unreachable exit condition (potential infinite loop) - defensive hardening",
+      "description": "SymCryptMlDsaRejNttPoly generates the 256 NTT-domain coefficients of one entry of the ML-DSA public matrix A by rejection sampling a SHAKE-128 (Keccak) stream. It appends a 34-byte seed (rho||i||j, 0x22 bytes) at 0x180096D5C, then repeatedly squeezes 3 bytes, masks the top bit of the third byte (and byte ptr [...+2],7Fh at 0x180096D84) to form a 23-bit value, and rejects any value >= 0x7FE001 (the ML-DSA prime q = 8380417, cmp eax,7FE001h at 0x180096D8D). In the unpatched build (0x180096CEC) the loop has no iteration counter: the output count rbx is set to 0x100 (mov ebx,100h at 0x180096D69) and decremented only on an accepted sample (sub rbx,1 at 0x180096D9A, jnz loc_180096D6E at 0x180096D9E), while a rejected sample takes the back-edge jnb loc_180096D6E at 0x180096D92 with no counter update. The only exit is accepting 256 coefficients, so a stream of only out-of-range values would not terminate (CWE-835). The rho seed is attacker-controlled (public-key material from SymCryptMlDsaPkDecode via BCryptImportKeyPair), but forcing pathological rejection requires biasing the SHAKE-128 output to hit the tiny reject window (0x800000-0x7FE001 = 0x1FFF, about 0.098% per sample) more than the ~42 rejects the 298-iteration cap tolerates over 256 accepts, which is computationally infeasible. The patched build (0x18009AA84) adds an independent iteration counter r14d initialized to 0 (mov r14d,edi at 0x18009AAC1), checked at the loop head (cmp r14d,12Ah at 0x18009AB01, jnb loc_18009AB45 at 0x18009AB08) with a hard cap of 298 (0x12A), incremented unconditionally every iteration (inc r14d at 0x18009AB25), returning SymCrypt error 0x8008 (mov edi,8008h at 0x18009AB45) if the cap is hit. Same CWE-835 defensive hardening pattern as SymCryptMlDsaRejBoundedPoly.",
+      "trigger_conditions": "The cap-exhausting / non-terminating path is not practically reachable. Although rho is attacker-controlled via BCryptImportKeyPair, the SHAKE-128 output keyed by rho behaves as an unpredictable XOF; biasing it to produce >42 out-of-range (>= 0x7FE001) 23-bit samples within 298 squeezes for a single matrix cell is a preimage-hardness problem and is computationally infeasible. Under any realistic public key the loop terminates well within the 298-iteration cap.",
+      "primitive": "None practically reachable. If the SHAKE-128 stream could be biased to reject persistently (infeasible), the unpatched pattern would be a kernel-thread livelock during ML-DSA public-key import / matrix expansion (no memory corruption, no read/write/execute primitive).",
+      "evidence": "// UNPATCHED SymCryptMlDsaRejNttPoly (sub_180096cec) - key loop logic:\n// SymCryptKeccakAppend(&sponge, rho_i_j, 0x22);        // 0x180096D5C\nuint32_t rbx = 0x100;                                    // 0x180096D69 output count = 256\ndo {\n    SymCryptKeccakExtract(&sponge, &v, 3, 0);            // 0x180096D7F squeeze 3 bytes\n    ((uint8_t*)&v)[2] &= 0x7f;                            // 0x180096D84 mask top bit -> 23-bit\n    uint32_t eax = v;                                     // 0x180096D89\n    if (eax >= 0x7FE001) continue;                        // 0x180096D92 reject (>= q), no counter\n    *out++ = eax;                                         // 0x180096D94 store accepted\n    rbx--;                                               // 0x180096D9A decrement ONLY on accept\n} while (rbx != 0);                                       // 0x180096D9E only exit is 256 accepts (CWE-835)\n\n// PATCHED (sub_18009aa84) adds an independent bound:\n// uint32_t r14 = 0;                                     // 0x18009AAC1\n// while (1) {\n//     if (r14 >= 0x12A) { ret = 0x8008; break; }        // 0x18009AB01/08 cap at 298\n//     SymCryptKeccakExtract(...); r14++;                // 0x18009AB25 unconditional\n//     if (v >= 0x7FE001) continue;                       // 0x18009AB31 reject\n//     *out++ = v; if (++ebx >= 0x100) break;             // 0x18009AB35/3B\n// }\n\n// rho is attacker-controlled: SymCryptMlDsaPkDecode copies it to [rbx+56h] (0x1800963FD)\n// and passes it to SymCryptMlDsaExpandA (0x18009653C) which calls this function (0x180095E44).",
+      "assembly": "UNPATCHED @ 0x180096CEC:\ncall    SymCryptKeccakAppend      ; 0x180096D5C append 0x22-byte seed (rho||i||j)\nmov     ebx, 100h                 ; 0x180096D69 output count = 256\nxor     r9d, r9d                  ; 0x180096D6E loop head (NO iteration counter)\ncall    SymCryptKeccakExtract     ; 0x180096D7F squeeze 3 bytes\nand     byte ptr [rsp+130h+var_110+2], 7Fh ; 0x180096D84 mask top bit -> 23-bit value\nmov     eax, [rsp+130h+var_110]   ; 0x180096D89\ncmp     eax, 7FE001h              ; 0x180096D8D compare against q = 8380417\njnb     loc_180096D6E             ; 0x180096D92 value >= q -> reject, loop back (no counter)\nmov     [rdi], eax                ; 0x180096D94 store accepted coefficient\nsub     rbx, 1                    ; 0x180096D9A decrement output count ONLY on accept\njnz     loc_180096D6E             ; 0x180096D9E loop back while count != 0\n\nPATCHED @ 0x18009AA84:\nmov     r14d, edi                 ; 0x18009AAC1 r14d = 0 ADDED iteration counter\nmov     ebx, edi                  ; 0x18009AAFF output index = 0\ncmp     r14d, 12Ah                ; 0x18009AB01 ADDED cap (298)\njnb     loc_18009AB45             ; 0x18009AB08 bail if r14d >= 0x12A\ninc     r14d                      ; 0x18009AB25 unconditional per-iteration increment\ncmp     eax, 7FE001h              ; 0x18009AB2C compare against q\njnb     loc_18009AB01             ; 0x18009AB31 value >= q -> reject, back to cap check\ninc     ebx                       ; 0x18009AB35 on accept\njb      loc_18009AB01             ; 0x18009AB41 loop back while ebx < 0x100\nmov     edi, 8008h                ; 0x18009AB45 cap hit -> SymCrypt error 0x8008",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejNttPoly",
+            "address": "0x180096cec",
+            "why": "Function entry. RCX = seed/rho pointer (appended to SHAKE-128 via SymCryptKeccakAppend at 0x180096D5C), R8 = output coefficient buffer."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejNttPoly+0xa6",
+            "address": "0x180096d92",
+            "why": "'jnb loc_180096D6E' reject back-edge. Taken when the 23-bit sample >= 0x7FE001 (q); loops back to the squeeze with NO iteration counter (CWE-835)."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejNttPoly+0xb2",
+            "address": "0x180096d9e",
+            "why": "'jnz loc_180096D6E' accept back-edge. RBX (output count, init 0x100) decrements only on an accepted coefficient; loop exits only when RBX reaches 0."
+          },
+          {
+            "symbol": "cng_patched!SymCryptMlDsaRejNttPoly+0x7d",
+            "address": "0x18009ab01",
+            "why": "'cmp r14d, 12Ah' - the added iteration cap check (298) in the patched build. r14d increments every iteration (0x18009AB25) and the loop bails to 0x18009AB45 (mov edi,8008h) if the cap is hit."
+          }
+        ],
+        "watch": [
+          "RBX at 0x180096d9e (unpatched): output-count counter, init 0x100, decremented only on accept; only loop exit.",
+          "EAX at 0x180096d8d (unpatched): masked 23-bit sample compared against 0x7FE001 (q); >= q means reject.",
+          "R14D at 0x18009ab01 (patched): independent iteration counter capped at 0x12A (298).",
+          "[RBX+56h] in SymCryptMlDsaPkDecode: the 32-byte rho copied from the attacker-supplied public key that keys the SHAKE-128 stream."
+        ],
+        "key_offsets": [
+          "0x180096d5c (unpatched): 'call SymCryptKeccakAppend' appends the 0x22-byte rho||i||j seed.",
+          "0x180096d69 (unpatched): 'mov ebx, 100h' output count = 256.",
+          "0x180096d84 (unpatched): 'and byte ptr [...+2], 7Fh' masks the top bit to a 23-bit value.",
+          "0x180096d8d (unpatched): 'cmp eax, 7FE001h' rejection threshold (q = 8380417).",
+          "0x180096d92 (unpatched): 'jnb loc_180096D6E' reject back-edge (no counter).",
+          "0x180096d9e (unpatched): 'jnz loc_180096D6E' accept back-edge (count-based exit only).",
+          "0x18009ab01 (patched): 'cmp r14d, 12Ah' added iteration cap (298).",
+          "0x18009ab25 (patched): 'inc r14d' unconditional per-iteration increment.",
+          "0x18009ab45 (patched): 'mov edi, 8008h' bail-out error return when the cap is hit."
+        ],
+        "trigger_setup": "Import an ML-DSA public key via BCryptImportKeyPair so SymCryptMlDsaPkDecode -> SymCryptMlDsaExpandA -> SymCryptMlDsaRejNttPoly runs on the attacker-supplied rho. To observe the added cap, load the patched cng.sys and single-step SymCryptMlDsaRejNttPoly (0x18009AA84) watching r14d advance toward its 0x12A bound. Forcing the cap to actually trigger would require a rho whose SHAKE-128 stream yields >42 out-of-range 23-bit samples within 298 squeezes for one matrix cell, which is computationally infeasible.",
+        "expected_observation": "Under any realistic imported public key the loop terminates well within 298 iterations in both builds (rejection rate ~0.098% per 23-bit sample). The patched build additionally enforces the bound explicitly via r14d, returning error 0x8008 on the (infeasible-to-reach) path where progress stalls.",
+        "notes": "rho is the 32-byte ML-DSA public-key seed; it keys the SHAKE-128 stream and IS attacker-controlled, unlike the fixed eta constant in SymCryptMlDsaRejBoundedPoly. 0x7FE001 is the ML-DSA prime q = 8380417. 0x12A (298) bounds total squeeze iterations above the 0x100 (256) accepted outputs needed. 0x8008 is a SymCrypt error code (not an NTSTATUS). The change is defensive hardening: the unpatched loop exit depends only on accepting 256 coefficients (CWE-835), and the patch adds an explicit iteration bound. Severity remains low because biasing the SHAKE-128 output is infeasible."
+      }
+    }
+  ],
+  "summary": "The patch adds defensive iteration caps to two ML-DSA rejection-sampling loops in the statically-linked SymCrypt library, both CWE-835, both low severity. (1) SymCryptMlDsaRejBoundedPoly: in the unpatched build (0x180096B4C) the loop exits only when the accepted-coefficient counter reaches 0x100, advancing only on accepted samples; if every sample were rejected it would not terminate (back-edge jb loc_180096BCB at 0x180096CAC). The patched build (0x18009A8C0) bounds it with an independent counter capped at 481 (0x1E1) returning SymCrypt error 0x8008. The gating eta value is a compile-time constant from static tables (SymCryptMlDsaInternalParams44/65/87) and is not attacker-controlled, so this is low-severity hardening, not a remotely triggerable kernel DoS. (2) SymCryptMlDsaRejNttPoly (unpatched 0x180096CEC, patched 0x18009AA84): the unpatched loop rejection-samples the NTT-domain coefficients of the public matrix A with no iteration counter, exiting only after 256 accepts (accept back-edge jnz loc_180096D6E at 0x180096D9E, reject back-edge jnb loc_180096D6E at 0x180096D92); the patched build adds counter r14d capped at 298 (0x12A, cmp r14d,12Ah at 0x18009AB01) returning error 0x8008 at 0x18009AB45. Here the rho seed keying the SHAKE-128 stream IS attacker-controlled (public-key material reached via BCryptImportKeyPair -> SymCryptMlDsaPkDecode -> SymCryptMlDsaExpandA -> SymCryptMlDsaRejNttPoly), but biasing the SHAKE-128 output enough to exhaust the 298-iteration budget is computationally infeasible, so this instance is also low severity. Overall verdict: a low-severity CWE-835 defensive fix applied to two functions."
+}

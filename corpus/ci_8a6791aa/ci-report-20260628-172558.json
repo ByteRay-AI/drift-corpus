@@ -1,0 +1,254 @@
+{
+  "binaries": {
+    "title": "Windows Code Integrity (ci.dll) - No security-relevant change: CodeIntegrity servicing feature-flag retirement & bundled SymCrypt library churn",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9804,
+    "matched": 2518,
+    "changed": 38,
+    "identical": 2480,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptFdefDecideModulusType (sub_18000E700)",
+      "similarity": 0.97,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added filter 'test eax, 0xC000 / jnz' to the SymCryptModulusTypeSelections loop, ahead of the existing CPU-feature test — entries whose flags include bits 14-15 are now skipped unconditionally",
+        "Unpatched version only tests each entry's flags against the CPU-feature bitmap g_SymCryptCpuFeaturesNotPresent",
+        "Patched version reads entry flags into eax, rejects entries with bits 14-15 set, then applies the CPU-feature test"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is SymCryptFdefDecideModulusType, part of the SymCrypt library statically linked into ci.dll. It selects an internal modular-arithmetic implementation type from the SymCryptModulusTypeSelections table (0x10-byte entries: +0 descriptor/result, +4 CPU-feature requirement flags, +8 size bound, +0xc mask), driven by available CPU features (g_SymCryptCpuFeaturesNotPresent). The patch adds an unconditional 'test eax, 0xC000' that skips entries requiring CPU-feature bits 14-15 before the feature-bitmap check. This function is not on the Authenticode/PE hash-algorithm-acceptance path and does not gate which signature hash algorithms are trusted; the 0xC000 bits are CPU-feature requirement flags, not weak/deprecated hash markers. The change is a bundled SymCrypt library update with no code-integrity impact.",
+      "assembly_diff": "Unpatched loop at 0x18000e7f5:\n  0x18000e7f5: lea rcx, SymCryptModulusTypeSelections\n  0x18000e7fc: not ebx\n  0x18000e7fe: mov r9d, 0x1ff\n  ; LOOP START:\n  0x18000e804: mov eax, [rcx+0x4]                 ; entry->flags (CPU-feature requirement)\n  0x18000e807: test cs:g_SymCryptCpuFeaturesNotPresent, eax\n  0x18000e80d: jnz 0x18000e848                    ; skip if required feature not present\n  0x18000e80f: mov r8d, [rcx+0x8]                 ; entry->size_bound\n  ...\n  0x18000e848: add rcx, 0x10\n  0x18000e84c: jmp 0x18000e804\n\nPatched loop at 0x18000e855:\n  0x18000e855: lea rdx, SymCryptModulusTypeSelections\n  0x18000e85e: mov r9d, 0x1ff\n  ; LOOP START:\n  0x18000e864: mov eax, [rdx+0x4]                 ; entry->flags\n  0x18000e867: test eax, 0xC000                   ; *** NEW: bits 14-15 mask ***\n  0x18000e86c: jnz 0x18000e8af                    ; *** NEW: unconditional skip ***\n  0x18000e86e: test cs:g_SymCryptCpuFeaturesNotPresent, eax\n  0x18000e874: jnz 0x18000e8af\n  0x18000e876: mov r8d, [rdx+0x8]\n  ..."
+    },
+    {
+      "name": "CiRevalidateImage (sub_180065AB0)",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019584) gate guarding the a5-range block: unpatched 'Feature_...WinTcbPplTocTou() != 0 && a5 != 0 && a5 < *MmSystemRangeStart' -> patched 'a5 != 0 && a5 < *MmSystemRangeStart'",
+        "Removed the same feature gate from the PPL condition: unpatched 'PsIsProtectedProcessLight(...) && (a4 != 7 || (Feature_...WinTcbPplTocTou() && v9))' -> patched 'PsIsProtectedProcessLight(...) && (a4 != 7 || v10)'",
+        "Effect: the guarded PPL re-validation branch now runs unconditionally instead of being gated by the feature flag (feature-staging graduation)"
+      ],
+      "security_relevant": false,
+      "security_notes": "CiRevalidateImage decides whether an image must be re-validated; it returns 1 to mean 'revalidate'. In the unpatched version, the a5-range block and the following Protected Process Light (PPL) decision are both wrapped in the Feature_Servicing_CodeIntegrityWinTcbPplTocTou feature flag; the patch removes both calls so the branch is unconditional. This is one of three CodeIntegrity Feature_Servicing_ flags retired module-wide in this patch (WinTcbPplTocTou, Missing3077Events, NonConformantNotBlockedByResources all drop to zero references). It is a WIL servicing feature-flag retirement / feature-staging graduation, not a delivered code-integrity fix: the flag's unpatched default is resolved from external WIL configuration (via wil_details_IsEnabledFallback in sub_180019584), so no reachable time-of-check/time-of-use window can be demonstrated from the binaries. The retirements are not uniformly hardening (the sibling NonConformantNotBlockedByResources retirement graduates a permissive path on), confirming lifecycle churn rather than a targeted fix.",
+      "assembly_diff": "Unpatched sub_180065AB0 (feature helper called twice):\n0x180065B87: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou__private_IsEnabledDeviceUsageNoInline\n0x180065B99: mov rax, cs:MmSystemRangeStart            ; a5-range block gated by the call above\n0x180065C05: call cs:__imp_PsGetCurrentProcess\n0x180065C14: call cs:__imp_PsIsProtectedProcessLight\n0x180065C29: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou__private_IsEnabledDeviceUsageNoInline\n\nPatched CiRevalidateImage @ 0x180068570 (no such call):\n0x18006864F: mov rax, cs:MmSystemRangeStart            ; a5-range block runs unconditionally\n0x1800686B6: call cs:__imp_PsGetCurrentProcess\n0x1800686C5: call cs:__imp_PsIsProtectedProcessLight    ; PPL branch no longer feature-gated"
+    },
+    {
+      "name": "SymCryptEckeySetValue (sub_18001FD38)",
+      "similarity": 0.99,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added 'or dword ptr [r12], 1' in the branch taken when bit 0xc of the key-import flags word (r15d) is set",
+        "That branch runs the on-demand ECDSA FIPS self-test (SymCryptEcDsaSelftest) and records completion in g_SymCryptFipsSelftestsPerformed |= 4",
+        "The new instruction sets bit 0 of the imported key's flag word (r12) after the self-test path"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is SymCryptEckeySetValue, a SymCrypt library function that imports an elliptic-curve key value. When bit 0xc of the flags word is set, both builds run the ECDSA FIPS 140 known-answer self-test (SymCryptEcDsaSelftest) if not already done, recording completion in the SymCrypt self-test bitmap g_SymCryptFipsSelftestsPerformed. The patch adds 'or dword ptr [r12], 1', which sets bit 0 of the key object's flag word. This is FIPS self-test state tracking on the key, not a PE/Authenticode verification-passed bit and not on the image-signature path. No code-integrity impact.",
+      "assembly_diff": "Bit-0xc branch tail (unpatched 0x1800202c5, patched 0x1800204cd):\nUnpatched:\n  0x1800202c5: call SymCryptEcDsaSelftest\n  0x1800202ca: lock or cs:g_SymCryptFipsSelftestsPerformed, 4\n  0x1800202d2: bt r15d, 0Dh\nPatched:\n  0x1800204cd: call SymCryptEcDsaSelftest\n  0x1800204d2: lock or cs:g_SymCryptFipsSelftestsPerformed, 4\n  0x1800204da: or dword ptr [r12], 1        ; *** NEW ***\n  0x1800204df: bt r15d, 0Dh"
+    },
+    {
+      "name": "CipGetEmbeddedSignatureAndFindFirstMatch (sub_1800DB414)",
+      "similarity": 0.90,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityMissing3077Events (sub_1800199b0) gate before setting flag bits in the signature path",
+        "Restructured error handling around the verification flow"
+      ],
+      "security_relevant": false,
+      "security_notes": "Removal of the Feature_Servicing_CodeIntegrityMissing3077Events gate; servicing feature-flag retirement (event 3077 telemetry), consistent with the other removed gates in this patch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipApplySIPolicyUMCI (sub_1800DA3E4)",
+      "similarity": 0.96,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityNonConformantNotBlockedByResources (sub_180019a04) check from an early-return guard: unpatched 'if (Feature(...) && ((a1+2360)&4)==0) return a2;' -> patched 'if (((a1+2360)&4)==0) return a2;'",
+        "Effect: the feature's permissive bypass (early return that skips the extra CipApplySiPolicyEx enforcement loop) is now always-on"
+      ],
+      "security_relevant": false,
+      "security_notes": "Removal of a servicing feature gate in the SI policy application path. The removed condition guarded a permissive early return, so retiring it graduates the feature's more-permissive path to always-on (a loosening direction). This is feature-staging lifecycle churn consistent with the other CodeIntegrity Feature_Servicing_ retirements in this patch; the flag's unpatched runtime state is external WIL configuration, so no reachable difference is demonstrable from the binaries.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipValidateImageHash (sub_18008B4F0)",
+      "similarity": 0.97,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityMissing3077Events (sub_1800199b0) check from the validation loop",
+        "Address shifts only otherwise"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same servicing feature-flag retirement. Validation loop logic unchanged apart from the removed gate.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiGetActionsForImage (sub_1800D5CD0)",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019584) gate, simplified flag computation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Removed the WinTcbPplTocTou feature gate; part of the same feature retirement that makes CiRevalidateImage's TOCTOU revalidation unconditional.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_180019080)",
+      "similarity": 0.99,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added '| 0x40000' to the initial value of the feature-state flag word"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-state-cache reevaluation helper; minor flag change reflecting the feature-flag changes elsewhere in the patch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipGetFileCache (sub_180096CE0)",
+      "similarity": 0.99,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019584) gate near the server-silo check"
+      ],
+      "security_relevant": false,
+      "security_notes": "Removed the WinTcbPplTocTou feature gate adjacent to the PsIsCurrentThreadInServerSilo check; feature-flag retirement.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptParallelHashProcess (sub_180006910)",
+      "similarity": 0.99,
+      "change_type": "cosmetic",
+      "key_changes": ["Address shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiInitializePolicyFromPolicies (sub_18001A91C)",
+      "similarity": 0.99,
+      "change_type": "cosmetic",
+      "key_changes": ["CI policy initialization - address shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipProcessSIPolicyLogs (sub_1800DDCB4)",
+      "similarity": 0.24,
+      "change_type": "cosmetic",
+      "key_changes": ["Spurious match - low-similarity call-graph match"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider (sub_180054718)",
+      "similarity": 0.99,
+      "change_type": "cosmetic",
+      "key_changes": ["Feature usage provider registration - added var_c=0, var_10=1 (telemetry)"],
+      "security_relevant": false,
+      "security_notes": "Telemetry change only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipShouldRevalidateForPolicyChange (sub_180067DC4)",
+      "similarity": 0.56,
+      "change_type": "cosmetic",
+      "key_changes": ["Spurious / low-similarity match"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "SymCryptFdefDecideModulusType (sub_18000E700)",
+      "entry_point": "Internal SymCrypt modular-arithmetic setup - reached when SymCrypt decides which modulus implementation type to use; not attacker-triggerable via signatures",
+      "call_chain": ["SymCryptFdefIntToModulus (sub_18000B7CC)", "SymCryptFdefDecideModulusType (sub_18000E700)"],
+      "vulnerability_class": "Behavioral change in bundled crypto library (no code-integrity impact)",
+      "description": "sub_18000E700 is SymCryptFdefDecideModulusType, part of the SymCrypt library statically linked into ci.dll. It iterates the SymCryptModulusTypeSelections table (0x10-byte entries: +0 modulus-type descriptor/result, +4 CPU-feature requirement flags, +8 size bound, +0xc mask) and picks an internal modular-arithmetic implementation based on which CPU features are present (the bitmap g_SymCryptCpuFeaturesNotPresent). The unpatched loop only tests each entry's flags against g_SymCryptCpuFeaturesNotPresent. The patched loop adds an unconditional 'test eax, 0xC000 / jnz' that skips entries whose flags include bits 14-15 before that feature test. This is not part of the Authenticode/PE signature-verification path, does not select or accept signature hash algorithms, and the 0xC000 bits are CPU-feature requirement flags rather than weak/deprecated/test hash markers. It is a bundled SymCrypt library update with no code-integrity security impact.",
+      "trigger_conditions": "Not attacker-triggerable as a security condition. To observe the behavioral difference: break on SymCryptFdefDecideModulusType, dump SymCryptModulusTypeSelections, and note that the patched build skips entries with flag bits 14-15 set before the g_SymCryptCpuFeaturesNotPresent test. The selected modulus-type descriptor in eax may differ on hardware where such an entry would otherwise match; there is no signature-verification effect.",
+      "primitive": "None - internal crypto-math implementation selection; no code-integrity bypass",
+      "evidence": "UNPATCHED sub_18000E700 modulus-type selection loop:\n```c\nvoid* entry = &SymCryptModulusTypeSelections;\nwhile (true)\n{\n    int32_t eax = *(entry + 4);                 // CPU-feature requirement flags\n    if (!(g_SymCryptCpuFeaturesNotPresent & eax))  // only test: required feature present\n    {\n        int32_t r8 = *(entry + 8);\n        if (!r8 || (arg2 <= block_count && rdi <= r8))\n        {\n            if (!(*(entry + 0xc) & ~rbx_1))\n                return *entry;                  // selected modulus-type descriptor\n        }\n    }\n    entry += 0x10;\n}\n```\n\nPATCHED sub_18000E760 modulus-type selection loop:\n```c\nvoid* entry = &SymCryptModulusTypeSelections;\nwhile (true)\n{\n    int32_t eax = *(entry + 4);\n    if (!(eax & 0xC000) && !(g_SymCryptCpuFeaturesNotPresent & eax))  // NEW: !(eax & 0xC000)\n    {\n        int32_t r8 = *(entry + 8);\n        if (!r8 || (arg2 <= block_count && rdi <= r8))\n        {\n            if (!(*(entry + 0xc) & ~rbx_1))\n                return *entry;\n        }\n    }\n    entry += 0x10;\n}\n```",
+      "assembly": "sub_18000E700 (unpatched ci.dll) selection loop:\n0x18000e7f5: lea rcx, SymCryptModulusTypeSelections\n0x18000e7fc: not ebx\n0x18000e7fe: mov r9d, 0x1ff\n; LOOP:\n0x18000e804: mov eax, [rcx+0x4]                 ; entry->flags (CPU-feature requirement)\n0x18000e807: test cs:g_SymCryptCpuFeaturesNotPresent, eax\n0x18000e80d: jnz 0x18000e848                    ; skip if required feature not present\n0x18000e80f: mov r8d, [rcx+0x8]                 ; entry->size_bound\n0x18000e813: test r8d, r8d\n0x18000e816: jz 0x18000e843\n0x18000e818: cmp r8d, 0x100000\n0x18000e81f: jbe 0x18000e825\n0x18000e821: xor edx, edx\n0x18000e823: jmp 0x18000e839\n0x18000e825: mov edx, r8d\n0x18000e828: mov eax, r8d\n0x18000e82b: and edx, r9d\n0x18000e82e: shr eax, 0x9\n0x18000e831: add edx, r9d\n0x18000e834: shr edx, 0x9\n0x18000e837: add edx, eax\n0x18000e839: cmp r15d, edx\n0x18000e83c: ja 0x18000e848\n0x18000e83e: cmp edi, r8d\n0x18000e841: ja 0x18000e848\n0x18000e843: test [rcx+0xc], ebx\n0x18000e846: jz 0x18000e84e\n0x18000e848: add rcx, 0x10\n0x18000e84c: jmp 0x18000e804\n0x18000e84e: mov eax, [rcx]                      ; return selected descriptor\n; Patched adds at loop head: test eax, 0xC000 ; jnz skip (before the g_SymCryptCpuFeaturesNotPresent test).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptFdefDecideModulusType",
+            "address": "0x18000E700",
+            "why": "SymCrypt modulus-type selection. RCX (arg1) = modulus-setup context. When this returns, EAX holds the selected modulus-type descriptor. Compare which descriptor is chosen between builds on hardware where a bit-14/15 entry would otherwise match."
+          },
+          {
+            "symbol": "ci!SymCryptFdefDecideModulusType+0xF5 (table loop)",
+            "address": "0x18000E804",
+            "why": "Loop body. RCX points to the current SymCryptModulusTypeSelections entry: [RCX+0x4] = CPU-feature requirement flags, [RCX+0x8] = size bound, [RCX+0xC] = mask. The patched build skips entries where [RCX+4] & 0xC000 != 0 before the g_SymCryptCpuFeaturesNotPresent test."
+          }
+        ],
+        "watch": [
+          "EAX at 0x18000E804: entry flags (CPU-feature requirement) - check (EAX & 0xC000) to identify entries the patch skips",
+          "RCX at 0x18000E804: current table entry pointer - dump 0x10 bytes [descriptor, flags, size, mask]",
+          "g_SymCryptCpuFeaturesNotPresent: CPU-features-not-present bitmap tested at 0x18000E807"
+        ],
+        "key_offsets": [
+          "0x18000E804-0x18000E80D: unpatched loop head - loads entry flags and tests only g_SymCryptCpuFeaturesNotPresent. The patched build inserts 'test eax, 0xC000; jnz skip' before this test.",
+          "0x18000E7F5: table base loaded: lea rcx, SymCryptModulusTypeSelections",
+          "0x18000E84E: selection - mov eax, [rcx] returns the modulus-type descriptor"
+        ],
+        "trigger_setup": "Dump SymCryptModulusTypeSelections in both builds (0x10-byte entries: +0 descriptor, +4 flags, +8 size, +C mask). Identify entries with flag bits 14-15 set; the patched build skips them via the new 'test eax, 0xC000'. Behavioral only - no signed-image workflow.",
+        "expected_observation": "On hardware where a bit-14/15 entry would otherwise satisfy the CPU-feature test, the unpatched build may select it while the patched build skips it and selects a different descriptor. No image-load or signature-verification effect.",
+        "notes": "SymCryptModulusTypeSelections maps CPU-feature requirements to internal modular-arithmetic implementation types. Bits 14-15 in the flags field (+4) are CPU-feature requirement bits, not hash-algorithm status markers. Use 'lm ci' to confirm module base."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "CiRevalidateImage (sub_180065AB0)",
+      "entry_point": "Image revalidation decision - CiRevalidateImage decides whether a (PPL) image must be re-validated; registered via the CI callout table at +0x98",
+      "call_chain": ["CI image validation / revalidation path", "CiRevalidateImage (sub_180065AB0)", "returns 1 = must revalidate"],
+      "vulnerability_class": "Servicing feature-flag retirement / WIL feature-staging graduation (no demonstrable code-integrity impact)",
+      "description": "CiRevalidateImage returns 1 to mean an image must be (re)validated. In the unpatched version, the a5-range block and the following Protected Process Light (PPL) decision are both wrapped in the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019584) feature flag. The patched version removes both Feature_...WinTcbPplTocTou() calls, so the a5 block runs whenever a5 != 0 && a5 < *MmSystemRangeStart and the PPL branch becomes 'PsIsProtectedProcessLight(...) && (a4 != 7 || v10)' - the guarded branch runs regardless of feature state. This is one of three CodeIntegrity Feature_Servicing_ flags retired module-wide in this patch and is a WIL servicing feature-flag retirement, not a delivered code-integrity fix. The flag's unpatched default is resolved from external WIL configuration (sub_180019584 falls through to wil_details_IsEnabledFallback), so it cannot be shown from the binaries that any real system ran with this branch suppressed; no reachable time-of-check/time-of-use window is demonstrable. The direction here is a hardening (branch graduated on), but the sibling NonConformantNotBlockedByResources retirement graduates a permissive path on, confirming feature-staging lifecycle rather than a targeted TOCTOU fix. CWE-367/CWE-693 are not asserted because no reachable window is demonstrable.",
+      "trigger_conditions": "Not an attacker-triggerable security condition. Observable difference only: the unpatched build calls Feature_Servicing_CodeIntegrityWinTcbPplTocTou at 0x180065B87 and 0x180065C29 and skips the a5/PPL path when the helper returns 0; the patched build (0x180068570) has no such call and always runs it. Whether the unpatched helper ever returned 0 on a real system depends on WIL feature configuration external to the binary and cannot be established here.",
+      "primitive": "None demonstrable. Retires the WinTcbPplTocTou servicing feature flag and graduates the guarded PPL re-validation branch to unconditional. The flag's unpatched default is external WIL configuration, so no reachable time-of-check/time-of-use window and no code-integrity bypass can be shown from these builds.",
+      "evidence": "UNPATCHED CiRevalidateImage:\n```c\nif ( Feature_..._WinTcbPplTocTou_IsEnabled() != 0 && a5 != 0 && a5 < MmSystemRangeStart )\n{\n    if ( a5 & 0x800000000000000LL ) { if (!PsIsCurrentThreadInServerSilo()) return 1; }\n    else v9 = (a5 & 0x400000000000000LL) == 0;\n}\nif ( (a1 & 0x10) == 0 )\n{\n    if ( PsIsProtectedProcessLight(PsGetCurrentProcess())\n         && (a4 != 7 || (Feature_..._WinTcbPplTocTou_IsEnabled() != 0 && v9)) )\n        return 1;                              // must revalidate\n}\n```\n\nPATCHED CiRevalidateImage (@ 0x180068570):\n```c\nif ( a5 != 0 && a5 < MmSystemRangeStart )      // feature gate removed\n{\n    if ( a5 & 0x800000000000000LL ) { if (!PsIsCurrentThreadInServerSilo()) return 1; }\n    else v10 = (a5 & 0x400000000000000LL) == 0;\n}\nif ( (a1 & 0x10) == 0 )\n{\n    if ( PsIsProtectedProcessLight(PsGetCurrentProcess())\n         && (a4 != 7 || v10) )                  // gate removed - branch graduated to unconditional\n        return 1;\n}\n```",
+      "assembly": "Unpatched sub_180065AB0 (feature helper called twice, bracketing the a5/PPL blocks):\n0x180065B87: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou__private_IsEnabledDeviceUsageNoInline\n0x180065B99: mov rax, cs:MmSystemRangeStart\n0x180065C05: call cs:__imp_PsGetCurrentProcess\n0x180065C14: call cs:__imp_PsIsProtectedProcessLight\n0x180065C29: call Feature_Servicing_CodeIntegrityWinTcbPplTocTou__private_IsEnabledDeviceUsageNoInline\n\nPatched CiRevalidateImage @ 0x180068570 (no call to the feature helper):\n0x18006864F: mov rax, cs:MmSystemRangeStart\n0x1800686B6: call cs:__imp_PsGetCurrentProcess\n0x1800686C5: call cs:__imp_PsIsProtectedProcessLight",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!CiRevalidateImage",
+            "address": "0x180065AB0",
+            "why": "Revalidation-decision gate. ECX=a1 (flags, bit 0x10 checked), DL=a2, R8B=a3, R9D=a4 (compared to 7); a5 (5th arg) compared to *MmSystemRangeStart. Return AL: 1 = image must be revalidated. Observe with a PPL image and a4==7 while the WinTcbPplTocTou feature is disabled."
+          },
+          {
+            "symbol": "ci!Feature_Servicing_CodeIntegrityWinTcbPplTocTou__private_IsEnabledDeviceUsageNoInline",
+            "address": "0x180019584",
+            "why": "The removed feature gate. AL==0 means the feature is disabled; on the unpatched build that skips the a5 block and reduces the PPL condition to a4 != 7."
+          },
+          {
+            "symbol": "ci!PsIsProtectedProcessLight",
+            "address": "",
+            "why": "RCX = PsGetCurrentProcess(); AL==1 => PPL image."
+          }
+        ],
+        "watch": [
+          "Return value (AL): 1 = image must be revalidated",
+          "Feature_...WinTcbPplTocTou IsEnabled return: 0 in unpatched skips the TOCTOU revalidation for a4==7 PPL images",
+          "PsIsProtectedProcessLight return: 1 => PPL image"
+        ],
+        "key_offsets": [],
+        "trigger_setup": "Reach CiRevalidateImage with a PPL image, a4==7, a5 non-null below *MmSystemRangeStart. Compare the code path between builds.",
+        "expected_observation": "Unpatched: the WinTcbPplTocTou helper is called (0x180065B87, 0x180065C29) and selects the a5/PPL path only when it returns nonzero. Patched (0x180068570): the helper is gone and the path runs unconditionally. This shows the feature-flag retirement; it does not establish a reachable security difference, because the unpatched flag default is external WIL configuration.",
+        "notes": "This is a WIL servicing feature-flag retirement (one of three CodeIntegrity Feature_Servicing_ flags retired in this patch), not a delivered TOCTOU fix. No reachable difference on a real system can be demonstrated from the binaries."
+      }
+    }
+  ],
+  "summary": "This ci.dll (Windows Code Integrity) patch delivers no code-integrity signature- or policy-validation vulnerability fix. Every CI-side change is the retirement of a WIL servicing feature flag whose staged behavior is graduated to unconditional in code. Three CodeIntegrity Feature_Servicing_ flags are retired module-wide (all references drop to zero in the patched build): CodeIntegrityWinTcbPplTocTou, CodeIntegrityMissing3077Events, and CodeIntegrityNonConformantNotBlockedByResources. In CiRevalidateImage (sub_180065AB0) the WinTcbPplTocTou gate is removed so a Protected Process Light re-validation branch runs unconditionally (a hardening direction), while in CipApplySIPolicyUMCI (sub_1800DA3E4) the NonConformantNotBlockedByResources gate is removed so a permissive early-return path becomes always-on (the opposite direction); the mixed set confirms feature-staging lifecycle churn rather than a targeted fix. The flags' unpatched defaults are resolved from external WIL configuration and cannot be established from the binaries, so no reachable window is demonstrable for any of them. Two further in-place instruction edits are in statically-linked SymCrypt library code and carry no code-integrity impact: SymCryptFdefDecideModulusType (sub_18000E700) adds a 'test eax, 0xC000' CPU-feature mask to its SymCryptModulusTypeSelections loop (selecting a modular-arithmetic implementation, not a signature hash algorithm), and SymCryptEckeySetValue (sub_18001FD38) adds 'or [r12],1' to record ECDSA FIPS self-test state on an imported EC key. The remaining changes are telemetry and address-shift noise."
+}

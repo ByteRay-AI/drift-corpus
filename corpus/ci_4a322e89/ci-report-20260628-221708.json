@@ -1,0 +1,209 @@
+{
+  "binaries": {
+    "title": "ci.dll - No security-relevant change (statically-linked SymCrypt library rebuild plus WIL feature-staged TrustedLaunch/AppID-tagging development)",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9887,
+    "matched": 2531,
+    "changed": 11,
+    "identical": 2520,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields",
+      "address_unpatched": "0x180002D0C",
+      "address_patched": "0x18000E1E4",
+      "similarity": 0.701,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Patched version adds a 7th parameter (a7, an int32 flags word). The unpatched version has 6 parameters.",
+        "Patched version adds an entry guard: 'if ((a7 & 0xFFFFFDFF) != 0) return 32782;' (32782 = 0x800E, a SymCrypt error code), accepting only flag bit 0x200.",
+        "Patched version adds a post-loop RSA keypair consistency check gated by 'if ((a7 & 0x200) == 0)' and 'nPrimes == 2': it multiplies the key's two primes (SymCryptFdefIntMulMixedSize(*(a1+0x80)+0x60, *(a1+0x88)+0x60, a4)) and compares the product to the key's modulus (SymCryptFdefIntIsEqual(a4, *(a1+0x78)+0x60)). On mismatch it returns 0x800E.",
+        "Loop restructuring (do-while split with explicit bounds on *(a1+0x1c)/*(a1+0x18)) accompanying the SymCrypt rebuild."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the SymCrypt routine that derives RSA private CRT fields from the key's prime factors (calls SymCryptCrtGenerateForTwoCoprimes, SymCryptIntExtendedGcd, SymCryptFdefRawDivMod). The +0x80/+0x88 pointers are the key's two prime integers, +0x78 is its modulus integer, and +0x60 is the SymCrypt integer object data field. The added check verifies n == p*q on the key's own material, consistent with SymCrypt key-validation flags. The return value 0x800E is a SymCrypt status code, NOT the NTSTATUS STATUS_INVALID_IMAGE_HASH (0xC0000428). This routine derives PRIVATE key fields and requires two supplied primes; Authenticode signature verification in ci.dll uses only the RSA public key (modulus + exponent), so the routine is not on the PE signature-verification path and is not driven by attacker-supplied signature blobs. The change is SymCrypt library rebuild churn (a key-material consistency check), not a Code Integrity signature-validation fix.",
+      "assembly_diff": "PATCHED (0x18000E1E4) real additions:\n000000018000E20A  test    [rsp+arg_30], 0FFFFFDFFh   ; NEW entry guard on a7\n000000018000E4A7  test    [rsp+arg_30], 200h         ; NEW: skip check when flag 0x200 set\n000000018000E4D4  call    SymCryptFdefIntMulMixedSize ; NEW: compute p * q\n000000018000E4E6  call    SymCryptFdefIntIsEqual      ; NEW: compare product to modulus\n000000018000E4EF  mov     edi, 800Eh                  ; SymCrypt error code on mismatch\n\nUNPATCHED (0x180002D0C) has none of these instructions; it has no 7th parameter, no entry guard, and no product-vs-modulus check."
+    },
+    {
+      "name": "CiGetActionsForImageWithToken",
+      "address_unpatched": "0x18005589C",
+      "address_patched": "0x18005689C",
+      "similarity": 0.7607,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Patched version adds a developer-mode branch: 'if (a5 == 3) { if (CipIsDeveloperModeEnabled(...) >= 0) v14 ^= (v14 ^ (v17[0] << 20)) & 0x100000; }'.",
+        "Patched version adds a branch 'if ((a4 & 0xE41FFF87) == 0 && (*((_DWORD*)g_CipWhichLevelComparisons + (a5 & 0xF)) & 4) != 0)' that recomputes result bit 0x80000 from 'g_CiPolicyState & 0x2000'.",
+        "The sub-branch that sets/merges bit 0x80000 is gated behind Feature_CodeIntegrity_TrustedLaunch_TrustedRootStore__private_IsEnabledDeviceUsageNoInline(). The prior 0x20000-flag behavior is retained."
+      ],
+      "security_relevant": false,
+      "security_notes": "Additive TrustedLaunch trust-flag computations tied to developer-mode (a5==3) and a WIL feature flag (Feature_CodeIntegrity_TrustedLaunch_TrustedRootStore). The globals are g_CipWhichLevelComparisons and g_CiPolicyState. Prior behavior is preserved when the new conditions do not apply; this is feature-staged development, not a delivered signature-trust bypass fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipMinCryptToSigningLevel",
+      "address_unpatched": "0x1800E1E70",
+      "address_patched": "0x1800E32A0",
+      "similarity": 0.8895,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Restructured around Feature_CodeIntegrity_TrustedLaunchPolicy__private_IsEnabledDeviceUsageNoInline(); the prior logic is retained in the else branch.",
+        "CipMinCryptToAuthRoot2 is now called with an added output parameter.",
+        "New fallback: when CipValidateSigningPolicyForInheritedRuntimeSigners fails, if '(*(a1+2712) & 0x110000) == 0x110000' and the new AuthRoot status >= 2 and CiCatDbVerifyCertInStore succeeds, it sets signing level 3 and success."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-gated staged rollout of TrustedLaunch signing-level logic with the old path retained. The new CiCatDbVerifyCertInStore fallback relaxes (grants level 3) under specific policy-state flags rather than adding a check; it is gated behind the TrustedLaunchPolicy feature. Not a delivered check tightening on shipping configurations.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipApplySiPolicyEx",
+      "address_unpatched": "0x1800E0664",
+      "address_patched": "0x1800E1A64",
+      "similarity": 0.9814,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Broadened a policy-marking gate from Feature_Servicing_EndpointSec_AppIDTagging__private_IsEnabledDeviceUsageNoInline() to also accept Feature_Servicing_EndpointSec_AppIDTagging_6D_CFR__private_IsEnabledDeviceUsageNoInline().",
+        "Remainder is register renaming, label renumbering, and global address renumbering."
+      ],
+      "security_relevant": false,
+      "security_notes": "Adds a second WIL feature flag to an existing gate; no un-gated accept/reject change. Feature-staging churn."
+    },
+    {
+      "name": "SymCryptFdefDecideModulusType",
+      "address_unpatched": "0x18000E700",
+      "address_patched": "0x18000E760",
+      "similarity": 0.97,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Descriptor-flags test changed from 'if ((v17[1] & g_SymCryptCpuFeaturesNotPresent) == 0)' to 'if ((v17[1] & 0xC000) == 0 && (v17[1] & g_SymCryptCpuFeaturesNotPresent) == 0)', additionally skipping modulus-descriptor table entries whose flag word has bits 0xC000 set.",
+        "A relocated internal constant (special-modulus bytes) is referenced (unk_180035A2C -> unk_180036A7C)."
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt routine that selects a modular-reduction implementation for a modulus based on its value and CPU features. v17 walks an internal SymCrypt modulus-type descriptor table; the 0xC000 mask filters which arithmetic implementations are eligible. This is arithmetic-implementation dispatch, not a signature rule table or certificate deny list. SymCrypt library rebuild churn."
+    },
+    {
+      "name": "SymCryptRsakeySetValueInternal",
+      "address_unpatched": "0x18001E648",
+      "address_patched": "0x18001E798",
+      "similarity": 0.9728,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Propagates the new flags argument down into SymCryptRsakeyCalculatePrivateFields."
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt RSA key-import plumbing that passes the new flags word to SymCryptRsakeyCalculatePrivateFields. Part of the SymCrypt rebuild; no Code Integrity signature logic."
+    },
+    {
+      "name": "SymCryptEckeySetValue",
+      "address_unpatched": "0x18001FE18",
+      "address_patched": "0x18001FF40",
+      "similarity": 0.9849,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Reworked ECDSA FIPS self-test bookkeeping: when EC key flag 0x1000 is set, the key object is now marked '*v8 |= 1' regardless of whether the one-time SymCryptEcDsaSelftest ran.",
+        "Relocated an internal function-pointer jump table (off_18002B030 -> off_18002C030)."
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt EC key setup / FIPS self-test bookkeeping. The added flag marks the key object; it is SymCrypt-internal state, not page-hash or nested-signature verification. SymCrypt library rebuild churn."
+    },
+    {
+      "name": "SymCryptEcurveInitialize",
+      "address_unpatched": "0x18001F074",
+      "address_patched": "0x18001F1B8",
+      "similarity": 0.9719,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Register renaming and address renumbering; no behavioral security change."
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt elliptic-curve initialization; part of the SymCrypt rebuild."
+    },
+    {
+      "name": "SIPolicyObjectValidationEngine",
+      "address_unpatched": "0x1800747D8",
+      "address_patched": "0x180075BD8",
+      "similarity": 0.92,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "OR-ed the new Feature_Servicing_EndpointSec_AppIDTagging_6D_CFR__private_IsEnabledDeviceUsageNoInline() flag into the two existing AppID-tagging gates.",
+        "Remainder is register renaming, stack-offset shuffles, and label renumbering."
+      ],
+      "security_relevant": false,
+      "security_notes": "Adds a second WIL feature flag to existing AppID-tagging gates; no un-gated new check. Feature-staging churn."
+    },
+    {
+      "name": "SymCryptParallelHashProcess",
+      "address_unpatched": "0x180006910",
+      "address_patched": "0x180006630",
+      "similarity": 0.9914,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Address renumbering only; no logical or behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCrypt parallel hashing; cosmetic churn from the SymCrypt rebuild."
+    },
+    {
+      "name": "CipMinCryptToAuthRoot2",
+      "address_unpatched": "0x180055CFC",
+      "address_patched": "0x180056D88",
+      "similarity": 0.7953,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Gained a fifth output parameter (signature: (a1, a2, a3, a4) -> (a1, a2, a3, a4, a5)).",
+        "The pre-existing certificate public-key check and CTL-revocation check are unchanged (now written through renamed pointers).",
+        "All newly added writes emit informational TrustedLaunch status codes (0/1/2/3) gated behind Feature_CodeIntegrity_TrustedLaunchPolicy__private_IsEnabledDeviceUsageNoInline() and do not change the accept/reject return."
+      ],
+      "security_relevant": false,
+      "security_notes": "AuthRoot certificate-chain validation. The new parameter carries feature-gated TrustedLaunch status only; the actual accept/reject decision (IsServiceReady) is unchanged. Feature-staging plus register-rename churn."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SymCryptRsakeyCalculatePrivateFields",
+      "address_unpatched": "0x180002D0C",
+      "address_patched": "0x18000E1E4",
+      "classification": "SymCrypt library rebuild churn - not a Code Integrity signature fix",
+      "vulnerability_class": "None (cryptographic key-material consistency check)",
+      "description": "The patched SymCrypt routine adds a 7th flags parameter, an entry guard rejecting flags outside 0x200, and, for two-prime RSA keys, a consistency check that the product of the key's two primes equals its modulus (SymCryptFdefIntMulMixedSize then SymCryptFdefIntIsEqual over the key's own +0x80/+0x88/+0x78 integers at data offset +0x60), returning SymCrypt error 0x800E on mismatch. This routine derives private CRT fields and is only reached when importing an RSA private key with supplied primes. Authenticode signature verification uses only the RSA public key (modulus + exponent), so the check is not on the PE signature-verification path and is not attacker-reachable via crafted signatures. 0x800E is a SymCrypt status code, not the NTSTATUS STATUS_INVALID_IMAGE_HASH (0xC0000428). No signature bypass, cross-validation, catalog/certificate/anchor-hash comparison, or dual-signature logic is involved.",
+      "trigger_conditions": "Not attacker-reachable from PE signature verification. The check runs only during RSA private-key derivation (two supplied primes), which ci.dll does not perform on attacker-controlled input.",
+      "primitive": "None.",
+      "evidence": "Patched 0x18000E1E4 decompilation: 'if ((a7 & 0xFFFFFDFF) != 0) return 32782;' then, after the CRT loops, 'if ((a7 & 0x200) != 0) return v15; if (v20 == 2) { SymCryptFdefIntMulMixedSize(*(a1+0x80)+0x60, *(a1+0x88)+0x60, a4); if (SymCryptFdefIntIsEqual(a4, *(a1+0x78)+0x60) != 0) return v15; } return 32782;'. Real asm: test [rsp+arg_30],0FFFFFDFFh @0x18000E20A; test [rsp+arg_30],200h @0x18000E4A7; call SymCryptFdefIntMulMixedSize @0x18000E4D4; call SymCryptFdefIntIsEqual @0x18000E4E6; mov edi,800Eh @0x18000E4EF. Unpatched 0x180002D0C has none of these.",
+      "assembly": "See changed_functions entry assembly_diff for real address-anchored instructions."
+    },
+    {
+      "severity": "none",
+      "function": "CiGetActionsForImageWithToken",
+      "address_unpatched": "0x18005589C",
+      "address_patched": "0x18005689C",
+      "classification": "WIL feature-staging (TrustedLaunch) - not a delivered fix",
+      "vulnerability_class": "None (feature development)",
+      "description": "The patched build adds a developer-mode branch (a5==3 -> bit 0x100000 via CipIsDeveloperModeEnabled) and a policy-table branch (g_CipWhichLevelComparisons/g_CiPolicyState) whose 0x80000-bit computation is gated behind Feature_CodeIntegrity_TrustedLaunch_TrustedRootStore. The prior 0x20000-flag behavior is retained. This is additive TrustedLaunch trust-flag computation, not a signature-trust bypass fix.",
+      "trigger_conditions": "New branches only execute for developer-mode (a5==3) or specific a4/policy-table states, and the 0x80000 path is gated behind a WIL feature flag. No change on shipping configurations until the feature is enabled.",
+      "primitive": "None.",
+      "evidence": "Patched decompilation adds 'if (a5 == 3) { ... v14 ^= (v14 ^ (v17[0] << 20)) & 0x100000; }' and 'if ((a4 & 0xE41FFF87) == 0 && (*((_DWORD*)g_CipWhichLevelComparisons + (a5 & 0xF)) & 4) != 0) { v14 = v14 & 0xFFF7FFFF | ((g_CiPolicyState & 0x2000) << 6); if (v7 != 0) { if (Feature_CodeIntegrity_TrustedLaunch_TrustedRootStore_...IsEnabled()) v14 |= 0x80000; else ... } }'.",
+      "assembly": ""
+    },
+    {
+      "severity": "none",
+      "function": "SymCryptFdefDecideModulusType",
+      "address_unpatched": "0x18000E700",
+      "address_patched": "0x18000E760",
+      "classification": "SymCrypt library rebuild churn - not a Code Integrity signature fix",
+      "vulnerability_class": "None (modular-arithmetic implementation dispatch)",
+      "description": "The patched SymCrypt routine adds a 0xC000 mask to the modulus-descriptor flags test used to select a modular-reduction implementation: 'if ((v17[1] & 0xC000) == 0 && (v17[1] & g_SymCryptCpuFeaturesNotPresent) == 0)'. v17 walks an internal SymCrypt modulus-type descriptor table; the mask filters which arithmetic implementations are eligible for the given modulus/CPU. This is not a signature verification rule table or a certificate deny list, and is not attacker-controlled.",
+      "trigger_conditions": "Not attacker-reachable as a signature primitive; the table is internal SymCrypt state selected by modulus value and CPU features.",
+      "primitive": "None.",
+      "evidence": "Unpatched: 'if ((v17[1] & g_SymCryptCpuFeaturesNotPresent) == 0)'. Patched: 'v19 = v17[1]; if ((v19 & 0xC000) == 0 && (v19 & g_SymCryptCpuFeaturesNotPresent) == 0)'.",
+      "assembly": ""
+    }
+  ],
+  "summary": "This ci.dll diff delivers no attacker-reachable Code Integrity signature-verification fix. The 11 changed functions are (a) statically-linked SymCrypt routines that moved and changed due to a SymCrypt rebuild (SymCryptRsakeyCalculatePrivateFields added an n==p*q RSA keypair consistency check gated by a new flags parameter, reached only during private-key derivation and returning SymCrypt error 0x800E - not STATUS_INVALID_IMAGE_HASH; SymCryptFdefDecideModulusType added a 0xC000 mask to modular-reduction dispatch; SymCryptEckeySetValue reworked ECDSA FIPS self-test bookkeeping; SymCryptRsakeySetValueInternal/SymCryptEcurveInitialize/SymCryptParallelHashProcess are plumbing/cosmetic), and (b) Code Integrity policy functions whose new logic is gated behind WIL feature-staging flags with the prior code paths retained (CiGetActionsForImageWithToken, CipMinCryptToSigningLevel, CipMinCryptToAuthRoot2 for Feature_CodeIntegrity_TrustedLaunch*; CipApplySiPolicyEx, SIPolicyObjectValidationEngine for Feature_Servicing_EndpointSec_AppIDTagging_6D_CFR). No function adds or removes an un-gated accept/reject decision on the PE Authenticode verification path, so there is no signature bypass and no attacker-reachable security-relevant change."
+}

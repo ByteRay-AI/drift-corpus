@@ -1,0 +1,338 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys (SMB Redirector) - No security-relevant change (reparse-tag classification tweak and SMB-over-QUIC teardown feature-staging)",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9605,
+    "matched": 1094,
+    "changed": 59,
+    "identical": 1035,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FsRtlValidateReparsePointBufferEx",
+      "similarity": 0.9866,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed a single tag-acceptance predicate term: (ReparseTag & 0xC0000000) != 0x40000000",
+        "Symbolic-link (0xA000000C) and mount-point (0xA0000003) offset/length validation (RtlULongAdd accumulation and bounds comparisons) is byte-identical in both builds",
+        "Only other deltas are WPP tracing GUID names"
+      ],
+      "security_relevant": false,
+      "security_notes": "A full body diff shows the sole logic change is the removal of the term (ReparseTag & 0xC0000000) != 0x40000000 from the predicate that gates entry into the tag-specific validation block. This term distinguishes tags with bit 31 clear and bit 30 set (the 0x40000000 reserved-bit pattern). IO_REPARSE_TAG_SYMLINK (0xA000000C) and IO_REPARSE_TAG_MOUNT_POINT (0xA0000003) both have bit 31 set, so the removed term never affected them; their offset/length validation is identical in both builds. A tag matching the 0x40000000 pattern reaches neither field-walk handler and falls through to return STATUS_REPARSE (0x80000005) with no memory access. Removing the term from the accepting && chain makes the predicate true for more tags, so the patched build reclassifies these reserved-bit tags from STATUS_IO_REPARSE_TAG_NOT_HANDLED (0xC0000276) to STATUS_REPARSE (0x80000005). This is a reparse-tag classification change (a relaxation), not an out-of-bounds fix.",
+      "assembly_diff": "// UNPATCHED FsRtlValidateReparsePointBufferEx @ 0x1C0034840:\n0x1C0034919: and eax, 0C0000000h    // tag & 0xC0000000\n0x1C003491E: cmp eax, 40000000h     // == 0x40000000 ? (removed in patched)\n0x1C0034987: cmp ecx, 0A000000Ch    // IO_REPARSE_TAG_SYMLINK (identical in both builds)\n0x1C0034CB5: cmp ecx, 0A0000003h    // IO_REPARSE_TAG_MOUNT_POINT (identical in both builds)\n// PATCHED FsRtlValidateReparsePointBufferEx @ 0x1C0032620:\n// No 'and eax,0C0000000h / cmp eax,40000000h' pair exists.\n0x1C0032755: cmp ecx, 0A000000Ch\n0x1C0032A83: cmp ecx, 0A0000003h"
+    },
+    {
+      "name": "sub_1C0021F50",
+      "similarity": 0.329,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete rewrite from request-sending function to notification processing dispatch function",
+        "Unpatched: sends SMB requests with ETW logging, reads data from buffer with offset validation",
+        "Patched: dispatches based on notification type (0-8) with different handlers for each type",
+        "Function purpose changed entirely - likely a reordering of code due to optimization differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C006AF70",
+      "similarity": 0.7856,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection establishment function - allocates pool, registers callbacks, binds transport",
+        "Structural offsets shifted; data_1c005d* references changed",
+        "ETW/telemetry function addresses changed throughout",
+        "Added __security_cookie stack guard in patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "Connection setup function with telemetry changes. Added stack cookie in patched version is standard hardening. Not directly exploitable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00147B0",
+      "similarity": 0.7191,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection reconnection logic - acquires spinlock, references endpoint, dispatches work",
+        "Structural refactoring with offset shifts (0x1e0->0x1c8, 0x160->0x148)",
+        "Error handling paths reorganized but same validation logic",
+        "Telemetry function references changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0048E24",
+      "similarity": 0.8523,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Buffer allocation and MDL setup function for SMB IOCTL data",
+        "Unpatched uses sub_1c001ae60 (RtlULongAdd) for overflow-checked size computation (0x34 + arg4, then + 0x50)",
+        "Patched directly computes rax = r15 + 0x34 and allocates with rax + 0x50",
+        "Removal of overflow-checking helper calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "The overflow checks were replaced with direct arithmetic. The values involved (0x34 + arg4 + 0x50) are capped upstream and ExAllocatePool2 handles large sizes gracefully, so this is a simplification, not a security regression.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00204E8",
+      "similarity": 0.818,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Capability negotiation flag computation with different bitmask constants",
+        "Bit flags changed: 0x400->0x100, 0x800->0x200, 0x40->0x10, 0x180->0x60",
+        "Loop iteration logic modified for capability checking"
+      ],
+      "security_relevant": false,
+      "security_notes": "Protocol capability flag constant changes - likely SMB2 dialect or version negotiation differences, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbQuicDisconnectConnection",
+      "similarity": 0.6902,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched build adds a new push-lock-guarded teardown-notification callback block",
+        "Push lock (ExAcquirePushLockExclusiveEx/ExReleasePushLockExclusiveEx on a1+0xA8) and the callback dereference at a1+0xB8 are introduced together as new code",
+        "New callback invokes vtable slot 3 with status 0xC000020C (STATUS_CONNECTION_DISCONNECTED)",
+        "The unpatched build has no push lock and no callback dereference at this site"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched SmbQuicDisconnectConnection (0x1C0046A74) only emits WPP traces and, under a NULL check on *(a1+0x70), calls the MsQuic shutdown vtable (MsQuic+0x88) through the CFG guard dispatcher. It contains no push lock and no callback dereference at a1+0xB8. The patched build (0x1C0046464) adds a new block that, under a newly added push lock, checks *(a1+0xB4), clears a field, and invokes v2[3](v2, 0xC000020C, v3). Because the lock and the callback are added together as new teardown code, there is no pre-existing unlocked callback for the lock to protect. This is SMB-over-QUIC teardown feature-staging, not a fix for a demonstrable use-after-free.",
+      "assembly_diff": "// UNPATCHED SmbQuicDisconnectConnection @ 0x1C0046A74:\n0x1C0046B06: call cs:__guard_dispatch_icall_fptr   // MsQuic shutdown vtable call; no push lock present\n// PATCHED SmbQuicDisconnectConnection @ 0x1C0046464:\n0x1C0046508: call cs:__imp_ExAcquirePushLockExclusiveEx   // ADDED\n0x1C0046524: mov edx, 0C000020Ch                          // STATUS_CONNECTION_DISCONNECTED\n0x1C0046549: call cs:__imp_ExReleasePushLockExclusiveEx   // ADDED"
+    },
+    {
+      "name": "sub_1C001651C",
+      "similarity": 0.6342,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Authentication/session state processing function",
+        "Unpatched calls helper functions sub_1c0022378 and sub_1c00223b0 for status code mapping",
+        "Patched inlines the lookup logic with explicit bounds check (rax_6 > 5) before switch",
+        "ETW event IDs and data structure offsets changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "The inlining of the status code lookup with bounds check is refactoring. The original helper functions already handled out-of-range values via switch defaults. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0010520",
+      "similarity": 0.9092,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connection establishment with transport binding",
+        "Struct offset shifts throughout (0x328->0x320, 0x338->0x330, 0x2e1->0x2d9, etc.)",
+        "Added sub_1c001e70c() gate check before SmbCeCheckServerEntryDialect in patched version",
+        "Telemetry function references changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural offset changes and added dialect check. The new gate function likely controls SMB2 vs SMB1 negotiation path. Not directly security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0016824",
+      "similarity": 0.8275,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Status update function with ETW logging",
+        "Unpatched calls sub_1c006927c for additional processing; patched removes this call",
+        "ETW event structure offsets changed (0x170->0x158, 0x18c->0x174)",
+        "Condition flags swapped (data_1c005da08&0x10 vs data_1c005aa08&0x10)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry and status reporting changes. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00151F4",
+      "similarity": 0.9008,
+      "change_type": "behavioral",
+      "key_changes": [
+        "SMB response status processing function",
+        "Checks for 0x424d53ff (SMB response) and 0x424d53fe (SMB error response) magic values",
+        "Struct offsets shifted, ETW references changed",
+        "Response processing logic reorganized but same validation checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0011E60",
+      "similarity": 0.8213,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Multi-connection dispatch function with worker thread scheduling",
+        "Struct offsets shifted (0x1b8->0x1a0, 0x1d0->0x1b8, etc.)",
+        "Connection table walk logic reorganized",
+        "ExInitializeRundownProtection offset changed (0x1d0->0x1b8)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Multi-connection setup with structural refactoring. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C002009C",
+      "similarity": 0.882,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Capability flag set/check function using interlocked operations",
+        "Removed unused arg4 parameter in patched version",
+        "Simplified flag comparison logic",
+        "Different bit manipulation (rcx_2 & rax_2) vs (r8_5 & 1)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Capability flag manipulation refactoring. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0010D80",
+      "similarity": 0.9675,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Global data reference changes (data_1c006804b -> data_1c006504b)",
+        "Telemetry and timing function references changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbCryptoAllocateAndPopulateCipherSuiteOrder",
+      "similarity": 0.6431,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Simplified error handling - returns pointer directly instead of through output parameter",
+        "Same allocation size formula (arg2 * 0x1a - 2 + 4) in both versions",
+        "Removed unused output parameter arg3"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of cipher suite allocation. Same allocation logic, cleaner error path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E09C",
+      "similarity": 0.905,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Object cleanup/destructor function",
+        "Reordered ExWaitForRundownProtectionRelease before resource cleanup",
+        "Changed memset size (0x78 -> 0x60) for structure zeroing",
+        "Function pointer offsets shifted in vtable access"
+      ],
+      "security_relevant": false,
+      "security_notes": "Object cleanup with reordered operations. The reordering places ExWaitForRundownProtectionRelease first in the patched version, which is safer teardown ordering but not a direct security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007E078",
+      "similarity": 0.36,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature configuration initialization completely rewritten",
+        "Patched version adds __security_cookie and iterates arrays differently",
+        "Feature flag query logic changed with RtlQueryFeatureConfiguration / WIL feature-staging"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature configuration / WIL feature-staging initialization. Servicing churn, not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FsRtlValidateChangeNotifyBuffer",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Standalone FsRtlValidateChangeNotifyBufferEx and FsRtlValidateRelativeFileName helpers inlined into a single validator in the patched build",
+        "Inlined patched form performs no more validation than the unpatched wrapper + Ex helper pair"
+      ],
+      "security_relevant": false,
+      "security_notes": "Shared OS FsRtl library refactor (inlining). The patched inlined validator does not add validation over the unpatched pair; if anything it validates less (the filename-content validation via FsRtlValidateRelativeFileName is folded away). Not an mrxsmb attacker-data tightening.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbCompressionDecompress",
+      "similarity": 0.0,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched checks the server-claimed size (*a2 > a5) before calling RtlDecompressBufferEx2 with *a2 as the uncompressed size",
+        "Patched removes that check and instead passes the true output buffer size a5 to RtlDecompressBufferEx2"
+      ],
+      "security_relevant": false,
+      "security_notes": "Equivalent-safety refactor. Both builds bound the decompress write to <= a5 (unpatched via the *a2 <= a5 precheck, patched by passing a5 directly as UncompressedBufferSize), and both retain the post-check on the produced size. No out-of-bounds write is introduced or removed; if anything the patched form drops a redundant precheck. Not a security tightening.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "FsRtlValidateReparsePointBufferEx",
+      "entry_point": "REPARSE_DATA_BUFFER validation (reparse data received during path/reparse handling)",
+      "call_chain": ["Reparse handling path", "FsRtlValidateReparsePointBufferEx"],
+      "vulnerability_class": "No security-relevant change (reparse-tag classification change)",
+      "description": "Previously suspected as an out-of-bounds validation bypass. Verification against both builds shows the only logic change in FsRtlValidateReparsePointBufferEx is the removal of a single tag-acceptance predicate term, (ReparseTag & 0xC0000000) != 0x40000000. The symbolic-link (0xA000000C) and mount-point (0xA0000003) offset/length validation (the RtlULongAdd accumulation and bounds comparisons) is byte-identical in both builds. The removed term only distinguishes tags with bit 31 clear and bit 30 set (0x40000000 reserved-bit pattern), which are never symlink or mount-point tags. Such a tag reaches no field-walk handler and returns STATUS_REPARSE (0x80000005) with no memory access. Removing the term makes the predicate true for more tags, reclassifying these reserved-bit tags from STATUS_IO_REPARSE_TAG_NOT_HANDLED (0xC0000276) to STATUS_REPARSE (0x80000005). This is a reparse-tag classification change (a relaxation), with no reachable out-of-bounds read or write in either build.",
+      "trigger_conditions": "None. The changed predicate only reclassifies certain reserved-bit reparse tags; it does not alter the symlink/mount-point field validation that server-supplied reparse data would exercise, and the reclassified tags reach no offset/length arithmetic or memory access.",
+      "primitive": "None. No reachable out-of-bounds read/write in either build.",
+      "evidence": "// Full body diff of FsRtlValidateReparsePointBufferEx (unpatched 0x1C0034840 vs patched 0x1C0032620):\n// Only logic delta is removal of the predicate term (ReparseTag & 0xC0000000) != 0x40000000.\n// Symlink/mount-point validation identical.\n// UNPATCHED asm:\n// 0x1C0034919: and eax, 0C0000000h\n// 0x1C003491E: cmp eax, 40000000h   (present only in unpatched)\n// 0x1C0034987: cmp ecx, 0A000000Ch  (IO_REPARSE_TAG_SYMLINK, both builds)\n// 0x1C0034CB5: cmp ecx, 0A0000003h  (IO_REPARSE_TAG_MOUNT_POINT, both builds)\n// PATCHED asm has no 'and eax,0C0000000h / cmp eax,40000000h' pair.",
+      "assembly": "// UNPATCHED mrxsmb_unpatched.sys FsRtlValidateReparsePointBufferEx @ 0x1C0034840\n0x1C0034919 : and eax, 0C0000000h    // ReparseTag & 0xC0000000\n0x1C003491E : cmp eax, 40000000h     // == 0x40000000 ? (removed in patched)\n0x1C0034987 : cmp ecx, 0A000000Ch    // IO_REPARSE_TAG_SYMLINK (identical in both)\n0x1C0034CB5 : cmp ecx, 0A0000003h    // IO_REPARSE_TAG_MOUNT_POINT (identical in both)\n// PATCHED mrxsmb_patched.sys FsRtlValidateReparsePointBufferEx @ 0x1C0032620\n0x1C0032755 : cmp ecx, 0A000000Ch\n0x1C0032A83 : cmp ecx, 0A0000003h",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxsmb!FsRtlValidateReparsePointBufferEx",
+            "address": "0x1C0034840",
+            "why": "Anchor for confirming the (non-security) predicate change. The unpatched build executes 'and eax,0C0000000h; cmp eax,40000000h' at 0x1C0034919/0x1C003491E; the patched build at 0x1C0032620 has no such pair."
+          }
+        ],
+        "watch": [],
+        "key_offsets": [
+          "0x1C0034919: and eax, 0C0000000h - removed tag-acceptance term (unpatched only)",
+          "0x1C003491E: cmp eax, 40000000h - removed tag-acceptance term (unpatched only)",
+          "0x1C0034987 / 0x1C0032755: cmp ecx, 0A000000Ch - IO_REPARSE_TAG_SYMLINK (both builds, identical validation)"
+        ],
+        "trigger_setup": "Not applicable - no security-relevant primitive.",
+        "expected_observation": "No memory-safety fault is reachable through this change in either build.",
+        "notes": "The symlink/mount-point offset/length validation is identical across builds; only the tag-acceptance predicate differs by one term."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "SmbQuicDisconnectConnection",
+      "entry_point": "SMB-over-QUIC connection teardown path",
+      "call_chain": ["QUIC connection teardown", "SmbQuicDisconnectConnection"],
+      "vulnerability_class": "No security-relevant change (SMB-over-QUIC teardown feature code added)",
+      "description": "Previously suspected as a missing-synchronization / use-after-free fix. Verification against both builds shows the unpatched SmbQuicDisconnectConnection (0x1C0046A74) contains no push lock and no callback dereference at a1+0xB8; it only emits WPP traces and calls the MsQuic shutdown vtable (MsQuic+0x88) under a NULL check on *(a1+0x70). The patched build (0x1C0046464) ADDS a new block that, under a newly added push lock (ExAcquirePushLockExclusiveEx/ExReleasePushLockExclusiveEx on a1+0xA8), checks *(a1+0xB4), clears a field, and invokes vtable slot 3 with status 0xC000020C (STATUS_CONNECTION_DISCONNECTED). Because the lock and the callback are introduced together as new teardown code, there is no pre-existing unlocked callback in the unpatched build for the lock to protect. This is SMB-over-QUIC teardown feature-staging, not a fix for a demonstrable race/UAF.",
+      "trigger_conditions": "None. The unpatched build has no unlocked callback invocation at this site, so there is no race window to trigger.",
+      "primitive": "None. No demonstrable use-after-free in the unpatched build.",
+      "evidence": "// UNPATCHED sub SmbQuicDisconnectConnection @ 0x1C0046A74: WPP traces + NULL-guarded MsQuic shutdown vtable call only; no push lock; no a1+0xB8 callback dereference.\n// PATCHED SmbQuicDisconnectConnection @ 0x1C0046464 adds:\n//   ExAcquirePushLockExclusiveEx(a1 + 0xA8, 0);\n//   if (*(a1 + 0xB4)) { v2 = *(a1 + 0xB8); (*v2)[45] = 0; v2[3](v2, 0xC000020C, *(a1 + 0xB0)); }\n//   ExReleasePushLockExclusiveEx(a1 + 0xA8, 0);",
+      "assembly": "// UNPATCHED mrxsmb_unpatched.sys SmbQuicDisconnectConnection @ 0x1C0046A74\n0x1C0046B06 : call cs:__guard_dispatch_icall_fptr   // MsQuic shutdown vtable call; no push lock in function\n// PATCHED mrxsmb_patched.sys SmbQuicDisconnectConnection @ 0x1C0046464\n0x1C0046508 : call cs:__imp_ExAcquirePushLockExclusiveEx   // ADDED\n0x1C0046524 : mov edx, 0C000020Ch                          // STATUS_CONNECTION_DISCONNECTED\n0x1C0046549 : call cs:__imp_ExReleasePushLockExclusiveEx   // ADDED",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxsmb!SmbQuicDisconnectConnection",
+            "address": "0x1C0046464",
+            "why": "Anchor for confirming the added (patched-only) push-lock-guarded teardown callback. The push-lock calls at 0x1C0046508 and 0x1C0046549 and the callback status at 0x1C0046524 do not exist in the unpatched function at 0x1C0046A74."
+          }
+        ],
+        "watch": [],
+        "key_offsets": [
+          "Patched 0x1C0046508: ExAcquirePushLockExclusiveEx (added)",
+          "Patched 0x1C0046524: mov edx, 0C000020Ch (STATUS_CONNECTION_DISCONNECTED)",
+          "Patched 0x1C0046549: ExReleasePushLockExclusiveEx (added)"
+        ],
+        "trigger_setup": "Not applicable - no security-relevant primitive.",
+        "expected_observation": "The unpatched function contains no unlocked callback invocation, so no use-after-free is reachable through this site.",
+        "notes": "The push lock and the callback are added together as new SMB-over-QUIC teardown code; they do not retrofit synchronization onto pre-existing vulnerable code."
+      }
+    }
+  ],
+  "summary": "No delivered security fix was found in this diff. The two changes initially suspected as security-relevant do not survive verification. In FsRtlValidateReparsePointBufferEx the only logic change is removal of a single tag-acceptance predicate term ((ReparseTag & 0xC0000000) != 0x40000000); the symbolic-link and mount-point offset/length validation is byte-identical in both builds, and the removed term only affects reserved-bit reparse tags that reach no field walk, so no out-of-bounds primitive exists (the change is a classification relaxation). In SmbQuicDisconnectConnection the patched build adds a new push-lock-guarded teardown-notification callback; the unpatched build has no unlocked callback at that site, so the lock and callback are new SMB-over-QUIC teardown code (feature-staging), not a use-after-free fix. The remainder of the diff is servicing/feature churn: SMB-over-QUIC feature code (including removal of the QUIC certificate-mapping and server-suffix feature), WIL feature-staging helpers, WPP/ETW tracing changes, and struct-offset relocations. An independent review of the security-relevant-looking changed functions (validation, server-response parsing, allocation-size and copy-length computation, receive/decompress/decrypt paths) found no function where the patched build adds or tightens a bounds/length/overflow/type/lock check on attacker-controlled data."
+}

@@ -1,0 +1,67 @@
+{
+  "binaries": {
+    "title": "mup.sys - No security-relevant change (WIL feature-staging library churn: bit 0x40000 caching marker in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.9919,
+    "matched": 363,
+    "changed": 2,
+    "identical": 361,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "address": "0x14000321C",
+      "similarity": 0.9726,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched build forces bit 0x40000 (bit 18) into the recomputed cached feature-enabled-state on every CAS iteration via `bts eax, 0x12` at 0x140003288 (decompiles to `v11 = v9 | 0x40000`). The unpatched build does not set this bit; it commits the recomputed value as-is.",
+        "One mask changes from 0xFFFFF63E (unpatched) to 0xFFFBF63E (patched) in the `(i & 2) == 0` branch, clearing bit 0x40000 before it is re-ORed in, consistent with the bit being force-set.",
+        "Register allocation differs (r12/rbp/rdi in patched vs r15/rbx in unpatched) with an added push r12 / save of rbp in the prologue. This is a recompilation artifact, not a behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState is internal Windows Implementation Library (WIL) feature-staging code statically linked into mup.sys. It maintains a single 32-bit cached feature-enabled-state value for one feature: it reads the current state via wil_details_GetCurrentFeatureEnabledState, recomputes an updated cache value by masking/combining state bits, and commits it with _InterlockedCompareExchange (lock cmpxchg), retrying on contention. Bit 0x40000 is the WIL feature-state-cache 'recorded' marker; when absent, WIL treats the cached value as not-yet-recorded and re-evaluates the feature configuration on a later query. The pointer updated by the CAS (a1) is the per-feature WIL cache dword, not a provider or lock object; the byte read at a3+28 is a WIL feature-descriptor field, not a provider-object field. The only callers in mup.sys are wil_details_AreDependenciesEnabled (0x140002CA8) and wil_details_IsEnabledFallback (0x140003488), both feature-enablement checks over the driver's own compile-time feature descriptors. There is no UNC path, IRP, or attacker-controlled input on this path. The worst observable effect of the missing bit is redundant re-evaluation of a feature flag. No memory-safety, privilege, information-disclosure, or routing impact. This is WIL library churn, not a security fix.",
+      "assembly_diff": "Unpatched loop body (0x14000327A-0x1400032C2):\n  000000014000327A  mov     ecx, ebx\n  000000014000327C  mov     dword ptr [rsp+48h+arg_8], ebx\n  0000000140003280  test    esi, esi\n  0000000140003282  jz      short loc_1400032A5\n  0000000140003284  mov     dword ptr [rsp+48h+arg_8], ebx\n  0000000140003288  test    cl, 2\n  000000014000328B  jnz     short loc_1400032A5\n  000000014000328D  mov     ebx, ecx\n  000000014000328F  mov     eax, edi\n  0000000140003291  and     ebx, 0FFFFF63Eh\n  0000000140003297  and     eax, 9C1h\n  000000014000329C  or      ebx, eax\n  000000014000329E  or      ebx, 2\n  00000001400032A1  mov     dword ptr [rsp+48h+arg_8], ebx\n  00000001400032C0  mov     eax, ecx\n  00000001400032C2  lock cmpxchg [r15], ebx        ; commits value WITHOUT bit 0x40000\n\nPatched loop body (0x140003284-0x1400032D2):\n  0000000140003284  mov     eax, edi\n  0000000140003286  mov     ecx, edi\n  0000000140003288  bts     eax, 12h              ; set bit 0x40000 in recomputed value\n  000000014000328C  mov     dword ptr [rsp+48h+arg_8], eax\n  0000000140003290  mov     esi, eax\n  0000000140003292  test    ebp, ebp\n  0000000140003294  jz      short loc_1400032B1\n  0000000140003296  test    cl, 2\n  0000000140003299  jnz     short loc_1400032B1\n  000000014000329B  and     esi, 0FFFFF63Eh\n  00000001400032A1  mov     eax, ebx\n  00000001400032A3  and     eax, 9C1h\n  00000001400032A8  or      esi, eax\n  00000001400032AA  or      esi, 2\n  00000001400032AD  mov     dword ptr [rsp+48h+arg_8], esi\n  00000001400032D0  mov     eax, edi\n  00000001400032D2  lock cmpxchg [r12], esi        ; commits value WITH bit 0x40000"
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "address": "0x140012F2C",
+      "similarity": 0.976,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched build adds two stack-local initializations (`mov [rsp+...+var_C], 0` and `mov [rsp+...+var_10], 1`) passed as context to the RtlRegisterFeatureUsageProvider call.",
+        "The registered callback (wil_details_RecordFeatureUsageReporting) and helper (wil_details_FeatureDescriptors_SkipPadding) are the same functions in both builds; their addresses differ only because of relocation (0x1400040E0 vs 0x1400040F0, 0x140003F54 vs 0x140003F64)."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage telemetry registration via RtlRegisterFeatureUsageProvider. The change is limited to two additional context values and relocated (but identical) callback functions. Not a security fix.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "cwe": "None",
+      "function": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x14000321C",
+      "entry_point": "Internal WIL feature-enablement evaluation (wil_details_AreDependenciesEnabled @ 0x140002CA8, wil_details_IsEnabledFallback @ 0x140003488). Not reachable with attacker-controlled input; no UNC path or IRP on this path.",
+      "call_chain": [
+        "WIL feature check (Feature_*__private_IsEnabled style) over the driver's compile-time feature descriptors",
+        "wil_details_IsEnabledFallback (0x140003488) / wil_details_AreDependenciesEnabled (0x140002CA8)",
+        "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14000321C): atomic update of the per-feature cache dword"
+      ],
+      "vulnerability_class": "No security-relevant change. Internal WIL feature-state-cache bookkeeping bit (0x40000 'recorded' marker).",
+      "description": "The only functional difference in this function is that the patched build forces bit 0x40000 into the recomputed cached feature-enabled-state before every _InterlockedCompareExchange, while the unpatched build does not. Bit 0x40000 is WIL's feature-state-cache 'recorded' marker. Its absence causes WIL to re-evaluate the feature configuration on a later query rather than reuse the cached value. The CAS target (a1) is a per-feature WIL cache value, not a provider or lock object, and the code is reached only through WIL feature-enablement checks over the driver's own compile-time feature descriptors. There is no attacker-controlled input, no memory-safety issue, no privilege change, and no routing or provider-selection effect. This is WIL feature-staging library churn, not a vulnerability.",
+      "trigger_conditions": "None. The presence or absence of bit 0x40000 only affects whether WIL re-evaluates a feature flag; there is no input or race that yields a security-relevant outcome.",
+      "primitive": "None.",
+      "evidence": "// UNPATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (CAS loop)\nfor ( i = v5; ; i = v10 )\n{\n    LODWORD(v13) = v5;\n    if ( v8 != 0 )\n    {\n        LODWORD(v13) = v5;\n        if ( (i & 2) == 0 )\n        {\n            v5 = CurrentFeatureEnabledState & 0x9C1 | i & 0xFFFFF63E | 2;\n            LODWORD(v13) = v5;\n        }\n    }\n    if ( (i & 4) == 0 )\n    {\n        v5 = v5 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n        LODWORD(v13) = v5;\n    }\n    v10 = _InterlockedCompareExchange(a1, v5, i);   // no bit 0x40000\n    if ( i == v10 ) break;\n    v5 = v10;\n}\n\n// PATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (CAS loop)\nfor ( i = v5; ; i = v9 )\n{\n    LODWORD(v14) = v9 | 0x40000;          // bit 0x40000 forced\n    v11 = v9 | 0x40000;\n    if ( v8 != 0 && (i & 2) == 0 )\n    {\n        v11 = CurrentFeatureEnabledState & 0x9C1 | v9 & 0xFFFBF63E | 0x40000 | 2;\n        LODWORD(v14) = v11;\n    }\n    if ( (v5 & 4) == 0 )\n    {\n        v11 = v11 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n        LODWORD(v14) = v11;\n    }\n    v9 = _InterlockedCompareExchange(a1, v11, v5);  // bit 0x40000 present\n    if ( v5 == v9 ) break;\n    v5 = v9;\n}",
+      "assembly": "See changed_functions[0].assembly_diff for the verified disassembly of both builds. Functional delta: patched adds `bts eax, 0x12` at 0x140003288 to force bit 0x40000 into the value committed by `lock cmpxchg` (0x1400032D2 patched / 0x1400032C2 unpatched).",
+      "expected_observation": "At the CAS instruction the committed value differs by exactly bit 0x40000 (set in patched, clear in unpatched). This is a WIL caching-marker difference with no security consequence."
+    }
+  ],
+  "summary": "An independent whole-binary comparison confirms exactly two functions differ between the builds, both internal Windows Implementation Library (WIL) feature-staging code statically linked into mup.sys (plus a cosmetic WPP tracing symbol case rename, WPP_SF_d -> WPP_SF_D). wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14000321C) forces bit 0x40000 (the WIL feature-state-cache 'recorded' marker) into the recomputed cache value on every atomic compare-and-swap in the patched build; the unpatched build does not. The pointer updated by the CAS is a per-feature WIL cache dword, not a UNC provider or lock object, and the code is reached only through WIL feature-enablement checks over the driver's own compile-time feature descriptors, not through any UNC path, IRP, or attacker-controlled input. wil_details_RegisterFeatureUsageProvider (0x140012F2C) adds two context values to its RtlRegisterFeatureUsageProvider registration (telemetry). Neither change is security-relevant, and no security-relevant change was found elsewhere. Verdict: No security-relevant change (WIL feature-staging library churn)."
+}

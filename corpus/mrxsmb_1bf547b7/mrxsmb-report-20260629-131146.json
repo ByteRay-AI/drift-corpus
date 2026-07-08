@@ -1,0 +1,69 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - No security-relevant change (WIL feature-staging library churn)",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9922,
+    "matched": 1279,
+    "changed": 2,
+    "identical": 1277,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "address": "0x14003AD00",
+      "similarity": 0.9726,
+      "change_type": "non_security_library_churn",
+      "key_changes": [
+        "PATCHED: Added 'bts eax, 0x12' (set bit 18 = 0x40000) at 0x14003ad6c so the WIL feature-enabled-state cache value published by the interlocked compare-exchange always carries bit 0x40000. In the decompilation this is 'v9 | 0x40000' at the top of the update loop.",
+        "One branch constant changed from mask 0xFFFFF63E to 0xFFFBF63E (the same mask with bit 0x40000 cleared), so the following OR re-adds 0x40000 consistently.",
+        "Remaining diff is register renaming caused by the inserted instruction shifting register allocation.",
+        "This is the WIL (Windows Implementation Library) feature-staging helper that recomputes and caches a compile-time-registered feature flag's enabled state. The compare-exchange target (rcx/arg1) is a per-feature global cache cell, not an SMB VNetRoot/connection/session/exchange object."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not security-relevant. wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState is part of the statically-linked WIL feature-staging library. It packs a feature-enabled-state value and publishes it atomically into a global per-feature cache cell. The patched build unconditionally sets an internal WIL bookkeeping bit (0x40000) in that value. The value is derived from compile-time feature descriptors and the WIL configuration provider, not from attacker-controlled SMB request data, and the cache cell is not a per-connection object whose lifetime is gated by this bit. No use-after-free, race with security impact, or reachable exploit primitive follows. This is a WIL library rebuild.",
+      "assembly_diff": "UNPATCHED (wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x14003ad00), update loop:\n0x14003ad5e: mov ecx, ebx\n0x14003ad60: mov dword ptr [rsp+48h+arg_8], ebx\n0x14003ad64: test esi, esi\n0x14003ad66: jz 0x14003ad89\n...\n0x14003ada4: mov eax, ecx\n0x14003ada6: lock cmpxchg [r15], ebx      ; publish cached feature-state value (no 0x40000)\n\nPATCHED (same function @ 0x14003ad00), update loop:\n0x14003ad68: mov eax, edi\n0x14003ad6a: mov ecx, edi\n0x14003ad6c: bts eax, 12h                 ; ADDED: set bit 18 (0x40000)\n0x14003ad70: mov dword ptr [rsp+48h+arg_8], eax\n0x14003ad74: mov esi, eax\n...\n0x14003adb6: lock cmpxchg [r12], esi      ; publish cached feature-state value (with 0x40000)"
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "address": "0x140083A7C",
+      "similarity": 0.976,
+      "change_type": "non_security_library_churn",
+      "key_changes": [
+        "PATCHED: Added two local initializers (v2 = 1, v3 = 0) in the registration structure passed to RtlRegisterFeatureUsageProvider, reflecting a newer WIL provider-registration layout.",
+        "The remaining diff (branch/data label addresses) is relocation caused by the inserted instruction in the other changed function; not a behavioural change.",
+        "This is a WIL feature-usage provider registration function (RtlRegisterFeatureUsageProvider) - not security relevant."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14003AD00)",
+      "entry_point": "WIL feature-flag evaluation path (feature-cache readers); not reached with attacker-controlled SMB request data",
+      "call_chain": [
+        "WIL feature-flag query (wil_details_GetFeatureEnabledState / feature-cache readers)",
+        "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14003ad00) - recomputes and atomically caches the feature-enabled state into a global per-feature cache cell"
+      ],
+      "vulnerability_class": "None - WIL feature-staging library churn (internal cache-value bit added)",
+      "description": "The only substantive code change in mrxsmb.sys between these builds is that the WIL feature-staging helper wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14003AD00) now unconditionally sets bit 0x40000 in the packed feature-enabled-state value it publishes via 'lock cmpxchg' (added 'bts eax, 0x12'; companion mask change 0xFFFFF63E -> 0xFFFBF63E). The compare-exchange target is a global WIL per-feature cache cell, not an SMB VNetRoot or connection object. The published value is derived from compile-time feature descriptors and the WIL configuration provider, not from SMB traffic. Bit 0x40000 is an internal WIL cache flag and no consumer was found that gates object lifetime, freeing, or dereference on it. This is a rebuild of the statically-linked WIL library, not a security fix. The report's earlier VNetRoot/state-machine/use-after-free framing does not hold: the function is not a VNetRoot state machine and the named SMB call chain does not reach it.",
+      "trigger_conditions": "None applicable. There is no reachable security-relevant behaviour. The change alters only which constant bit is present in a WIL feature-flag cache word, and that value is not attacker-controlled.",
+      "primitive": "None. No use-after-free, double-free, information leak, or memory-corruption primitive follows from setting an internal WIL cache bit.",
+      "evidence": "UNPATCHED decompilation (0x14003ad00) update loop:\n```c\nfor ( i = v5; ; i = v10 )\n{\n    LODWORD(v13) = v5;                    // publish raw computed state (no 0x40000)\n    if ( v8 != 0 && (i & 2) == 0 )\n        v5 = CurrentFeatureEnabledState & 0x9C1 | i & 0xFFFFF63E | 2;\n    if ( (i & 4) == 0 )\n        v5 = v5 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n    v10 = _InterlockedCompareExchange(a1, v5, i);\n    if ( i == v10 ) break;\n    v5 = v10;\n}\n```\n\nPATCHED decompilation (0x14003ad00) update loop:\n```c\nv9 = v5;\nfor ( i = v5; ; i = v9 )\n{\n    LODWORD(v14) = v9 | 0x40000;          // NEW: bit 0x40000 always set\n    v11 = v9 | 0x40000;\n    if ( v8 != 0 && (i & 2) == 0 )\n        v11 = CurrentFeatureEnabledState & 0x9C1 | v9 & 0xFFFBF63E | 0x40000 | 2;\n    if ( (v5 & 4) == 0 )\n        v11 = v11 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n    v9 = _InterlockedCompareExchange(a1, v11, v5);\n    if ( v5 == v9 ) break;\n    v5 = v9;\n}\n```",
+      "assembly": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x14003ad00 - UNPATCHED (real disassembly):\n\n0x14003ad00: mov     [rsp+arg_10], rbx\n0x14003ad05: push    rbp\n0x14003ad06: push    rsi\n0x14003ad07: push    rdi\n0x14003ad08: push    r14\n0x14003ad0a: push    r15\n0x14003ad0c: sub     rsp, 20h\n0x14003ad10: mov     rax, cs:g_wil_details_ensureSubscribedToFeatureConfigurationChanges\n0x14003ad17: xor     ebp, ebp\n0x14003ad19: mov     [rsp+48h+arg_0], ebp\n0x14003ad1d: mov     r14, r8\n0x14003ad20: mov     [rsp+48h+arg_8], rdx\n0x14003ad25: mov     rbx, rdx\n0x14003ad28: mov     r15, rcx\n0x14003ad2b: test    rax, rax\n0x14003ad2e: jz      0x14003ad37\n0x14003ad30: call    _guard_dispatch_icall\n0x14003ad35: mov     ebp, eax\n0x14003ad37: lea     rdx, [rsp+48h+arg_0]\n0x14003ad3c: mov     rcx, r14\n0x14003ad3f: call    wil_details_GetCurrentFeatureEnabledState\n0x14003ad44: cmp     byte ptr [r14+1Ch], 0\n0x14003ad49: mov     rdi, rax\n0x14003ad4c: jnz     0x14003ad5a\n0x14003ad4e: mov     ecx, ebp\n0x14003ad50: neg     ecx\n0x14003ad52: sbb     esi, esi\n0x14003ad54: and     esi, [rsp+48h+arg_0]\n0x14003ad58: jmp     0x14003ad5e\n0x14003ad5a: mov     esi, [rsp+48h+arg_0]\n0x14003ad5e: mov     ecx, ebx\n0x14003ad60: mov     dword ptr [rsp+48h+arg_8], ebx\n0x14003ad64: test    esi, esi\n0x14003ad66: jz      0x14003ad89\n0x14003ad68: mov     dword ptr [rsp+48h+arg_8], ebx\n0x14003ad6c: test    cl, 2\n0x14003ad6f: jnz     0x14003ad89\n0x14003ad71: mov     ebx, ecx\n0x14003ad73: mov     eax, edi\n0x14003ad75: and     ebx, 0FFFFF63Eh\n0x14003ad7b: and     eax, 9C1h\n0x14003ad80: or      ebx, eax\n0x14003ad82: or      ebx, 2\n0x14003ad85: mov     dword ptr [rsp+48h+arg_8], ebx\n0x14003ad89: test    cl, 4\n0x14003ad8c: jnz     0x14003ada4\n0x14003ad8e: btr     ebx, 0Ah\n0x14003ad92: mov     eax, edi\n0x14003ad94: and     eax, 400h\n0x14003ad99: or      eax, ebx\n0x14003ad9b: or      eax, 4\n0x14003ad9e: mov     ebx, eax\n0x14003ada0: mov     dword ptr [rsp+48h+arg_8], eax\n0x14003ada4: mov     eax, ecx\n0x14003ada6: lock cmpxchg [r15], ebx           ; publish cached feature-state value (no 0x40000)\n0x14003adab: jz      0x14003adb3\n0x14003adad: mov     ebx, eax\n0x14003adaf: mov     ecx, eax\n0x14003adb1: jmp     0x14003ad60\n0x14003adb3: test    cl, 4\n0x14003adb6: jnz     0x14003add4\n0x14003adb8: mov     rax, cs:g_wil_details_subscribeFeatureStateCacheToConfigurationChanges\n0x14003adbf: test    rax, rax\n0x14003adc2: jz      0x14003add4\n0x14003adc4: movzx   edx, byte ptr [r14+1Ch]\n0x14003adc9: mov     r8d, ebp\n0x14003adcc: mov     rcx, r15\n0x14003adcf: call    _guard_dispatch_icall\n0x14003add4: test    esi, esi\n0x14003add6: jnz     0x14003adea\n0x14003add8: and     edi, 9C1h\n0x14003adde: and     ebx, 0FFFFF63Eh\n0x14003ade4: or      edi, ebx\n0x14003ade6: mov     dword ptr [rsp+48h+arg_8], edi\n0x14003adea: mov     rax, [rsp+48h+arg_8]\n0x14003adef: mov     rbx, [rsp+48h+arg_10]\n0x14003adf4: add     rsp, 20h\n0x14003adf8: pop     r15\n0x14003adfa: pop     r14\n0x14003adfc: pop     rdi\n0x14003adfd: pop     rsi\n0x14003adfe: pop     rbp\n0x14003adff: retn\n\n=== KEY DIFF IN PATCHED VERSION ===\n0x14003ad6c: bts     eax, 12h      ; ADDED: sets bit 18 (0x40000) in the cached feature-state value\n0x14003ad70: mov     dword ptr [rsp+48h+arg_8], eax\n0x14003ad74: mov     esi, eax\n...\n0x14003adb6: lock cmpxchg [r12], esi ; publishes cached value with 0x40000 set",
+      "debugging_aids": {
+        "notes": "The compare-exchange target (rcx/arg1) is a global WIL per-feature enabled-state cache cell, established by the surrounding WIL feature-staging functions (wil_details_GetCurrentFeatureEnabledState, wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath, wil_details_RegisterFeatureUsageProvider). Bit 0x40000 is an internal WIL cache flag added by a library version bump. This is not an SMB VNetRoot state field and there is no attacker-controlled trigger."
+      }
+    }
+  ],
+  "summary": "The diff between mrxsmb_unpatched.sys and mrxsmb_patched.sys contains no security-relevant change. Exactly two functions differ in substance, both belonging to the statically-linked WIL (Windows Implementation Library) feature-staging framework: wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x14003AD00) now unconditionally sets an internal bookkeeping bit (0x40000) in the feature-enabled-state value it caches via 'lock cmpxchg' (added 'bts eax, 0x12'; companion mask change 0xFFFFF63E -> 0xFFFBF63E), and wil_details_RegisterFeatureUsageProvider (0x140083A7C) adds two local initializers to the RtlRegisterFeatureUsageProvider registration structure. The compare-exchange target is a global per-feature cache cell, not an SMB VNetRoot or connection object, and the cached value comes from compile-time feature descriptors, not from SMB traffic. An independent content-based whole-module diff (matching across relocations) confirms these are the only substantive changes; all other apparent differences are branch-target relocation shifts and WPP tracing thunk renames. There is no VNetRoot lifecycle bug, no use-after-free, no race with security impact, and no reachable exploit primitive. This is a WIL library rebuild."
+}

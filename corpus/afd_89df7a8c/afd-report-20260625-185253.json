@@ -1,0 +1,284 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.992,
+    "matched": 1073,
+    "changed": 6,
+    "identical": 1067,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdRestartSuperAcceptGetAddress",
+      "similarity": 0.9295,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "The memmove length (size = *(uint16_t*)(buffer + 8) + 2, read from the transport-filled TA_ADDRESS in the mapped completion buffer) is only clamped when EvaluateCurrentState(&g_Feature_4201696571_57655968) returns non-zero. On the flag-off path the jz at 0x1C00642DE jumps straight to the memmove at 0x1C0064304, so the copy runs with size bounded only by the 16-bit AddressLength field.",
+        "The patch makes a clamp unconditional. A new flag g_Feature_499346745_59190809 selects between two clamps and both branches clamp: flag-on clamps size to IoStatus.Information - 0xa (the bytes the transport reported returning); flag-off clamps to the legacy MDL->ByteCount - offset formula.",
+        "The unpatched function is at 0x1C00641C0; the patched function relocated to 0x1C00641D0. The copy is the CRT memmove (labelled in the disassembly)."
+      ],
+      "security_relevant": true,
+      "security_notes": "HIGH: Out-of-bounds write (CWE-787) and out-of-bounds read (CWE-125) via an unclamped memmove length. On the unpatched flag-off path, memmove(buffer, buffer + 0xa, size) at 0x1C0064304 runs with size = AddressLength + 2 (up to 0x10001) and no bound; a size larger than the mapped buffer writes past the destination and reads past the source in kernel context. The patch clamps in every path. The AddressLength value is read from the transport completion buffer via MDL->MappedSystemVa; the tightened patched clamp to IoStatus.Information - 0xa indicates the concern is an AddressLength that claims more than the transport actually wrote. An attacker-controlled route to an oversized AddressLength could not be established from the two binaries; the demonstrable fact is the absence of any length bound on the flag-off path.",
+      "assembly_diff": "UNPATCHED (0x1C00641C0):\n0x1C00642CF  movzx   edi, word ptr [rbp+8]        ; AddressLength\n0x1C00642D3  add     di, 2                        ; size = AddressLength + 2\n0x1C00642D7  call    EvaluateCurrentState         ; g_Feature_4201696571_57655968\n0x1C00642DC  test    eax, eax\n0x1C00642DE  jz      short loc_1C00642F9          ; flag off -> skip clamp\n0x1C00642E0  mov     rdx, [rbx+8]                 ; MDL\n0x1C00642E7  mov     ecx, [rdx+28h]               ; MDL->ByteCount\n0x1C00642EA  sub     ecx, [rsi+8]                 ; ByteCount - offset\n0x1C00642ED  cmp     ecx, eax\n0x1C00642EF  jnb     short loc_1C00642F9\n0x1C00642F1  movzx   edi, word ptr [rdx+28h]       ; clamp\n0x1C00642F5  sub     di, [rsi+8]\n0x1C00642F9  movzx   r8d, di                       ; Size\n0x1C00642FD  lea     rdx, [rbp+0Ah]                ; Src\n0x1C0064301  mov     rcx, rbp                      ; Dst\n0x1C0064304  call    memmove                       ; unbounded on flag-off path\n0x1C0064309  mov     [r15+rbp-2], di\n\nPATCHED (0x1C00641D0):\n0x1C00642D7  movzx   ebx, word ptr [rbp+8]         ; AddressLength\n0x1C00642DB  add     bx, 2                         ; size = AddressLength + 2\n0x1C00642DF  call    EvaluateCurrentState          ; g_Feature_499346745_59190809 (new)\n0x1C00642E4  test    eax, eax\n0x1C00642E6  jz      short loc_1C0064308           ; new flag off -> legacy MDL clamp\n0x1C00642E8  movzx   eax, word ptr [rsi+18h]        ; IoStatus.Information\n0x1C00642EC  cmp     ax, 0Ah\n0x1C00642F0  jb      short loc_1C00642FC            ; if < 0xa, max = 0\n0x1C00642F2  mov     ecx, 0FFF6h                    ; -0xa\n0x1C00642F7  add     ax, cx                         ; ax = Information - 0xa\n0x1C00642FA  jmp     short loc_1C00642FE\n0x1C00642FC  xor     eax, eax\n0x1C00642FE  cmp     ax, bx\n0x1C0064301  jnb     short loc_1C0064321\n0x1C0064303  movzx   ebx, ax                        ; clamp size = Information - 0xa\n0x1C0064306  jmp     short loc_1C0064321\n0x1C0064308  mov     rdx, [rdi+8]                   ; MDL (legacy path)\n0x1C006430F  mov     ecx, [rdx+28h]\n0x1C0064312  sub     ecx, [rsi+8]\n0x1C0064315  cmp     ecx, eax\n0x1C0064317  jnb     short loc_1C0064321\n0x1C0064319  movzx   ebx, word ptr [rdx+28h]\n0x1C006431D  sub     bx, [rsi+8]\n0x1C0064321  movzx   r8d, bx                        ; Size\n0x1C0064325  lea     rdx, [rbp+0Ah]                 ; Src\n0x1C0064329  mov     rcx, rbp                       ; Dst\n0x1C006432C  call    memmove                        ; clamped in every path\n0x1C0064331  mov     [r15+rbp-2], bx"
+    },
+    {
+      "name": "AfdQueryHandles",
+      "similarity": 0.9012,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "The AccessMode argument to ObOpenObjectByPointer is set to 0 (KernelMode) when EvaluateCurrentState(&g_Feature_3932725563_57984164) returns FALSE and the endpoint flag 0x10000 is clear. A KernelMode open with DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY) skips the SeSecurityPrivilege check and the security-descriptor check.",
+        "The patch removes the conditional and always passes the caller's processor mode (sil, the routine's arg3) to ObOpenObjectByPointer at both call sites (address-object file object at endpoint+0x18, connection-object file object at connection+0x10).",
+        "r15d is zeroed in the prologue (0x1C0031B96) and used as the KernelMode (0) value; AccessMode is the sixth ObOpenObjectByPointer argument, passed on the stack (r9d at the call is DesiredAccess)."
+      ],
+      "security_relevant": true,
+      "security_notes": "MEDIUM: Missing privilege check (CWE-862). In the unpatched build, when g_Feature_3932725563_57984164 is FALSE and endpoint flag 0x10000 is clear, ObOpenObjectByPointer opens the caller's own socket transport file objects with AccessMode = 0 (KernelMode) and DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY), bypassing the SeSecurityPrivilege and DACL checks that a UserMode open would enforce. A caller without SeSecurityPrivilege thereby obtains a handle carrying ACCESS_SYSTEM_SECURITY. The objects are the caller's own endpoint's address/connection file objects, not other principals' objects.",
+      "assembly_diff": "UNPATCHED first ObOpen (0x1C0031B70), r15d = 0, sil = caller mode:\n0x1C0031CBF  lea     rcx, g_Feature_3932725563_57984164_FeatureDescriptorDetails\n0x1C0031CC6  call    EvaluateCurrentState\n0x1C0031CCB  test    eax, eax\n0x1C0031CCD  jz      short loc_1C0031CE0\n0x1C0031CD9  mov     [rsp+88h+AccessMode], sil     ; feature on: caller mode\n0x1C0031CE0  test    dword ptr [rbx+10h], 10000h\n0x1C0031CE7  movsx   eax, sil\n0x1C0031CEB  jnz     short loc_1C0031CF0           ; flag set: caller mode\n0x1C0031CED  mov     eax, r15d                     ; else AccessMode = 0 (KernelMode)\n0x1C0031CFA  mov     [rsp+88h+AccessMode], al\n0x1C0031D0D  mov     r9d, 2000000h                 ; DesiredAccess = ACCESS_SYSTEM_SECURITY\n0x1C0031D1A  mov     rcx, [rbx+18h]                ; Object\n0x1C0031D1E  call    cs:__imp_ObOpenObjectByPointer\n\nPATCHED (0x1C0031B70): feature-state call and 0x10000 test removed; both sites use caller mode:\n0x1C0031CBE  mov     [rsp+88h+AccessMode], sil\n0x1C0031CD2  mov     r9d, 2000000h\n0x1C0031CDF  call    cs:__imp_ObOpenObjectByPointer"
+    },
+    {
+      "name": "AfdTdiCreateAO",
+      "similarity": 0.9723,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same AccessMode pattern as AfdQueryHandles in the address-object creation (bind) path: when g_Feature_3932725563_57984164 is FALSE and endpoint flag 0x10000 is clear, AccessMode to ObOpenObjectByPointer is set to 0 (KernelMode) via 'mov eax, edi' (edi = 0) at 0x1C003A5D1.",
+        "DesiredAccess is 0x02000000 (ACCESS_SYSTEM_SECURITY), set via r12d (0x1C003A4C5 mov r12d, 2000000h).",
+        "The patch removes the conditional and always passes the caller's processor mode from the stacked AccessMode."
+      ],
+      "security_relevant": true,
+      "security_notes": "MEDIUM: Missing privilege check (CWE-862) in AfdTdiCreateAO. When g_Feature_3932725563_57984164 is FALSE and endpoint flag 0x10000 is clear, ObOpenObjectByPointer opens the transport file object with AccessMode = 0 (KernelMode) and DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY), skipping the SeSecurityPrivilege and DACL checks. The patch always passes the caller's mode.",
+      "assembly_diff": "UNPATCHED (0x1C0039D88), edi = 0, r12d = 0x2000000:\n0x1C003A5A7  lea     rcx, g_Feature_3932725563_57984164_FeatureDescriptorDetails\n0x1C003A5AE  call    EvaluateCurrentState\n0x1C003A5B3  test    eax, eax\n0x1C003A5B5  jz      short loc_1C003A5C0\n0x1C003A5B7  mov     al, [rsp+4B8h+AccessMode]     ; feature on: caller mode\n0x1C003A5C0  test    dword ptr [rsi+10h], 10000h\n0x1C003A5C7  movsx   eax, [rsp+4B8h+AccessMode]\n0x1C003A5CF  jnz     short loc_1C003A5D3           ; flag set: caller mode\n0x1C003A5D1  mov     eax, edi                      ; else AccessMode = 0 (KernelMode)\n0x1C003A5D8  mov     byte ptr [rsp+4B8h+EcpContext], al\n0x1C003A5EB  mov     r9d, r12d                     ; DesiredAccess = 0x2000000\n0x1C003A5F8  call    cs:__imp_ObOpenObjectByPointer\n\nPATCHED (0x1C0039CF8): feature-state call and 0x10000 test removed; AccessMode from stacked caller mode."
+    },
+    {
+      "name": "AfdCreateConnection",
+      "similarity": 0.8395,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patch adds a device-stack match check: it compares IoGetDeviceAttachmentBaseRef(connection->DeviceObject at connection+0x18) with IoGetDeviceAttachmentBaseRef(IoGetRelatedDeviceObject(caller FileObject)) and returns STATUS_INVALID_PARAMETER (0xC000000D) on mismatch before calling AfdIssueDeviceControl.",
+        "The unpatched routine has no IoGetDeviceAttachmentBaseRef call and reaches AfdIssueDeviceControl without this comparison.",
+        "Register reallocation and control-flow restructuring accompany the change."
+      ],
+      "security_relevant": true,
+      "security_notes": "MEDIUM (hardening): Improper validation of a caller-supplied handle's device stack (CWE-20). The patched build verifies that the file object backing the caller-supplied handle sits on the same device stack as the connection's transport device before issuing a device control through it, returning STATUS_INVALID_PARAMETER on mismatch. This prevents a device control from being issued to an unexpected device via a mismatched handle.",
+      "assembly_diff": "PATCHED (0x1C0047F50):\n0x1C0048263  mov     rcx, [rbx+18h]                ; connection DeviceObject\n0x1C0048267  call    cs:__imp_IoGetDeviceAttachmentBaseRef\n0x1C004826D  mov     rcx, rdi                      ; caller FileObject\n0x1C0048273  call    cs:__imp_IoGetRelatedDeviceObject\n0x1C004827C  call    cs:__imp_IoGetDeviceAttachmentBaseRef\n0x1C0048285  cmp     rsi, rax                      ; base(connection) vs base(handle)\n0x1C0048288  jz      short loc_1C00482C1           ; match -> proceed\n0x1C00482B7  mov     eax, 0C000000Dh               ; STATUS_INVALID_PARAMETER\n0x1C00482F5  call    AfdIssueDeviceControl         ; only on match\nUNPATCHED: no IoGetDeviceAttachmentBaseRef; AfdIssueDeviceControl reached without the check."
+    },
+    {
+      "name": "AfdExtractAfdSendMsgInfo",
+      "similarity": 0.966,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The unpatched build gates a size/source validation behind g_Feature_Servicing_AudioVideoStutteringIssue_58996271 (the check is skipped when the flag is on). The patched build removes the flag and validates unconditionally: it requires Size == *(endpoint + 0x94) and returns STATUS_INVALID_PARAMETER (0xC000000D) on mismatch before the memmove at 0x1C000B3CF.",
+        "The other memmove sites and their AfdUserProbeAddress probes are unchanged.",
+        "r15 is reallocated to r14."
+      ],
+      "security_relevant": false,
+      "security_notes": "The feature-gated validation is replaced with an always-on size-equality validation before the copy; no security regression.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSuperAccept",
+      "similarity": 0.9796,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removal of the EvaluateCurrentState(&g_Feature_1487976763_57832072) gate; the STATUS_BUFFER_TOO_SMALL (0xC0000023) reject path itself remains in the patched build.",
+        "Register reallocation and stack layout changes.",
+        "No security-relevant logic change beyond the feature-flag teardown."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "AfdRestartSuperAcceptGetAddress",
+      "entry_point": "NtDeviceIoControlFile / AFD SuperAccept IOCTL (dispatched via AfdDispatchDeviceControl)",
+      "call_chain": [
+        "NtDeviceIoControlFile (syscall)",
+        "AfdDispatch (IRP_MJ_DEVICE_CONTROL)",
+        "AfdDispatchDeviceControl",
+        "AfdSuperAccept",
+        "[transport completes accept asynchronously]",
+        "AfdContinueSuperAccept",
+        "AfdRestartSuperAcceptGetAddress"
+      ],
+      "vulnerability_class": "Out-of-bounds write / out-of-bounds read via unclamped memmove length (CWE-787 / CWE-125)",
+      "description": "On completion of a SuperAccept (accept-with-address) operation, AfdRestartSuperAcceptGetAddress maps the buffer the transport filled with a TA_ADDRESS and compacts it in place. It computes size = *(uint16_t*)(buffer + 8) + 2 (the AddressLength field plus 2) and calls memmove(buffer, buffer + 0xa, size) at 0x1C0064304. In the unpatched build the clamp that constrains size to MDL->ByteCount - offset is executed only when EvaluateCurrentState(&g_Feature_4201696571_57655968) returns non-zero; on the flag-off path the jz at 0x1C00642DE skips it, so the copy runs with size bounded only by the 16-bit field (up to 0x10001). Because source and destination both point inside the mapped buffer, a size larger than the mapped region reads past the source and writes past the destination in kernel context. The patch makes a clamp unconditional (both branches of a new flag g_Feature_499346745_59190809 clamp: to IoStatus.Information - 0xa, or to the legacy MDL formula).",
+      "trigger_conditions": "Reachable path present in the binary: (1) create a listening TCP socket over the AFD endpoint; (2) issue the SuperAccept operation via NtDeviceIoControlFile with the accept output buffer; (3) a peer connects and the transport completes the accept IRP; (4) AfdContinueSuperAccept -> AfdRestartSuperAcceptGetAddress maps the completion buffer, computes size = AddressLength + 2, and on the unpatched flag-off path calls memmove without clamping. The out-of-bounds condition requires the AddressLength field in the mapped buffer to exceed MDL->ByteCount - offset. AddressLength is read from the transport-filled buffer via the MDL mapping; a demonstrable attacker-controlled route to an oversized value was not established from the two binaries.",
+      "primitive": "Kernel-mode out-of-bounds copy: memmove with a length (AddressLength + 2, up to 0x10001) that is unbounded on the unpatched flag-off path, writing past the destination and reading past the source within/beyond the mapped completion buffer. No further primitive (adjacent-object corruption, arbitrary read/write, or mitigation bypass) is demonstrable from the binaries and none is claimed.",
+      "evidence": "UNPATCHED (0x1C00641C0):\n0x1C00642CF  movzx edi, word ptr [rbp+8]   ; AddressLength\n0x1C00642D3  add   di, 2                    ; size = AddressLength + 2\n0x1C00642D7  call  EvaluateCurrentState     ; g_Feature_4201696571_57655968\n0x1C00642DC  test  eax, eax\n0x1C00642DE  jz    0x1C00642F9              ; flag off -> skip clamp\n0x1C00642E7  mov   ecx, [rdx+28h]           ; MDL->ByteCount (clamp only if flag on)\n0x1C00642EA  sub   ecx, [rsi+8]\n0x1C00642F9  movzx r8d, di                   ; Size\n0x1C0064301  mov   rcx, rbp                  ; Dst\n0x1C00642FD  lea   rdx, [rbp+0Ah]            ; Src\n0x1C0064304  call  memmove\n\nPATCHED (0x1C00641D0): clamp in both branches of g_Feature_499346745_59190809; flag-on clamps size to IoStatus.Information - 0xa (0x1C00642E8..0x1C0064303), flag-off clamps to MDL->ByteCount - offset (0x1C0064308..0x1C006431D); memmove at 0x1C006432C reached only after a clamp.",
+      "assembly": "See changed_functions[0].assembly_diff for the full unpatched (0x1C00641C0) and patched (0x1C00641D0) clamp-and-memmove sequences.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdRestartSuperAcceptGetAddress",
+            "address": "0x1C00641C0",
+            "why": "Function entry (unpatched). rdx = IRP; rsi = [rdx+0xB8] = AFD completion context. The mapped buffer is MDL->MappedSystemVa + [rsi+8]; IoStatus.Information is [rsi+0x18]."
+          },
+          {
+            "symbol": "AfdRestartSuperAcceptGetAddress memmove call site",
+            "address": "0x1C0064304",
+            "why": "The copy. rcx = dst = rbp (buffer), rdx = src = rbp+0xa, r8d = size. Compare r8d against (MDL->ByteCount - offset) = ([rbx+8]->[+0x28] - [rsi+8]) to observe whether the copy exceeds the mapped buffer."
+          },
+          {
+            "symbol": "AfdRestartSuperAcceptGetAddress clamp branch",
+            "address": "0x1C00642DE",
+            "why": "The jz that skips the clamp when EvaluateCurrentState(&g_Feature_4201696571_57655968) returns 0."
+          }
+        ],
+        "watch": [
+          "di/r8d at 0x1C0064304 - the memmove size (= AddressLength + 2 on the flag-off path)",
+          "rbp at the memmove call - destination (MappedSystemVa + offset)",
+          "[rbx+8]->[+0x28] (MDL->ByteCount) and [rsi+8] (offset) - the bound the skipped clamp would enforce",
+          "[rsi+0x18] (IoStatus.Information) - the value the patched clamp uses (Information - 0xa)",
+          "word [rbp+8] - the AddressLength field read from the mapped completion buffer"
+        ],
+        "key_offsets": [
+          "0x1C00642CF: movzx edi, word [rbp+8] - AddressLength",
+          "0x1C00642D3: add di, 2 - size = AddressLength + 2",
+          "0x1C00642D7: call EvaluateCurrentState - g_Feature_4201696571_57655968",
+          "0x1C00642DE: jz 0x1C00642F9 - skip clamp when flag off",
+          "0x1C0064304: call memmove - the out-of-bounds copy on the flag-off path"
+        ],
+        "trigger_setup": "1. Create a listening TCP socket over the AFD endpoint (socket, bind, listen). 2. Issue the SuperAccept operation via NtDeviceIoControlFile with an accept output buffer. 3. Have a peer connect to complete the accept. 4. The restart path reaches AfdRestartSuperAcceptGetAddress, which computes size from the AddressLength field in the completion buffer and copies it.",
+        "expected_observation": "On the unpatched flag-off path, r8d at 0x1C0064304 equals AddressLength + 2 with no clamp; if that exceeds MDL->ByteCount - offset the memmove reads and writes beyond the mapped buffer. On the patched build the size is clamped in every path before the memmove at 0x1C006432C.",
+        "notes": "The copy is the CRT memmove (labelled in the disassembly), not a distinct routine. The source of AddressLength is the transport completion buffer; the patched clamp to IoStatus.Information - 0xa binds size to the bytes the transport reported returning."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "AfdQueryHandles",
+      "entry_point": "NtDeviceIoControlFile / AFD query-handles IOCTL (dispatched via AfdDispatchDeviceControl)",
+      "call_chain": [
+        "NtDeviceIoControlFile (syscall)",
+        "AfdDispatch (IRP_MJ_DEVICE_CONTROL)",
+        "AfdDispatchDeviceControl",
+        "AfdQueryHandles"
+      ],
+      "vulnerability_class": "Missing privilege / authorization check (CWE-862)",
+      "description": "AfdQueryHandles opens handles to the endpoint's address-object file object (endpoint+0x18) and, when connected, the connection object's file object (connection+0x10), each with DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY). In the unpatched build the AccessMode argument is set to 0 (KernelMode) when EvaluateCurrentState(&g_Feature_3932725563_57984164) returns FALSE and the endpoint flag 0x10000 is clear (via 'mov eax, r15d' at 0x1C0031CED, r15d = 0). A KernelMode open skips the SeSecurityPrivilege check required for ACCESS_SYSTEM_SECURITY and the security-descriptor check. Both ObOpenObjectByPointer sites follow the same pattern. The patch removes the conditional and always passes the caller's processor mode (sil). The affected objects are the caller's own socket transport file objects.",
+      "trigger_conditions": "1. Create a socket whose endpoint does not have flag 0x10000 set. 2. Issue the AFD query-handles IOCTL requesting the address and/or connection handles. 3. On the unpatched build with the feature flag off, the ObOpenObjectByPointer opens run with AccessMode = 0 (KernelMode).",
+      "primitive": "A caller without SeSecurityPrivilege obtains a handle carrying ACCESS_SYSTEM_SECURITY (0x02000000) to the caller's own endpoint's transport file objects, because the KernelMode open skips the privilege and security-descriptor checks a UserMode open would enforce.",
+      "evidence": "UNPATCHED first ObOpen (0x1C0031B70), r15d = 0 (0x1C0031B96), sil = caller mode:\n0x1C0031CBF  lea   rcx, g_Feature_3932725563_57984164_FeatureDescriptorDetails\n0x1C0031CC6  call  EvaluateCurrentState\n0x1C0031CCB  test  eax, eax\n0x1C0031CCD  jz    0x1C0031CE0\n0x1C0031CE0  test  dword ptr [rbx+10h], 10000h\n0x1C0031CEB  jnz   0x1C0031CF0             ; flag set: caller mode\n0x1C0031CED  mov   eax, r15d                ; else AccessMode = 0 (KernelMode)\n0x1C0031CFA  mov   [rsp+88h+AccessMode], al\n0x1C0031D0D  mov   r9d, 2000000h            ; DesiredAccess = ACCESS_SYSTEM_SECURITY\n0x1C0031D1A  mov   rcx, [rbx+18h]           ; Object\n0x1C0031D1E  call  cs:__imp_ObOpenObjectByPointer\n\nPATCHED (0x1C0031B70): feature-state call and 0x10000 test removed; both sites use caller mode:\n0x1C0031CBE  mov   [rsp+88h+AccessMode], sil\n0x1C0031CDF  call  cs:__imp_ObOpenObjectByPointer",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdQueryHandles",
+            "address": "0x1C0031B70",
+            "why": "Function entry. r8b/sil = caller's processor mode. Step to the ObOpenObjectByPointer calls at 0x1C0031D1E and 0x1C0031DEA and read the sixth (stacked) argument AccessMode."
+          },
+          {
+            "symbol": "ObOpenObjectByPointer (from AfdQueryHandles)",
+            "address": "0x1C0031D1E",
+            "why": "First open site. AccessMode is the sixth argument, on the stack; r9d here is DesiredAccess (0x2000000). On the vulnerable path AccessMode is 0 (KernelMode)."
+          }
+        ],
+        "watch": [
+          "stacked AccessMode argument at the ObOpenObjectByPointer call - 0 (KernelMode) on the vulnerable path, caller mode after the patch",
+          "[rbx+10h] & 0x10000 - endpoint flag that, when clear together with the feature flag off, selects KernelMode",
+          "EvaluateCurrentState return at 0x1C0031CC6"
+        ],
+        "key_offsets": [
+          "0x1C0031CC6: EvaluateCurrentState for g_Feature_3932725563_57984164",
+          "0x1C0031CED: mov eax, r15d - KernelMode (0) assignment",
+          "0x1C0031D1E: first ObOpenObjectByPointer (address object, [rbx+18h])",
+          "0x1C0031DEA: second ObOpenObjectByPointer (connection object)"
+        ],
+        "trigger_setup": "1. Create a socket without endpoint flag 0x10000. 2. Issue the AFD query-handles IOCTL requesting the address/connection handles. Reachable from any user-mode process holding the socket.",
+        "expected_observation": "At the ObOpenObjectByPointer calls the stacked AccessMode is 0 (KernelMode) on the unpatched flag-off path and the caller's mode after the patch.",
+        "notes": "The same AccessMode pattern (gated by g_Feature_3932725563_57984164 and endpoint flag 0x10000) also exists in AfdTdiCreateAO. Both use DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY) and are fixed by always passing the caller's mode. The affected objects are the caller's own socket file objects, not other principals' objects."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "AfdTdiCreateAO",
+      "entry_point": "Socket bind/connect via AfdBind/AfdConnect -> AfdTdiCreateAO",
+      "call_chain": [
+        "NtDeviceIoControlFile (syscall)",
+        "AfdDispatch (IRP_MJ_DEVICE_CONTROL)",
+        "AfdDispatchDeviceControl",
+        "AfdBind or AfdConnect",
+        "AfdTdiCreateAO"
+      ],
+      "vulnerability_class": "Missing privilege / authorization check (CWE-862)",
+      "description": "In AfdTdiCreateAO, when creating a transport address object and the caller requested a handle, ObOpenObjectByPointer opens the transport file object with DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY). In the unpatched build AccessMode is set to 0 (KernelMode) when EvaluateCurrentState(&g_Feature_3932725563_57984164) returns FALSE and endpoint flag 0x10000 is clear ('mov eax, edi' at 0x1C003A5D1, edi = 0), skipping the SeSecurityPrivilege and security-descriptor checks. The patch removes the conditional and always passes the caller's processor mode.",
+      "trigger_conditions": "1. Create a socket without endpoint flag 0x10000. 2. Bind the socket (triggers AfdBind -> AfdTdiCreateAO) requesting a handle output. 3. On the unpatched build with the feature flag off, the open runs with AccessMode = 0 (KernelMode).",
+      "primitive": "A caller without SeSecurityPrivilege obtains a handle carrying ACCESS_SYSTEM_SECURITY to the transport address object's file object, because the KernelMode open skips the privilege and security-descriptor checks.",
+      "evidence": "UNPATCHED (0x1C0039D88), edi = 0, r12d = 0x2000000 (0x1C003A4C5):\n0x1C003A5A7  lea   rcx, g_Feature_3932725563_57984164_FeatureDescriptorDetails\n0x1C003A5AE  call  EvaluateCurrentState\n0x1C003A5B3  test  eax, eax\n0x1C003A5B5  jz    0x1C003A5C0\n0x1C003A5C0  test  dword ptr [rsi+10h], 10000h\n0x1C003A5CF  jnz   0x1C003A5D3             ; flag set: caller mode\n0x1C003A5D1  mov   eax, edi                 ; else AccessMode = 0 (KernelMode)\n0x1C003A5D8  mov   byte ptr [rsp+4B8h+EcpContext], al\n0x1C003A5EB  mov   r9d, r12d                ; DesiredAccess = 0x2000000\n0x1C003A5F8  call  cs:__imp_ObOpenObjectByPointer\n\nPATCHED (0x1C0039CF8): feature-state call and 0x10000 test removed; AccessMode from stacked caller mode.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdTdiCreateAO",
+            "address": "0x1C0039D88",
+            "why": "Function entry (unpatched). Step to the ObOpenObjectByPointer at 0x1C003A5F8 and read the stacked AccessMode argument; on the vulnerable path it is 0."
+          }
+        ],
+        "watch": [
+          "stacked AccessMode at the ObOpenObjectByPointer call (0x1C003A5F8) - 0 (KernelMode) on the vulnerable path",
+          "[rsi+10h] & 0x10000 - endpoint flag gating the KernelMode selection",
+          "r12d - DesiredAccess (0x2000000)"
+        ],
+        "key_offsets": [
+          "0x1C003A5AE: EvaluateCurrentState for g_Feature_3932725563_57984164",
+          "0x1C003A5D1: mov eax, edi - KernelMode (0) assignment",
+          "0x1C003A5F8: ObOpenObjectByPointer with the selected AccessMode"
+        ],
+        "trigger_setup": "1. Create a socket. 2. Bind it (AfdBind -> AfdTdiCreateAO) requesting a handle. The KernelMode open occurs when the feature flag is off and endpoint flag 0x10000 is clear.",
+        "expected_observation": "ObOpenObjectByPointer opens the transport file object with AccessMode = 0 (KernelMode) and DesiredAccess = 0x02000000 on the unpatched flag-off path; caller mode after the patch.",
+        "notes": "Same root cause and servicing flag as AfdQueryHandles. The patch removes the conditional and always passes the caller's mode."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "AfdCreateConnection",
+      "entry_point": "NtDeviceIoControlFile / AFD connect path (dispatched via AfdDispatchDeviceControl)",
+      "call_chain": [
+        "NtDeviceIoControlFile (syscall)",
+        "AfdDispatch (IRP_MJ_DEVICE_CONTROL)",
+        "AfdDispatchDeviceControl",
+        "AfdCreateConnection"
+      ],
+      "vulnerability_class": "Improper input validation of a caller-supplied handle's device stack (CWE-20)",
+      "description": "The unpatched AfdCreateConnection issues AfdIssueDeviceControl on a caller-supplied handle's file object without confirming that the file object sits on the same device stack as the connection's transport device. The patch adds an IoGetDeviceAttachmentBaseRef comparison of the base attachment device of the connection's device object (connection+0x18) against that of the file object's related device object, returning STATUS_INVALID_PARAMETER (0xC000000D) on mismatch before AfdIssueDeviceControl.",
+      "trigger_conditions": "1. Reach the AfdCreateConnection path with a caller-supplied handle. 2. On the unpatched build the device control is issued through the handle without any device-stack match check.",
+      "primitive": "Hardening: prevents a device control from being issued through a handle whose file object is on a different device stack than the connection's transport.",
+      "evidence": "PATCHED (0x1C0047F50):\n0x1C0048263  mov   rcx, [rbx+18h]           ; connection DeviceObject\n0x1C0048267  call  cs:__imp_IoGetDeviceAttachmentBaseRef\n0x1C004826D  mov   rcx, rdi                  ; caller FileObject\n0x1C0048273  call  cs:__imp_IoGetRelatedDeviceObject\n0x1C004827C  call  cs:__imp_IoGetDeviceAttachmentBaseRef\n0x1C0048285  cmp   rsi, rax\n0x1C0048288  jz    0x1C00482C1              ; match -> proceed\n0x1C00482B7  mov   eax, 0C000000Dh           ; STATUS_INVALID_PARAMETER\n0x1C00482F5  call  AfdIssueDeviceControl     ; only on match\nUNPATCHED: no IoGetDeviceAttachmentBaseRef; AfdIssueDeviceControl reached without the comparison.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdCreateConnection",
+            "address": "0x1C0047F50",
+            "why": "Function entry. On the patched build a device-stack comparison runs at 0x1C0048263-0x1C0048288 before AfdIssueDeviceControl; on the unpatched build it is absent."
+          },
+          {
+            "symbol": "nt!IoGetDeviceAttachmentBaseRef",
+            "address": "lookup via imports",
+            "why": "Called twice in the patched AfdCreateConnection (0x1C0048267 and 0x1C004827C); not called in the unpatched routine."
+          }
+        ],
+        "watch": [
+          "rsi vs rax at 0x1C0048285 - the two base device objects being compared",
+          "return value 0xC000000D (STATUS_INVALID_PARAMETER) on mismatch"
+        ],
+        "key_offsets": [
+          "0x1C0048267 / 0x1C004827C: IoGetDeviceAttachmentBaseRef (patched only)",
+          "0x1C0048285: cmp rsi, rax - device-stack base comparison",
+          "0x1C00482B7: STATUS_INVALID_PARAMETER on mismatch",
+          "0x1C00482F5: AfdIssueDeviceControl (reached only on match in the patched build)"
+        ],
+        "trigger_setup": "Reach the AfdCreateConnection path with a caller-supplied handle; observe that the patched build validates the handle's device stack before issuing the device control.",
+        "expected_observation": "Patched build returns STATUS_INVALID_PARAMETER when the handle's device stack base differs from the connection's; unpatched build issues the device control without checking.",
+        "notes": "Hardening fix; no demonstrable exploit primitive beyond the mismatched-handle device control it prevents."
+      }
+    }
+  ],
+  "summary": "The afd.sys patch makes an existing length clamp in AfdRestartSuperAcceptGetAddress unconditional. In the unpatched build the clamp on the memmove length (size = AddressLength + 2, read from the transport-filled TA_ADDRESS in the mapped completion buffer) runs only when EvaluateCurrentState(&g_Feature_4201696571_57655968) returns non-zero; on the flag-off path the jz at 0x1C00642DE skips it and memmove(buffer, buffer + 0xa, size) at 0x1C0064304 runs with size bounded only by the 16-bit field, an out-of-bounds write to the destination and read from the source in kernel context (HIGH, CWE-787/CWE-125). The patched build clamps in both branches of a new flag g_Feature_499346745_59190809 (to IoStatus.Information - 0xa, or the legacy MDL formula). Attacker control of an oversized AddressLength could not be established from the binaries. Separately, AfdQueryHandles and AfdTdiCreateAO passed AccessMode = 0 (KernelMode) to ObOpenObjectByPointer for opens of the caller's own transport file objects with DesiredAccess = 0x02000000 (ACCESS_SYSTEM_SECURITY) when g_Feature_3932725563_57984164 was FALSE and endpoint flag 0x10000 clear, skipping the SeSecurityPrivilege and security-descriptor checks; the patch always uses the caller's mode (MEDIUM, CWE-862). AfdCreateConnection adds an IoGetDeviceAttachmentBaseRef device-stack match check before AfdIssueDeviceControl, returning STATUS_INVALID_PARAMETER on mismatch (MEDIUM hardening, CWE-20)."
+}

@@ -1,0 +1,98 @@
+{
+  "binaries": {
+    "id_unpatched": "acpials_unpatched.sys",
+    "id_patched": "acpials_patched.sys",
+    "overall_similarity": 0.8098,
+    "matched": 22,
+    "changed": 6,
+    "identical": 16,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FxStubBindClasses",
+      "similarity": 0.7268,
+      "change_type": "framework_hardening_not_reachable",
+      "key_changes": [
+        "Patched version adds bounds check 'ptr+4 <= END' (0x1C000129B-0x1C00012A2) before reading the size field at [ptr]",
+        "Patched version adds bounds check 'ptr+0x50 <= END' (0x1C00012AA-0x1C00012B1) before reading the function pointer at [ptr+0x38]",
+        "Indirect call modernized: unpatched 'call __guard_check_icall_fptr' (0x1C0001327) then 'call rdi' (0x1C0001341) becomes patched 'call __guard_dispatch_icall_fptr' (0x1C00012DB)",
+        "On an out-of-range entry the patched code returns 0xC000007B (STATUS_INVALID_DEVICE_REQUEST)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The added bounds checks are real and the direction is correct (patched is stricter), but they harden a loop that never executes in this driver. In both builds the class-bind iterator is initialized to the table END marker (unpatched 0x1C0001303 'lea rbx, __KMDF_CLASS_BIND_END', patched 0x1C000128F 'lea r8, __KMDF_CLASS_BIND_END') and the loop condition is 'ptr < END', so the body, including the [ptr+0x38] function-pointer read and its call, runs zero times. The class-bind section is empty because the driver registers no KMDF classes. The START/END markers are compiler/linker-generated section boundaries, not attacker-controlled data; a normally linked, signed driver always contains whole 0x50-byte entries between them. This is defense-in-depth in compiler-generated framework stub code delivered by a KMDF framework/toolchain rebuild, not a fix for a condition reachable through this driver's attack surface.",
+      "assembly_diff": "UNPATCHED FxStubBindClasses (0x1C00012D0):\n0x1C0001303: lea     rbx, __KMDF_CLASS_BIND_END   ; iterator = END (empty table)\n0x1C000130A: cmp     rbx, rbp                     ; rbp = END; ONLY base pointer checked\n0x1C000130D: jnb     0x1C0001366                  ; ptr >= END -> exit (taken first pass)\n0x1C000130F: cmp     dword [rbx], 0x50            ; read size, no ptr+4<=END check\n0x1C0001314: mov     rdi, [rbx+0x38]              ; read funcptr, no ptr+0x50<=END check\n0x1C0001327: call    cs:__guard_check_icall_fptr  ; validate rdi\n0x1C0001341: call    rdi                          ; call pointer\n0x1C000135B: add     rbx, 0x50\n\nPATCHED FxStubBindClasses (0x1C000126C):\n0x1C000128F: lea     r8, __KMDF_CLASS_BIND_END    ; iterator = END\n0x1C0001296: cmp     r8, rdi                      ; rdi = END; base-pointer check\n0x1C0001299: jnb     0x1C0001315                  ; ptr >= END -> exit\n0x1C000129B: lea     rax, [r8+4]\n0x1C000129F: cmp     rax, rdi                     ; ADDED: ptr+4 <= END\n0x1C00012A2: ja      0x1C0001310                  ; else return 0xC000007B\n0x1C00012A4: cmp     dword [r8], 0x50\n0x1C00012AA: lea     rbx, [r8+0x50]\n0x1C00012AE: cmp     rbx, rdi                     ; ADDED: ptr+0x50 <= END\n0x1C00012B1: ja      0x1C0001310                  ; else return 0xC000007B\n0x1C00012B3: mov     rax, [r8+0x38]               ; now guarded funcptr read\n0x1C00012DB: call    cs:__guard_dispatch_icall_fptr ; CFG dispatch (validate + call)"
+    },
+    {
+      "name": "FxDriverEntryWorker",
+      "similarity": 0.7172,
+      "change_type": "framework_churn",
+      "key_changes": [
+        "The unpatched standalone FxStubInitTypes (0x1C0001248) was inlined into FxDriverEntryWorker",
+        "The inlined type-init loop was NOT given a full-entry bounds check: it still checks only the base pointer against END ('cmp rbx, r14; jb' at 0x1C000120E), same as the unpatched FxStubInitTypes",
+        "Indirect call modernized to 'call __guard_dispatch_icall_fptr' (0x1C0001200)",
+        "Driver-object/registry-path argument handling and unload-registration were restructured"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched FxStubInitTypes and the patched inlined type-init loop have the same bounds logic: both initialize the iterator to __KMDF_TYPE_INIT_END (patched 0x1C00011E9) and check only base < END, reading a function pointer at [entry+0x20] with no full-0x28-byte-entry check. No bounds check was added here. The type-init table is empty, so the loop body never executes in either build. The observable difference is the CFG dispatch modernization and inlining, framework churn, not a security change.",
+      "assembly_diff": "UNPATCHED FxStubInitTypes loop (0x1C0001248):\n0x1C0001284: cmp     dword [rbx-0x20], 0x28  ; size field of current entry\n0x1C000128A: mov     rdi, [rbx]              ; funcptr at entry+0x20\n0x1C0001295: call    cs:__guard_check_icall_fptr\n0x1C000129B: call    rdi\n0x1C00012A1: add     rbx, 0x28\n0x1C00012A5: lea     rax, [rbx-0x20]         ; entry base\n0x1C00012A9: cmp     rax, rsi                ; rsi = END; base-pointer-only check\n0x1C00012AC: jb      0x1C0001284\n\nPATCHED inlined in FxDriverEntryWorker (0x1C0001124):\n0x1C00011E9: lea     rbx, __KMDF_TYPE_INIT_END ; iterator = END (empty table)\n0x1C00011F2: cmp     dword [rbx], 0x28         ; size field (NOT a bounds check)\n0x1C00011F7: mov     rax, [rbx+0x20]          ; funcptr, only base < END enforced\n0x1C0001200: call    cs:__guard_dispatch_icall_fptr\n0x1C000120A: add     rbx, 0x28\n0x1C000120E: cmp     rbx, r14                 ; r14 = END; base-pointer loop condition\n0x1C0001211: jb      0x1C00011F2"
+    },
+    {
+      "name": "FxStubDriverUnloadCommon",
+      "similarity": 0.1825,
+      "change_type": "framework_churn",
+      "key_changes": [
+        "The unpatched standalone FxStubUnbindClasses (0x1C0001384) and the trailing WdfVersionUnbind call were inlined into FxStubDriverUnloadCommon",
+        "The unbind loop bounds logic is unchanged: patched 'cmp rbx, rax; ja' (0x1C0001028) matches unpatched 'cmp rbx, rax; ja' (0x1C00013B0)",
+        "Indirect call modernized to 'call __guard_dispatch_icall_fptr' (0x1C000104E)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No bounds check was added to the unbind loop. The patched FxStubDriverUnloadCommon unbind iteration is structurally identical to the unpatched FxStubUnbindClasses: it iterates the class-bind table from END while ptr <= off_1C0003088 (the last-bound entry saved by FxStubBindClasses) and reads an unbind function pointer at [entry+0x40]. Because the class-bind table is empty and off_1C0003088 is never advanced past START, the loop does not iterate. The change is inlining plus the CFG dispatch modernization, framework churn.",
+      "assembly_diff": "UNPATCHED FxStubUnbindClasses loop (0x1C0001384):\n0x1C00013B0: cmp     rbx, rax                 ; rax = saved last-bound ptr\n0x1C00013B3: ja      0x1C00013FE\n0x1C00013B5: mov     rdi, [rbx+0x40]          ; unbind funcptr\n0x1C00013C1: call    cs:__guard_check_icall_fptr\n0x1C00013DB: call    rdi\n0x1C00013F1: add     rbx, 0x50\n\nPATCHED inlined in FxStubDriverUnloadCommon (0x1C0001008):\n0x1C0001028: cmp     rbx, rax                 ; rax = saved last-bound ptr (same logic)\n0x1C000102B: ja      0x1C0001080\n0x1C000102D: mov     rax, [rbx+0x40]          ; unbind funcptr\n0x1C000104E: call    cs:__guard_dispatch_icall_fptr\n0x1C0001073: add     rbx, 0x50"
+    },
+    {
+      "name": "FxStubDriverUnload",
+      "similarity": 0.5801,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Refactored block structure",
+        "Changed from tailcall to direct call of FxStubDriverUnloadCommon",
+        "Register allocation changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FxDriverEntry",
+      "similarity": 0.2627,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Unpatched tailcalls the worker (jmp DriverEntry_0); patched uses explicit 'call FxDriverEntryWorker' + ret",
+        "Patched passes DriverObject/RegistryPath directly to the worker"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AlsFilterNotifyHandler",
+      "similarity": 0.9923,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only global address references shifted by relinking (WdfFunctions, WdfDriverGlobals, data refs)",
+        "Decompiler variable rename only, no behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The diff is confined to the KMDF (Kernel Mode Driver Framework) compiler/framework-generated stub functions in acpials.sys (ACPI Ambient Light Sensor filter driver): FxDriverEntry, FxDriverEntryWorker, FxStubBindClasses, FxStubDriverUnloadCommon and FxStubDriverUnload, plus a relink-only change in AlsFilterNotifyHandler. The driver's attacker-facing IOCTL surface (AlsFilterEvtIoDeviceControl at 0x1C0006320 and the read/notify handlers) is identical between builds. The stub changes are a framework rebuild: all indirect calls were moved from the validate-then-call pattern (call __guard_check_icall_fptr; call rN) to the combined CFG dispatch thunk (call __guard_dispatch_icall_fptr), FxStubInitTypes and FxStubUnbindClasses were inlined into their callers, and FxStubBindClasses gained two full-entry bounds checks (ptr+4<=END and ptr+0x50<=END) before reading a function pointer at [entry+0x38]. That bounds-check addition is real and correctly directed, but it hardens a loop that executes zero iterations in this driver: the class-bind and type-init tables are empty, the iterators are initialized to the table END markers, and the loop conditions are 'ptr < END'. The type-init and unbind loops did NOT receive bounds checks (an earlier claim to the contrary does not match the disassembly). The section boundary markers are compiler/linker-generated and not attacker-controlled. There is no path from attacker input to the changed code, so no reachable vulnerability is fixed or introduced; the change is defense-in-depth framework churn."
+}

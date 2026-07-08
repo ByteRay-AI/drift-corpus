@@ -1,0 +1,250 @@
+{
+  "binary": "ccffilter.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.17763.8641",
+    "sha256": "8bb015080e610f2fe18367bd3a49245a63b1143a0e6109285ef5a9d04778cc62",
+    "file": "ccffilter_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "f2e9f47af61adc9696d844438d77dadd4f3e591a8e1bdc5d14e70a4a9007e3fd",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Cluster Client Failover Filter",
+      "FileVersion": "10.0.17763.8641 (WinBuild.160101.0800)",
+      "InternalName": "CCFFilter.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "CCFFilter.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.8641"
+    }
+  },
+  "prev": {
+    "version": "10.0.17763.2803",
+    "sha256": "aec44ab560547b499a3516a01f1ffff15c15f2ac0c7d35af7d4b74c69d9cc50c",
+    "kb_numbers": [
+      "KB5012647",
+      "KB5012636",
+      "KB5013941",
+      "KB5015018",
+      "KB5014022",
+      "KB5014692",
+      "KB5014669",
+      "KB5015811",
+      "KB5015880",
+      "KB5016623",
+      "KB5016690",
+      "KB5017315",
+      "KB5017379",
+      "KB5018419",
+      "KB5020438",
+      "KB5019966",
+      "KB5021655",
+      "KB5021237",
+      "KB5022554",
+      "KB5022286",
+      "KB5022840",
+      "KB5023702",
+      "KB5025229",
+      "KB5026362",
+      "KB5027222",
+      "KB5028168",
+      "KB5029247",
+      "KB5030214",
+      "KB5031361",
+      "KB5032196",
+      "KB5033371",
+      "KB5034127",
+      "KB5034768",
+      "KB5035849",
+      "KB5037425",
+      "KB5036896",
+      "KB5037765",
+      "KB5039705",
+      "KB5039217",
+      "KB5040430",
+      "KB5041578",
+      "KB5043050",
+      "KB5044277",
+      "KB5046615",
+      "KB5048661",
+      "KB5050008",
+      "KB5052000",
+      "KB5053596",
+      "KB5055519",
+      "KB5058922",
+      "KB5059091",
+      "KB5058392",
+      "KB5061978",
+      "KB5060531",
+      "KB5062557",
+      "KB5063877",
+      "KB5066187",
+      "KB5065428",
+      "KB5066586",
+      "KB5068791",
+      "KB5071544",
+      "KB5074975",
+      "KB5073723",
+      "KB5077795",
+      "KB5078131"
+    ],
+    "win_versions": [],
+    "file": "ccffilter_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Cluster Client Failover Filter",
+      "FileVersion": "10.0.17763.2803 (WinBuild.160101.0800)",
+      "InternalName": "CCFFilter.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "CCFFilter.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.2803"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

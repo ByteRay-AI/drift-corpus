@@ -1,0 +1,189 @@
+{
+  "binaries": {
+    "id_unpatched": "mrxdav_unpatched.sys",
+    "id_patched": "mrxdav_patched.sys",
+    "overall_similarity": 0.9903,
+    "matched": 230,
+    "changed": 6,
+    "identical": 224,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MRxDAVQueryFileInformation",
+      "similarity": 0.9924,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "FileStandardInformation (info class 5): NumberOfLinks changed from a read of FCB+0xE8 to the constant 1",
+        "FileStandardInformation: DeletePending changed from hardcoded 0 to *(FCB + 0x8C) & 1 (real FCB delete state)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Information disclosure: the unpatched code reads NumberOfLinks from FCB offset 0xE8 and returns it to the caller in FILE_STANDARD_INFORMATION. That offset is not a maintained link count on the WebDAV FileStandardInformation path (the patch substitutes the constant 1), so a value that is not guaranteed initialized is disclosed to user mode. The DeletePending change from hardcoded 0 to the real FCB state is a correctness fix.",
+      "assembly_diff": "UNPATCHED at 0x1C001EBD1: mov eax,[rsi+0E8h]; 0x1C001EBD7 mov [rdi+10h],eax; 0x1C001EBCA mov [rdi+14h],bl (bl=0)  ->  PATCHED at 0x1C001EBFC: mov ecx,1; 0x1C001EC19 mov al,[rsi+8Ch]; 0x1C001EC1F and al,cl; 0x1C001EC21 mov [rdi+10h],ecx; 0x1C001EC28 mov [rdi+14h],al"
+    },
+    {
+      "name": "DavReadWriteFileEx",
+      "similarity": 0.987,
+      "change_type": "caching_correctness",
+      "key_changes": [
+        "Function signature gains a new int32 parameter (the caching flag)",
+        "Irp->Flags |= 1 (unconditional IRP_NOCACHE) changed to Irp->Flags |= (arg & 1)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched DavReadWriteFileEx unconditionally sets bit 0 (IRP_NOCACHE) of the IRP Flags field. The patch makes it conditional on a caller-supplied flag. This is part of a caching-consistency correctness change; no security impact is demonstrated by the diff.",
+      "assembly_diff": "UNPATCHED at 0x1C001BA57: or dword [rsi+10h], 1  ->  PATCHED at 0x1C001BAA8: mov eax,[rsp+arg_48]; 0x1C001BAAF and eax,1; 0x1C001BAB2 or [r14+10h],eax"
+    },
+    {
+      "name": "MRxDAVCreate",
+      "similarity": 0.9852,
+      "change_type": "caching_correctness",
+      "key_changes": [
+        "PATCHED adds RxDisableLocalBuffering(*(RX_CONTEXT + 0x38)) at 0x1C0010753 (absent in unpatched)",
+        "RxDisableLocalBuffering is an RDBSS import present only in the patched binary"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched driver never calls RxDisableLocalBuffering when creating WebDAV file objects, so RDBSS leaves local buffering enabled. The patch disables it, part of the caching-consistency change. No security impact is demonstrated by the diff.",
+      "assembly_diff": "Patched adds call cs:__imp_RxDisableLocalBuffering at 0x1C0010753 with rcx = *(RX_CONTEXT + 0x38); in the .c: RxDisableLocalBuffering(*(_QWORD *)(a1 + 56))"
+    },
+    {
+      "name": "MRxDAVCreateContinuation",
+      "similarity": 0.9931,
+      "change_type": "caching_correctness",
+      "key_changes": [
+        "ZwCreateFile CreateOptions: *(arg2 + 0x20C) | 8 -> *(arg2 + 0x20C) (removed FILE_NO_INTERMEDIATE_BUFFERING, 0x8)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched code ORs FILE_NO_INTERMEDIATE_BUFFERING (0x8) into CreateOptions when opening the local backing file via ZwCreateFile. The patch removes the forced flag. Part of the caching-consistency change; no security impact demonstrated.",
+      "assembly_diff": "UNPATCHED: or r8d, 8 at 0x1C0012AB1 (r8d = *(arg2 + 0x20C)) before ZwCreateFile at 0x1C0012B08  ->  PATCHED: no such OR before ZwCreateFile at 0x1C0012B12"
+    },
+    {
+      "name": "MRxDAVReadContinuation",
+      "similarity": 0.948,
+      "change_type": "caching_correctness",
+      "key_changes": [
+        "All DavReadWriteFileEx call sites pass the new caching flag *(*(RX_CONTEXT + 0x28) + 0x10)",
+        "Stack frame increased from 0x88 to 0x98 for the additional parameter"
+      ],
+      "security_relevant": false,
+      "security_notes": "Threads the caching flag into DavReadWriteFileEx so IRP_NOCACHE is set conditionally. Part of the caching-consistency change; no security impact demonstrated. Register reallocation is a side effect of the added parameter.",
+      "assembly_diff": "sub rsp, 0x88 -> sub rsp, 0x98; flag loaded via mov rax,[rdi+28h] then mov eax,[rax+10h] (0x1C001AC36/0x1C001AC42) and passed to DavReadWriteFileEx"
+    },
+    {
+      "name": "MRxDAVWriteContinuation",
+      "similarity": 0.9733,
+      "change_type": "caching_correctness",
+      "key_changes": [
+        "All DavReadWriteFileEx call sites pass the new caching flag *(*(RX_CONTEXT + 0x28) + 0x10)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same caching-consistency change as MRxDAVReadContinuation on the write path. No security impact demonstrated.",
+      "assembly_diff": "All call sites: DavReadWriteFileEx(...) -> DavReadWriteFileEx(..., *(*(RX_CONTEXT + 0x28) + 0x10), ...)"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "MRxDAVQueryFileInformation",
+      "entry_point": "NtQueryInformationFile / GetFileInformationByHandle with FileStandardInformation (info class 5) on a WebDAV file handle",
+      "call_chain": [
+        "CreateFileW(\"\\\\server\\DavWWWRoot\\file.txt\") or UNC path open",
+        "RDBSS top-level dispatch",
+        "MRxDAVQueryFileInformation (registered as the MRxQueryFileInfo callback)",
+        "FileStandardInformation branch (loc_1C001EB6F) reads FCB+0xE8 as NumberOfLinks"
+      ],
+      "vulnerability_class": "Use of uninitialized resource (CWE-908) / Information exposure (CWE-200)",
+      "description": "When handling FileStandardInformation (info class 5), the unpatched MRxDAVQueryFileInformation copies the DWORD at FCB offset 0xE8 into the NumberOfLinks field of the caller's FILE_STANDARD_INFORMATION and returns it to user mode. That offset does not hold a maintained link count on the WebDAV path; the patch replaces the read with the constant 1, indicating the source field was not a valid, initialized value. The 4-byte disclosure is returned once per query. Separately, the unpatched code hardcodes DeletePending to 0; the patch reads the real state from FCB+0x8C bit 0 (a correctness fix).",
+      "trigger_conditions": "1. Open a file via the WebDAV redirector (e.g. CreateFile on a UNC path like \\\\server\\DavWWWRoot\\file). 2. Call NtQueryInformationFile (or GetFileInformationByHandle) with FileStandardInformation on the handle. 3. The returned FILE_STANDARD_INFORMATION.NumberOfLinks contains the value at FCB+0xE8 under the unpatched driver, or the constant 1 under the patched driver.",
+      "primitive": "Disclosure of the 4-byte value at FCB+0xE8 in the NumberOfLinks field, once per query. The diff does not establish what those bytes contain, so no further claim about the disclosed contents or downstream exploitation is made.",
+      "evidence": "// UNPATCHED FileStandardInformation branch (rsi = FCB, rdi = output buffer, bl = 0):\nif (ebp >= 0x18) {\n    *(DWORD*)(rdi+0x00) = *(DWORD*)(rsi+0x18);   // AllocationSize.LowPart\n    *(DWORD*)(rdi+0x04) = *(DWORD*)(rsi+0x1c);   // AllocationSize.HighPart\n    *(DWORD*)(rdi+0x08) = *(DWORD*)(rsi+0x20);   // EndOfFile.LowPart\n    *(DWORD*)(rdi+0x0c) = *(DWORD*)(rsi+0x24);   // EndOfFile.HighPart\n    *(BYTE*)(rdi+0x14)  = 0;                      // DeletePending hardcoded 0\n    *(BYTE*)(rdi+0x15)  = r15b & 0x10;            // Directory/reparse\n    *(DWORD*)(rdi+0x10) = *(DWORD*)(rsi+0xe8);    // NumberOfLinks = FCB+0xE8 (disclosure)\n}\n\n// PATCHED:\n    *(DWORD*)(rdi+0x10) = 1;                       // NumberOfLinks = 1\n    *(BYTE*)(rdi+0x14)  = *(BYTE*)(rsi+0x8c) & 1;  // DeletePending = real FCB state",
+      "assembly": "; UNPATCHED MRxDAVQueryFileInformation - FileStandardInformation success path (loc_1C001EB6F)\n; rsi = FCB, rdi = output buffer\n0x1C001EBA9: mov eax, [rsi+18h]      ; AllocationSize.LowPart\n0x1C001EBAC: and r15b, 10h           ; Directory/reparse flag\n0x1C001EBB0: mov [rdi], eax\n0x1C001EBB2: mov r14d, 18h           ; output size = 24\n0x1C001EBB8: mov eax, [rsi+1Ch]      ; AllocationSize.HighPart\n0x1C001EBBB: mov [rdi+4], eax\n0x1C001EBBE: mov eax, [rsi+20h]      ; EndOfFile.LowPart\n0x1C001EBC1: mov [rdi+8], eax\n0x1C001EBC4: mov eax, [rsi+24h]      ; EndOfFile.HighPart\n0x1C001EBC7: mov [rdi+0Ch], eax\n0x1C001EBCA: mov [rdi+14h], bl       ; DeletePending = 0 (bl zeroed at entry)\n0x1C001EBCD: mov [rdi+15h], r15b     ; Directory/reparse\n0x1C001EBD1: mov eax, [rsi+0E8h]     ; reads FCB+0xE8 (not a link count)\n0x1C001EBD7: mov [rdi+10h], eax      ; -> NumberOfLinks returned to user\n0x1C001EBDA: jmp loc_1C001EC80\n\n; PATCHED (loc_1C001EBF9)\n0x1C001EBFC: mov ecx, 1              ; NumberOfLinks = 1\n0x1C001EC19: mov al, [rsi+8Ch]       ; real DeletePending state\n0x1C001EC1F: and al, cl              ; mask bit 0\n0x1C001EC21: mov [rdi+10h], ecx      ; -> NumberOfLinks = 1\n0x1C001EC28: mov [rdi+14h], al       ; -> DeletePending real state",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxdav!MRxDAVQueryFileInformation",
+            "address": "0x1C001E820",
+            "why": "Entry of the function (unpatched). arg1 (rcx) is the RX_CONTEXT. FCB = *(rcx+0x38); info class = *(rcx+0x1b0) (must be 5); output buffer = *(rcx+0x1b8); output length = *(rcx+0x1c8) (must be >= 0x18)."
+          },
+          {
+            "symbol": "mrxdav!MRxDAVQueryFileInformation read of FCB+0xE8",
+            "address": "0x1C001EBD1",
+            "why": "The instruction 'mov eax,[rsi+0E8h]' that reads FCB+0xE8 as NumberOfLinks (unpatched). rsi = FCB; dd rsi+0xe8 L1 is the value returned. Removed by the patch."
+          }
+        ],
+        "watch": [
+          "rsi at 0x1C001EBD1 = FCB pointer; [rsi+0xe8] is the value returned as NumberOfLinks",
+          "rdi at 0x1C001EBD1 = output FILE_STANDARD_INFORMATION buffer; [rdi+0x10] receives the value after 0x1C001EBD7",
+          "*(RX_CONTEXT + 0x1b0) = file information class; must equal 5 to reach this path",
+          "*(RX_CONTEXT + 0x38) = FCB pointer (rsi)"
+        ],
+        "key_offsets": [
+          "0x1C001E820: MRxDAVQueryFileInformation entry (unpatched); patched entry 0x1C001E870",
+          "0x1C001EB6F: FileStandardInformation branch, cmp ebp,18h size check",
+          "0x1C001EBCA: mov [rdi+14h], bl -- DeletePending hardcoded 0 (unpatched)",
+          "0x1C001EBD1: mov eax,[rsi+0E8h] -- read of FCB+0xE8 (unpatched, removed by patch)",
+          "0x1C001EBFC: mov ecx,1 (patched NumberOfLinks constant)",
+          "0x1C001EC19: mov al,[rsi+8Ch] (patched real DeletePending)"
+        ],
+        "trigger_setup": "1. Ensure the WebClient service is running. 2. Make a WebDAV file reachable via UNC. 3. HANDLE h = CreateFileW(L\"\\\\\\\\server\\\\DavWWWRoot\\\\file.txt\", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL); 4. FILE_STANDARD_INFORMATION fsi = {0}; IO_STATUS_BLOCK iosb = {0}; NtQueryInformationFile(h, &iosb, &fsi, sizeof(fsi), FileStandardInformation); 5. Read fsi.NumberOfLinks.",
+        "expected_observation": "Under the unpatched binary, fsi.NumberOfLinks reflects the value at FCB+0xE8. Under the patched binary it is the constant 1. The unpatched DeletePending field is always 0 regardless of the file's actual delete state.",
+        "notes": "FILE_STANDARD_INFORMATION layout: +0x00 AllocationSize(8), +0x08 EndOfFile(8), +0x10 NumberOfLinks(4), +0x14 DeletePending(1), +0x15 Directory(1). The FCB pointer comes from *(RX_CONTEXT + 0x38). The diff does not establish what FCB+0xE8 contains at query time."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "DavReadWriteFileEx",
+      "entry_point": "ReadFile / WriteFile on a WebDAV handle -> MRxDAVRead/MRxDAVWrite -> MRxDAVReadContinuation/MRxDAVWriteContinuation -> DavReadWriteFileEx",
+      "call_chain": [
+        "CreateFileW(\"\\\\server\\DavWWWRoot\\file\") -> MRxDAVCreate",
+        "ReadFile/WriteFile on the handle",
+        "RDBSS dispatch -> MRxDAVRead/MRxDAVWrite",
+        "MRxDAVReadContinuation / MRxDAVWriteContinuation",
+        "DavReadWriteFileEx"
+      ],
+      "vulnerability_class": "Caching-behavior correctness change (no demonstrated vulnerability)",
+      "description": "The unpatched driver combines three behaviors the patch makes consistent: MRxDAVCreate never calls RxDisableLocalBuffering (RDBSS local buffering stays enabled); MRxDAVCreateContinuation opens the backing local file with FILE_NO_INTERMEDIATE_BUFFERING; and DavReadWriteFileEx unconditionally sets IRP_NOCACHE. The patch adds RxDisableLocalBuffering, drops FILE_NO_INTERMEDIATE_BUFFERING, and makes IRP_NOCACHE conditional on a caller-supplied flag threaded through the read/write continuations. This is a caching-consistency correctness change. The binary diff does not demonstrate any stale-read, data-corruption, or cross-user disclosure condition, so no vulnerability class or exploit primitive is asserted.",
+      "trigger_conditions": "No attacker-triggerable condition is demonstrated by the diff. The change alters cached vs. uncached I/O on the backing file and whether RDBSS local buffering is disabled.",
+      "primitive": "None demonstrated.",
+      "evidence": "// UNPATCHED DavReadWriteFileEx (.c):\n    v12->Flags |= 1u;              // unconditional IRP_NOCACHE\n\n// PATCHED DavReadWriteFileEx (.c), new parameter a10:\n    v13->Flags |= a10 & 1;         // conditional on caller-supplied flag\n// a10 supplied by callers as *(*(RX_CONTEXT + 0x28) + 0x10)",
+      "assembly": "; UNPATCHED DavReadWriteFileEx (entry 0x1C001B7C8)\n0x1C001BA57: or dword ptr [rsi+10h], 1   ; IRP->Flags |= IRP_NOCACHE (unconditional)\n\n; PATCHED DavReadWriteFileEx (entry 0x1C001B818)\n0x1C001BAA8: mov eax, [rsp+arg_48]        ; caller-supplied caching flag (a10)\n0x1C001BAAF: and eax, 1                    ; mask bit 0\n0x1C001BAB2: or [r14+10h], eax             ; IRP->Flags |= (flag & 1)\n\n; MRxDAVCreate: patched adds call cs:__imp_RxDisableLocalBuffering at 0x1C0010753\n; MRxDAVCreateContinuation: unpatched 'or r8d, 8' at 0x1C0012AB1 (r8d = *(arg2+0x20C)) removed in patched",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxdav!DavReadWriteFileEx",
+            "address": "0x1C001B7C8",
+            "why": "Entry of the function that sets IRP_NOCACHE (unpatched; patched entry 0x1C001B818)."
+          },
+          {
+            "symbol": "mrxdav!DavReadWriteFileEx IRP_NOCACHE set",
+            "address": "0x1C001BA57",
+            "why": "The instruction 'or dword [rsi+10h], 1' that unconditionally sets IRP_NOCACHE (unpatched). rsi = allocated IRP. In the patched build the equivalent OR at 0x1C001BAB2 uses the caller-supplied flag loaded at 0x1C001BAA8."
+          },
+          {
+            "symbol": "mrxdav!MRxDAVCreate",
+            "address": "0x1C0010670",
+            "why": "The RxDisableLocalBuffering call at 0x1C0010753 exists only in the patched build."
+          }
+        ],
+        "watch": [
+          "rsi at 0x1C001BA57 = allocated IRP; [rsi+0x10] = IRP.Flags; bit 0 is set unconditionally in the unpatched build",
+          "In MRxDAVCreate, the RxDisableLocalBuffering import is present only in the patched binary"
+        ],
+        "key_offsets": [
+          "0x1C001BA57: or dword [rsi+10h], 1 (unpatched unconditional IRP_NOCACHE)",
+          "0x1C001BAA8/0x1C001BAAF/0x1C001BAB2: patched conditional NOCACHE",
+          "0x1C0010753: RxDisableLocalBuffering call (patched only)",
+          "0x1C0012AB1: or r8d, 8 (FILE_NO_INTERMEDIATE_BUFFERING) in unpatched MRxDAVCreateContinuation"
+        ],
+        "trigger_setup": "Not applicable; no attacker-triggerable security condition is demonstrated by the diff.",
+        "expected_observation": "At 0x1C001BA57 (unpatched) IRP.Flags bit 0 is set unconditionally; the patched build gates the same OR on the caller-supplied flag loaded from the stack.",
+        "notes": "The new parameter to DavReadWriteFileEx is sourced from *(*(RX_CONTEXT + 0x28) + 0x10). The change spans five functions: MRxDAVCreate (adds RxDisableLocalBuffering), MRxDAVCreateContinuation (removes FILE_NO_INTERMEDIATE_BUFFERING), DavReadWriteFileEx (conditional NOCACHE), MRxDAVReadContinuation and MRxDAVWriteContinuation (thread the flag)."
+      }
+    }
+  ],
+  "summary": "The substantive security fix in this patch is a kernel information disclosure in MRxDAVQueryFileInformation: when handling FileStandardInformation queries, the unpatched code reads NumberOfLinks from FCB offset 0xE8 and returns it to the caller. That offset is not a maintained link count on the WebDAV path (the patch substitutes the constant 1), so a value that is not guaranteed initialized is disclosed to user mode, once per query (CWE-908). The patch also fixes DeletePending, which was hardcoded to 0, to read the real FCB state. What the disclosed 4 bytes contain is not established by the diff, so no further claim about the disclosed contents is made. The other five changed functions form a caching-consistency correctness change (add RxDisableLocalBuffering, drop FILE_NO_INTERMEDIATE_BUFFERING, make IRP_NOCACHE conditional); the diff does not demonstrate any stale-read or cross-user condition, so that change is not rated as a vulnerability. An independent per-function comparison of the two builds confirms exactly these six functions differ substantively; all other differences are relocation and WPP trace-GUID label churn."
+}

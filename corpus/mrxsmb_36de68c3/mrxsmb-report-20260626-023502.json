@@ -1,0 +1,137 @@
+{
+  "binaries": {
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9907,
+    "matched": 1059,
+    "changed": 3,
+    "identical": 1056,
+    "unmatched_unpatched": 5,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmbCeCompleteSrvCallConstructionPhase2",
+      "similarity": 0.7001,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED: Calls to Feature_84197691__private_IsEnabledDeviceUsage() that gated between an early zero-checked endpoint reference and a deferred reference taken after negotiate parsing (gates at 0x1c0011e60 and 0x1c0012038, plus error-path gates).",
+        "REMOVED: Late call to VctReferenceEndpoint (0x1c000ee90) at 0x1c001207e — the feature-disabled path that ran AFTER GetDialectInfoFromNegotiateResponse processed attacker-controlled data. VctReferenceEndpoint is atomic (lock xadd) but lacks a zero-check, so it resurrects a reference-count-0 (torn-down) object.",
+        "REMOVED: Deferred VcEndpoint acquisition block (SmbCeGetFirstVcEndpoint at 0x1c0012050 + VctReferenceEndpoint) that ran only AFTER negotiate response parsing.",
+        "ALWAYS-ON: Early endpoint reference via VctReferenceEndpointSafe (0x1c0011ea9) BEFORE negotiate response processing (0x1c0011fbb).",
+        "CHANGED: SmbCeAcquireSpinLock replaced with ExAcquireSpinLockExclusive(connection+0x784) (construction flag at connection+0x782), and SmbCeGetFirstBindingObject replaced with SmbCeGetFirstBindingObjectEx(rdi, 0) at 0x1c00120d9.",
+        "CHANGED: Error paths funnel through VctDisconnectAndDereferenceEndpoint / VctDereferenceEndpoint. Reference-failure status is 0xC000020C in both builds."
+      ],
+      "security_relevant": true,
+      "security_notes": "USE-AFTER-FREE (object resurrection) in VcEndpoint lifetime, feature-gated. When Feature_84197691 (a WIL feature-staging flag) is DISABLED in the unpatched binary, SmbCeCompleteSrvCallConstructionPhase2 defers taking a reference on the VcEndpoint until AFTER processing an attacker-controlled SMB negotiate response via GetDialectInfoFromNegotiateResponse. The deferred reference uses VctReferenceEndpoint (0x1c000ee90). Both reference helpers are atomic; the difference is the zero-check: VctReferenceEndpoint increments unconditionally (lock xadd [obj+8], 1) and always returns the non-zero new count, whereas VctReferenceEndpointSafe (0x1c00168e4) reads the count, returns failure (0) if it is already 0, else increments via lock cmpxchg. If a concurrent teardown drops the endpoint reference count to 0 during the negotiate-processing window, the late VctReferenceEndpoint resurrects the torn-down object instead of failing, and the endpoint is then dereferenced. The patch removes the feature gate entirely and always uses the early, zero-checked reference before any server data is parsed. No arbitrary read/write, pool-spray reclaim, info-leak, or code-execution primitive is demonstrable from the diff.",
+      "assembly_diff": "--- Unpatched (deferred path), real addresses ---\n0x1c0011e60  call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1c0011e6c  jz      0x1c0011ee2            ; feature OFF -> skip early reference\n; early zero-checked path (feature ON):\n0x1c0011eaa  call    VctReferenceEndpointSafe\n; negotiate parse (both paths):\n0x1c0011fc3  mov     rcx, [r13+18h]\n0x1c0011fcc  call    GetDialectInfoFromNegotiateResponse\n0x1c0012038  call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1c001203f  jnz     0x1c0012099           ; feature ON -> already referenced\n; late reference (feature OFF):\n0x1c0012050  call    SmbCeGetFirstVcEndpoint\n0x1c001207b  mov     rcx, rbx\n0x1c001207e  call    VctReferenceEndpoint  ; no zero-check\n0x1c0012083  and     [rbx+148h], r12\n\n--- VctReferenceEndpoint @ 0x1c000ee90 (no zero-check) ---\n0x1c000ee9d  mov     ebx, 1\n0x1c000eea2  lock xadd [rcx+8], ebx         ; atomic increment, cannot fail on refcount 0\n0x1c000eeeb  mov     eax, ebx               ; return non-zero count\n\n--- VctReferenceEndpointSafe @ 0x1c00168e4 (zero-checked) ---\n0x1c00168f3  mov     ebx, [rcx+8]\n0x1c00168f9  test    ebx, ebx\n0x1c00168fb  jz      0x1c0016964           ; refcount 0 -> return 0\n0x1c0016902  lock cmpxchg [rcx+8], edx\n\n--- Patched (always early, zero-checked) ---\n0x1c0011e4b  lea     rcx, [r13+784h]\n0x1c0011e61  call    ExAcquireSpinLockExclusive\n0x1c0011e78  mov     [r13+782h], al\n0x1c0011e7f  call    SmbCeGetFirstVcEndpoint\n0x1c0011ea9  call    VctReferenceEndpointSafe\n0x1c0011fbb  call    GetDialectInfoFromNegotiateResponse   ; only AFTER safe reference\n; no Feature_84197691 and no VctReferenceEndpoint call remain"
+    },
+    {
+      "name": "GetDialectInfoFromNegotiateResponse",
+      "similarity": 0.9548,
+      "change_type": "behavioral",
+      "key_changes": [
+        "REMOVED: Feature_84197691__private_IsEnabledDeviceUsage() gating on the unknown-dialect error path. In the unpatched build the status 0xC000A013 was applied conditionally via cmovnz gated on the feature (0x1c0015bda / 0x1c0015c25); in the patched build it is applied unconditionally (mov ebx, 0xC000A013 at 0x1c0015ab0).",
+        "UNCHANGED: The SMB magic checks (0x424d53ff / 0x424d53fe) and the response-size checks (0x20 / 0x23 / 0x40 / 0x46) are byte-identical in both builds. Both builds also contain the same 0xc0000016 and 0xc000022d status comparisons — there is no status-code swap.",
+        "CHANGED: Data address offsets and WPP trace GUID references — relocation artifacts from different build layouts."
+      ],
+      "security_relevant": false,
+      "security_notes": "The GetDialectInfoFromNegotiateResponse changes are secondary: removal of the same Feature_84197691 feature-staging gate from the unknown-dialect error path (making the 0xC000A013 status unconditional) plus WPP telemetry and relocation churn. The function parses SMB negotiate response data (magic 0x424d53ff for SMB1, 0x424d53fe for SMB2; response-size checks >= 0x20/0x23/0x40/0x46). No bounds check was added or removed. The security-relevant change is in the caller SmbCeCompleteSrvCallConstructionPhase2; this function only mirrors the feature-flag removal.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.9865,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "REMOVED: A Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage gate (0x1c00650b7 in the unpatched build) — a telemetry feature check.",
+        "Data address changes and WPP trace GUID references shifted due to different image base/layout between builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not security-relevant — removal of a telemetry feature-staging gate plus data/global address relocations and WPP GUID changes from the rebuild. No behavioral security change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Feature_84197691__private_IsEnabledDeviceUsage (feature-staging helper, retired with the gate; not security-relevant)",
+      "Feature_84197691__private_IsEnabledFallback (feature-staging helper; not security-relevant)",
+      "Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage (telemetry feature-staging helper; not security-relevant)",
+      "Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledFallback (telemetry feature-staging helper; not security-relevant)",
+      "SmbCeGetFirstBindingObject (wrapper superseded by SmbCeGetFirstBindingObjectEx, which exists in both builds; not security-relevant)"
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "SmbCeCompleteSrvCallConstructionPhase2",
+      "entry_point": "Network-adjacent: a Windows client initiates an SMB connection to a malicious/compromised SMB server (SMB2 NEGOTIATE), and the server races a connection teardown against negotiate processing.",
+      "call_chain": [
+        "MRxSmbCreateSrvCall (0x1c0062520) — RDBSS minirdr callback invoked when the client connects to \\\\server\\share",
+        "SmbCeCreateSrvCall (0x1c006254c) — drives server-call construction; takes SmbCeCompleteSrvCallConstructionPhase2 by address at 0x1c006292f",
+        "SmbCeCompleteSrvCallConstructionPhase2 (0x1c0011e10) — when Feature_84197691 is disabled, references the VcEndpoint only after negotiate parsing",
+        "GetDialectInfoFromNegotiateResponse (0x1c00158dc) — parses attacker-controlled negotiate response (dialect, capabilities, sizes)",
+        "VctReferenceEndpoint (0x1c000ee90) — late reference with no zero-check, at call site 0x1c001207e"
+      ],
+      "vulnerability_class": "Use-After-Free (CWE-416) — resurrection of a reference-count-0 object during a network-adjacent teardown race",
+      "description": "In the unpatched mrxsmb.sys, SmbCeCompleteSrvCallConstructionPhase2 contains a WIL feature-staging flag (Feature_84197691__private_IsEnabledDeviceUsage) that gates two orderings for VcEndpoint (virtual circuit endpoint) reference acquisition:\n\n1. Feature ENABLED: acquires spinlock, gets endpoint via SmbCeGetFirstVcEndpoint, references it via VctReferenceEndpointSafe (0x1c00168e4) which reads the reference count and refuses to increment if it is already 0, and holds that reference across the negotiate parse.\n\n2. Feature DISABLED: parses the negotiate response via GetDialectInfoFromNegotiateResponse FIRST, then late-acquires the endpoint via SmbCeGetFirstVcEndpoint + VctReferenceEndpoint (0x1c000ee90) at 0x1c001207e.\n\nBoth reference helpers are atomic. The difference is the zero-check: VctReferenceEndpoint uses lock xadd [obj+8], 1 and always returns the non-zero new count, so it cannot detect that the object is already at reference count 0 (mid-teardown). During the disabled-path window, the endpoint is held by no reference from this path while attacker-controlled negotiate bytes are parsed. If a concurrent teardown drops the endpoint reference count to 0 during that window, the late VctReferenceEndpoint resurrects the torn-down object instead of failing, and the endpoint is then dereferenced (and [rbx+148h], r12, and later cleanup). The patched version removes the feature flag entirely and always uses the zero-checked early reference before any server data is parsed.",
+      "trigger_conditions": "1. Feature_84197691 (WIL feature-staging flag) is DISABLED, selecting the deferred path. The default for a given build cannot be determined from the binary; it is resolved at runtime by the feature-configuration system.\n2. An SMB client on the system connects to a malicious/compromised SMB server (e.g., net use \\\\attacker\\share, or any application that opens the UNC path).\n3. The server responds to the SMB negotiate request with a negotiate response that passes the size/magic checks in GetDialectInfoFromNegotiateResponse.\n4. A concurrent teardown drops the VcEndpoint reference count to 0 between the start of GetDialectInfoFromNegotiateResponse and the late VctReferenceEndpoint call at 0x1c001207e, while the endpoint is still enumerable by SmbCeGetFirstVcEndpoint. VctReferenceEndpoint then resurrects the reference-count-0 object.\n5. The function subsequently dereferences the resurrected endpoint (fields at +0x148, and cleanup at +0x1c8).",
+      "primitive": "Kernel object-lifetime race (use-after-free / resurrection) on a VcEndpoint. The reachable impact demonstrable from the diff is dereferencing a reference-count-0 (torn-down) endpoint, most plausibly a bug check. No arbitrary read/write, controlled pool reclaim, info-leak, or code-execution primitive is demonstrable from the diff; such escalation is not claimed.",
+      "evidence": "=== UNPATCHED SmbCeCompleteSrvCallConstructionPhase2 — feature gate + deferred reference ===\n\nif (Feature_84197691__private_IsEnabledDeviceUsage()) {\n    // early, zero-checked path (feature enabled)\n    r15 = SmbCeAcquireSpinLock(connection);\n    rbx = SmbCeGetFirstVcEndpoint(serverEntry);\n    if (rbx == NULL || !VctReferenceEndpointSafe(rbx)) { rbx = NULL; status = 0xC000020C; goto err; }\n    rbx[0x148] = 0;\n    SmbCeReleaseSpinLock(connection, r15);\n}\n// if feature disabled: endpoint NOT referenced here\n\n// negotiate parse (both paths, attacker-controlled bytes):\nstatus = GetDialectInfoFromNegotiateResponse(serverEntry->connection, negBuf, size, ...);\n\nif (!Feature_84197691__private_IsEnabledDeviceUsage()) {\n    r13 = SmbCeAcquireSpinLock(connection);\n    rbx = SmbCeGetFirstVcEndpoint(serverEntry);   // endpoint may be mid-teardown\n    VctReferenceEndpoint(rbx);                     // lock xadd, no zero-check -> resurrects refcount-0 object\n    rbx[0x148] = 0;\n    SmbCeReleaseSpinLock(connection, r13);\n}\n\n=== VctReferenceEndpoint @ 0x1c000ee90 (no zero-check) ===\n// ebx = 1; lock xadd [obj+8], ebx   (atomic increment, returns previous count)\n// return previous + 1               (always non-zero; cannot fail on a torn-down object)\n\n=== VctReferenceEndpointSafe @ 0x1c00168e4 (zero-checked) ===\n// old = [obj+8]; if (old == 0) return 0;   (refuse to reference a torn-down object)\n// lock cmpxchg [obj+8], old+1; return 1;\n\n=== PATCHED SmbCeCompleteSrvCallConstructionPhase2 — no feature flag, always early+zero-checked ===\nsil = ExAcquireSpinLockExclusive(connection + 0x784);\n*(connection + 0x782) = 1;\nrbx = SmbCeGetFirstVcEndpoint(serverEntry);\nif (rbx) {\n    if (!VctReferenceEndpointSafe(rbx)) { rbx = NULL; status = 0xC000020C; goto err; }\n    rbx[0x148] = 0;\n    SmbCeReleaseSpinLock(connection, sil);\n    status = GetDialectInfoFromNegotiateResponse(serverEntry->connection, negBuf, size, ...);\n}\n// VctReferenceEndpoint call is completely removed",
+      "assembly": "=== UNPATCHED SmbCeCompleteSrvCallConstructionPhase2 @ 0x1c0011e10 — real instructions ===\n0x1c0011e28  mov     r13, [rcx+18h]            ; r13 = ServerEntry\n0x1c0011e2e  mov     r14, [rcx+20h]            ; r14 = negotiate response buffer\n0x1c0011e34  mov     edi, [rcx+8]             ; edi = NTSTATUS\n0x1c0011e3e  mov     rsi, [r13+18h]           ; rsi = connection\n0x1c0011e55  mov     r15, [rax+108h]          ; r15 = SrvCall\n; feature gate\n0x1c0011e60  call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1c0011e6a  test    eax, eax\n0x1c0011e6c  jz      0x1c0011ee2              ; disabled -> deferred path\n; early zero-checked path (feature enabled)\n0x1c0011e71  call    SmbCeAcquireSpinLock\n0x1c0011e7c  call    SmbCeGetFirstVcEndpoint  ; rbx = endpoint\n0x1c0011eaa  call    VctReferenceEndpointSafe ; zero-checked\n0x1c0011ecc  and     [rbx+148h], r12\n0x1c0011ed3  call    SmbCeReleaseSpinLock\n; negotiate parse (both paths)\n0x1c0011fc3  mov     rcx, [r13+18h]\n0x1c0011fcc  call    GetDialectInfoFromNegotiateResponse\n0x1c0011fd1  mov     edi, eax\n; second gate\n0x1c0012038  call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1c001203d  test    eax, eax\n0x1c001203f  jnz     0x1c0012099             ; enabled -> already referenced, skip\n; late reference (feature disabled)\n0x1c0012044  call    SmbCeAcquireSpinLock\n0x1c0012050  call    SmbCeGetFirstVcEndpoint\n0x1c001207b  mov     rcx, rbx\n0x1c001207e  call    VctReferenceEndpoint     ; no zero-check\n0x1c0012083  and     [rbx+148h], r12\n0x1c0012090  call    SmbCeReleaseSpinLock\n\n=== VctReferenceEndpoint @ 0x1c000ee90 (no zero-check) ===\n0x1c000ee9d  mov     ebx, 1\n0x1c000eea2  lock xadd [rcx+8], ebx           ; atomic increment, cannot fail on refcount 0\n0x1c000eeb2  inc     ebx\n0x1c000eeeb  mov     eax, ebx                 ; return non-zero count\n0x1c000eef7  retn\n\n=== VctReferenceEndpointSafe @ 0x1c00168e4 (zero-checked) ===\n0x1c00168f3  mov     ebx, [rcx+8]\n0x1c00168f9  test    ebx, ebx\n0x1c00168fb  jz      0x1c0016964             ; refcount 0 -> return 0\n0x1c00168fd  lea     edx, [rbx+1]\n0x1c0016902  lock cmpxchg [rcx+8], edx        ; atomic compare-exchange\n0x1c0016951  mov     al, 1                    ; success\n0x1c0016964  xor     al, al                   ; failure\n\n=== PATCHED SmbCeCompleteSrvCallConstructionPhase2 @ 0x1c0011e10 — real instructions ===\n0x1c0011e4b  lea     rcx, [r13+784h]          ; SpinLock\n0x1c0011e61  call    ExAcquireSpinLockExclusive\n0x1c0011e6d  mov     sil, al\n0x1c0011e78  mov     [r13+782h], al           ; construction flag = 1\n0x1c0011e7f  call    SmbCeGetFirstVcEndpoint\n0x1c0011ea9  call    VctReferenceEndpointSafe ; always zero-checked, early\n0x1c0011ece  and     [rdi+148h], r12\n0x1c0011ed5  call    SmbCeReleaseSpinLock\n0x1c0011fbb  call    GetDialectInfoFromNegotiateResponse  ; only AFTER safe reference\n; no Feature_84197691 and no VctReferenceEndpoint call remain",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxsmb!SmbCeCompleteSrvCallConstructionPhase2",
+            "address": "0x1c0011e10",
+            "why": "Entry to the vulnerable function. Check RCX (arg1 = work item context). At entry: [RCX+0x18] = ServerEntry, [RCX+0x20] = negotiate response buffer ptr, [RCX+0x8] = status code, [RCX+0x10] = RDBSS context. Step through to verify which path is taken."
+          },
+          {
+            "symbol": "mrxsmb!Feature_84197691__private_IsEnabledDeviceUsage",
+            "address": "0x1c0022da4",
+            "why": "The feature flag check that gates safe vs unsafe path. Set bp here and check return value in EAX. If EAX==0 (disabled), the deferred unsafe path is taken. This confirms the vulnerable code path is active."
+          },
+          {
+            "symbol": "mrxsmb!GetDialectInfoFromNegotiateResponse",
+            "address": "0x1c00158dc",
+            "why": "The negotiate response parser — called BEFORE the endpoint is referenced in the unsafe path. RCX = ServerEntry->connection, RDX = negotiate response buffer (attacker-controlled), R8 = response size. This is the processing window where the endpoint can be freed."
+          },
+          {
+            "symbol": "mrxsmb!VctReferenceEndpoint",
+            "address": "0x1c000ee90",
+            "why": "The UNSAFE late reference call at 0x1c001207e in the disabled-feature path. RCX = VcEndpoint pointer. Check [RCX+0x8] (refcount) — if it's 0 or the pool looks freed, this is the UAF. This call should NOT be hit from this function in the patched binary."
+          },
+          {
+            "symbol": "mrxsmb!VctReferenceEndpointSafe",
+            "address": "0x1c00168e4",
+            "why": "The SAFE early reference call. In the patched binary this is the only path. RCX = VcEndpoint. If [RCX+0x8]==0, it returns 0 (failure) and takes the error path instead of proceeding with a freed object."
+          }
+        ],
+        "watch": [
+          "RCX at VctReferenceEndpoint (0x1c000ee90) = VcEndpoint pointer — check if pool header is valid (not FREE)",
+          "[RCX+0x8] = refcount — if 0, the endpoint is being torn down and VctReferenceEndpoint will create a dangling reference",
+          "EBX/EDI after GetDialectInfoFromNegotiateResponse = NTSTATUS from negotiate parsing (0 = success, negative = error)",
+          "RSI = connection object used for spinlock acquisition",
+          "R13/RDI (patched) = ServerEntry — [R13+0x18] = connection, [R13+0x18] is used as arg to GetDialectInfoFromNegotiateResponse",
+          "Pool tag of VcEndpoint allocation — watch for 'VCip' or similar SMB pool tags in !pool output around the endpoint address",
+          "Feature_84197691 return value in EAX at 0x1c0022da4 — 0 means vulnerable path active"
+        ],
+        "key_offsets": [
+          "0x1c0011e5d: call 0x1c0022da4 (Feature_84197691 check) — the feature flag gate that determines safe vs unsafe path",
+          "0x1c0011e68: je 0x1c0011ee2 — jump to deferred (unsafe) path when feature is disabled",
+          "0x1c0011eaa: call 0x1c00168e4 (VctReferenceEndpointSafe) — early SAFE reference, only taken when feature enabled",
+          "0x1c0011f7c: call 0x1c00158dc (GetDialectInfoFromNegotiateResponse) — processes attacker negotiate response data",
+          "0x1c0012038: call 0x1c0022da4 — second feature check to decide if late endpoint acquisition is needed",
+          "0x1c001207e: call 0x1c000ee90 (VctReferenceEndpoint) — THE VULNERABLE CALL: unsafe late reference on potentially-freed endpoint. This is the exact instruction that triggers the UAF.",
+          "0x1c000eea2: *(arg1+8) += 1 — inside VctReferenceEndpoint, the unconditional refcount increment with no zero-check",
+          "0x1c00168fb: cmp result_1, 0 — inside VctReferenceEndpointSafe, the zero-check that the unsafe variant lacks"
+        ],
+        "trigger_setup": "1. Set up an SMB server that can send negotiate responses AND control connection timing.\n2. On the victim (running unpatched mrxsmb.sys with Feature_84197691 disabled), trigger an SMB connection to the server: 'net use \\\\server_ip\\share' or any file open on the UNC path.\n3. The server receives the SMB2 NEGOTIATE request, then sends a negotiate response that passes the size/magic checks (SMB2 magic 0x424d53fe, size >= 0x40, a valid dialect).\n4. During the negotiate-processing window, drive a concurrent teardown that drops the endpoint reference count to 0 while it is still enumerable (e.g., TCP RST/FIN, additional data that triggers the disconnect path, or a concurrent operation on the same connection).\n5. The teardown reaches VctDereferenceEndpoint and the endpoint reference count drops to 0.\n6. When SmbCeCompleteSrvCallConstructionPhase2 resumes after negotiate processing and calls VctReferenceEndpoint (0x1c000ee90) at 0x1c001207e, it resurrects the reference-count-0 object (VctReferenceEndpointSafe would have failed here).",
+        "expected_observation": "1. At the VctReferenceEndpoint breakpoint (0x1c000ee90 / call site 0x1c001207e), [RCX+0x8] reads 0 immediately before the lock xadd — the resurrection condition.\n2. After the increment the function proceeds to dereference the endpoint (and [rbx+148h], r12, then later cleanup touching +0x1c8).\n3. Dereferencing a torn-down/freed endpoint most plausibly manifests as a bug check (e.g., PAGE_FAULT_IN_NONPAGED_AREA). No controlled outcome is demonstrable from the diff.\n4. WPP/ETW may log a 'CreateSrvCallError' event (if Microsoft_Windows_SMBClientEnableBits & 1) with error status 0xc000020c.",
+        "notes": "VcEndpoint offsets observed in the diff:\n- VcEndpoint+0x8: ReferenceCount (LONG) — incremented by VctReferenceEndpoint / VctReferenceEndpointSafe\n- VcEndpoint+0x148: ServerCall claim field (cleared via and [rbx+148h], r12 after the reference)\n- VcEndpoint+0x1c8: sliding-window field (xchg'd during teardown/cleanup)\n- ServerEntry+0x18: Connection object\n- Connection+0x782: byte construction flag (set to 1 in patched)\n- Connection+0x784: spin lock (ExAcquireSpinLockExclusive in patched)\n\nFeature_84197691 is a WIL feature-staging flag; the patch removes it and makes the early zero-checked reference mandatory. Whether the deferred path is the default on a given build cannot be determined from the binary.\n\nThe zero-checked VctReferenceEndpointSafe is the variant used in the receive/disconnect paths (SmbWskReceiveEvent, SmbQuicReceiveEvent) and in the feature-enabled path here, consistent with the endpoint being observable at reference count 0 while still enumerable."
+      }
+    }
+  ],
+  "summary": "The patch removes a WIL feature-staging gate (Feature_84197691) in mrxsmb.sys (SMB Redirector) function SmbCeCompleteSrvCallConstructionPhase2. When the flag is disabled, the unpatched code defers taking a reference on the VcEndpoint until AFTER parsing an attacker-controlled SMB negotiate response, and then takes it with VctReferenceEndpoint. Both reference helpers are atomic; VctReferenceEndpoint lacks the zero-check that VctReferenceEndpointSafe has, so if a concurrent teardown drops the endpoint reference count to 0 during the negotiate-processing window, the late reference resurrects the torn-down object (use-after-free / resurrection, CWE-416) instead of failing. The patch removes the gate and always references the endpoint with the zero-checked VctReferenceEndpointSafe BEFORE processing any server data. Severity is Medium: a feature-gated, network-adjacent kernel object-lifetime race with no demonstrable arbitrary read/write, info-leak, or code-execution primitive in the diff. Direction confirmed: the patched build is stricter."
+}

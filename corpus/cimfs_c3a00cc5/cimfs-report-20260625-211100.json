@@ -1,0 +1,317 @@
+{
+  "binaries": {
+    "id_unpatched": "cimfs_unpatched.sys",
+    "id_patched": "cimfs_patched.sys",
+    "overall_similarity": 0.3743,
+    "matched": 176,
+    "changed": 141,
+    "identical": 35,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "Cim::ImageReader::GetData",
+      "similarity": 0.9154,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched validates the resolved in-region offset against the region-table size with an unsigned compare before the subtraction: 'cmp rax, rcx; jb terminate' at 0x140018BA0, guaranteeing size >= offset so the following 'sub rax, rcx' cannot underflow",
+        "Patched removes that pre-subtraction unsigned guard and adds 'test rcx, rcx; js' on the offset (0x1C000A233), 'sub rax, rcx; js' on the result (0x1C000A23F/0x1C000A242), 'test rdi, rdi; js' on the requested size (0x1C000A254/0x1C000A257)",
+        "Patched changes the available-vs-request compare from unsigned 'jb' to signed 'jl' (0x1C000A260)",
+        "Also drops the StackEventTracer reference parameter and routes failure through inline ETW"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense-in-depth hardening. The unpatched GetData already rejects offset > size with an unsigned 'cmp rax, rcx; jb' before subtracting, so the subtraction does not underflow, and it rejects request > available with a second unsigned check. The patched build replaces the pre-subtraction guard with signed negative/underflow checks so no intermediate value can be interpreted as negative. On the observed paths the in-region offset is masked to 48 bits and bound-checked by GetOffsetTruncate before reaching GetData, so no input passing the unpatched unsigned checks was shown to produce an out-of-bounds span. GetData constructs a read span (gsl::span), so any theoretical impact direction is an out-of-bounds read (CWE-125), not a write.",
+      "assembly_diff": "UNPATCHED (0x140018B08):\n0x140018B9D: mov rax, [rbx]        ; region size\n0x140018BA0: cmp rax, rcx          ; UNSIGNED: size vs offset\n0x140018BA3: jb  0x140018D5C       ; size < offset -> terminate (ensures size >= offset)\n0x140018BA9: sub rax, rcx          ; available = size - offset (cannot underflow)\n0x140018BAC: cmp rdi, 0FFFFFFFFFFFFFFFFh\n0x140018BB0: jnz 0x140018BC1\n0x140018BC1: cmp rax, rdi          ; UNSIGNED: available vs requested\n0x140018BC4: jb  0x140018D5C       ; available < requested -> terminate\n\nPATCHED (0x1C000A1AC):\n0x1C000A233: test rcx, rcx         ; ADDED signed check on offset\n0x1C000A236: js  0x1C000A3D0\n0x1C000A23C: mov rax, [rbx]        ; region size\n0x1C000A23F: sub rax, rcx          ; available = size - offset (no prior unsigned guard)\n0x1C000A242: js  0x1C000A3D0       ; ADDED signed underflow -> terminate\n0x1C000A248: cmp rdi, 0FFFFFFFFFFFFFFFFh\n0x1C000A24C: jnz 0x1C000A254\n0x1C000A254: test rdi, rdi         ; ADDED signed check on requested size\n0x1C000A257: js  0x1C000A3D0\n0x1C000A25D: cmp rax, rdi\n0x1C000A260: jl  0x1C000A3D0       ; SIGNED less-than replaces unsigned jb"
+    },
+    {
+      "name": "Cim::ImageReader::GetDataTruncate",
+      "similarity": 0.8595,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same signed-guard pattern as GetData: patched adds 'test rdx, rdx; js' on the offset and 'sub rcx, rdx; js' on the subtraction result",
+        "Drops the StackEventTracer reference parameter"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense-in-depth hardening mirroring GetData. Unpatched uses unsigned comparisons on the resolved offset and size; patched adds signed negative/underflow checks. The offset originates from GetOffsetTruncate (48-bit masked, pre-validated). Read-side helper.",
+      "assembly_diff": "UNPATCHED (0x140018D68) uses unsigned 'cmp; jb' on the resolved offset. PATCHED (0x1C0009F90) adds 'test rdx, rdx; js' and 'sub rcx, rdx; js' before use."
+    },
+    {
+      "name": "Cim::ImageReader::GetOffsetTruncate",
+      "similarity": 0.6174,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Offset masked to 48 bits ('and r10, 0xFFFFFFFFFFFF') and region-index bound-checked before the region-table access in BOTH builds",
+        "Patched adds a signed 'cmp rdx, count; jge' (0x1C0009CF5) alongside the existing unsigned 'jnb'",
+        "Error path moved from ProcessTraceStatusOrigin to inline ETW"
+      ],
+      "security_relevant": true,
+      "security_notes": "Both builds mask the in-region offset to 48 bits (always non-negative) and reject an out-of-range region index ('cmp rdx, [rcx]; jnb error' at 0x140019AE2). The region index is the top 16 bits of the packed RegionOffset, so it is non-negative by construction; the added signed 'jge' at 0x1C0009CF5 is defensive. Not a reachable index-overflow fix.",
+      "assembly_diff": "UNPATCHED (0x140019AA4):\n0x140019AD9: and r10, 0FFFFFFFFFFFFh  ; 48-bit offset mask\n0x140019AE2: cmp rdx, [rcx]           ; index vs region count\n0x140019AE5: jnb loc_140019C4D        ; UNSIGNED: index >= count -> error\n\nPATCHED (0x1C0009CB8):\n0x1C0009CE9: and r10, 0FFFFFFFFFFFFh   ; 48-bit offset mask (same)\n0x1C0009CF2: cmp rdx, [rcx]            ; index vs region count\n0x1C0009CF5: jge loc_1C0009E4E         ; ADDED signed check on index\n0x1C0009CFB: jnb loc_1C0009F82         ; unsigned out-of-range -> terminate"
+    },
+    {
+      "name": "Cim::ImageReader::GetFile",
+      "similarity": 0.6273,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "16-bit entry_size read with movzx at 0x14001938B and compared unsigned against 0x68 at 0x1400193A6; exceeding 0x68 emits an 'Invalid entry size' trace and continues (does not reject)",
+        "The subsequent GetData read (0x1400194E4) is bounds-checked inside GetData, and the gsl::copy is bounds-checked: copy_len = min(entry_size, data_len) (cmovb at 0x140019673) into a {0x68, File*} span, which terminates rather than overflows if the length exceeds 0x68",
+        "Unpatched zero-inits the output File struct only when Feature_CimfsV1CompatGetFileFix__private is enabled (memset gated at 0x14001960A)",
+        "Patched uses a fixed 0x58 copy clamped with signed checks (mov edx,0x58; cmovg at 0x1C000A733; js at 0x1C000A73A; jg at 0x1C000A73F) and drops the feature-gated zero-init"
+      ],
+      "security_relevant": true,
+      "security_notes": "Refactor plus hardening, not a memory-corruption fix. An oversized entry_size (>0x68) is traced but not rejected in the unpatched build; however the read (GetData) and the copy (gsl::copy) are each bounds-checked and call gsl::details::terminate() rather than overflow, in both builds. The material changes are: the variable copy length (<=0x68, unsigned min) becomes a fixed 0x58 with signed min, and the previously feature-gated zero-initialization of the output File struct is applied unconditionally by removing the branch. The File struct is an internal structure consumed by later QueryInformation handling; no residual-data path to an unprivileged caller was demonstrated.",
+      "assembly_diff": "UNPATCHED (0x140018FB4):\n0x14001938B: movzx edx, word [var_B0+0Ah]  ; entry_size (zero-extended)\n0x1400193A6: cmp dx, 0x68                   ; UNSIGNED compare\n0x1400193AA: jbe 0x1400194AE                ; <=0x68 continue; else trace, then continue (no reject)\n0x1400194E4: call GetData                    ; read bounds-checked inside GetData\n0x14001960A: jz  0x140019654                ; feature off -> skip zero-init\n0x140019616: call memset                     ; feature on: zero the 0x68 output struct\n0x140019673: cmovb rcx, rdx                  ; copy_len = min(entry_size, data_len) UNSIGNED\n0x1400196B2: call gsl::copy                   ; dst {0x68, File*}; terminates if len > 0x68\n\nPATCHED (0x1C000A3DC):\n0x1C000A71B: mov edx, 0x58                   ; fixed copy size\n0x1C000A733: cmovg rcx, rdx                  ; copy_len = min(data_len, 0x58) SIGNED\n0x1C000A73A: test rcx, rcx; js terminate     ; SIGNED negative check\n0x1C000A73F: cmp rcx, rax; jg terminate      ; SIGNED upper-bound check"
+    },
+    {
+      "name": "Cim::ImageReader::GetArray<enum gsl::byte>",
+      "similarity": 0.9313,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds signed negative and upper-bound checks on the size returned by GetDataTruncate before it is used as an element count"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense-in-depth hardening consistent with the GetData family: the size returned by GetDataTruncate is validated with signed checks instead of unsigned-only comparisons. Read-side array parsing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Cim::ImageReader::GetArray<struct Cim::Format::PeImageMapping>",
+      "similarity": 0.9345,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same signed-check hardening as GetArray<byte>, applied to the PE image-mapping array"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same defense-in-depth signed-check pattern as GetArray<byte>.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Cim::LinkTable<enum Cim::Format::FileId>::Parse",
+      "similarity": 0.7215,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Rejects spans smaller than 8 bytes ('cmp r9, 8; jb error') and requires an 8-byte-aligned data pointer ('test bl, 7; jnz error') in both builds; there is no size==7 bypass",
+        "Unpatched computes the entry count with unsigned arithmetic ('shr', 'ja'/'jb'); patched replaces these with signed division ('cqo; and; add; sar') and signed checks ('test; js', 'jg')",
+        "disk_count is read as a zero-extended uint32, so it is always non-negative"
+      ],
+      "security_relevant": true,
+      "security_notes": "Defense-in-depth hardening. The unpatched count arithmetic is unsigned; the patched build uses signed division and signed comparisons so a computed size with the sign bit set is rejected. Because disk_count is a non-negative 32-bit field and the on-disk span size would have to approach 2^63 for (size-8) to appear negative, no reachable trigger was demonstrated in the unpatched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Cim::LinkTable<struct Cim::Format::Stream>::Parse",
+      "similarity": 0.7324,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "No size==7 bypass: spans smaller than 8 bytes go to the error path and the data pointer must be 8-byte aligned in both builds",
+        "Unpatched uses unsigned count arithmetic (shr/ja/jb); patched replaces it with signed division and checks (cqo; sar, js, jg)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same defense-in-depth pattern as LinkTable<FileId>::Parse. Unsigned (size-8)-derived count arithmetic replaced with signed division and signed comparisons. disk_count is a non-negative uint32; no reachable trigger demonstrated.",
+      "assembly_diff": "UNPATCHED (0x140029E8C):\n0x140029EC2: cmp r9, 8; jb error       ; size floor\n0x140029ED0: test bl, 7; jnz error     ; alignment\n0x140029F0A: shr r11, 4                ; UNSIGNED (size-8)/16\n0x140029F0E: mov r9d, [rax+4]          ; disk_count (zero-extended uint32)\n0x140029F23: cmp r9, rdx; ja error     ; UNSIGNED\n0x140029F3A: cmp r9, r11; ja terminate ; UNSIGNED\n\nPATCHED (0x1C000F324):\n0x1C000F38D: lea r9, [r8-8]\n0x1C000F391: test r9, r9; js terminate ; SIGNED\n0x1C000F3C3: cqo; and edx,0Fh; add; sar rax,4  ; SIGNED div-by-16\n0x1C000F3D2: js terminate              ; SIGNED\n0x1C000F3E9: cmp r8, rax; jg terminate ; SIGNED (jg replaces ja)"
+    },
+    {
+      "name": "Cim::FileSystem::GetStreamSegment",
+      "similarity": 0.4912,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Heavily recompiled; StackEventTracer parameter removed and stream-handling control flow reorganized"
+      ],
+      "security_relevant": false,
+      "security_notes": "Large recompile. The specific stream-type handling changes were not resolved against both builds; reported as behavioral churn rather than a verified security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Cim::FileSystem::GetReparseData",
+      "similarity": 0.5701,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Heavily recompiled; signature and error reporting changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Large recompile. No specific security-relevant mechanism verified against both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Cim::FileSystem::GetDataSegment",
+      "similarity": 0.5089,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed StackEventTracer parameter and ProcessTraceStatusPushLocation calls",
+        "Struct field offsets shifted"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_InitializeFeatureStaging",
+      "similarity": 0.696,
+      "change_type": "cosmetic",
+      "key_changes": ["Feature-staging configuration changes, including Feature_CimfsV1CompatGetFileFix__private registration"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry",
+      "similarity": 0.4708,
+      "change_type": "behavioral",
+      "key_changes": ["Updated driver initialization, new device/device name creation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "Cim::ImageReader::GetData",
+      "entry_point": "MountVolume -> IRP_MJ_CREATE/READ/QUERY_DIRECTORY/QUERY_EA on mounted CIM filesystem volume",
+      "call_chain": [
+        "MountVolumeFromFileSystem (mount crafted CIM image)",
+        "Cim::FileSystem::Open / QueryDirectory / QueryEa / NonCachedRead",
+        "Cim::ImageReader::GetFile",
+        "Cim::ImageReader::GetData (0x140018B08)",
+        "Cim::ImageReader::GetOffsetTruncate (0x140019AA4)"
+      ],
+      "vulnerability_class": "integer underflow handling in a bounds check; defense-in-depth (CWE-190; read-side CWE-125 impact direction)",
+      "description": "The patched build hardens the offset/size validation in Cim::ImageReader::GetData. The unpatched build validates the resolved in-region offset against the region-table size with an unsigned compare before subtracting ('cmp rax, rcx; jb terminate' at 0x140018BA0), which guarantees size >= offset so 'sub rax, rcx' cannot underflow, then rejects request > available with a second unsigned compare at 0x140018BC1. The patched build removes the pre-subtraction unsigned guard and instead adds signed negative/underflow checks: 'test rcx, rcx; js' on the offset (0x1C000A233), 'sub rax, rcx; js' on the result (0x1C000A242), 'test rdi, rdi; js' on the requested size (0x1C000A257), and a signed 'jl' at 0x1C000A260. On the observed paths the in-region offset is masked to 48 bits and bound-checked by GetOffsetTruncate, so no input passing the unpatched unsigned checks was demonstrated to yield an out-of-bounds span. GetData constructs a read span, so the theoretical impact direction is an out-of-bounds read, not a write.",
+      "trigger_conditions": "Mount a crafted CIM image and perform a file operation (IRP_MJ_CREATE, IRP_MJ_READ via NonCachedRead, IRP_MJ_DIRECTORY_CONTROL, or IRP_MJ_QUERY_EA) that reaches GetData. The patched build reaches gsl::details::terminate() at the added signed checks if an intermediate value would be negative; the unpatched build continues. No region-table size/offset combination that passes the unpatched unsigned checks and produces an out-of-bounds span was demonstrated, because the offset is 48-bit masked and pre-validated.",
+      "primitive": "None demonstrated. The change removes a latent signed/unsigned-confusion class in read-span construction; no reachable out-of-bounds read or write primitive was established against the unpatched build.",
+      "evidence": "UNPATCHED (0x140018B08):\n0x140018B9D: mov rax, [rbx]        ; region size\n0x140018BA0: cmp rax, rcx          ; UNSIGNED: size vs offset\n0x140018BA3: jb  0x140018D5C       ; size < offset -> terminate (ensures size >= offset)\n0x140018BA9: sub rax, rcx          ; available = size - offset (cannot underflow)\n0x140018BC1: cmp rax, rdi          ; UNSIGNED: available vs requested\n0x140018BC4: jb  0x140018D5C\n\nPATCHED (0x1C000A1AC):\n0x1C000A233: test rcx, rcx; js 0x1C000A3D0   ; ADDED signed offset check\n0x1C000A23C: mov rax, [rbx]\n0x1C000A23F: sub rax, rcx\n0x1C000A242: js  0x1C000A3D0                  ; ADDED signed underflow check\n0x1C000A254: test rdi, rdi; js 0x1C000A3D0    ; ADDED signed size check\n0x1C000A25D: cmp rax, rdi\n0x1C000A260: jl  0x1C000A3D0                  ; SIGNED replaces unsigned jb",
+      "assembly": "See changed_functions[Cim::ImageReader::GetData].assembly_diff for the verified UNPATCHED (0x140018B08) and PATCHED (0x1C000A1AC) bounds blocks. GetOffsetTruncate masks the in-region offset to 48 bits ('and r10, 0FFFFFFFFFFFFh' at 0x140019AD9 unpatched / 0x1C0009CE9 patched) in both builds.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cimfs_unpatched!Cim::ImageReader::GetData",
+            "address": "0x140018B08",
+            "why": "Inspect the packed RegionOffset (r8), the requested size (rdi), and, at 0x140018BA0, the region size (rax) versus the resolved offset (rcx). The offset has already been 48-bit masked and bound-checked by GetOffsetTruncate."
+          },
+          {
+            "symbol": "cimfs_unpatched!Cim::ImageReader::GetOffsetTruncate",
+            "address": "0x140019AA4",
+            "why": "See the in-region offset masked to 48 bits ('and r10, 0FFFFFFFFFFFFh' at 0x140019AD9) and the region index bound-checked ('cmp rdx, [rcx]; jnb error' at 0x140019AE2) before the region-table access."
+          },
+          {
+            "symbol": "cimfs_unpatched!Cim::ImageReader::GetFile",
+            "address": "0x140018FB4",
+            "why": "At 0x14001938B the 16-bit entry_size is read with movzx and compared unsigned at 0x1400193A6; exceeding 0x68 only traces. The subsequent read (GetData) and copy (gsl::copy) are bounds-checked."
+          }
+        ],
+        "watch": [
+          "rcx at 0x140018BA0 = resolved in-region offset (48-bit masked, pre-validated)",
+          "rax at 0x140018BA0 = region-table entry size *(rbx)",
+          "rax after 0x140018BA9 = available = size - offset (cannot underflow: guarded by the preceding jb)",
+          "rdi = requested read size",
+          "rbx at 0x140018B99 = &region_table[index], layout [0x00: uint64 size, 0x08: char* data_ptr]",
+          "r8 at function entry = packed RegionOffset (bits 48-63 region index, bits 0-47 in-region offset)"
+        ],
+        "key_offsets": [
+          "0x140018BA0: 'cmp rax, rcx; jb' - unsigned pre-subtraction guard (unpatched)",
+          "0x140018BA9: 'sub rax, rcx' - available computation (guarded, no underflow)",
+          "0x140018BC1: 'cmp rax, rdi; jb' - unsigned request check",
+          "0x1C000A233: patched 'test rcx, rcx; js' - signed offset check",
+          "0x1C000A242: patched 'sub rax, rcx; js' - signed underflow check",
+          "0x1C000A257: patched 'test rdi, rdi; js' - signed size check",
+          "0x1C000A260: patched 'jl' - signed available-vs-request check",
+          "0x140019AD9 / 0x1C0009CE9: 'and r10, 0FFFFFFFFFFFFh' - 48-bit offset mask (both builds)",
+          "0x1400193A6: 'cmp dx, 0x68' in GetFile - entry-size check that only traces",
+          "0x14001960A: Feature_CimfsV1CompatGetFileFix gate in GetFile"
+        ],
+        "trigger_setup": "Mount a crafted CIM image via the cimfs driver, then open a file or enumerate a directory to reach Cim::ImageReader::GetFile -> GetData. Compare the two builds at the bounds block: the patched build has additional signed checks (test/js, sub/js, jl); the unpatched build relies on the unsigned pre-subtraction guard and unsigned request check.",
+        "expected_observation": "Behavioral difference only: on an input that would drive an intermediate value negative, the patched build reaches gsl::details::terminate() at the new signed checks while the unpatched build proceeds. No out-of-bounds span from the unpatched build was demonstrated because the offset is 48-bit masked and bound-checked before GetData.",
+        "notes": "Region-table entry: 16 bytes, [uint64 size, char* data_ptr]. RegionOffset packing: bits 48-63 = region index, bits 0-47 = in-region offset. The image base may differ from the analyzed 0x140000000; rebase with 'lm cimfs'."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "Cim::ImageReader::GetFile",
+      "entry_point": "MountVolume -> IRP_MJ_CREATE (file open) / IRP_MJ_DIRECTORY_CONTROL / IRP_MJ_QUERY_EA",
+      "call_chain": [
+        "MountVolumeFromFileSystem (mount crafted CIM image)",
+        "Cim::FileSystem::Open / QueryDirectory / QueryEa / FindLink",
+        "Cim::ImageReader::GetFile (0x140018FB4)"
+      ],
+      "vulnerability_class": "bounded-copy refactor and removal of a feature-gated zero-init (not memory corruption)",
+      "description": "GetFile reads a 16-bit entry_size from a FileTableDirectoryEntry (movzx at 0x14001938B) and compares it unsigned against 0x68 (0x1400193A6). When entry_size exceeds 0x68 the entry is not rejected: the code emits an 'Invalid entry size' trace and continues. This is not an out-of-bounds access: the subsequent GetData read is bounds-checked inside GetData, and the following gsl::copy is bounds-checked - copy_len = min(entry_size, data_len) (cmovb at 0x140019673) into a {0x68, File*} span, which calls gsl::details::terminate() rather than overflowing if the length exceeds the destination. The patched build replaces the variable copy with a fixed 0x58 clamped by signed checks (mov edx,0x58; cmovg at 0x1C000A733; js; jg) and removes the Feature_CimfsV1CompatGetFileFix__private gate that previously made the output-struct zero-init conditional.",
+      "trigger_conditions": "Craft a FileTableDirectoryEntry with entry_size > 0x68, mount the image, and open/enumerate the file. The unpatched build traces and proceeds with bounds-checked read and copy; both builds terminate rather than overflow on an oversized length.",
+      "primitive": "None demonstrated. The copy is bounds-checked in both builds. The removed feature gate makes the output File-struct zero-init unconditional, hardening a potential uninitialized-tail read; no path exposing that residual data to an unprivileged caller was demonstrated.",
+      "evidence": "UNPATCHED (0x140018FB4):\n0x14001938B: movzx edx, word [var_B0+0Ah]  ; entry_size (zero-extended)\n0x1400193A6: cmp dx, 0x68                   ; UNSIGNED compare\n0x1400193AA: jbe 0x1400194AE                ; <=0x68 continue; else trace, then continue (no reject)\n0x1400194E4: call GetData                    ; read bounds-checked inside GetData\n0x14001960A: jz  0x140019654                ; feature off -> skip zero-init\n0x140019616: call memset                     ; feature on: zero 0x68 output struct\n0x140019673: cmovb rcx, rdx                  ; copy_len = min(entry_size, data_len) UNSIGNED\n0x1400196B2: call gsl::copy                   ; dst {0x68, File*}; terminates if len > 0x68\n\nPATCHED (0x1C000A3DC):\n0x1C000A71B: mov edx, 0x58\n0x1C000A733: cmovg rcx, rdx                  ; copy_len = min(data_len, 0x58) SIGNED\n0x1C000A73A: test rcx, rcx; js terminate\n0x1C000A73F: cmp rcx, rax; jg terminate",
+      "assembly": "See changed_functions[Cim::ImageReader::GetFile].assembly_diff.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cimfs_unpatched!Cim::ImageReader::GetFile",
+            "address": "0x140018FB4",
+            "why": "Watch the 16-bit entry_size loaded with movzx at 0x14001938B and compared unsigned at 0x1400193A6. Exceeding 0x68 only traces; the read and copy remain bounds-checked."
+          }
+        ],
+        "watch": [
+          "edx at 0x14001938B = 16-bit entry_size from disk (movzx)",
+          "ecx at 0x1400194AE = same value used as GetData read length",
+          "r14 = (FileId - 1) & 0x3FF = slot index, multiplied by entry_size for the read offset",
+          "Feature_CimfsV1CompatGetFileFix return value at 0x140019608 = controls whether the output File struct is zeroed"
+        ],
+        "key_offsets": [
+          "0x14001938B: movzx 16-bit entry_size load",
+          "0x1400193A6: 'cmp dx, 0x68' - exceeding it only traces (jbe at 0x1400193AA)",
+          "0x1400194E4: GetData call (read bounds-checked)",
+          "0x14001960A: Feature_CimfsV1CompatGetFileFix gate for zero-init",
+          "0x140019673 / 0x1400196B2: unsigned min and bounds-checked gsl::copy into the 0x68 File span"
+        ],
+        "trigger_setup": "Craft a CIM image with entry_size > 0x68 in a FileTableDirectoryEntry, mount it, and open/enumerate the file. Observe that the read and copy are bounds-checked and terminate rather than overflow.",
+        "expected_observation": "Controlled termination (gsl::details::terminate) on an oversized read/copy, in both builds; no memory corruption. The patched build additionally uses a fixed 0x58 copy and unconditional output zero-init.",
+        "notes": "The File struct is an internal structure (0x68 in the unpatched copy path, 0x58 fixed in the patched copy). r14 = (FileId - 1) & 0x3FF is the slot index within a 1024-entry block."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "Cim::LinkTable<enum Cim::Format::FileId>::Parse / Cim::LinkTable<struct Cim::Format::Stream>::Parse",
+      "entry_point": "MountVolume -> MountVolumeFromFileSystem -> image metadata parsing",
+      "call_chain": [
+        "MountVolumeFromFileSystem",
+        "Cim::ImageReader::GetStruct<Filesystem>",
+        "Cim::LinkTable<FileId>::Parse / Cim::LinkTable<Stream>::Parse (0x14002A038 / 0x140029E8C)"
+      ],
+      "vulnerability_class": "integer handling in metadata parsing; defense-in-depth (CWE-190)",
+      "description": "Both builds reject spans smaller than 8 bytes ('cmp r9, 8; jb error' at 0x140029EC2) and require an 8-byte-aligned data pointer ('test bl, 7; jnz error' at 0x140029ED0); there is no size==7 bypass. The unpatched build computes the entry count from (size-8) with unsigned shifts and compares (shr at 0x140029F0A, ja at 0x140029F23/0x140029F3A). The patched build replaces these with signed division ('cqo; and; add; sar') and signed checks ('test; js', 'jg'). The disk_count field compared against the computed count is read as a zero-extended uint32 (mov r9d, [rax+4]), so it is always non-negative, and the span size would have to approach 2^63 for (size-8) to appear negative.",
+      "trigger_conditions": "Forge the link-table descriptor in the filesystem metadata block and mount the image; parsing occurs inside MountVolumeFromFileSystem. The patched build applies signed count arithmetic; the unpatched build uses unsigned arithmetic. No reachable input that trips the new signed checks in the unpatched build was demonstrated.",
+      "primitive": "None demonstrated. disk_count is a non-negative 32-bit field; the added signed guards protect against a span size near 2^63, which is not shown to be reachable for on-disk metadata.",
+      "evidence": "UNPATCHED LinkTable<Stream>::Parse (0x140029E8C):\n0x140029EC2: cmp r9, 8; jb error         ; size floor\n0x140029ED0: test bl, 7; jnz error       ; alignment\n0x140029F0A: shr r11, 4                   ; UNSIGNED (size-8)/16\n0x140029F0E: mov r9d, [rax+4]             ; disk_count (zero-extended uint32, >= 0)\n0x140029F23: cmp r9, rdx; ja error        ; UNSIGNED\n0x140029F3A: cmp r9, r11; ja terminate     ; UNSIGNED\n\nPATCHED (0x1C000F324):\n0x1C000F38D: lea r9, [r8-8]\n0x1C000F391: test r9, r9; js terminate     ; SIGNED\n0x1C000F3C3: cqo; and edx,0Fh; add; sar rax,4  ; SIGNED div-by-16\n0x1C000F3D2: js terminate                  ; SIGNED\n0x1C000F3E9: cmp r8, rax; jg terminate      ; SIGNED (jg replaces ja)",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cimfs_unpatched!Cim::LinkTable<struct Cim::Format::Stream>::Parse",
+            "address": "0x140029E8C",
+            "why": "Inspect the link-table span ([rdx] = size, [rdx+8] = data pointer). Watch the unsigned count arithmetic (shr at 0x140029F0A, cmp r9,rdx; ja at 0x140029F23) that the patch converts to signed sar/js/jg. disk_count is the zero-extended uint32 at [rax+4]."
+          },
+          {
+            "symbol": "cimfs_unpatched!Cim::LinkTable<enum Cim::Format::FileId>::Parse",
+            "address": "0x14002A038",
+            "why": "Same unsigned count-arithmetic pattern converted to signed in the patch."
+          }
+        ],
+        "watch": [
+          "[rdx] at entry = link-table span size",
+          "[rdx+8] = link-table data pointer (checked 8-byte aligned by test bl,7)",
+          "r11 at 0x140029F0A = (size-8) >> 4, the unsigned entry count",
+          "disk_count = zero-extended uint32 at [rax+4] (always non-negative)"
+        ],
+        "key_offsets": [
+          "0x140029EC2 (Stream): 'cmp r9, 8; jb error' size floor; 0x140029ED0 'test bl,7; jnz' alignment",
+          "0x140029F0A / 0x140029F23 (Stream): unsigned count shift and 'ja' check the patch converts to signed sar/jg"
+        ],
+        "trigger_setup": "Forge the link-table descriptor so the count computed from (size-8) and the on-disk count field would exercise the arithmetic. The table is parsed during mount.",
+        "expected_observation": "Behavioral difference only: the patched build reaches gsl::details::terminate() on the signed js/jg checks for a computed size with the sign bit set; the unpatched build uses unsigned arithmetic. No reachable trigger from a realistic on-disk span was demonstrated.",
+        "notes": "The patched build uses the standard signed-division-by-power-of-two pattern (cqo; and edx, mask; add; sar). disk_count is a non-negative uint32."
+      }
+    }
+  ],
+  "summary": "The patch is a defense-in-depth hardening pass over the cimfs.sys (Composite Image File System) on-disk metadata parser. Across the Cim::ImageReader read/resolve helpers (GetData, GetDataTruncate, GetArray, GetOffsetTruncate) and Cim::LinkTable::Parse, unsigned-only comparisons on metadata-derived values are replaced with signed negative/underflow guards (js/jl/jg and signed division via cqo; sar). The same recompile removes the StackEventTracer parameter and routes errors through inline ETW. These are real, security-relevant changes in an attacker-facing parsing surface (mount a crafted CIM image, then perform file operations). However, the audit against both binaries did not substantiate a reachable out-of-bounds primitive in the unpatched build: the in-region offset is masked to 48 bits and bound-checked by GetOffsetTruncate before use; the GetFile read and gsl::copy are bounds-checked in both builds (an oversized entry_size traces and continues but terminates rather than overflows); and the link-table count derives from a non-negative 32-bit field. There is no out-of-bounds write on any examined path. The realistic impact direction, if any of the guarded values were reachable with the sign bit set, is an out-of-bounds read (CWE-125), not a write (CWE-787). GetFile additionally replaces a variable copy length (<=0x68, unsigned min) with a fixed 0x58 (signed min) and makes the previously feature-gated output-struct zero-init unconditional. Severity is assessed as low (defense-in-depth integer hardening) rather than high; the earlier out-of-bounds-write framing and the exploit chain are not supported by the binaries."
+}

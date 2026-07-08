@@ -1,0 +1,266 @@
+{
+  "binaries": {
+    "id_unpatched": "cldflt_unpatched.sys",
+    "id_patched": "cldflt_patched.sys",
+    "overall_similarity": 0.9907,
+    "matched": 1006,
+    "changed": 8,
+    "identical": 998,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CldStreamQueryProgress (sub_1C0066FD4)",
+      "similarity": 0.9355,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The per-entry query wrapper chain HsmiQueryFileRange (sub_1c003913c) -> HsmiQueryFileRangeNoLock (sub_1c00391c8) -> HsmpBitmapQueryRange is inlined directly into CldStreamQueryProgress in the patched version instead of being reached through the sub_1c003913c call",
+        "In BOTH versions the shared push lock is acquired and released once per loop iteration: unpatched acquires FltAcquirePushLockSharedEx and releases via HsmpReleaseBitmapLock (sub_1c0039890) inside HsmiQueryFileRange (sub_1c003913c); patched acquires FltAcquirePushLockSharedEx and releases via HsmpReleaseBitmapLock (sub_1c003d160) inline inside the same iteration. The lock scope is unchanged",
+        "In BOTH versions the bitmap range query is dispatched through HsmExpandKernelStackAndCallout (sub_1c0007718) -> HsmpBitmapQueryRangeExCallout (sub_1c0007c00); the patched code calls this callout directly at the inlined site, the unpatched code reaches it through HsmpBitmapQueryRange",
+        "Loop-termination test relocated: unpatched checks the returned next-VBN against the stream-size field after FsRtlAddBaseMcbEntry (0x1C0067A8B, jl loc_1C00679E7); patched checks the current position against the same field at the top of the loop before dispatching the query (if (v45 >= *(ctx+168)))",
+        "The no-bitmap fallback for the range end is identical in both builds: when the per-object bitmap sub-pointer is null the range end is set to the stream-size value, or to a 0x7FFFFFFFFFFFFFFF sentinel only when the stream-size limit pointer itself is null. In the unpatched build this is the LABEL_5 branch of HsmiQueryFileRangeNoLock (sub_1c00391c8); in the patched build it is the inlined else-branch. It is not a patched-only substitution",
+        "The Feature_1235530042__private_IsEnabledDeviceUsage (sub_1c00098e4) call is replaced by an inline per-object dereference"
+      ],
+      "security_relevant": false,
+      "security_notes": "The lock discipline is identical in both binaries. The shared push lock guarding the bitmap (FltAcquirePushLockSharedEx on *(ctx+0xa0)+0x28, released by HsmpReleaseBitmapLock) is taken and dropped once per loop iteration in the unpatched code (inside HsmiQueryFileRange / sub_1c003913c) and once per loop iteration in the patched code (inline). No lock was widened to cover the whole loop, so no time-of-check/time-of-use window is opened or closed by this change. FsRtlAddBaseMcbEntry writes to a per-request local MCB (ctx+0x18 in unpatched, ctx+1 in patched) that is not shared across threads, so it needs no lock in either version. The observable behavioral difference is the relocation of the loop-termination test from after entry processing to before it, plus the 0x7FFFFFFFFFFFFFFF sentinel for the no-bitmap case; both are consistent with the inlining of the query wrapper and the associated loop rotation by the compiler.",
+      "assembly_diff": "UNPATCHED inner loop (per-iteration lock is inside the HsmiQueryFileRange wrapper):\n0x1C0067A11: call HsmiQueryFileRange (sub_1c003913c)  ; wrapper acquires FltAcquirePushLockSharedEx, queries one range, releases via HsmpReleaseBitmapLock (sub_1c0039890)\n0x1C0067A1A: call HsmDbgBreakOnStatus (sub_1c0002c20)\n0x1C0067A47: call FsRtlAddBaseMcbEntry            ; writes per-request local MCB (no shared lock needed)\n0x1C0067A8B: jl  loc_1C00679E7                     ; loop-termination test AFTER entry processing\n\nHsmiQueryFileRange (sub_1c003913c), UNPATCHED:\n  v8 = *(a1+0xa0); if (v8) FltAcquirePushLockSharedEx(v8+0x28, 0)\n  r = HsmiQueryFileRangeNoLock(a1, ...)             ; sub_1c00391c8\n  HsmpReleaseBitmapLock(a1)                          ; sub_1c0039890\n  return r\n\nPATCHED inner loop (same wrapper inlined, same per-iteration lock):\n  while (1) {\n    if (v45 >= *(ctx+0xa8)) { ... }                 ; loop-termination test BEFORE entry processing\n    FltAcquirePushLockSharedEx(*(ctx+0xa0)+0x28, 0)  ; acquire (per iteration)\n    HsmExpandKernelStackAndCallout(HsmpBitmapQueryRangeExCallout, ...) or 0x7FFFFFFFFFFFFFFF sentinel\n    HsmpReleaseBitmapLock(...)                        ; sub_1c003d160 (per iteration)\n    FsRtlAddBaseMcbEntry(ctx+1, Lbn, Lbn, end-Lbn)\n  }"
+    },
+    {
+      "name": "CldiPortNotifyConnect (sub_1C005CE70)",
+      "similarity": 0.9567,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Process context creation: unpatched sets the process-ID field (v6+232) only when Feature_1235530042__private_IsEnabledDeviceUsage (sub_1c00098e4) returns non-zero; patched sets it unconditionally, consistent with the feature flag being enabled",
+        "In BOTH versions FltInitializePushLock (v6+96) and RtlInitializeGenericTableAvl (v6+104) are called BEFORE the object is inserted into the global list under FltAcquirePushLockExclusiveEx(&PushLock); the initialization ordering is unchanged",
+        "AVL table callback function addresses shifted due to relocation: sub_1c00464a0->sub_1c00477f0, sub_1c00613b0->sub_1c00623f0, sub_1c00613e0->sub_1c0062420"
+      ],
+      "security_relevant": false,
+      "security_notes": "In both binaries the new process-context object has its internal push lock (FltInitializePushLock at v6+0x60) and AVL table (RtlInitializeGenericTableAvl at v6+0x68) fully initialized before the object is linked into the global list (data at qword_1C0023598) under the exclusive global lock FltAcquirePushLockExclusiveEx(&PushLock). No object is published to other threads before its synchronization primitives are initialized in either version, so there is no initialization-ordering race. The only functional change is that the process-ID field (v6+0xE8) is populated unconditionally in the patched version rather than being gated by the Feature_1235530042__private_IsEnabledDeviceUsage feature check; this is a feature-flag behavior change, not a memory-safety fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_1235530042__private_IsEnabledDeviceUsage (sub_1C00098E4)",
+      "similarity": 0.0147,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Complete rewrite: unpatched reads global feature-state data_1c00247b0, checks bit 0x10, conditionally calls Feature_1235530042__private_IsEnabledFallback (sub_1c000991c); patched takes arg1 and dereferences arg1+0x60 then +0xe8",
+        "Called from CldiPortNotifyConnect (sub_1C005CE70), CldiPortProcessAbortHydration (sub_1C005D390), and CldStreamQueryProgress (sub_1C0066FD4) - all changed functions",
+        "This is a WIL (Windows Implementation Library) feature-flag helper that was inlined and changed to a per-object dereference"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_SF_qLiiiiid (sub_1C001A4B8 unpatched) matched to WPP_SF_qLiiid (sub_1C001A1E8 patched)",
+      "similarity": 0.6502,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP/ETW trace marshaller with no program logic. The unpatched WPP_SF_qLiiiiid (sub_1C001A4B8, 8-argument signature) is absent from the patched build; it is fuzzy-matched to the smaller WPP_SF_qLiiid (sub_1C001A1E8, 6-argument signature), which is new in the patched build",
+        "The signature difference follows from HsmiOpUpdatePlaceholderFile switching its rejection-path trace call from WPP_SF_qLiiiiid to WPP_SF_qLiiid after the upper-bound value (rangeEnd) was no longer logged",
+        "Stack frame size reduced from 0xc8 to 0xa8"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HsmpRecallInitiateHydrationEx (sub_1C0002D10)",
+      "similarity": 0.9564,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Two Feature_1889232187__private_IsEnabledDeviceUsage-gated validation checks present in the unpatched build are removed in the patched build (both the feature gate and the guarded check body are deleted): (a) an offset-vs-stream-size bound - unpatched call to Feature_1889232187__private_IsEnabledDeviceUsage at 0x1C0002EEE, followed by 'if (offset < 0 || offset > streamSize) return 0xC000CF0B'; (b) an offset+length integer-overflow bound - unpatched call at 0x1C0003598, followed by 'if (a6 < 0 || len < 0 || len > 0x7FFFFFFFFFFFFFFF - a6) return 0xC000CF0B'. The status immediate 0xC000CF0B (-1073688821) appears twice inside the unpatched function and zero times inside the patched function, confirming the checks are gone rather than made unconditional",
+        "Feature_1889232187 is removed binary-wide (11 references in the unpatched .c, 0 in the patched .c)",
+        "Range-end alignment changed from reusing a single HsmpGetRecallAlignment result for both start and end to a second HsmpGetRecallAlignment call for the end",
+        "Remaining differences are register allocation and relocation-driven call-target address changes (sub_1c003aae0->sub_1c003e3b0, sub_1c0005a00->sub_1c00058c0, sub_1c006c698->sub_1c006c738)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The two removed checks were compiled behind the WIL (Windows Implementation Library) feature flag Feature_1889232187__private_IsEnabledDeviceUsage, i.e. they only executed when that staged feature was enabled at runtime; the runtime default is not determinable from the binary. The removal direction is a relaxation (the patched build performs fewer range validations), but this is WIL feature-staging/servicing churn rather than a security fix, and it is not a demonstrable reachable vulnerability change: the recall/hydration path still clamps offset+length against the stream size (the pre-existing 'if (offset+len > streamsize) len = ...' clamp is present in both builds) before dispatching. No exploitable primitive introduced or removed was demonstrated.",
+      "assembly_diff": "UNPATCHED (checks gated behind the staged feature):\n0x1C0002EEE: call Feature_1889232187__private_IsEnabledDeviceUsage\n  ; then: if (offset < 0 || offset > streamSize) status = 0xC000CF0B (-1073688821)\n0x1C0003598: call Feature_1889232187__private_IsEnabledDeviceUsage\n  ; then: if (a6 < 0 || len < 0 || len > 0x7FFFFFFFFFFFFFFF - a6) status = 0xC000CF0B\n\nPATCHED: no call to Feature_1889232187 and no 0xC000CF0B inside the function; both guarded checks removed."
+    },
+    {
+      "name": "sub_1C0067D9E",
+      "similarity": 0.9757,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Address 0x1C0067D9E falls inside CldStreamQueryProgress (function header at 0x1C0066FD4); no distinct function boundary exists at this address in either binary",
+        "Register allocation changes: r12->rdi, edi->r14d, rbx->rdi",
+        "Stack frame size increased from 0x160 to 0x190",
+        "Variable rename: P argument captured before use for safe free"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CldiPortProcessAbortHydration (sub_1C005D390)",
+      "similarity":  0.9818,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Mostly register/variable renames and relocation-driven address changes",
+        "Function address changes: sub_1c003aae0->sub_1c003e3b0, sub_1c0009734->sub_1c00095f4",
+        "Feature_1235530042__private_IsEnabledDeviceUsage (sub_1c00098e4) call replaced with inline dereference"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HsmiOpUpdatePlaceholderFile (sub_1C007B4B4 unpatched / sub_1C007B554 patched)",
+      "similarity": 0.9903,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The per-range validation on each update-range entry is relaxed from a two-sided bound to a one-sided bound, and its feature gate is swapped. Unpatched (call to Feature_1889232187__private_IsEnabledDeviceUsage at 0x1C007C08D): 'if (feature && (rangeStart < 0 || rangeStart > rangeEnd)) return 0xC000CF0B'. Patched (call to Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage at 0x1C007C130): 'if (feature && rangeStart < 0) return 0xC000CF0B'. The 'rangeStart > rangeEnd' upper-bound comparison is dropped",
+        "rangeStart and rangeEnd are derived from the caller-supplied update-range array; both builds still compute rangeEnd and pass it as the range end to HsmiMarkFileRangeNoLock(a2, 0x4244, rangeStart, rangeEnd, ...) and HsmiMarkFileRangeNoLock(a2, 0x4256, rangeStart, rangeEnd, ...)",
+        "The gating feature changed Feature_1889232187 (removed binary-wide) -> Feature_Servicing_PostRelOutlookHangIssue (0 references in the unpatched .c, 9 in the patched .c)",
+        "The trace call in the rejection path changed from WPP_SF_qLiiiiid (logs both rangeStart and rangeEnd) to WPP_SF_qLiiid (logs one fewer value), consistent with the dropped upper-bound comparison",
+        "Remaining differences are register allocation, relocation-driven call-target address changes (sub_1c003aae0->sub_1c003e3b0, sub_1c00460d0->sub_1c0047420), and label/address renumbering"
+      ],
+      "security_relevant": false,
+      "security_notes": "The relaxed check is WIL feature-staging/servicing churn. In the unpatched build the two-sided check ran only when the staged Feature_1889232187 was enabled; in the patched build the one-sided check runs only when Feature_Servicing_PostRelOutlookHangIssue is enabled - a servicing feature whose name identifies it as a functional-regression fix (a post-release Outlook hang), consistent with the strict upper bound being relaxed to resolve a hang rather than being added or removed for security. The removed comparison is 'rangeStart > rangeEnd' after alignment; the range end (rangeEnd) is still computed and still passed to HsmiMarkFileRangeNoLock as the operation bound in both builds. Feature-gated on both sides with the bound retained downstream, so no demonstrable reachable memory-safety primitive is introduced or removed by this diff.",
+      "assembly_diff": "UNPATCHED:\n0x1C007C08D: call Feature_1889232187__private_IsEnabledDeviceUsage\n  ; if (rangeStart < 0 || rangeStart > rangeEnd) status = 0xC000CF0B; else HsmiMarkFileRangeNoLock(a2, 0x4244, rangeStart, rangeEnd, ...)\n\nPATCHED:\n0x1C007C130: call Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage\n  ; if (rangeStart < 0) status = 0xC000CF0B; else HsmiMarkFileRangeNoLock(a2, 0x4244, rangeStart, rangeEnd, ...)"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "CldStreamQueryProgress (sub_1C0066FD4)",
+      "entry_point": "Cloud Files minifilter progress/range query handler reached from CldiPortProcessQueryProgress (sub_1c005e2e8)",
+      "call_chain": ["User-mode port message on cloud placeholder file", "cldflt!CldiPortProcessQueryProgress (sub_1c005e2e8)", "cldflt!CldStreamQueryProgress (sub_1C0066FD4)", "cldflt!HsmiQueryFileRange (sub_1c003913c, unpatched wrapper; inlined in patched)", "cldflt!HsmiQueryFileRangeNoLock (sub_1c00391c8)"],
+      "vulnerability_class": "No memory-safety change identified; inlining of the query wrapper plus loop-termination-test relocation and sentinel handling",
+      "description": "CldStreamQueryProgress iterates over bitmap ranges to build placeholder mapping (MCB) information for cloud-backed files. In the unpatched code each iteration calls HsmiQueryFileRange (sub_1c003913c), which acquires FltAcquirePushLockSharedEx on *(ctx+0xa0)+0x28, queries exactly one range via HsmiQueryFileRangeNoLock (sub_1c00391c8) -> HsmpBitmapQueryRange -> HsmExpandKernelStackAndCallout (sub_1c0007718) -> HsmpBitmapQueryRangeExCallout (sub_1c0007c00), then releases the lock via HsmpReleaseBitmapLock (sub_1c0039890). The patched code inlines this wrapper chain into CldStreamQueryProgress, acquiring FltAcquirePushLockSharedEx and releasing via HsmpReleaseBitmapLock (sub_1c003d160) inline. In BOTH versions the push lock is acquired and released once per loop iteration, so the lock scope is identical and no time-of-check/time-of-use window is introduced or removed. FsRtlAddBaseMcbEntry writes a per-request local MCB (ctx+0x18 unpatched, ctx+1 patched) that is not shared, so it needs no lock in either version. The behavioral difference is that the loop-termination test moved from after entry processing (0x1C0067A8B jl loc_1C00679E7) to before it, which is consistent with compiler inlining and loop rotation and was not verified to change memory-safety behavior. The no-bitmap fallback (range end set to the stream-size value, or to a 0x7FFFFFFFFFFFFFFF sentinel only when the stream-size limit pointer is null) is identical in both builds - it is the LABEL_5 branch of HsmiQueryFileRangeNoLock (sub_1c00391c8) in the unpatched build and the inlined else-branch in the patched build, not a patched-only change.",
+      "trigger_conditions": "1. A cloud files sync provider must be registered (e.g., OneDrive, or a custom CfRegisterSyncRoot call). 2. Create placeholder files with non-trivial data layout (multiple bitmap ranges). 3. Issue a placeholder progress/range query that invokes CldStreamQueryProgress. The described per-iteration lock/unlock behavior is present in both binaries, so no cross-version race window is opened or closed by this change.",
+      "primitive": "None identified. The lock discipline and the unlocked FsRtlAddBaseMcbEntry on a per-request local MCB are identical between unpatched and patched, so no exploitable primitive is introduced or removed by this diff.",
+      "evidence": "UNPATCHED CldStreamQueryProgress loop (per-iteration lock inside HsmiQueryFileRange wrapper):\n\n0x1C0067A11 : call HsmiQueryFileRange (sub_1c003913c)   ; wrapper acquires+releases push lock, queries one range\n0x1C0067A1A : call HsmDbgBreakOnStatus (sub_1c0002c20)\n0x1C0067A47 : call FsRtlAddBaseMcbEntry                  ; writes per-request local MCB (no shared lock needed)\n0x1C0067A8B : jl   loc_1C00679E7                          ; loop-termination test AFTER entry processing\n\n; HsmiQueryFileRange (sub_1c003913c), UNPATCHED - lock is per call:\n;   v8 = *(a1+0xa0); if (v8) FltAcquirePushLockSharedEx(v8+0x28, 0)\n;   r = HsmiQueryFileRangeNoLock(a1, ...)                 ; sub_1c00391c8\n;   HsmpReleaseBitmapLock(a1)                              ; sub_1c0039890\n;   return r\n\nPATCHED CldStreamQueryProgress loop (same wrapper inlined, same per-iteration lock):\n;   while (1) {\n;     if (v45 >= *(ctx+0xa8)) { ... }                     ; loop-termination test BEFORE entry processing\n;     FltAcquirePushLockSharedEx(*(ctx+0xa0)+0x28, 0)      ; acquire (per iteration)\n;     HsmExpandKernelStackAndCallout(HsmpBitmapQueryRangeExCallout, ...) or 0x7FFFFFFFFFFFFFFF sentinel\n;     HsmpReleaseBitmapLock(...)                            ; sub_1c003d160 (per iteration)\n;     FsRtlAddBaseMcbEntry(ctx+1, Lbn, Lbn, end-Lbn)\n;   }",
+      "assembly": "HsmiQueryFileRange (sub_1c003913c, UNPATCHED wrapper):\n0x1C003913C: v8 = *(a1+0xa0)\n0x1C0039156: test v8, v8\n0x1C003916D: FltAcquirePushLockSharedEx(v8+0x28, 0)   ; acquire\n0x1C0039198: call HsmiQueryFileRangeNoLock (sub_1c00391c8)  ; query ONE range\n0x1C00391A2: call HsmpReleaseBitmapLock (sub_1c0039890)     ; release\n0x1C00391BD: ret\n\nCldStreamQueryProgress loop (UNPATCHED):\n0x1C0067A11: call HsmiQueryFileRange (sub_1c003913c)  ; acquire+query+release per entry\n0x1C0067A47: call FsRtlAddBaseMcbEntry                 ; per-request local MCB\n0x1C0067A8B: jl   loc_1C00679E7                         ; termination test after processing\n\nPATCHED (inlined, unchanged lock scope):\nFltAcquirePushLockSharedEx(...+0x28, 0)  ; per iteration\nHsmExpandKernelStackAndCallout(HsmpBitmapQueryRangeExCallout, ...)\nHsmpReleaseBitmapLock (sub_1c003d160)     ; per iteration\ntermination test moved before processing; 0x7FFFFFFFFFFFFFFF sentinel when bitmap object is null",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!HsmiQueryFileRange (sub_1c003913c)",
+            "address": "0x1c003913c",
+            "why": "Per-entry query wrapper. RCX = arg1 (the source object). It acquires FltAcquirePushLockSharedEx on *(RCX+0xa0)+0x28, queries one range, and releases via HsmpReleaseBitmapLock before returning. The patched build inlines this same sequence with the same lock scope."
+          },
+          {
+            "symbol": "cldflt_unpatched!HsmpReleaseBitmapLock (sub_1c0039890)",
+            "address": "0x1c00391a2 (call site within HsmiQueryFileRange)",
+            "why": "Releases the shared push lock at the end of each per-entry query. The patched build performs the equivalent release inline via HsmpReleaseBitmapLock (sub_1c003d160). Lock hold time is one query per iteration in both builds."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldStreamQueryProgress+0xa3d (sub_1C0066FD4)",
+            "address": "0x1c0067a11",
+            "why": "Entry to the bitmap-range iteration loop. Mcb is the per-request local BASE_MCB being built. The stream-size cap is read from *(ctx+0xa8)."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldStreamQueryProgress+0xa73 (sub_1C0066FD4)",
+            "address": "0x1c0067a47",
+            "why": "FsRtlAddBaseMcbEntry call site - writing the per-request local MCB. This MCB is not shared across threads, so it is intentionally written without the bitmap push lock in both unpatched and patched builds."
+          }
+        ],
+        "watch": [
+          "RCX at HsmiQueryFileRange entry = arg1 (source object); *(RCX+0xa0) = lock owner object; *(RCX+0xa0)+0x28 = push lock acquired/released each iteration in both builds",
+          "*(ctx+0xa8) = stream-size cap used by the loop-termination test",
+          "Lbn (current iteration VBN) and the returned next-VBN - advance monotonically as ranges are consumed",
+          "*(ctx+0xa0) running total updated per iteration",
+          "Bitmap object pointer *(ctx+0x38) - when null, the patched build substitutes the 0x7FFFFFFFFFFFFFFF sentinel for the range end"
+        ],
+        "key_offsets": [
+          "0x1c0067a11: call HsmiQueryFileRange (sub_1c003913c) - per-iteration acquire+query+release (unchanged scope)",
+          "0x1c0067a47: call FsRtlAddBaseMcbEntry - per-request local MCB write (no shared lock in either build)",
+          "0x1c0067a8b: jl loc_1C00679E7 - loop-termination test after processing (moved before processing in patched)",
+          "0x1c003916d: FltAcquirePushLockSharedEx in HsmiQueryFileRange - lock acquired per call",
+          "0x1c00391a2: call HsmpReleaseBitmapLock (sub_1c0039890) in HsmiQueryFileRange - lock released per call"
+        ],
+        "trigger_setup": "1. Ensure cldflt.sys is loaded (Windows 10/11 with Cloud Files filter, typically via OneDrive or CfRegisterSyncRoot). 2. Register a cloud files sync root using CfConnectSyncRoot/CfRegisterSyncRoot with a test directory. 3. Create cloud placeholder files with multiple data ranges to populate bitmap mapping entries. 4. Issue a placeholder progress/range query that reaches CldStreamQueryProgress. The per-iteration lock/unlock behavior is identical between the unpatched and patched builds, so this diff does not open or close a cross-thread race window.",
+        "expected_observation": "No cross-version difference in lock behavior is observable at these breakpoints. The push lock is held for exactly one range query per iteration in both builds. The visible differences are the position of the loop-termination test and the 0x7FFFFFFFFFFFFFFF sentinel for the no-bitmap case.",
+        "notes": "The bitmap query in both builds is dispatched through HsmExpandKernelStackAndCallout (sub_1c0007718), which runs HsmpBitmapQueryRangeExCallout (sub_1c0007c00) on an expanded kernel stack (KeExpandKernelStackAndCalloutEx, 0x6000 bytes) only when the remaining stack is below 0x3C00 bytes; this kernel-stack-exhaustion guard is present in both binaries. Output entries are 0x80 bytes each, copied to user mode via ProbeForWrite. Use lm cldflt to get the image base and add the RVA offsets."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "CldiPortNotifyConnect (sub_1C005CE70)",
+      "entry_point": "Cloud Files minifilter communication port connect handler / process context creation",
+      "call_chain": ["CfConnectSyncRoot or FltSendMessage user-mode API", "cldflt!CldiPortNotifyConnect (sub_1C005CE70) (process context creation)", "internal push lock and AVL table initialization"],
+      "vulnerability_class": "No initialization-ordering issue identified; feature-flag gating change on the process-ID field",
+      "description": "In BOTH the unpatched and patched CldiPortNotifyConnect, a newly allocated process context object has its internal push lock (FltInitializePushLock at v6+0x60) and AVL table (RtlInitializeGenericTableAvl at v6+0x68) initialized BEFORE the object is linked into the global list (qword_1C0023598) under the exclusive global lock FltAcquirePushLockExclusiveEx(&PushLock). In the unpatched decompilation the initialization is at the lines immediately preceding the list insertion, which itself occurs under the acquired global lock. No object is published to other threads before its synchronization primitives are initialized in either version, so there is no initialization-ordering race. The only functional difference is that the process-ID field (v6+0xE8) is set unconditionally in the patched build, whereas the unpatched build gates it behind Feature_1235530042__private_IsEnabledDeviceUsage (sub_1c00098e4).",
+      "trigger_conditions": "Not applicable. The initialization ordering is identical between the two builds (initialize push lock and AVL table, then insert into the global list under the exclusive global lock), so there is no cross-version race window to trigger.",
+      "primitive": "None identified. The synchronization primitives are initialized before publication in both builds.",
+      "evidence": "UNPATCHED CldiPortNotifyConnect (initialization precedes list insertion):\n// object allocated and zeroed:\nmemset(PoolWithTag, 0, 0xF0u)\n*(v6+16) = ClientPort\n*(v6+72) = IoGetCurrentProcess()\n*(v6+208) = 1\nif (Feature_1235530042__private_IsEnabledDeviceUsage())  // sub_1c00098e4 - conditional in unpatched\n    *(v6+232) = PsGetProcessId(IoGetCurrentProcess())\nFltInitializePushLock(v6+96)                 // push lock initialized\nRtlInitializeGenericTableAvl(v6+104, CldiPortRootTableCompare, ...)  // AVL table initialized\n// object then inserted into global list UNDER the global lock:\nFltAcquirePushLockExclusiveEx(&PushLock, 0)\n*(v6) = &qword_1C0023598; *(v6+8) = qword_1C00235A0; ... ; qword_1C00235A0 = v6\nFltReleasePushLockEx(&PushLock, 0)\n\nPATCHED: identical ordering; only the process-ID assignment is unconditional (the Feature_1235530042__private_IsEnabledDeviceUsage gate is removed).",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!CldiPortNotifyConnect (sub_1C005CE70)",
+            "address": "0x1c005ce70",
+            "why": "Process context creation function. Break here to observe object allocation, push lock/AVL initialization, and the subsequent list insertion under the exclusive global lock."
+          },
+          {
+            "symbol": "cldflt_unpatched!CldiPortNotifyConnect (FltInitializePushLock call)",
+            "address": "FltInitializePushLock(v6+0x60) call site",
+            "why": "Push lock initialization. In both builds this executes before the object is linked into the global list under FltAcquirePushLockExclusiveEx(&PushLock), so the object is never visible to other threads with an uninitialized lock."
+          }
+        ],
+        "watch": [
+          "RBX (or RDI) = allocated process context object pointer",
+          "Global list head at qword_1C0023598 and tail pointer at qword_1C00235A0",
+          "v6+0x60 = push lock field (initialized before list insertion in both builds)",
+          "v6+0x68 = AVL table (initialized before list insertion in both builds)",
+          "v6+0xE8 = process-ID field (set conditionally in unpatched via Feature_1235530042__private_IsEnabledDeviceUsage, unconditionally in patched)"
+        ],
+        "key_offsets": [
+          "FltInitializePushLock(v6+0x60): push lock initialized BEFORE list insertion (both builds)",
+          "RtlInitializeGenericTableAvl(v6+0x68): AVL table initialized BEFORE list insertion (both builds)",
+          "FltAcquirePushLockExclusiveEx(&PushLock): global lock guarding the list insertion that follows initialization"
+        ],
+        "trigger_setup": "Not applicable; the initialization-before-publication ordering is identical in both builds.",
+        "expected_observation": "At the FltInitializePushLock breakpoint the object is not yet linked into the global list in either build; publication happens afterward under the exclusive global lock. No uninitialized-lock window is observable.",
+        "notes": "The object is zero-initialized (memset, size 0xf0). Both the push lock and AVL table are initialized before the object is published to the global list in both binaries. The only behavioral change is the unconditional population of the process-ID field (v6+0xE8) in the patched build."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "HsmpRecallInitiateHydrationEx (sub_1C0002D10) and HsmiOpUpdatePlaceholderFile (sub_1C007B4B4 unpatched / sub_1C007B554 patched)",
+      "entry_point": "Cloud Files placeholder hydration/recall and placeholder-update paths, reached from cloud file callbacks and FSCTL/placeholder-update operations",
+      "call_chain": ["User-mode cloud file operation on a placeholder (recall/hydrate or update placeholder ranges)", "cldflt!HsmpRecallInitiateHydrationEx (sub_1C0002D10) / cldflt!HsmiOpUpdatePlaceholderFile", "range validation gated by a WIL feature flag", "cldflt!HsmpQueryModifiedRangeNoLock / cldflt!HsmiMarkFileRangeNoLock"],
+      "vulnerability_class": "WIL feature-staging / servicing relaxation of feature-gated range validation; no demonstrable reachable memory-safety change",
+      "description": "The patched build removes or relaxes range-validation checks that were compiled behind the WIL feature flag Feature_1889232187__private_IsEnabledDeviceUsage in the unpatched build. In HsmpRecallInitiateHydrationEx two Feature_1889232187-gated checks are removed entirely (both gate and guarded body): an offset-vs-stream-size bound (unpatched Feature call at 0x1C0002EEE, 'if (offset < 0 || offset > streamSize) return 0xC000CF0B') and an offset+length integer-overflow bound (unpatched Feature call at 0x1C0003598, 'if (a6 < 0 || len < 0 || len > 0x7FFFFFFFFFFFFFFF - a6) return 0xC000CF0B'); the status immediate 0xC000CF0B appears twice inside the unpatched function and zero times inside the patched function. In HsmiOpUpdatePlaceholderFile the per-range check is relaxed from two-sided (unpatched Feature_1889232187 call at 0x1C007C08D, 'if (rangeStart < 0 || rangeStart > rangeEnd) return 0xC000CF0B') to one-sided (patched Feature_Servicing_PostRelOutlookHangIssue call at 0x1C007C130, 'if (rangeStart < 0) return 0xC000CF0B'), dropping the 'rangeStart > rangeEnd' comparison. Feature_1889232187 is removed binary-wide (11 references in the unpatched .c, 0 in the patched .c) and Feature_Servicing_PostRelOutlookHangIssue is added (0 references in the unpatched .c, 9 in the patched .c).",
+      "trigger_conditions": "A cloud files sync provider registered (e.g. OneDrive or a custom CfRegisterSyncRoot). Placeholder recall/hydration or a placeholder-update operation supplying range descriptors. The removed and relaxed checks are gated by WIL feature flags in both builds, so their runtime effect depends on the feature state, which is not determinable from the binary.",
+      "primitive": "None demonstrated. The offset/length values in HsmiOpUpdatePlaceholderFile are derived from the caller-supplied update-range array, but in both builds the computed range end (rangeEnd) is still passed to HsmiMarkFileRangeNoLock as the operation bound, and HsmpRecallInitiateHydrationEx retains its 'if (offset+len > streamsize) len = ...' clamp in both builds. No reachable memory-safety primitive introduced or removed by the diff was demonstrated.",
+      "evidence": "HsmpRecallInitiateHydrationEx UNPATCHED:\n0x1C0002EEE: call Feature_1889232187__private_IsEnabledDeviceUsage ; then 'if (offset < 0 || offset > streamSize) status = 0xC000CF0B'\n0x1C0003598: call Feature_1889232187__private_IsEnabledDeviceUsage ; then 'if (a6 < 0 || len < 0 || len > 0x7FFFFFFFFFFFFFFF - a6) status = 0xC000CF0B'\nHsmpRecallInitiateHydrationEx PATCHED: no Feature_1889232187 call and no 0xC000CF0B inside the function.\n\nHsmiOpUpdatePlaceholderFile UNPATCHED:\n0x1C007C08D: call Feature_1889232187__private_IsEnabledDeviceUsage ; 'if (rangeStart < 0 || rangeStart > rangeEnd) status = 0xC000CF0B; else HsmiMarkFileRangeNoLock(a2, 0x4244, rangeStart, rangeEnd, ...)'\nHsmiOpUpdatePlaceholderFile PATCHED:\n0x1C007C130: call Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage ; 'if (rangeStart < 0) status = 0xC000CF0B; else HsmiMarkFileRangeNoLock(a2, 0x4244, rangeStart, rangeEnd, ...)'",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!HsmiOpUpdatePlaceholderFile (Feature_1889232187 gate)",
+            "address": "0x1c007c08d",
+            "why": "Unpatched per-range gate. The following comparison rejects a range with rangeStart < 0 OR rangeStart > rangeEnd. The patched build replaces the gate at the equivalent site (0x1c007c130) with Feature_Servicing_PostRelOutlookHangIssue and rejects only rangeStart < 0."
+          },
+          {
+            "symbol": "cldflt_unpatched!HsmpRecallInitiateHydrationEx (Feature_1889232187 gates)",
+            "address": "0x1c0002eee",
+            "why": "Unpatched offset-vs-stream-size gate (a second gate is at 0x1c0003598 for the offset+length overflow check). Neither gate nor guarded 0xC000CF0B return exists in the patched function."
+          }
+        ],
+        "watch": [
+          "Feature_1889232187__private_IsEnabledDeviceUsage return value (unpatched only) - the removed gate",
+          "Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage return value (patched only) - the replacement gate",
+          "rangeStart and rangeEnd in HsmiOpUpdatePlaceholderFile - derived from the caller-supplied update-range array; rangeEnd is passed to HsmiMarkFileRangeNoLock in both builds"
+        ],
+        "key_offsets": [
+          "0x1c0002eee: unpatched HsmpRecallInitiateHydrationEx - Feature_1889232187 gate for offset-vs-stream-size check (removed in patched)",
+          "0x1c0003598: unpatched HsmpRecallInitiateHydrationEx - Feature_1889232187 gate for offset+length overflow check (removed in patched)",
+          "0x1c007c08d: unpatched HsmiOpUpdatePlaceholderFile - Feature_1889232187 gate for two-sided range check",
+          "0x1c007c130: patched HsmiOpUpdatePlaceholderFile - Feature_Servicing_PostRelOutlookHangIssue gate for one-sided range check"
+        ],
+        "trigger_setup": "Register a cloud files sync root (CfRegisterSyncRoot/CfConnectSyncRoot) and issue placeholder hydration/recall and placeholder-update operations. Whether the gated checks execute depends on the WIL feature state in each build.",
+        "expected_observation": "In the unpatched build the two-sided/offset-overflow checks are reachable when the staged feature is enabled; in the patched build they are absent (recall path) or reduced to a negative-only test (update path). The downstream bound (stream size / rangeEnd) is passed to HsmiMarkFileRangeNoLock in both builds.",
+        "notes": "The gating feature name Feature_Servicing_PostRelOutlookHangIssue identifies the update-path change as a servicing fix for a post-release functional regression (an Outlook hang), consistent with a strict upper bound being relaxed to resolve a hang rather than changed for security reasons."
+      }
+    }
+  ],
+  "summary": "The diff between cldflt_unpatched.sys and cldflt_patched.sys is entirely WIL (Windows Implementation Library) feature-staging and servicing churn; no memory-safety vulnerability fix was verified, and no security-relevant change was delivered. Two feature flags move in the patch. (1) Feature_1235530042__private_IsEnabledDeviceUsage (sub_1C00098E4) graduates to always-on: it was rewritten from a global feature-state check into a per-object dereference and inlined at its call sites in CldiPortNotifyConnect (sub_1C005CE70), CldiPortProcessAbortHydration (sub_1C005D390), and CldStreamQueryProgress (sub_1C0066FD4). In CldiPortNotifyConnect this only makes the process-ID field populated unconditionally (push lock and AVL table are initialized before the object is published to the global list in BOTH builds, so no initialization-ordering race exists). In CldiPortProcessAbortHydration the dual gated path collapses to the always-on process-ID (+232) comparison; the parser validation constants are byte-identical between builds. In CldStreamQueryProgress the per-entry query wrapper HsmiQueryFileRange (sub_1c003913c) / HsmiQueryFileRangeNoLock (sub_1c00391c8) / HsmpBitmapQueryRange was inlined; the shared push lock is acquired and released once per loop iteration in BOTH builds (no lock was widened to cover the loop), so no time-of-check/time-of-use window is opened or closed, the loop-termination test was rotated to the top of the loop, and the no-bitmap range-end fallback (stream size, or a 0x7FFFFFFFFFFFFFFF sentinel when the limit pointer is null) is identical in both builds. (2) Feature_1889232187__private_IsEnabledDeviceUsage is removed binary-wide (11 -> 0 references) and Feature_Servicing_PostRelOutlookHangIssue is added (0 -> 9). This removes two feature-gated range-validation checks in HsmpRecallInitiateHydrationEx (an offset-vs-stream-size bound at 0x1C0002EEE and an offset+length integer-overflow bound at 0x1C0003598, both returning 0xC000CF0B) and relaxes the per-range check in HsmiOpUpdatePlaceholderFile from two-sided (rangeStart < 0 || rangeStart > rangeEnd) to one-sided (rangeStart < 0). The direction is a relaxation, but these checks are WIL feature-gated on both sides (runtime state not determinable from the binary), the downstream bound is still passed to HsmiMarkFileRangeNoLock / retained by the pre-existing stream-size clamp, and the replacement feature name (Servicing PostRelOutlookHangIssue) identifies the update-path change as a functional-regression servicing fix, so no demonstrable reachable memory-safety change results. WPP_SF_qLiiiiid (sub_1C001A4B8) is absent in the patched build and fuzzy-matched to the smaller marshaller WPP_SF_qLiiid (sub_1C001A1E8), a trace-signature change driven by the relaxed check logging one fewer value."
+}

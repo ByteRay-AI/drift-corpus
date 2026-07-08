@@ -1,0 +1,87 @@
+{
+  "binaries": {
+    "title": "intelpep.sys (Intel Power Engine Plugin) - Idle-state reporting refinement and device/processor struct-layout revision; no security-relevant change",
+    "id_unpatched": "intelpep_unpatched.sys",
+    "id_patched": "intelpep_patched.sys",
+    "overall_similarity": 0.9906,
+    "matched": 156,
+    "changed": 9,
+    "identical": 147,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "PepNotifyPpmQueryPlatformState",
+      "address_unpatched": "0x1C0002430",
+      "address_patched": "0x1C00024A0",
+      "similarity": 0.9507,
+      "change_type": "functional_no_security_impact",
+      "key_changes": [
+        "Added disabled-state filter inside the reporting loop: the patched build reads the pointer at entry+0x28, dereferences it, and skips the entry when the pointed-to byte is nonzero. This removes currently-disabled idle states from the platform-state list reported to PoFx. The record index is bounded by PepKnownDeviceCount in BOTH builds and the filter only reduces the emitted set (a strict subset), so the maximum write extent is unchanged and no out-of-bounds write is introduced or removed.",
+        "Device-context field offsets shifted by +8: lock pointer rbp+0x50 -> rbp+0x58 (acquire and release), state-ID array rbp+i*8+0x58 -> rbp+i*8+0x60. This is a consistent structure-layout revision, not a corrected wrong-pointer read: the sibling handler PepNotifyPpmCstStates reads the same fields and shifts by the identical +8 in the patch, so each build is internally consistent.",
+        "Register renaming (edx->r8d for the table index, r8d->r9d for the output counter) is a scheduling side effect of the two added filter instructions; behavior is unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a PoFx power-management notification callback (PEP_NOTIFY_PPM_QUERY_PLATFORM_STATE), not an IOCTL handler. The iterated list PepKnownDeviceList and its count PepKnownDeviceCount are driver-internal state populated during initialization from platform/ACPI data; the participation flag (entry+0x18) and the dereferenced disabled-flag byte (entry+0x28) reflect firmware/platform configuration, not attacker input. The added disabled-state filter is a functional refinement of which idle states are reported. It cannot cause or fix a buffer overflow: in both builds the record index (counter+2)*2 is bounded by PepKnownDeviceCount and the patched build writes a strict subset of the unpatched records, so the worst-case write extent (all entries participating, none disabled) is identical. The +8 offset shifts are a device-context layout change applied consistently to every consumer, not incorrect synchronization or use of a wrong resource. No memory-safety vulnerability exists in the unpatched build."
+    },
+    {
+      "name": "PepNotifyPpmCstStates",
+      "address_unpatched": "0x1C0002330",
+      "address_patched": "0x1C00023A0",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Reads the same device-context fields as PepNotifyPpmQueryPlatformState and shifts them by the identical +8 in the patch (lock [rdi+0x50]->[rdi+0x58], array [rdi+0x58]->[rdi+0x60]). Confirms the change is a device-context structure-layout revision, not a wrong-pointer bug in any single function."
+    },
+    {
+      "name": "PepNotifyPpmQueryCapabilities",
+      "address_unpatched": "0x1C0002060",
+      "address_patched": "0x1C0002060",
+      "change_type": "functional_no_security_impact",
+      "security_relevant": false,
+      "security_notes": "Gained a branch that, when *(a2+0xB) is nonzero, allocates a per-processor context (ExAllocatePoolWithTag, constant size 0xB8), zero-initializes it, initializes a WDF lock (WdfFunctions+0x9C0), and links it at a1+0x28. The 0xB8 size matches the enlarged per-processor context. Allocation size is a compile-time constant, not attacker-controlled. Functional/init change tied to the struct growth, not a security fix."
+    },
+    {
+      "name": "PepInitializeProcessorContext",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Per-processor context size imul constant 0xB0->0xB8 and field [rsi+0x50]->[rsi+0x58]. Struct growth churn."
+    },
+    {
+      "name": "PepNotifyPpmEnumerateBootVetoes",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Per-processor context stride 0xB0->0xB8; index field [rbx+rax]->[rbx+rax+4]; [r8+8]->[r8+0x10]. Struct growth churn."
+    },
+    {
+      "name": "PepNotifyPpmParkSelection",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Field access [rcx+4]->[rcx+8] in the revised layout. Churn."
+    },
+    {
+      "name": "PepPlatformIdleVetoReference",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Field access [rcx+0x48]->[rcx+0x50] in the revised layout. Churn."
+    },
+    {
+      "name": "PepCollectProcessorTemperature",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Field access xchg eax,[r8+4]->[r8+8]. Per-processor context field shift."
+    },
+    {
+      "name": "PepScheduleTemperatureCollection",
+      "change_type": "layout_revision",
+      "security_relevant": false,
+      "security_notes": "Per-processor context stride 0xB0->0xB8; [rdi+rax]->[rdi+rax+4]; add rcx,8->add rcx,0x10. Struct growth churn."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "The patch to intelpep.sys is a data-structure layout revision plus two functional refinements, with no security-relevant change. Two structures were enlarged: the device context (an 8-byte field inserted before offset 0x50, shifting the ERESOURCE lock 0x50->0x58 and a state-ID array 0x58->0x60) and the per-processor context (0xB0->0xB8 bytes). These shifts ripple through nine functions and are applied consistently to every consumer, so each build is internally consistent - they are recompilation churn, not wrong-pointer bugs. In PepNotifyPpmQueryPlatformState the patch also adds a disabled-state filter (dereference entry+0x28 and skip the entry if the byte is nonzero), refining which idle states are reported to the Windows Power Framework. This is not a buffer-overflow fix: in both builds the output record index is bounded by the driver-internal PepKnownDeviceCount and the patched build writes a strict subset of the unpatched records, so the maximum write extent is identical. PepNotifyPpmQueryCapabilities adds on-demand allocation of the enlarged per-processor context (constant 0xB8 size). All affected code runs from PoFx/ACPI power-management notification callbacks, not from an untrusted IOCTL surface, and none of the inputs is attacker-controlled. There is no reachable out-of-bounds write, no incorrect-synchronization vulnerability, and no local-privilege-escalation primitive."
+}

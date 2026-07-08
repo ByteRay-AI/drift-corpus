@@ -1,0 +1,502 @@
+{
+  "binary": "ci.dll",
+  "kb": "KB5089549",
+  "release_date": "2026-05-12",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-33839",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-34330",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34331",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-34333",
+      "title": "Windows Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-190",
+          "name": "Integer Overflow or Wraparound"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34344",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34345",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-34347",
+      "title": "Windows Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-34351",
+      "title": "Windows TCP/IP Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-35416",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-35417",
+      "title": "Windows Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-35418",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-35422",
+      "title": "Windows TCP/IP Driver Security Feature Bypass Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-288",
+          "name": "Authentication Bypass Using an Alternate Path or Channel"
+        }
+      ],
+      "impact": "Security Feature Bypass",
+      "cvss": 6.5
+    },
+    {
+      "id": "CVE-2026-40380",
+      "title": "Windows Volume Manager Extension Driver Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        },
+        {
+          "id": "CWE-197",
+          "name": "Numeric Truncation Error"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 6.2
+    },
+    {
+      "id": "CVE-2026-40399",
+      "title": "Windows TCP/IP Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-121",
+          "name": "Stack-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40405",
+      "title": "Windows TCP/IP Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-40406",
+      "title": "Windows TCP/IP Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-40407",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40408",
+      "title": "Windows WAN ARP Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40410",
+      "title": "Windows SMB Client Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-40414",
+      "title": "Windows TCP/IP Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.4
+    },
+    {
+      "id": "CVE-2026-40415",
+      "title": "Windows TCP/IP Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 8.1
+    },
+    {
+      "id": "CVE-2026-41088",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-32161",
+      "title": "Windows Native WiFi Miniport Driver Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-33835",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-33837",
+      "title": "Windows TCP/IP Local Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34334",
+      "title": "Windows TCP/IP Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-34337",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        },
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40369",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40397",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-191",
+          "name": "Integer Underflow (Wrap or Wraparound)"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-40401",
+      "title": "Windows TCP/IP Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.1
+    },
+    {
+      "id": "CVE-2026-40413",
+      "title": "Windows TCP/IP Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-476",
+          "name": "NULL Pointer Dereference"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 7.4
+    },
+    {
+      "id": "CVE-2026-33841",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-33840",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": true,
+  "patched": {
+    "version": "10.0.26100.8737",
+    "sha256": "ac205af767df30ce6e7b6614097c301898d0143863aaaaaa1dce500bc6ab3b70",
+    "file": "ci_patched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "ductName": "\u0010",
+      "efresh": ""
+    }
+  },
+  "prev": {
+    "version": "10.0.26100.8457",
+    "sha256": "8a6791aab8e236afb7a185ddc54e0fa1b4a9816814692b7aa4a4d94a96754ff8",
+    "kb_numbers": [
+      "KB5095093"
+    ],
+    "win_versions": [
+      "11-24H2"
+    ],
+    "file": "ci_unpatched.dll",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      ".6.1.4.1.311.1": "",
+      "\u4f37\u0001": "",
+      "\\Microsoft\\Boot": "\\OSDat",
+      "olicies\\Staged": "",
+      "rosoft Code Signing PCA 2011": "Mi",
+      "rosoft Root Cert": "",
+      "\u9cf7\u26e8\u6f84\u4edc\ua30e\u9e85\u263d\uefef\u2d41\uff2f\u7c0c\u6c8e\u804e\u10be\u867c\ue80d\u3896": "",
+      "\\": "",
+      "\u0080\u7550\u6772\u6465\u4145\u6957\u6874\u6156\u696c\u4864\u7361h\u6150\u7472\u5f41\u7250\u7669\u6154\u7367\u0a00\u6946\u656c\u614e\u656d\u1600\u724f\u6769\u6e69\u6c43\u6961\u446d\u7461\u5661\u7265\u6973\u6e6f\u0800\u724f\u6769\u6e69\u0400\u7954\u6570\u0400\u6547\u656e\u6172\u6974\u6e6f\u0800\u6553\u7373\u6f69\u496eD\u530f\u6275\u6553\u7373\u6f69\u496eD\u530f\u616d\u7472\u6353\u6572\u6e65\u6c43\u6961m\u5208\u7665\u636f\u7461\u6f69\u496eD\u4608\u6c69\u4e65\u6d61\u4965\u4f6e\u6972\u6967\u436e\u616c\u6d69\u1600\u0b06\u0005": "",
+      "\u0018\u011e\u0012\uf012\ue010\uc00e\u700c\u500b": "\u1f02\u000e\u0606\u0607\ud41f\u0011\u741f\u0010\u641f\u000f\u341f\u000e\u921f\uf018\ue016\u5014\u0902\u0003\u0601\u0602\u8209",
+      "\u060d\u341fA\u011f6\uf010\ue00e\ud00c\uc00a\u7008\u6007\u5006": "\u92ec\u0002\u01a0",
+      "\u5c89\u6c24\u8941\ubc5b\u8949\u105b\u8949\u085b\u8949\u185b\u570f\u0fc0\u4411\u5824\uf38b\u8b48\u24bc\u00f8": "\u74ff\u4803\u1f89\u854d\u74c0\uc717\u2444\u0858\u0800\u4c00\u4489\u6024\u8d48\u244c\ub858",
+      "\u4848\u748b\u5024\u8348\u30c4\uc35f\ucccc\ucccc\ucccc\ucccc\ucccc\u8948\u245c\u4808\u7489\u1024\u894c\u2464\u5518\u5641\u5741\u8b48\u48ec\uec81\u0080": "\uc865\u0f00\uc057\u8348\uc065\u4800\uf28b\u8b4c\u48e1\u558d\u48c0\uce8b\u8a45\u45f1\uf88b\u110f\ud045\u110f\ue045\u110f\uf045\uff48\ue315\uff20\u0fff\u441f",
+      "\u244c\u8928\u2444\u4534\uc033\u8d48\u2444\u4834\ud68b\u8b48\u48cf\u4489\u2024\uff48\u0115\ufe9c\u0fff\u441f": "\u8b48\u244c\u4850\ucc33\u67e8\ufc5f\u4cff\u5c8d\u6024\u8b49\u205b\u8b49\u2873\u8b49\u5fe3\uccc3\ucccc\ucccc\ucccc\ucccc\u8b48\u48c4\u5889\u5708\u8348\u40ec\u8b49\uc6f8\ue840\u8b00\uc6da\u2040\u4c00\u408d\u4520\uc933\u8d48\ue850\uc7e8\ufff7\u84ff\u75c0\u8a20\u244c\u8a30\u2454\u8468\u75c9\u840c\u74d2\u8110\u02fb\ue900\u75c0\u4c08\uc78b\uebe8\ufff8\u48ff\u5c8b\u5024\u8348\u40c4\uc35f\ucccc\ucccc\ucccc\ucccc\u8948\u245c\u4808\u7489\u1024\u4857\uec83\u0f40\u19b7\u8b48\u83f1\u16c3\u02b9\u0001\u8b00\u41d3\u43b8\u7349\u4863\u15ff\u9ab8\ufffe\u1f0fD\u4800\uf88b\u8548\u75c0\ub807\u0017\uc000\u66eb\ub70f\u4806\u4f8d\u6616\u4789\u4414\ub70f\u4806\u568b\ue808\u6084\ufffc\ub841\u1000",
+      "\ud105\ufd83\u48ff\u948d\ua024": "\ud29c\ufffb\uc085\u880f\u014b",
+      "\u48c4\u6c89\u2824\u8b48\uf90c\u8948\u2454\u4920\ud58b\ub489\ua024": "\u2e94\u0002\u8b44\u3dd0\u0225\uc000\u0475\uc7ff\ub0eb\u233d",
+      "\u5441\u5541\u5641\u5741\u8348\u60ec\u8b4c\u24bc\u00c8": "\u0002\u44c0\ud08b\uf08b\u8b48\u2484\u00d0",
+      "\u53b8\u5365\u3369\ue8db\ubcb9\ufff9\u8949\u0885\u0007\u4800\uc085\u0a75\u17bb": "\u01f4",
+      "\uff85\u840f\u0134": "\u6024\u4b00\u3c8d\u487f\ue7c1\u4804\uce8b\u0348\u187d\u8b48\ue8d7\u0e46",
+      "\u4800\u8548\u75c0\ubf0a\u0017\uc000\ucfe9": "\uba00\u0001",
+      "\uccc3\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\u8948\u245c\u4808\u8b4c\u49ca\ue9c1\u4520\uc18b\u3344\u41c2\ub60f\u83c0\u35e8\u8d45\u111c\u8d41\u8193\u65af\u411e\ud033\u8b4c\u0814\uc28b\ue8c1\u2c08\u4c48\u5389\u0f20\uc8b6\ub60f\u48c2\u8335": "\u4800\uc12b\ub948",
+      "\u20e1\u3348\u48ca\uc10b\uccc3\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\u8948\u245c\u4808\u7489\u1024\u8948\u247c\u4818\u8b48\u48f2\ufa8b\ueec1\u4804\uefc1\u4420\u0c8d\uc117\u04e7\u8d41\u6981\u7898\u441c\ub60f\uc1d0\u08e8\ub60f\u48c0\uf083\u4c74\u1c8b\u41c1\u828d\uff6c\uffff\u148b\u48c1\u818b\u0120": "\u5089\u4124\u418d\u0f97\uc8b6\u868d\u2cf9\ud32a\u8b48\u2474\u0310\u48c7\u7c8b\u1824\u3341\u83ca\u2ec1\uc148\u20e0\u0d48\ua530\u1803\u8948\u1914\u894c\u605b\u8b48\u245c\uc308\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\u8b4c\uc1ca\u04ea\uc149\u20e9\uc141\u04e1\u0344\u41ca\ub60f\u44c1\u448b\u5708\u8b41\uc1c1\u10e8\u8341\u6bc0\ub60f\u48c0\u948b\ub8c1",
+      "\uf9db\u48ff\uc481\u00a8": "\u5f41\u5e41\u5d41\u5c41\u5e5f\u5b5d\uccc3\ucccc\ucccc\ucccc\u8b4c\u49dc\u5b89\u4908\u7389\u4910\u7b89\u4d18\u7389\u4120\u4857\uec83\u4970\uc18b\u8b49\u4cf0\uf28b\u8b44\u83f9\u2464P\u8349\ue863\u4500\uc933\u8d4d\ue843\u948b\ua024",
+      "\u244c\ue868\u8efa\ufff7\u4489\u4024\uc085\u2578\u8b48\u2444\u4848\uc085\u1b74\u8348\u02c0\u8948\u2444\u4848\u548b\u6824\u8b49\ue8cf\uf085\ufff7\u3345\uebdb\u4113\u5c89\u4024\u29e9\uffff\u41ff\u5c89\u4024\uc6ff\u7489\u5824\ufee9\ufffe\u45ff\ued84\u1475\uc7ff\u7c89\u5c24\u8ee9\ufffe\ubbff\u0225\uc000\u5c89\u4024\u06eb\u4489\u4024\uc38b\u8b48\u248c\u01b0": "\ue8cc\u9362\ufff9\u8d4c\u249c\u01c0",
+      "\u330f\u48c9\u15ff\ua3e8\ufffb\u1f0fD\u3300\uebdb\ubb16\u009a\uc000\u8b48\ue8ce\u0256": "\u0fff\u3785\u0002\u8b00\u48c3\u9c8b\ue824",
+      "\u4838\ub589\u0148": "\u74ff\u4838\u858b\u01c8",
+      "\u0fff\u441f": "\uff48\ua915\ufb92\u0fff\u441f",
+      "\u2904\uc38b\u234c\u41c8\ufb3b\u5976\u8b45\u41c5\u958d\u6892\u075f\u334d\u41c2\uc48b\u334c\u48c0\ue2c1\u4920\uf081\u2260\u4ed8\u0b4c\u48c2\u448b\u3024\u8b48\u245c\u4838\u6c8b\u4024\u8b48\u2474\u4148\ub60f\u49ce\u8789\u01a8": "\u4d20\u5f89\u4970\uc08b\u894d\ucf0c\u5f41\u5e41\u5d41\u5c41\uc35f\u45cc\u858d\ua3bf\u2b68\u8ab8\u3900\u49ec\ue0c1\u4c20\ud033\u0b4d\uebc2\uccb0\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\ucccc\u8348\u48ec\u8b4c\u48d9\u8c8b\u8024",
+      "\ud68b\u3348\ub8d0\ua189\ueeda\u3348\u48d0\u00b8": "\u6300\u2477\u48d7\u5c8b\u0824\u0b48\u48d0\u748b\u1824\u8b48\u49c2\u8b89\u01a0",
+      "\u8948\u247c\u4818\uf98b\u8d44\u928a\ue70c\u4895\uf28b\u8b48\u48da\uebc1\u4120\ub70f\u44d1\u9b8d\ub3aa\ua9a7\u8b41\uc1c3\u10e8\u0f44\uc0b6\u818b\u00c8": "\u1ce8\ub605\u0006\u0300\u41d0\ub60f\u83c3\u02e8\u8b4e\uc114\u8b48\uc10c\u8b41\uc1c3\u08e8\u8b44\u9104\ub60f\u48c8\uf181\u0094",
+      "\ue8c1\u4108\uc081\u0681": "\ub60f\u48c0\ufb35",
+      "\u4c57\uf18b\uc28b\ue0c1\u4804\uea8b\uc148\u20ed\u8b4c\u8bfa\u44fd\ud58b\ufa33\uc141\u04ea\u0344\u44d0\ucd8b\uc141\u04e1\u9d8d\uc27a\u4d4e\u3341\u41da\uf28b\u8b41\u41c2\uef2b\ue8c1\u0f08\uc8b6\uc28b\ue8c1\u8304\u4be9\u0344\u41c8": ""
+    },
+    "selection_tier": 1,
+    "selection_tier_description": "same Windows version (e.g. both from '10-1809')"
+  }
+}

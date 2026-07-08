@@ -1,0 +1,236 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.6712,
+    "matched": 1170,
+    "changed": 916,
+    "identical": 254,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdServiceWaitForListen @ 0x1C00197C0 (patched 0x140043C80)",
+      "similarity": 0.9073,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Bounds-check block refactored from goto-based sequence into one compound conditional, but the conditions are logically identical in both builds (when flag bit 0x100 is clear, only the primary size *(a2+0xa0) is checked; when set, primary+6 and, if the secondary maximum is non-zero, secondary+6 are checked)",
+        "Copy source is *(a2+0x98)+6 with length *(*(a2+0x98)+4)+2 in BOTH builds — no change to the buffer copy source or length",
+        "Reference-count increment hardened: unpatched 'lock inc dword ptr [r14+38h]' (32-bit) became patched 'lock xadd [r14+40h], rax' (64-bit) followed by '__fastfail(0xE)' when the resulting count is <= 1",
+        "Struct field offsets shifted (endpoint context grew), accounting for most of the byte-level diff"
+      ],
+      "security_relevant": true,
+      "security_notes": "The only behavioral change in this function is the reference-count integrity fastfail. The bounds-check logic is equivalent between builds and the MDL-mapped copy uses the same validated pointer *(a2+0x98) with the same length in both builds. There is no out-of-bounds read/write in this path. An earlier hypothesis of a skipped secondary-buffer check leading to an OOB write is not supported: the 'secondary not checked when bit 0x100 clear' branch exists identically in the patched build.",
+      "assembly_diff": "// Reference-count increment, unpatched vs patched (real disassembly):\n// UNPATCHED 0x1C002D7B4: lock inc dword ptr [r14+38h]   ; 32-bit, unchecked\n// PATCHED  0x140043F6C: lock xadd [r14+40h], rax        ; 64-bit InterlockedIncrement64\n// PATCHED  0x140043F72: add rax, r12                    ; new count\n// PATCHED  0x140043F75: cmp rax, r12                    ; vs 1\n// PATCHED  0x140043F78: jg short loc_140043F81\n// PATCHED  0x140043F7A: mov ecx, 0Eh                    ; FAST_FAIL_INVALID_REFERENCE_COUNT\n// PATCHED  0x140043F7F: int 29h                         ; __fastfail(0xE)\n// Bounds checks: logically identical in both builds (goto vs compound conditional only)."
+    },
+    {
+      "name": "AfdRestartBufferReceiveWithUserIrp @ 0x1C0005A10 (patched 0x14000C0B0)",
+      "similarity": 0.8368,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Reference-count increment at [obj+0x30] changed from 'lock inc' (32-bit, result ignored) to 'lock xadd' (64-bit InterlockedIncrement64) followed by '__fastfail(0xE)' when the new count is <= 1",
+        "Both builds already use atomic (lock-prefixed) reference-count operations — there is no non-atomic decrement",
+        "Struct field offsets shifted due to context-structure growth"
+      ],
+      "security_relevant": true,
+      "security_notes": "This AFD receive-repost path takes a reference on the connection object (a3+0x30) before adding the repost work item via AfdLRListAddItem. The unpatched build increments the 32-bit count without checking the result. The patched build performs a 64-bit interlocked increment and executes __fastfail(0xE) (FAST_FAIL_INVALID_REFERENCE_COUNT) if the resulting count is not greater than 1, i.e. if the reference was taken on an object whose count had already reached 0. This is defense-in-depth against reference-count-based use-after-free. The report's earlier 'non-atomic dec then if(old==1) free' double-free mechanism is not present in this function.",
+      "assembly_diff": "// UNPATCHED 0x1C0022912: lock inc dword ptr [rdi+30h]   ; 32-bit, unchecked\n// UNPATCHED 0x1C0022924: call AfdLRListAddItem\n// PATCHED  0x14000C24F: lock xadd [rbx+30h], rax        ; 64-bit\n// PATCHED  0x14000C255: add rax, rsi                    ; new count (rsi=1)\n// PATCHED  0x14000C258: cmp rax, rsi\n// PATCHED  0x14000C25B: jg short loc_14000C264\n// PATCHED  0x14000C25D: mov ecx, 0Eh\n// PATCHED  0x14000C262: int 29h                         ; __fastfail(0xE)\n// PATCHED  0x14000C272: call AfdLRListAddItem"
+    },
+    {
+      "name": "AfdTLTPacketsSend @ 0x1C003EFE8 (patched 0x140053CE8)",
+      "similarity": 0.827,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Two reference-count increments (fields +0x30 and +0x38 -> +0x40) changed from 'lock inc' (32-bit) to checked 64-bit increments with '__fastfail(0xE)' when the new count is <= 1",
+        "Allocation modernized from ExAllocatePoolWithQuotaTag(0x30, 'AfdF') to ExAllocatePool2(0x61, 48, 'AfdF') — identical size (0x30 = 48) and identical tag (0x46646641 = 'AfdF')",
+        "Struct field offsets shifted due to context-structure growth"
+      ],
+      "security_relevant": true,
+      "security_notes": "This TDI transport send/registration path takes references on connection objects. The unpatched build uses plain 32-bit interlocked increments; the patched build uses checked 64-bit increments that __fastfail(0xE) on a resulting count <= 1, consistent with the driver-wide reference-count integrity hardening. The allocation change is a straight ExAllocatePoolWithQuotaTag -> ExAllocatePool2 API modernization: size (0x30) and pool tag ('AfdF') are unchanged. The earlier claim of a corrected undersized allocation (0x210) is not supported by the binaries.",
+      "assembly_diff": "// UNPATCHED 0x1C003F09B: lock inc dword ptr [r12+38h]\n// UNPATCHED 0x1C003F0A6: lock inc dword ptr [rax+30h]\n// UNPATCHED 0x1C003F116: call __imp_ExAllocatePoolWithQuotaTag\n// PATCHED  0x140053DC6: lock xadd [r13+40h], rax ; then int 29h on <= 1\n// PATCHED  0x140053DDE: lock xadd [rcx+30h], rax ; then mov ecx,0Eh / int 29h\n// PATCHED  0x140053E6F: call __imp_ExAllocatePool2"
+    },
+    {
+      "name": "sub_1C0048484 (AfdRioCreateRqPair)",
+      "similarity": 0.9023,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Registered-I/O buffer registration: IoAllocateMdl + MmProbeAndLockPages + MmMapLockedPagesSpecifyCache for user-supplied buffers",
+        "Uses AfdRioCheckRqBufferSize (0x1C0047030) to validate count*0x48+0x10 == total_size with count <= 0x38E38E2 (integer-overflow guard)",
+        "Error paths consolidated between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Registers I/O buffers for AFD registered I/O. The size validation guards against integer overflow in count*struct_size. No new security-relevant defect identified in the diff; the change is a consolidation of error handling.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WskKnrCompletePending @ 0x1C0013068",
+      "similarity": 0.9054,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Reference-count decrement handling restructured; fields consolidated between builds",
+        "Consistent with the driver-wide reference-count integrity hardening pass",
+        "ETW logging parameters changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Resource cleanup with reference counting. Changes are consistent with the broad reference-count hardening; no independent exploitable change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003D7B4 (AfdFastTransmitFile)",
+      "similarity": 0.9225,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Fast-path file send using FsRtlCopyRead / FsRtlMdlRead",
+        "Sums three sizes and uses an int-sized allocation length on the buffered path; the large-transfer path uses MDL-based I/O",
+        "Additional validation lines between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Fast TransmitFile path. No security-relevant change confirmed in the diff. The earlier reference to a maximum-size constant at 0x1C00582D0 is not verifiable against the binaries and has been removed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0047030 (AfdRioCheckRqBufferSize)",
+      "similarity": 0.9524,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Size validation helper: checks arg1 * 0x48 + 0x10 == arg2 with arg1 <= 0x38E38E2",
+        "Prevents integer overflow in count * struct_size arithmetic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Integer-overflow guard; equivalent logic in both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000AC10 (AFDETW_TRACERECVDATAGRAM)",
+      "similarity": 0.9077,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ETW trace logging function",
+        "Register renaming and data-reference changes only"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00751B0 (WskTdiCreateAO)",
+      "similarity": 0.9526,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Device file creation via IoCreateFileEx with ECP list",
+        "Allocation wrapper changed between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00668D0 (AfdCommonDelAddressHandler)",
+      "similarity": 0.9561,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "List management function",
+        "Register renaming; equivalent logic for list unlinking and cleanup"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "Reference-count increments across AFD (AfdServiceWaitForListen @ 0x1C00197C0, AfdRestartBufferReceiveWithUserIrp @ 0x1C0005A10, AfdTLTPacketsSend @ 0x1C003EFE8, and ~225 further sites)",
+      "entry_point": "Any AFD path that takes a new reference on an endpoint/connection/receive-repost object",
+      "call_chain": [
+        "Object teardown drives a reference count toward 0",
+        "A concurrent path (pending I/O completion, receive repost via AfdRestartBufferReceiveWithUserIrp, TDI send via AfdTLTPacketsSend, accept/listen servicing via AfdServiceWaitForListen) takes a fresh reference on the same object"
+      ],
+      "vulnerability_class": "Use-after-free / reference-count integrity (CWE-416)",
+      "description": "The dominant security-relevant change is a driver-wide rollout of reference-count integrity checks. In the unpatched build, taking a new reference is a plain 32-bit interlocked increment (lock inc dword ptr [obj+off]) whose result is ignored. In the patched build the increment is performed as a 64-bit interlocked add (lock xadd) and the result is checked: if the new count is not greater than 1, the code executes __fastfail(0xE) (int 29h with ecx=0xE, FAST_FAIL_INVALID_REFERENCE_COUNT). This halts the machine when a reference is taken on an object whose count had already reached 0, a hallmark of use-after-free / reference-count underflow. The unpatched build has this check at 2 sites; the patched build has it at 227. This is defense-in-depth hardening: the diff shows the guard being added but does not by itself demonstrate a reachable, attacker-controllable underflow.",
+      "trigger_conditions": "Reaching the fastfail requires an AFD object's reference count to already be at or below 0 when a new reference is taken. A candidate race: (1) create a TCP socket via WSASocket; (2) issue an overlapped WSARecv so a receive-repost context is live; (3) from a second thread call closesocket() while the receive is pending, racing endpoint teardown against the reference-taking paths. On a patched machine, if the race drives the count to 0 before a reference is re-taken, __fastfail(0xE) fires (bugcheck 0x139, subcode 0xE). Deterministic reproduction is not established from the diff.",
+      "primitive": "None demonstrated. The check is a mitigation: it converts a would-be use-after-free into an immediate, non-exploitable bugcheck rather than exposing an out-of-bounds or controllable-free primitive.",
+      "evidence": "// Reference-count increment, unpatched vs patched (real decompilation):\n// UNPATCHED AfdRestartBufferReceiveWithUserIrp @ 0x1C0005A10:\n//   *(_DWORD *)(a3 + 4) |= 0x10000000u;\n//   _InterlockedIncrement((volatile signed __int32 *)(a3 + 0x30));   // 32-bit, result ignored\n//   AfdLRListAddItem((PSLIST_ENTRY)(a3 + 0xC0));\n// PATCHED AfdRestartBufferReceiveWithUserIrp @ 0x14000C0B0:\n//   *(_DWORD *)(a3 + 4) |= 0x10000000u;\n//   if ( _InterlockedIncrement64((volatile signed __int64 *)(a3 + 0x30)) <= 1 )\n//       __fastfail(0xEu);                                            // FAST_FAIL_INVALID_REFERENCE_COUNT\n//   AfdLRListAddItem((PSLIST_ENTRY)(a3 + 0xC0));",
+      "assembly": "// UNPATCHED AfdRestartBufferReceiveWithUserIrp @ 0x1C0005A10:\n// 0x1C0022912: lock inc dword ptr [rdi+30h]      ; refcount += 1 (32-bit, unchecked)\n// 0x1C0022924: call AfdLRListAddItem\n\n// PATCHED AfdRestartBufferReceiveWithUserIrp @ 0x14000C0B0:\n// 0x14000C249: mov rax, rsi                      ; rsi = 1\n// 0x14000C24F: lock xadd [rbx+30h], rax          ; rax = old refcount; refcount += 1 (64-bit)\n// 0x14000C255: add rax, rsi                      ; rax = new refcount\n// 0x14000C258: cmp rax, rsi                      ; new count vs 1\n// 0x14000C25B: jg short loc_14000C264            ; new > 1 -> continue\n// 0x14000C25D: mov ecx, 0Eh                      ; FAST_FAIL_INVALID_REFERENCE_COUNT\n// 0x14000C262: int 29h                           ; __fastfail(0xE)\n// 0x14000C272: call AfdLRListAddItem",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdRestartBufferReceiveWithUserIrp (checked reference-count increment, patched)",
+            "address": "0x14000C24F",
+            "why": "Break at the 'lock xadd [rbx+30h], rax' increment. Read [rbx+0x30] beforehand; a value of 0 or negative means the following cmp/jg will route to the fastfail."
+          },
+          {
+            "symbol": "afd!AfdRestartBufferReceiveWithUserIrp (fastfail site, patched)",
+            "address": "0x14000C262",
+            "why": "The 'int 29h' with ecx=0Eh (FAST_FAIL_INVALID_REFERENCE_COUNT). Reached only when a reference is taken on an object whose count was already <= 0."
+          },
+          {
+            "symbol": "afd!AfdRestartBufferReceiveWithUserIrp (unchecked increment, unpatched)",
+            "address": "0x1C0022912",
+            "why": "The unpatched 'lock inc dword ptr [rdi+30h]' with no following check; the reference is taken even if [rdi+0x30] was already 0."
+          }
+        ],
+        "watch": [
+          "[obj+0x30]: reference count field being incremented (rdi in unpatched, rbx in patched AfdRestartBufferReceiveWithUserIrp)",
+          "ecx at the fastfail: 0xE = FAST_FAIL_INVALID_REFERENCE_COUNT",
+          "Bugcheck code on a patched machine: 0x139 (KERNEL_SECURITY_CHECK_FAILURE) with subcode 0xE",
+          "Whether any concurrent teardown path can drive the count to 0 before this increment (the underflow precondition)"
+        ],
+        "key_offsets": [
+          "0x1C0022912: unpatched unchecked 'lock inc dword ptr [rdi+30h]'",
+          "0x14000C24F: patched 'lock xadd [rbx+30h], rax' (64-bit increment)",
+          "0x14000C258: patched 'cmp rax, rsi' (new count vs 1)",
+          "0x14000C262: patched 'int 29h' fastfail",
+          "0x140043F6C / 0x140043F7F: same pattern in patched AfdServiceWaitForListen (field +0x40)",
+          "0x140053DC6 / 0x140053DDE: same pattern in patched AfdTLTPacketsSend (fields +0x40, +0x30)"
+        ],
+        "trigger_setup": "Run a tight loop of overlapped WSARecv immediately followed by closesocket() from separate threads across many sockets to maximize the teardown-vs-reference race window. Note that reaching the fastfail requires an actual reference-count underflow, which is not demonstrated by the diff.",
+        "expected_observation": "On patched: an immediate __fastfail-driven bugcheck (0x139, subcode 0xE) if and only if the race drives a reference count to 0 before a new reference is taken. On unpatched: no fastfail; the count is silently incremented from 0, leaving a revived (dangling) object that may be used after free later.",
+        "notes": "The __fastfail(0xE) / FAST_FAIL_INVALID_REFERENCE_COUNT pattern is a runtime integrity check applied broadly (227 sites in the patched build vs 2 in the unpatched build). It stops exploitation of a reference-count underflow at the point of detection; it does not remove a root-cause logic defect, because none is visible in this diff."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "AfdServiceWaitForListen @ 0x1C00197C0 (patched 0x140043C80)",
+      "entry_point": "NtDeviceIoControlFile -> AfdWaitForListen -> AfdServiceWaitForListen (accept/listen data delivery)",
+      "call_chain": [
+        "NtDeviceIoControlFile -> AfdDispatch -> AfdWaitForListen handler -> AfdServiceWaitForListen (MDL-mapped copy of accept data)"
+      ],
+      "vulnerability_class": "None (buffer validation unchanged)",
+      "description": "An earlier hypothesis of an out-of-bounds read/write in this function via a skipped secondary-buffer bounds check is not supported by the binaries. The bounds checks are logically identical between builds: when endpoint flag bit 0x100 is clear, both builds check only the primary size field (*(a2+0xa0)) and do not check the secondary field; when bit 0x100 is set, both builds additionally check *(a2+0xa0)+6 and (if the secondary maximum is non-zero) *(a2+0xa8)+6. The patched build expresses these as one compound conditional rather than a goto sequence, but the truth table is the same. The MDL-mapped copy reads its source from the same validated pointer *(a2+0x98) with length *(*(a2+0x98)+4)+2 in both builds. The only behavioral change in this function is the reference-count integrity fastfail covered by the primary finding.",
+      "trigger_conditions": "Not applicable; no buffer-validation defect exists in this path.",
+      "primitive": "None.",
+      "evidence": "// Bounds check truth table is identical; copy source/length identical:\n// BOTH builds: memmove(dst, *(a2+0x98)+6, *(_WORD*)(*(a2+0x98)+4)+2)\n// UNPATCHED uses goto LABEL_16/LABEL_24; PATCHED uses one compound 'if(...) {...} else return 0xC0000023'.\n// The 'secondary not checked when bit 0x100 clear' branch exists identically in the patched build.",
+      "assembly": "// Real disassembly at the addresses previously cited as an OOB write (unpatched cold block of AfdServiceWaitForListen):\n// 0x1C002D556: cmp [rdx+0A0h], eax        ; primary size vs max (bit 0x100 clear path)\n// 0x1C002D55C: ja  loc_1C002D5EC          ; primary too large -> error\n// 0x1C002D5CD: cmp eax, [r15+10h]         ; primary+6 vs max (bit 0x100 set path)\n// 0x1C002D5D1: ja  short loc_1C002D5EC\n// 0x1C002D5DB: mov eax, [rdx+0A8h]        ; secondary size (bit 0x100 set path)\n// 0x1C002D5E1: add eax, 6\n// 0x1C002D5E4: cmp eax, ecx               ; secondary+6 vs max\n// 0x1C002D5E6: jbe loc_1C002D566          ; ok -> proceed\n// 0x1C002D5EC: mov edi, 0C0000023h        ; STATUS_BUFFER_TOO_SMALL\n// These are the same checks in the patched build. No OOB write is present.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd!AfdServiceWaitForListen (accept/listen data delivery)",
+            "address": "0x1C00197C0",
+            "why": "Entry point. Inspect the bounds checks and the memmove source (*(a2+0x98)+6) / length (*(*(a2+0x98)+4)+2); confirm they match between builds."
+          }
+        ],
+        "watch": [
+          "FsContext+8: endpoint flags; bit 0x100 selects which (equivalent) validation branch runs",
+          "*(a2+0x98): validated buffer pointer used as the copy source in BOTH builds",
+          "*(a2+0xa0): primary size field; *(a2+0xa8): secondary size field"
+        ],
+        "key_offsets": [
+          "0x1C002D556: primary size check (bit 0x100 clear path)",
+          "0x1C002D5CD: primary+6 check (bit 0x100 set path)",
+          "0x1C002D5E4: secondary+6 check (bit 0x100 set path)",
+          "0x1C002D5EC: STATUS_BUFFER_TOO_SMALL (0xC0000023) error path"
+        ],
+        "trigger_setup": "Not applicable; retained only to document that the previously suspected OOB path is not exploitable.",
+        "expected_observation": "The copy parameters (destination VA, source *(a2+0x98)+6, length *(*(a2+0x98)+4)+2) are identical between unpatched and patched at the same code point.",
+        "notes": "This finding is downgraded to informational: the buffer validation is unchanged and no out-of-bounds primitive exists. The function's only real change is the reference-count integrity fastfail (see the primary finding)."
+      }
+    }
+  ],
+  "summary": "The diff between afd_unpatched.sys and afd_patched.sys (Windows Ancillary Function Driver) is dominated by a driver-wide reference-count integrity hardening pass. Plain 32-bit interlocked reference-count increments (lock inc) were replaced with 64-bit interlocked increments (lock xadd) followed by __fastfail(0xE) (FAST_FAIL_INVALID_REFERENCE_COUNT, int 29h with ecx=0xE) when the resulting count is not greater than 1. This halts the machine when a reference is taken on an object whose count had already reached 0, a defense-in-depth mitigation against reference-count-based use-after-free. The check appears at 227 sites in the patched build versus 2 in the unpatched build, including in AfdServiceWaitForListen, AfdRestartBufferReceiveWithUserIrp, and AfdTLTPacketsSend. The previously reported out-of-bounds write in AfdServiceWaitForListen is not supported by the binaries: the bounds checks are logically identical between builds and the copy source is the same validated pointer *(a2+0x98) in both. The previously reported 'non-atomic decrement / double-free' mechanism is also not present: both builds use atomic operations, and the real change is a checked increment (not a decrement guard) with fastfail code 0xE (not 0xD). The AfdTLTPacketsSend allocation change is an ExAllocatePoolWithQuotaTag -> ExAllocatePool2 API modernization with identical size (0x30) and tag ('AfdF'), not an undersized-allocation fix. The reference-count hardening is genuine but defense-in-depth; the diff does not demonstrate a reachable, attacker-controllable underflow."
+}

@@ -1,0 +1,503 @@
+{
+  "binaries": {
+    "title": "cmimcext.sys - No security-relevant change: WIL feature-staging library churn, ExAllocatePool2 modernization, and a feature-gated (Feature_ImcL) rollout",
+    "id_unpatched": "cmimcext_unpatched.sys",
+    "id_patched": "cmimcext_patched.sys",
+    "overall_similarity": 0.7993,
+    "matched": 55,
+    "changed": 34,
+    "identical": 21,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC) → wil_details_FeatureReporting_IncrementUsageInCache (sub_1400016BC)",
+      "similarity": 0.2144,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Core atomic feature-config state machine split from a monolithic multi-case dispatcher (unpatched, 218 instructions) into a focused single-case function (patched, 69 instructions)",
+        "Unpatched operates on a GLOBAL state dword passed as arg2=&data_1c0004138; patched receives the state pointer as arg1 from per-instance caller context",
+        "The unpatched version handled feature-change types 0,1,2-7,0x140-0x17f all in one function using lock cmpxchg on the global; patched version only handles type 0/4 (the 0x1ff-bit-field case) and delegates other cases to separate functions wil_details_FeatureReporting_IncrementUsageInCache (sub_1400016BC)/wil_details_FeatureReporting_IncrementOpportunityInCache (sub_1400015C8)",
+        "Removes the global state reference data_1c0004138; state isolation eliminates cross-instance interference"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage cache helper. The unpatched version updates the WIL feature-state cache in place with per-dword lock cmpxchg; the patched (newer WIL) version receives the state pointer from a caller-supplied context instead of a module-global. This is a library-version refactor, not a synchronization fix: the path is PASSIVE_LEVEL feature-usage telemetry with no demonstrated two-writer concurrency, and the per-dword cmpxchg is WIL's normal in-place update present in both builds.",
+      "assembly_diff": "Unpatched wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC) (0x1c00013fc) operates on global:\nmov     r10d, r8d\nmov     rdi, rdx          ; rdx = &data_1c0004138 (global)\nmov     r11, rcx\n...\nlock cmpxchg dword [rdi], r8d   ; cmpxchg on GLOBAL\nlock cmpxchg dword [rdi+0x4], edx\n\nPatched wil_details_FeatureReporting_IncrementUsageInCache (sub_1400016BC) (0x1400016bc) operates on caller-provided state:\nmov     r8d, dword [rcx]   ; rcx = per-instance state ptr\nlea     r10, [r9+0x8]\nmov     ebx, edx\n...\nmov     eax, r8d\nlock cmpxchg dword [rdi], ecx   ; cmpxchg on per-instance state"
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4) → wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1400018DC)",
+      "similarity": 0.4212,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched reads config from GLOBAL data_1c00038f8 and passes &data_1c0004138 to wil_details_FeatureReporting_RecordUsageInCache (sub_1c00013fc)",
+        "Patched reads config from per-instance context *(arg1+8) and *(arg1+0x18)",
+        "Patched version inlines the feature-change-type dispatch that was previously in wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC)",
+        "Replaces the global feature-descriptor table data_1c00038f8 with per-instance *(arg1+8) and the previously hard-coded feature id 0x3a6cba9 with *(arg1+0x18); the recordFeatureUsage function pointer data_1c0004170 (g_wil_details_recordFeatureUsage) remains a global read in the patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage reporting helper. The unpatched version reads the WIL feature-property cache via the module-global off_1C00038F8 and the set-once reporting callback g_wil_details_recordFeatureUsage (data_1c0004170); the patched version reads cache state from a caller-supplied context. This is a WIL library-version refactor. The reporting callback is initialized once during staging init, is dispatched through __guard_dispatch_icall (CFG-checked), and REMAINS a module-global read in the patched build, so no racing-global was eliminated. No attacker-controlled concurrent writer of these globals was identified.",
+      "assembly_diff": "Unpatched wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4) (0x1c00016d4):\nmov     r9, rdx\nlea     rcx, [rbp-0x38]\nmov     rbx, rdx\nshr     r9, 0x20\nmov     rdx, qword [rel 0x1c00038f8]  ; GLOBAL feature state table\nmov     esi, r8d\ncall    0x1c00013fc                    ; operates on GLOBAL data_1c0004138\n...\nmov     rax, qword [rel 0x1c0004170]  ; GLOBAL callback pointer\ntest    rax, rax\nje      0x1c0001759\nmov     r9, qword [rel 0x1c00038f8]   ; GLOBAL again\nlea     rcx, [rbp-0x20]\nmov     ecx, 0x3a6cba9\ncall    qword [rel 0x1c00060d0]        ; indirect call via GLOBAL\n\nPatched wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1400018DC) (0x1400018dc):\nmov     r10, qword [rcx+0x8]           ; per-instance context *(arg1+8)\nmov     r14, rcx\nmov     ecx, r8d\n...\ncall    0x1400016bc                    ; operates on per-instance state r10"
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (sub_1C0008224) → wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (sub_14000A204)",
+      "similarity": 0.6561,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Recursive feature-state evaluation function changed from operating on global *arg1 to per-instance context arg3",
+        "Unpatched recurses via wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (sub_1c0008224)(*rax_1, rax_1) reading global state; patched calls wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (sub_14000a1c8)(*rax_2, rax_2) with per-instance data",
+        "Added explicit 0xc00 (both-bits-set) flag handling and rsi_2 (bit-6) tracking"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-dependency evaluation. The unpatched version reads/updates the feature-state word via a CAS loop; the patched (newer WIL) version receives the state through a caller-supplied context. Library-version refactor; no attacker-controlled concurrent mutation demonstrated.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_InitializeFeatureStaging (sub_1C000B008) → wil_InitializeFeatureStaging (sub_14000CB94)",
+      "similarity": 0.6982,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ADDED standard one-time-init guard: patched version checks g_wil_details_isFeatureStagingInitialized at 0x14000CBAA and returns if already initialized",
+        "ADDED RtlRegisterFeatureUsageProvider registration at 0x14000CCB4 (new WIL telemetry provider surface, absent in the older library)",
+        "Sets g_wil_details_recordFeatureUsage to wil_details_RecordFeatureUsageReporting at 0x14000CC70",
+        "In both builds the function registers the feature-change notification only when a feature descriptor requests it (conditional, via a descriptor scan)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Newer-WIL one-time staging initializer. The patched build adds WIL's standard init guard (g_wil_details_isFeatureStagingInitialized) and a new RtlRegisterFeatureUsageProvider registration; CmCompleteInitMachineConfig adds the symmetric RtlUnregisterFeatureUsageProvider teardown and clears the flag. This is library churn, not a security fix. The function allocates nothing and touches no linked list in either build; it does NOT call ImpAddAllowListEvent and there is no notification-node list, so there is no double-registration pool-corruption primitive.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_Servicing_IMCMemoryCorruptionFix__private_IsEnabledDeviceUsage (sub_1C0001C18) → wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (sub_14000A1C8)",
+      "similarity": 0.9094,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched checks bit 4 (0x10) of GLOBAL data_1c0004220 to decide control flow",
+        "Patched checks bit 9 of PER-INSTANCE state *arg1",
+        "Function signature changed from no-args (reads global) to taking arg1 (per-instance state pointer)"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-evaluation churn (state source changed from module-global to caller-supplied context). Note the unpatched sub_1C0001C18 is a tiny Feature_Servicing_IMCMemoryCorruptionFix device-usage gate while the patched sub_14000A1C8 is a feature-state evaluation helper; the pairing reflects address reuse across the rebuild rather than an evolution of the same routine. No security-relevant behavior change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__cpu_features_init (sub_1C0001E10) → __cpu_features_init (sub_1400021E0)",
+      "similarity": 0.3933,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "CPUID-based CPU feature detection restructured (AVX/SSE checks reordered)",
+        "Register allocation changed (r9→r8); logic equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1C00018E0) → wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_140001B04)",
+      "similarity": 0.6309,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature-state computation function now takes per-instance context arg3 instead of global &data_1c00038f0",
+        "Added 0xc00 dual-flag handling and r13/rsi_1 tracking for refined state evaluation",
+        "Core RtlQueryFeatureConfiguration call logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of the global-to-per-instance refactoring. The feature-query logic is preserved; only the state-source changed from global to per-instance.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CmSetInitMachineConfig",
+      "similarity": 0.8146,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds Feature_ImcL__private_IsEnabledDeviceUsageNoInline (sub_140001020)() as additional gating check (OR'd with rsi_1 Hyper-V cpuid check) before selecting registry-migration paths",
+        "Patched uses ImpReadImcHiveDword (sub_14000C960)/ImpReadWriteSequence (sub_14000C9F0) (which check Feature_ImcL__private_IsEnabledDeviceUsageNoInline (sub_140001020)) instead of unconditional ImpReadImcHiveDword (sub_1C000BAE4)",
+        "Core registry open/query/set logic preserved",
+        "Global state variables renamed (data_1c0004xxx → data_140005xxx)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The patched build adds a new WIL runtime feature-staging gate (Feature_ImcL__private_IsEnabledDeviceUsageNoInline (sub_140001020)) at multiple branch points (0x14000C120, 0x14000C2BF, 0x14000C469, 0x14000C4AC, 0x14000C51A, 0x14000C58D, 0x14000C5E1). At the first site the gate, when enabled, bypasses the pre-existing esi (Hyper-V partition count from cpuid 0x4000000c) check and proceeds directly. Both the gated path and the pre-existing path remain present in the binary; selection is by runtime feature-configuration state. This is a feature-staged rollout (killswitch), not an unconditionally-delivered security fix. Core registry open/query/set logic is preserved.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CmCompleteInitMachineConfig",
+      "similarity": 0.9116,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ADDED RtlUnregisterFeatureUsageProvider(data_140005140) cleanup — balances the new registration in wil_InitializeFeatureStaging (sub_14000CB94)",
+        "ADDED g_wil_details_isFeatureStagingInitialized = 0 reset (clearing the re-entrancy guard)",
+        "Cleanup loop wrapped in Feature_ImcL__private_IsEnabledDeviceUsageNoInline (sub_140001020)() check",
+        "Loop restructuring (goto-based vs sequential)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry/cleanup additions. The RtlUnregisterFeatureUsageProvider call is the symmetric teardown for the new registration added in wil_InitializeFeatureStaging (sub_14000CB94). Not independently exploitable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpCopyKeyValues (sub_1C0008B7C) → ImpCopyKeyValues (sub_1400096F4)",
+      "similarity": 0.9856,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag(NonPagedPoolNx) → ExAllocatePool2(POOL_FLAG_NON_PAGED=0x40)",
+        "Status constant renaming (-0x3ffffff3 → STATUS_INVALID_PARAMETER)",
+        "Error-path global variable field assignment order changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Standard pool-API modernization. Buffer-growth logic ((ResultLength + 0x1000) & 0xfffff000) is identical. No bounds-check or size-validation change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpEstablishNamedSubkey (sub_1C0008DD0) → ImpEstablishNamedSubkey (sub_140009954)",
+      "similarity": 0.961,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Bounds check rewritten: 'rdx - 1 > 0xfffffffd' (unpatched) → '!rdx || rdx == 0xffffffff' (patched) — LOGICALLY EQUIVALENT",
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration in ImpGetObjectSecurityDescriptorByHandle (sub_140009C20)",
+        "Status constant naming and register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "The bounds check 'rdx - 1 > 0xfffffffd' is mathematically equivalent to '!rdx || rdx == 0xffffffff'. No actual logic change. ExAllocatePool2 is hardening (guarantees zero-initialized NX pool).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpUnloadImcHive (sub_1C0008614) → ImpUnloadImcHive (sub_140009EF0)",
+      "similarity": 0.9777,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration",
+        "Register allocation and label renumbering"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpGetRegValueSz (sub_1C000BCE0) → ImpGetRegValueSz (sub_14000D000)",
+      "similarity": 0.9828,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "OBJECT_ATTRIBUTES initialization reordered (field-by-field → struct init)",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpGetObjectSecurityDescriptorByHandle (sub_1C0009090) → ImpGetObjectSecurityDescriptorByHandle (sub_140009C20)",
+      "similarity": 0.9751,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration for ZwQuerySecurityObject buffer",
+        "Error-path field assignment order changed"
+      ],
+      "security_relevant": false,
+      "security_notes": "ZwQuerySecurityObject buffer-growth logic unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpGetSubkeyByIndex (sub_1C00091CC) → ImpGetSubkeyByIndex (sub_140009D68)",
+      "similarity": 0.9519,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration for ZwEnumerateKey buffer",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpAddAllowListEvent (sub_1C000BB74) → ImpAddAllowListEvent (sub_14000CE80)",
+      "similarity": 0.7397,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Allocation error-path restructured: if/else inverted for clarity",
+        "Register allocation changes (NumberOfBytes inlined)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The linked-list insertion and ExAllocatePool2/RtlCopyUnicodeString logic is equivalent. Restructured control flow only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpEstablishIMCPolicies (sub_1C000B7E8) → ImpEstablishIMCPolicies (sub_14000C66C)",
+      "similarity": 0.9906,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration",
+        "OBJECT_ATTRIBUTES initialization style change",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpApplyMachineConfiguration (sub_1C00087E4) → ImpApplyMachineConfiguration (sub_14000935C)",
+      "similarity": 0.989,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePool2(POOL_FLAG_NON_PAGED=0x40) replaces ExAllocatePoolWithTag(NonPagedPoolNx) — flags=0x40 equivalent",
+        "Register renaming r15→r12 throughout",
+        "Called sub-functions renamed to patched equivalents"
+      ],
+      "security_relevant": false,
+      "security_notes": "The recursive registry-tree-migration logic (ZwEnumerateKey → ZwOpenKey → ZwCreateKey → ImpCopyKeyValues (sub_1C0008B7C) value-copy) is unchanged. The rdi+0x40 in ExAllocatePool2(rdi+0x40,...) is the POOL_FLAG (rdi=0 in that branch, so flags=0x40=NON_PAGED). Pool hardening only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_ReevaluateOnFeatureConfigurationChange (sub_1C0008010) → wil_details_ReevaluateOnFeatureConfigurationChange (sub_14000A3A0)",
+      "similarity": 0.9657,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Global data table address renamed (data_1c00038f0 → data_140004978)",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-change-notification callback — iterates feature table and updates state. Logic equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_PopulateInitialConfiguredFeatureStates (sub_1C000B0B4) → wil_details_PopulateInitialConfiguredFeatureStates (sub_14000CCF0)",
+      "similarity": 0.7443,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "rdx_1 computation restructured: '*(i+0x1c) - 2 > 1' → explicit 'rax_1 == 3 || rax_1 == 2' check — EQUIVALENT",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "The 'x - 2 > 1' test is equivalent to 'x == 3 || x == 2' for unsigned comparison. Logic unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService (sub_1C00017C4) → wil_details_FeatureReporting_ReportUsageToService (sub_1400017B0)",
+      "similarity": 0.9874,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Now passes per-instance context arg1 to wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1400018DC) instead of computing rcx locally",
+        "Nested if-chain (unpatched) replaced with flat if/else-if chain (patched) — EQUIVALENT logic",
+        "Callback invocation changed from indirect global to per-instance _guard_dispatch_icall (sub_1400022d0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL reporting dispatcher. State/callback now threaded through a caller-supplied context; logic equivalent. Library-version refactor.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (sub_1C0001B30) → wil_details_IsEnabledFallback (sub_140001E18)",
+      "similarity": 0.95,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Now takes arg3 (per-instance context) and passes it to wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_140001B04) and wil_details_FeatureReporting_ReportUsageToService (sub_1400017B0)",
+        "Unpatched passes &data_1c0004220 (global) and &data_1c00038f0 (global) to callees"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-enable fallback. State now threaded through a caller-supplied context instead of module-globals. Library-version refactor.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1C0001BBC) → wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_140001DBC)",
+      "similarity": 0.7582,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Now takes arg3 (per-instance context) and reads/writes *arg3 instead of global data_1c0004220",
+        "CAS loop operates on per-instance state"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-state-cache helper. The in-place CAS update on the WIL state word now receives its target through a caller-supplied context instead of reading a module-global. Library-version refactor; no attacker-controlled concurrent writer demonstrated.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "McGenControlCallbackV2 (sub_1C0001010) → McGenControlCallbackV2 (sub_1400011E0)",
+      "similarity": 0.9791,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Bitmap manipulation restructured (separate read/calc/write vs direct memory op)",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature bitmask update logic equivalent. Restructured for register allocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies (sub_1C0008138) → wil_details_EvaluateFeatureDependencies (sub_14000A0B4)",
+      "similarity": 0.8654,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Second loop: unpatched calls wil_details_EvaluateFeatureDependencies_GetCachedFeatureEnabledState (sub_1c0008224)(rax, i_1) recursively on global; patched checks TEST_BITD(rax,9) then calls wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (sub_14000a204)(rcx, rax, i_1) with per-instance context"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-dependency evaluation. Callee now receives a caller-supplied context instead of recursing on a module-global. Library-version refactor.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_Servicing_IMCMemoryCorruptionFix__private_IsEnabledFallback (sub_1C0001C00) → Feature_Servicing_IMCMemoryCorruptionFix__private_IsEnabledFallback (sub_1400010B4)",
+      "similarity": 0.5239,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Now passes &data_140004978 (per-instance data table) as third arg to wil_details_IsEnabledFallback (sub_140001e18)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Trampoline function — passes additional context pointer to wil_details_IsEnabledFallback (sub_140001e18).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HviIsAnyHypervisorPresent (sub_1C0001C50) → HviIsAnyHypervisorPresent (sub_140002094)",
+      "similarity": 0.9608,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed unnecessary __security_cookie stack guard (leaf function, no local buffer)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Security cookie removal from a leaf function with no vulnerable stack usage. Cosmetic optimization.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HviIsHypervisorMicrosoftCompatible (sub_1C0001CAC) → HviIsHypervisorMicrosoftCompatible (sub_1400020D4)",
+      "similarity": 0.95,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed unnecessary __security_cookie stack guard",
+        "Hypervisor detection (cpuid 0x40000001 == 0x31237648) logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpSetRegValue (sub_1C000BEB4) → ImpSetRegValue (sub_14000D45C)",
+      "similarity": 0.9787,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "OBJECT_ATTRIBUTES initialization reordered"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpReadImcHiveDword (sub_1C000BAE4) → ImpReadImcHiveDword (sub_14000C960)",
+      "similarity": 0.9832,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only __security_cookie function name changed (__security_check_cookie (sub_1c0001d10) → __security_check_cookie (sub_140002290))"
+      ],
+      "security_relevant": false,
+      "security_notes": "ZwQueryValueKey wrapper — completely unchanged logic. Type/size validation (Type==4, DataLength==4) identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImpValidatePagingFiles (sub_1C000C128) → ImpValidatePagingFiles (sub_14000D5E4)",
+      "similarity": 0.9646,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Computer-name validation logic restructured (loop body reordered)",
+        "Register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "The computer-name parsing/validation (checking for valid characters, space handling) produces the same results. Restructured control flow.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon (sub_1C0001D9C) → __GSHandlerCheckCommon (sub_14000215C)",
+      "similarity": 0.9878,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes only"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4) / wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC) (WIL feature-usage reporting helpers)",
+      "entry_point": "CmSetInitMachineConfig (single boot-time call site) -> wil_InitializeFeatureStaging -> WIL feature-evaluation/reporting tree",
+      "call_chain": ["CmSetInitMachineConfig", "wil_InitializeFeatureStaging (sub_1C000B008)", "wil_details_EvaluateFeatureDependencies (sub_1C0008138)", "wil_details_IsEnabledFallback (sub_1C0001B30)", "wil_details_FeatureReporting_ReportUsageToService (sub_1C00017C4)", "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4)", "wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC)"],
+      "vulnerability_class": "No security-relevant change (WIL feature-staging library refactor; not a synchronization defect)",
+      "description": "There is no race condition on global feature-config state in this diff. The touched globals are the WIL feature-property cache (off_1C00038F8) and a set-once reporting callback pointer (g_wil_details_recordFeatureUsage / data_1c0004170). In the patched (newer WIL) build these helpers receive their state through a caller-supplied context pointer instead of reading the module-global cache, but g_wil_details_recordFeatureUsage is STILL read as a module-global in the patched build, so no racing global was removed. The per-dword lock cmpxchg is WIL's normal in-place feature-state update, present in both builds. The path is PASSIVE_LEVEL feature-usage telemetry; no attacker-controlled two-writer concurrency was demonstrated. The 'multi-field non-atomic write' race, 'stale callback pointer' dereference, and 'notification-list pool corruption' were not substantiated by the binaries. This is a WIL library-version refactor, not a security fix.",
+      "trigger_conditions": "cmimcext.sys is a boot-time driver; CmSetInitMachineConfig runs once during initialization to migrate content from \\REGISTRY\\MACHINE\\INITIALMACHINECONFIG. The WIL reporting/evaluation helpers examined here run at PASSIVE_LEVEL from that single boot-time path. No attacker-reachable concurrent-writer trigger was identified.",
+      "primitive": "None. No corruption, stale-pointer, or linked-list primitive is supported by the binaries. The reporting callback is initialized once and dispatched through __guard_dispatch_icall (CFG-checked).",
+      "evidence": "Unpatched wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4) reads the WIL feature-property cache via a module-global:\n  int32_t* r = wil_details_FeatureReporting_RecordUsageInCache (sub_1c00013fc)(&var_50, off_1C00038F8, arg3, arg2 >> 0x20);\n  int64_t cb = g_wil_details_recordFeatureUsage;  // set-once callback pointer (data_1c0004170)\n  if (cb)\n      __guard_dispatch_icall(cb, 0x3a6cba9, arg3, 1, off_1C00038F8, &var_38);  // CFG-checked dispatch\n\nPatched wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1400018DC) (newer WIL: state from context):\n  uint64_t sub_1400018dc(void* ctx, ...) {\n      int32_t* state = *(ctx + 8);  // caller-supplied context, not off_1C00038F8\n      wil_details_FeatureReporting_IncrementUsageInCache (sub_1400016bc)(state, rsi, arg3, &s);\n      // g_wil_details_recordFeatureUsage is STILL read as a module-global here\n  }\n\nUnpatched wil_InitializeFeatureStaging (sub_1C000B008): calls PopulateInitialConfiguredFeatureStates and EvaluateFeatureDependencies, then registers the change notification only if a feature descriptor requests it. It allocates nothing and inserts nothing into a list (no ImpAddAllowListEvent call).\n\nPatched wil_InitializeFeatureStaging (sub_14000CB94): adds the standard one-time-init guard (g_wil_details_isFeatureStagingInitialized at 0x14000CBAA/0x14000CBB8), sets g_wil_details_recordFeatureUsage at 0x14000CC70, and adds a new RtlRegisterFeatureUsageProvider registration at 0x14000CCB4 — newer-WIL library shape, not a security fix.",
+      "assembly": "wil_details_FeatureReporting_ReportUsageToServiceDirect @ 0x1C00016D4 (unpatched):\n00000001C00016F7  mov     r9, rdx\n00000001C00016FA  lea     rcx, [rbp+var_38]\n00000001C00016FE  mov     rbx, rdx\n00000001C0001701  shr     r9, 20h\n00000001C0001705  mov     rdx, cs:off_1C00038F8            ; module-global WIL feature cache\n00000001C000170C  mov     esi, r8d\n00000001C000170F  call    wil_details_FeatureReporting_RecordUsageInCache\n00000001C0001714  xor     edi, edi\n00000001C0001716  mov     r14d, 1\n00000001C000171C  movups  xmm1, xmmword ptr [rax]\n00000001C000171F  movups  [rbp+var_20], xmm1\n00000001C0001723  movsd   xmm0, qword ptr [rax+10h]\n00000001C0001728  mov     rax, cs:g_wil_details_recordFeatureUsage  ; set-once callback pointer\n00000001C000172F  movsd   [rbp+var_10], xmm0\n00000001C0001734  test    rax, rax\n00000001C0001737  jz      short loc_1C0001759\n00000001C0001739  mov     r9, cs:off_1C00038F8\n00000001C0001740  lea     rcx, [rbp+var_20]\n00000001C000174C  mov     ecx, 3A6CBA9h\n00000001C0001751  mov     edx, esi\n00000001C0001753  call    cs:__guard_dispatch_icall_fptr  ; CFG-checked dispatch of set-once callback\n00000001C0001785  call    cs:__imp_RtlNotifyFeatureUsage; ntoskrnl",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cmimcext_unpatched!wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1c00016d4)",
+            "address": "0x1c00016d4",
+            "why": "Entry to the WIL feature-usage reporting helper. At entry rdx=arg2 (high dword = feature change type), r8d=arg3 (subtype). The call at 0x1c000170f reads the WIL feature-property cache off_1C00038F8. Runs at PASSIVE_LEVEL from the single boot-time CmSetInitMachineConfig path."
+          },
+          {
+            "symbol": "cmimcext_unpatched!wil_details_FeatureReporting_RecordUsageInCache (sub_1c00013fc)",
+            "address": "0x1c00013fc",
+            "why": "WIL feature-usage cache helper. Performs an in-place per-dword lock cmpxchg update of the WIL feature-state (present in both builds). The newer WIL supplies this state via a caller-supplied context instead of the module-global."
+          },
+          {
+            "symbol": "cmimcext_unpatched!wil_InitializeFeatureStaging (sub_1c000b008)",
+            "address": "0x1c000b008",
+            "why": "One-time WIL staging init. Calls Populate/Evaluate helpers and conditionally registers the feature-change notification. It performs no allocation and no list insertion (no ImpAddAllowListEvent). The patched build adds a standard init guard here (g_wil_details_isFeatureStagingInitialized)."
+          },
+          {
+            "symbol": "cmimcext_unpatched!wil_details_ReevaluateOnFeatureConfigurationChange (sub_1c0008010)",
+            "address": "0x1c0008010",
+            "why": "The feature-change-notification callback (logic equivalent across builds). Iterates the feature descriptor table and re-evaluates cached feature state."
+          }
+        ],
+        "watch": [
+          "off_1C00038F8 (WIL feature-property cache pointer) — read by wil_details_FeatureReporting_ReportUsageToServiceDirect at 0x1c0001705 and 0x1c0001739; module-global in unpatched, context-supplied in patched",
+          "g_wil_details_recordFeatureUsage / data_1c0004170 (set-once reporting callback pointer) — read at 0x1c0001728 and dispatched via __guard_dispatch_icall; remains a module-global in the patched build",
+          "r9d at wil_details_FeatureReporting_ReportUsageToServiceDirect entry = arg2>>0x20 = feature change type",
+          "esi at wil_details_FeatureReporting_ReportUsageToServiceDirect = r8d = feature subtype"
+        ],
+        "key_offsets": [
+          "0x1c0001705: mov rdx, cs:off_1C00038F8 — reads the WIL feature-property cache",
+          "0x1c000170f: call wil_details_FeatureReporting_RecordUsageInCache — WIL cache update",
+          "0x1c0001728: mov rax, cs:g_wil_details_recordFeatureUsage — reads the set-once callback pointer",
+          "0x1c0001753: call cs:__guard_dispatch_icall_fptr — CFG-checked dispatch of the reporting callback",
+          "0x1c0001785: call cs:__imp_RtlNotifyFeatureUsage — WIL usage notification",
+          "wil_InitializeFeatureStaging @ 0x1c000b008: no init guard in unpatched; patched adds g_wil_details_isFeatureStagingInitialized check at 0x14000cbaa and set at 0x14000cbb8"
+        ],
+        "trigger_setup": "cmimcext.sys is reached during system initialization when the Configuration Manager calls CmSetInitMachineConfig once to migrate content from \\REGISTRY\\MACHINE\\INITIALMACHINECONFIG. wil_InitializeFeatureStaging runs from that single call site and conditionally registers wil_details_ReevaluateOnFeatureConfigurationChange only when a feature descriptor requests change notification. The WIL reporting helpers run at PASSIVE_LEVEL. No attacker-controlled concurrent-writer setup was identified.",
+        "expected_observation": "Normal single-threaded WIL feature-usage reporting: off_1C00038F8 (feature-property cache) is read on the reporting path, and g_wil_details_recordFeatureUsage (set once during init) is dispatched via __guard_dispatch_icall. No concurrent-writer contention, list corruption, or bugcheck was demonstrated in either build.",
+        "notes": "This is cmimcext.sys (Configuration Manager Initial Machine Config Extension) — a kernel driver loaded during boot, not directly IOCTL-reachable from user mode. The driver is at base 0x1c0000000 (unpatched) / 0x140000000 (patched). Pool tag is 'IMCP' (0x50434d49). The feature-config subsystem uses Windows Rtl*FeatureConfiguration APIs (RtlQueryFeatureConfiguration, RtlRegisterFeatureConfigurationChangeNotification, RtlNotifyFeatureUsage, and in the patched build RtlRegisterFeatureUsageProvider). The structural difference across the rebuild is that the newer WIL feature helpers receive state through a caller-supplied context pointer instead of reading module-globals; g_wil_details_recordFeatureUsage remains a module-global in both builds."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "wil_InitializeFeatureStaging (sub_1C000B008) (WIL one-time staging init)",
+      "entry_point": "CmSetInitMachineConfig -> wil_InitializeFeatureStaging (sub_1C000B008)",
+      "call_chain": ["CmSetInitMachineConfig", "wil_InitializeFeatureStaging (sub_1C000B008)", "wil_details_PopulateInitialConfiguredFeatureStates (sub_1C000B0B4)", "wil_details_EvaluateFeatureDependencies (sub_1C0008138)", "RtlRegisterFeatureConfigurationChangeNotification"],
+      "vulnerability_class": "No security-relevant change (WIL one-time-init guard + new usage-provider registration; not a re-entrancy/pool-corruption fix)",
+      "description": "There is no exploitable missing-re-entrancy-guard defect here. The unpatched wil_InitializeFeatureStaging (sub_1C000B008) allocates nothing and inserts nothing into any list: it calls RtlQueryFeatureConfigurationChangeStamp, wil_details_PopulateInitialConfiguredFeatureStates, wil_details_EvaluateFeatureDependencies, and conditionally RtlRegisterFeatureConfigurationChangeNotification. There is no ImpAddAllowListEvent call and no notification-node list in this function in either build, so there is no double-registration corruption primitive. The patched wil_InitializeFeatureStaging (sub_14000CB94) adds WIL's standard one-time-init guard (g_wil_details_isFeatureStagingInitialized) and a new RtlRegisterFeatureUsageProvider registration (with matching RtlUnregisterFeatureUsageProvider teardown in CmCompleteInitMachineConfig). This is a newer-WIL library shape, not a security fix.",
+      "trigger_conditions": "wil_InitializeFeatureStaging runs from the single boot-time CmSetInitMachineConfig call site. No exploitable re-invocation path or corruption target was identified in either build.",
+      "primitive": "None. The function performs no allocation and no list insertion, so there is no callback-duplication or list-corruption primitive.",
+      "evidence": "Unpatched wil_InitializeFeatureStaging (sub_1C000B008) — allocates nothing, no list insertion:\n  RtlQueryFeatureConfigurationChangeStamp();\n  wil_details_PopulateInitialConfiguredFeatureStates();\n  wil_details_EvaluateFeatureDependencies();\n  // scans wil_details_featureDescriptors; registers ONLY if a descriptor requests notification\n  RtlRegisterFeatureConfigurationChangeNotification(wil_details_ReevaluateOnFeatureConfigurationChange, 0, &stamp, &wil_details_featureChangeNotification);\n\nPatched wil_InitializeFeatureStaging (sub_14000CB94) — adds one-time-init guard + new usage provider:\n  if (g_wil_details_isFeatureStagingInitialized) return;   // 0x14000CBAA\n  g_wil_details_isFeatureStagingInitialized = 1;            // 0x14000CBB8\n  ... same Populate/Evaluate/RegisterChangeNotification ...\n  g_wil_details_recordFeatureUsage = wil_details_RecordFeatureUsageReporting;  // 0x14000CC70\n  RtlRegisterFeatureUsageProvider(...);                     // 0x14000CCB4 (new WIL surface)",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cmimcext_unpatched!wil_InitializeFeatureStaging (sub_1c000b008)",
+            "address": "0x1c000b008",
+            "why": "One-time WIL staging init reached from the single boot-time CmSetInitMachineConfig call site. It allocates nothing and inserts nothing into a list; the patched build adds a standard init guard (g_wil_details_isFeatureStagingInitialized) and a new RtlRegisterFeatureUsageProvider call."
+          }
+        ],
+        "watch": [
+          "g_wil_details_isFeatureStagingInitialized — patched-only one-time-init flag (set at 0x14000cbb8, cleared in CmCompleteInitMachineConfig)",
+          "wil_details_featureChangeNotification / data_1c0004228 — change-notification registration handle"
+        ],
+        "key_offsets": [
+          "0x1c000b008: function entry — no init guard in unpatched; patched adds the guard at 0x14000cbaa/0x14000cbb8",
+          "0x14000ccb4: new RtlRegisterFeatureUsageProvider registration (patched-only WIL telemetry surface)"
+        ],
+        "trigger_setup": "wil_InitializeFeatureStaging is invoked once from CmSetInitMachineConfig during system initialization. No re-invocation corruption path was identified.",
+        "expected_observation": "Single WIL staging initialization; conditional change-notification registration. No allocation and no list mutation occur in this function in either build.",
+        "notes": "The one-time-init guard (g_wil_details_isFeatureStagingInitialized) is set at 0x14000cbb8 in the patched binary and cleared in CmCompleteInitMachineConfig at teardown. It is WIL's standard init pattern, not a fix for an exploitable double-registration."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The cmimcext.sys diff (34 changed functions, 0 unmatched) is a rebuild against a newer Windows feature-staging (WIL) library plus routine modernization. The WIL feature-usage/reporting helpers changed from reading module-globals (off_1C00038F8 feature-property cache, g_wil_details_recordFeatureUsage set-once callback) to receiving state through a caller-supplied context pointer, though g_wil_details_recordFeatureUsage remains a module-global read in the patched build. The one-time staging initializer (wil_InitializeFeatureStaging) gained WIL's standard init guard (g_wil_details_isFeatureStagingInitialized) and a new RtlRegisterFeatureUsageProvider registration (with matching teardown in CmCompleteInitMachineConfig). Every ExAllocatePoolWithTag was replaced by ExAllocatePool2 (all 7 tagged sites in the unpatched build; the patched build has 0 ExAllocatePoolWithTag and 12 ExAllocatePool2), with buffer-growth and bounds logic unchanged. The only Configuration-Manager behavioral change is a new runtime feature-staging killswitch, Feature_ImcL__private_IsEnabledDeviceUsageNoInline, gating pre-existing CmSetInitMachineConfig/CmCompleteInitMachineConfig paths (old paths retained); at its first site, when enabled it bypasses the pre-existing Hyper-V-partition-count gate. No race condition on shared global feature state, no missing-re-entrancy-guard pool corruption, no stale-callback dereference, and no write-what-where primitive are present in the binaries: the reporting path is PASSIVE_LEVEL telemetry, the callback pointer is set-once and CFG-dispatched, and wil_InitializeFeatureStaging performs no allocation or list insertion. A WIL feature flag named Feature_Servicing_IMCMemoryCorruptionFix is present in BOTH builds with an unchanged call site in CmCompleteInitMachineConfig, indicating a servicing fix that is staged behind runtime feature configuration rather than delivered unconditionally in this diff."
+}

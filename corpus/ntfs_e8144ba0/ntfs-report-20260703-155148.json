@@ -1,0 +1,203 @@
+{
+  "binaries": {
+    "title": "ntfs.sys - $LogFile restart-table validation and integer-overflow checks made unconditional via WIL feature-gate removal (CWE-20 / CWE-190, Medium)",
+    "id_unpatched": "ntfs_unpatched.sys",
+    "id_patched": "ntfs_patched.sys",
+    "overall_similarity": 0.9922,
+    "matched": 4047,
+    "changed": 10,
+    "identical": 4037,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NtfsExtendRestartTable (0x1C0024660 unpatched, 0x1C0024640 patched)",
+      "similarity": 0.9096,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: EvaluateCurrentState(&g_Feature_2859161914_59426036) is called; when it returns non-zero (feature enabled) the code calls RtlULongAdd(NumberEntries, growth, &new_count) and raises STATUS_DISK_CORRUPT_ERROR on overflow. When it returns zero (feature disabled) it branches to 0x1C00246F5 and computes new_count with a plain 32-bit 'add edx, edi'.",
+        "PATCHED: the feature call is removed; RtlULongAdd runs unconditionally at 0x1C0024688.",
+        "new_count feeds InitializeNewTable (pool sizing); the subsequent memmove copies entry_size * NumberEntries (original count) bytes."
+      ],
+      "security_relevant": true,
+      "security_notes": "The overflow-checked addition on the restart-table entry count is gated behind a WIL staging feature and made unconditional in the patched build. Directionally a hardening. The overflow itself is NOT reachable with attacker magnitude: the augend is the 16-bit NumberEntries field (<= 0xFFFF) and every caller supplies a small growth addend (0x10 from NtfsAllocateRestartTableIndex; a division-derived count elsewhere), so NumberEntries + growth cannot wrap 32 bits. The RtlULongAdd is a corruption guard, not a heap-overflow primitive. CWE-190.",
+      "assembly_diff": "UNPATCHED key path:\n0x1C00246A5: call    EvaluateCurrentState        ; WIL feature eval (not a resource-lock query)\n0x1C00246AC: jz      loc_1C00246F5               ; feature OFF -> skip checked add\n0x1C00246B9: call    RtlULongAdd                 ; overflow-checked (feature ON)\n0x1C00246F9: add     edx, edi                    ; unchecked add (feature OFF)\n\nPATCHED equivalent:\n0x1C002468D: call    RtlULongAdd                 ; unconditional, no feature gate"
+    },
+    {
+      "name": "NtfsAllocateRestartTableFromIndex (0x1C002DC38)",
+      "similarity": 0.9651,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED at 0x1C002DDCF: EvaluateCurrentState gates the (entry_size==0 || NumberEntries==0) corrupt-header check; skipped when feature disabled.",
+        "UNPATCHED at 0x1C002DE0D: after 'add word [rbx+4], r12w' (in-use count increment), EvaluateCurrentState gates the count-overflow check (count==0xFFFF or count > NumberEntries); skipped when feature disabled.",
+        "PATCHED: both checks run unconditionally without the feature call."
+      ],
+      "security_relevant": true,
+      "security_notes": "Missing validation of restart-table header fields after free-list update. When the feature is disabled, zero entry_size/NumberEntries and in-use-count overflow go undetected; the unchecked entry_size feeds the memset size at 0x1C002DE05 and the free-list index arithmetic. CWE-20. Reachable via a crafted $LogFile restart area on a mounted volume; no controlled OOB primitive demonstrable.",
+      "assembly_diff": "UNPATCHED:\n0x1C002DDCF: lea     rcx, g_Feature_2859161914_59426036_FeatureDescriptorDetails\n0x1C002DDD6: call    EvaluateCurrentState\n0x1C002DDDD: jz      loc_1C002DDFC              ; skip zero-size check when feature disabled\n0x1C002DDDF: cmp     word ptr [rbx], di        ; entry_size == 0 ?\n0x1C002DDE4: cmp     word ptr [rbx+2], di      ; NumberEntries == 0 ?\n0x1C002DE05: call    memset\n0x1C002DE14: add     word ptr [rbx+4], r12w    ; in-use count += 1\n0x1C002DE19: call    EvaluateCurrentState\n0x1C002DE20: jz      loc_1C002DE76             ; skip overflow check when feature disabled\n0x1C002DE2B: cmp     ax, cx                    ; count == 0xffff ?\n0x1C002DE30: cmp     ax, word ptr [rbx+2]      ; count > NumberEntries ?"
+    },
+    {
+      "name": "NtfsAllocateRestartTableIndex (0x1C000E124)",
+      "similarity": 0.8786,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED at 0x1C000E1C1: EvaluateCurrentState gates the (entry_size==0 || NumberEntries==0) check; when feature disabled it branches directly to the allocation logic.",
+        "UNPATCHED at 0x1C000E23E: after 'inc word [rbx+4]' (in-use count), EvaluateCurrentState gates the count-overflow check (count==0xFFFF or count > NumberEntries).",
+        "PATCHED: both validations run unconditionally."
+      ],
+      "security_relevant": true,
+      "security_notes": "Missing validation of restart-table entry count after allocation. When the feature is disabled, the count overflow goes undetected and the function can return a corrupt free-list index used by callers in pointer arithmetic. CWE-20. Same crafted-$LogFile attack surface; no controlled OOB primitive demonstrable.",
+      "assembly_diff": "UNPATCHED:\n0x1C000E1C1: call    EvaluateCurrentState\n0x1C000E1C8: jz      loc_1C000E1ED             ; skip header check when feature disabled\n0x1C000E1CA: cmp     word ptr [rbx], r14w     ; entry_size == 0 ?\n0x1C000E1D0: cmp     word ptr [rbx+2], r14w   ; NumberEntries == 0 ?\n0x1C000E233: inc     word ptr [rbx+4]         ; in-use count++\n0x1C000E23E: call    EvaluateCurrentState\n0x1C000E245: jz      loc_1C000E289            ; skip overflow check when feature disabled\n0x1C000E250: cmp     ax, cx                   ; count == 0xffff ?\n0x1C000E255: cmp     ax, word ptr [rbx+2]     ; count > NumberEntries ?"
+    },
+    {
+      "name": "NtfsCheckRestartTable (0x1C01BC2D4 unpatched, 0x1C01BC2C4 patched)",
+      "similarity": 0.8353,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: two validation paths selected by EvaluateCurrentState at 0x1C01BC300. Feature ON (eax != 0) runs the strong checks (entry_size != 0, entry_size <= buffer_size, NumberEntries != 0, NumberInUse != 0, and a div-based check that the entry count fits the buffer). Feature OFF (eax == 0, je 0x1C01BC381) takes the weaker path.",
+        "UNPATCHED at 0x1C01BC49E: a second EvaluateCurrentState inside the free-list traversal relaxes the entry-offset bounds test when the feature is disabled.",
+        "PATCHED: no EvaluateCurrentState calls; enters directly at the strong checks."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the on-disk restart-table validator: it parses the $LogFile restart area during mount/recovery, so its input is influenceable by a crafted volume. With the feature disabled, malformed restart tables pass the weaker path and reach downstream size/index computations. The patched build always runs the strong path. CWE-20. This finding carries the most meaningful reachable impact (Medium).",
+      "assembly_diff": "UNPATCHED entry and bifurcation:\n0x1C01BC300: call    EvaluateCurrentState        ; path-selection gate\n0x1C01BC30E: jz      loc_1C01BC381              ; feature OFF -> weaker path\n0x1C01BC310: test    r9w, r9w                  ; strong path: entry_size != 0\n0x1C01BC31A: cmp     r10d, ebx                 ; entry_size <= buffer_size\n0x1C01BC31F: movzx   r8d, word ptr [rdi+2]     ; NumberEntries != 0\n0x1C01BC32A: movzx   r11d, word ptr [rdi+4]    ; NumberInUse != 0\n0x1C01BC49E: call    EvaluateCurrentState      ; second gate in free-list traversal\n0x1C01BC4AC: jz      loc_1C01BC4CE             ; relaxed offset-bounds path\n\nPATCHED: no feature calls; strong checks run at 0x1C01BC2EB onward including 'div r13' entry-count-fits check at 0x1C01BC338."
+    },
+    {
+      "name": "InitializeNewTable (0x1C0019D10)",
+      "similarity": 0.9321,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restart-table pool allocator (ExAllocatePoolWithTag at 0x1C0019DAD).",
+        "UNPATCHED at 0x1C0019DE7: EvaluateCurrentState gates a NumberInUse==0 early check ('test ebp,ebp; jz') before the NtfsLinkRestartTable call. PATCHED removes the feature call.",
+        "This is where new_count (from NtfsExtendRestartTable) is turned into a pool allocation size."
+      ],
+      "security_relevant": false,
+      "security_notes": "The feature-gated portion is a minor early-return check. Its allocation size is computed from the (bounded) count produced by callers. Consistent with the overall feature-gate removal.",
+      "assembly_diff": "UNPATCHED:\n0x1C0019DA0: mov     ecx, 210h                 ; PoolType\n0x1C0019DAD: call    cs:__imp_ExAllocatePoolWithTag\n0x1C0019DE7: call    EvaluateCurrentState\n0x1C0019DEE: jz      loc_1C0019DF4\n0x1C0019DF0: test    ebp, ebp                  ; NumberInUse==0 (feature ON)\n0x1C0019DFA: call    NtfsLinkRestartTable"
+    },
+    {
+      "name": "PageUpdateAnalysis (0x1C0205D04)",
+      "similarity": 0.9572,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED at 0x1C0205DB5: EvaluateCurrentState gates a 'cmp [table+2], r14w; jb error' check (NumberEntries >= required count) before proceeding. PATCHED removes the feature call so the check always runs.",
+        "Caller of NtfsExtendRestartTable / NtfsInitializeRestartTable."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-gated NumberEntries >= required bounds check made unconditional; consistent with the patch pattern. Not independently exploitable.",
+      "assembly_diff": "UNPATCHED:\n0x1C0205DB5: lea     rcx, g_Feature_2859161914_59426036_FeatureDescriptorDetails\n0x1C0205DBC: call    EvaluateCurrentState\n0x1C0205DC3: jz      loc_1C0205DD7             ; skip bounds check when feature disabled\n0x1C0205DCC: cmp     word ptr [rax+2], r14w   ; NumberEntries >= required ?"
+    },
+    {
+      "name": "EvaluateCurrentState (0x1C0030128 unpatched, 0x1C00303D0 patched)",
+      "similarity": 0.6686,
+      "change_type": "behavioral",
+      "key_changes": [
+        "This is the WIL feature-state evaluator (not a resource-lock/ERESOURCE query).",
+        "UNPATCHED: takes the feature-descriptor pointer as an argument.",
+        "PATCHED: refactored so the feature descriptor is referenced in the body and it reads the cached feature state directly; relocated to 0x1C00303D0."
+      ],
+      "security_relevant": false,
+      "security_notes": "The evaluator itself is refactored; it is not the vulnerability. The fix is the removal of its calls from the restart-table routines. EvaluateCurrentState call sites drop from 13 (unpatched) to 4 (patched); the 4 remaining belong to an unrelated feature family.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtfsSetPositionInfo (0x1C01D2D80)",
+      "similarity": 0.9854,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Its only change is the EvaluateCurrentState call being retargeted to the refactored evaluator (argument dropped). Guard logic (EvaluateCurrentState() && value < 0) is otherwise identical.",
+        "Belongs to a separate feature family that remains gated in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "Mechanical consequence of the evaluator refactor; the feature guarding this SetInfo family is still present in both builds, so no delivered change here."
+    },
+    {
+      "name": "NtfsSetAllocationInfo (0x1C00DFA10)",
+      "similarity": 0.9928,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only change is the EvaluateCurrentState call retargeting (argument dropped); guard logic identical.",
+        "Separate feature family, still gated in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "NtfsSetEndOfFileInfo (0x1C011B630)",
+      "similarity": 0.9929,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only change is the EvaluateCurrentState call retargeting (argument dropped); guard logic identical.",
+        "Separate feature family, still gated in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "NtfsCheckRestartTable (0x1C01BC2D4 unpatched, 0x1C01BC2C4 patched)",
+      "entry_point": "Mount / LFS recovery of a crafted NTFS volume whose $LogFile restart area contains a malformed restart table",
+      "call_chain": [
+        "Mount / transaction-log recovery on a crafted NTFS volume (VHD or physical media)",
+        "$LogFile restart-area parsing during recovery",
+        "NtfsCheckRestartTable (validates the on-disk restart table)"
+      ],
+      "vulnerability_class": "Insufficient validation of untrusted on-disk metadata (CWE-20)",
+      "description": "NtfsCheckRestartTable validates a restart table parsed from the volume's $LogFile restart area. In the unpatched build the routine selects between a strong and a weak validation path based on the WIL feature EvaluateCurrentState(&g_Feature_2859161914_59426036) at 0x1C01BC300, and a second gate at 0x1C01BC49E relaxes the free-list entry-offset bounds test. When the feature is disabled, malformed restart tables (bad entry_size, NumberEntries, NumberInUse, or entry offsets) can pass the weak path and reach downstream restart-table routines that use those fields for memset sizing, pool sizing, and free-list index arithmetic. The patched build removes both feature calls and always runs the strong path (entry_size != 0, entry_size <= buffer_size, NumberEntries != 0, NumberInUse != 0, and a div-based check that the declared entry count fits the buffer).",
+      "trigger_conditions": "Present a crafted NTFS volume whose $LogFile restart area encodes a restart table with inconsistent header fields, then trigger mount/recovery so NtfsCheckRestartTable parses it. The validation bypass only exists when g_Feature_2859161914_59426036 evaluates false in the unpatched build.",
+      "primitive": "Malformed restart-table fields surviving validation and reaching size/index computations in downstream restart-table routines. This is a local, crafted-volume attack surface. A specific attacker-controlled out-of-bounds read/write or code-execution primitive is not demonstrable from these binaries.",
+      "evidence": "UNPATCHED path selection at 0x1C01BC300:\n0x1C01BC2F6: lea     rcx, g_Feature_2859161914_59426036_FeatureDescriptorDetails\n0x1C01BC300: call    EvaluateCurrentState\n0x1C01BC30C: test    eax, eax\n0x1C01BC30E: jz      loc_1C01BC381              ; feature OFF -> weaker path\n0x1C01BC310: test    r9w, r9w                  ; strong path: entry_size != 0\n0x1C01BC31A: cmp     r10d, ebx                 ; entry_size <= buffer_size\n0x1C01BC31F: movzx   r8d, word ptr [rdi+2]     ; NumberEntries != 0\n0x1C01BC32A: movzx   r11d, word ptr [rdi+4]    ; NumberInUse != 0\n0x1C01BC49E: call    EvaluateCurrentState      ; second gate inside free-list traversal\n\nPATCHED: no EvaluateCurrentState calls; strong checks run directly (entry_size != 0 at 0x1C01BC2EB, entry_size <= buffer_size, NumberEntries/NumberInUse != 0, 'div r13' entry-count-fits check at 0x1C01BC338)."
+    },
+    {
+      "severity": "low",
+      "function": "NtfsExtendRestartTable (0x1C0024660 unpatched, 0x1C0024640 patched)",
+      "entry_point": "LFS restart-table growth during recovery/logging (called from NtfsAllocateRestartTableIndex, NtfsAllocateRestartTableFromIndex, PageUpdateAnalysis)",
+      "call_chain": [
+        "LFS recovery / logging operation requiring restart-table growth",
+        "NtfsAllocateRestartTableIndex / NtfsAllocateRestartTableFromIndex / PageUpdateAnalysis",
+        "NtfsExtendRestartTable"
+      ],
+      "vulnerability_class": "Integer overflow check made unconditional (CWE-190); overflow not attacker-reachable",
+      "description": "When growing a restart table, the unpatched build only performs the overflow-checked addition RtlULongAdd(NumberEntries, growth) when EvaluateCurrentState returns non-zero; otherwise it computes new_count with a plain 32-bit add. new_count feeds InitializeNewTable (pool sizing) while a subsequent memmove copies entry_size * NumberEntries (original count) bytes. The patched build makes RtlULongAdd unconditional. The overflow is NOT reachable with attacker magnitude: the augend NumberEntries is a 16-bit field (<= 0xFFFF) and every caller supplies a small growth addend (0x10 from NtfsAllocateRestartTableIndex; a division-derived count in the others), so NumberEntries + growth cannot wrap 32 bits. The check is defensive hardening, not a heap-overflow primitive.",
+      "trigger_conditions": "Requires NumberEntries + growth to exceed 0xFFFFFFFF, which no caller can produce. Not reachable.",
+      "primitive": "None demonstrable. If a wrap were reachable it would produce an undersized allocation followed by an oversized memmove, but the operands are internally bounded.",
+      "evidence": "UNPATCHED:\n0x1C00246A5: call    EvaluateCurrentState\n0x1C00246AC: jz      loc_1C00246F5             ; feature OFF -> unchecked add\n0x1C00246B9: call    RtlULongAdd              ; overflow-checked (feature ON)\n0x1C00246F9: add     edx, edi                 ; unchecked add (feature OFF)\n0x1C0024706: call    InitializeNewTable       ; pool sizing uses new_count\n0x1C002471D: imul    ecx, eax                 ; entry_size * NumberEntries (original)\n0x1C0024727: call    memmove\n\nPATCHED: RtlULongAdd unconditional at 0x1C002468D. Caller growth addends: NtfsAllocateRestartTableIndex sets edx=0x10 at 0x1C000E18C; NtfsAllocateRestartTableFromIndex and PageUpdateAnalysis derive edx from a bounded division result."
+    },
+    {
+      "severity": "low",
+      "function": "NtfsAllocateRestartTableIndex (0x1C000E124)",
+      "entry_point": "LFS restart-table entry allocation during recovery/logging",
+      "call_chain": [
+        "LFS recovery / logging operation allocating a restart-table entry",
+        "NtfsAllocateRestartTableIndex"
+      ],
+      "vulnerability_class": "Missing validation of restart-table fields / count overflow (CWE-20)",
+      "description": "Two checks are gated behind EvaluateCurrentState: (1) entry_size==0 || NumberEntries==0 at 0x1C000E1C1, and (2) after 'inc word [rbx+4]' the in-use count reaching 0xFFFF or exceeding NumberEntries at 0x1C000E23E. When the feature is disabled both are skipped and the function can return a corrupt free-list index used by callers in pointer arithmetic. The patched build runs both unconditionally.",
+      "trigger_conditions": "Corrupt restart-table header (from a crafted $LogFile restart area) with zero entry_size/NumberEntries or an in-use count at the boundary, then trigger an allocation into that table with the feature disabled.",
+      "primitive": "Corrupt free-list index / unchecked entry_size reaching caller pointer arithmetic. No controlled OOB primitive demonstrable from these binaries.",
+      "evidence": "0x1C000E1C1: call EvaluateCurrentState; 0x1C000E1C8: jz 0x1C000E1ED (skip entry_size==0/NumberEntries==0 check). 0x1C000E233: inc word [rbx+4]; 0x1C000E23E: call EvaluateCurrentState; 0x1C000E245: jz 0x1C000E289 (skip count==0xffff / count>NumberEntries check)."
+    },
+    {
+      "severity": "low",
+      "function": "NtfsAllocateRestartTableFromIndex (0x1C002DC38)",
+      "entry_point": "LFS restart-table entry deallocation / free-list update during recovery/logging",
+      "call_chain": [
+        "LFS recovery / logging operation updating a restart-table free list",
+        "NtfsAllocateRestartTableFromIndex"
+      ],
+      "vulnerability_class": "Missing validation of restart-table fields / count overflow (CWE-20)",
+      "description": "Two checks are gated behind EvaluateCurrentState: (1) entry_size==0 || NumberEntries==0 at 0x1C002DDCF, and (2) after 'add word [rbx+4], r12w' the in-use count reaching 0xFFFF or exceeding NumberEntries at 0x1C002DE0D. When the feature is disabled both are skipped; the unchecked entry_size feeds the memset size at 0x1C002DE05 and the free-list index arithmetic. The patched build runs both unconditionally.",
+      "trigger_conditions": "Corrupt restart-table header (from a crafted $LogFile restart area) with zero entry_size/NumberEntries, then trigger a free-list update with the feature disabled.",
+      "primitive": "Unchecked entry_size used as a memset size and in free-list index arithmetic. No controlled OOB primitive demonstrable from these binaries.",
+      "evidence": "0x1C002DDCF: call EvaluateCurrentState; 0x1C002DDDD: jz 0x1C002DDFC (skip entry_size==0/NumberEntries==0 check). 0x1C002DE05: call memset (size = entry_size). 0x1C002DE14: add word [rbx+4], r12w; 0x1C002DE19: call EvaluateCurrentState; 0x1C002DE20: jz 0x1C002DE76 (skip count==0xffff / count>NumberEntries check)."
+    }
+  ],
+  "summary": "The patch removes a WIL staging feature gate (g_Feature_2859161914_59426036, evaluated by EvaluateCurrentState) from a cluster of NTFS Log File Service (LFS) restart-table routines: NtfsExtendRestartTable, NtfsAllocateRestartTableIndex, NtfsAllocateRestartTableFromIndex, NtfsCheckRestartTable, InitializeNewTable, and PageUpdateAnalysis. In the unpatched build these routines only run their restart-table consistency checks (zero entry-size/count detection, in-use-count overflow detection, an RtlULongAdd overflow check, and the strong validation path in the on-disk validator) when the feature evaluates true; when it evaluates false the checks are skipped. The patched build deletes the feature calls (EvaluateCurrentState call sites drop from 13 to 4) so the checks always run. The change is directionally a hardening; the patched build is strictly stricter. Reachable impact is modest: the affected structures are LFS restart tables parsed from the $LogFile restart area during mount/recovery (a local, crafted-volume attack surface), and the strongest concern is NtfsCheckRestartTable's weak path letting malformed restart tables through to size/index computations (CWE-20, Medium). The integer overflow in NtfsExtendRestartTable is not reachable with attacker magnitude (16-bit augend plus a small internal growth addend), so it is defensive (CWE-190, Low). No attacker-controlled kernel heap-overflow, information leak, or code-execution primitive is demonstrable from these binaries. An independent function-level diff of the two decompilations confirmed no security-relevant change outside this cluster and the EvaluateCurrentState refactor."
+}

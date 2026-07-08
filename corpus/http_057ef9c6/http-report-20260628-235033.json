@@ -1,0 +1,173 @@
+{
+  "binaries": {
+    "title": "http.sys - no security-relevant change: IOCTL structure parsers gain a feature-staged (Feature_NewUMAHttpSys / UxKirNewUma) user-mode-access hardening path (pointer-alignment checks, single-capture reads, fault-tolerant copy) with the legacy path retained in the flag-off branch; default behavior unchanged",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9105,
+    "matched": 3865,
+    "changed": 282,
+    "identical": 3583,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlpCopySingleMultipleHeader (unpatched 0x1400DBD58 / patched 0x1400DB3B0) (HTTP response header-string builder)",
+      "similarity": 0.6055,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Patched adds a UxKirNewUma-gated path with array-wide alignment pre-validation UlpProbeAlignmentOfHeaders(a1, count, array_base) (0x1400DDAF4) before iterating the header array. This runs only when UxKirNewUma != 0.",
+        "Patched single-captures each entry's length and value pointer via RtlReadUShortFromUser (0x1401C311C) and RtlReadULong64FromUser (0x1401C30A4) in the feature-on path; the retained legacy branch (UxKirNewUma == 0) loads word [rax] (length) and qword [rax+8] (value pointer) with direct reads, identical to the unpatched build.",
+        "Patched adds per-value alignment+readability validation UlProbeAlignmentAnsiString(value_ptr, length) (0x1400D4D74) before the copy in the feature-on path; the legacy branch calls only UlProbeAnsiStringOld (same as unpatched UlProbeAnsiString).",
+        "Patched copies the value bytes through UxTryCopyFromMode in the feature-on path; the legacy branch uses memmove (0x1400DBED5), identical to the unpatched build. The destination bounds check (a7 < *v13 + length + 3) is present in both branches and in the unpatched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "This function builds HTTP response header strings into a kernel pool buffer by iterating a user-supplied array of header entries. The unpatched code, and the patched code when UxKirNewUma == 0, probe each entry's value pointer with UlProbeAnsiString and bounds-check the destination write before copying; the length is a 16-bit field. The patched build adds an alternate path (alignment pre-validation, single-capture reads, fault-tolerant copy) but it is gated on UxKirNewUma, which is set from Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() at init and is off by default. The legacy path is retained verbatim in the else branch, so shipped default behavior matches the unpatched build. No demonstrable, reachable out-of-bounds read or write exists in either build's default path.",
+      "assembly_diff": "; === UNPATCHED 0x1400DBD58 (single path) and PATCHED 0x1400DB3B0 (UxKirNewUma == 0 branch) ===\n00000001400DBE4F  mov     rcx, [rax+8]      ; value pointer load (captured once)\n00000001400DBED5  call    memmove           ; copy value\n; destination bounds check present before the write in both\n\n; === PATCHED 0x1400DB3B0 (UxKirNewUma != 0 branch, feature-on only) ===\nif (UxKirNewUma != 0) {\n  UlpProbeAlignmentOfHeaders(a1, count, array_base)  ; added array-wide alignment pre-validation\n  UShortFromUser = RtlReadUShortFromUser(entry)      ; single-capture length (guarded)\n  Ptr32FromMode  = RtlReadULong64FromUser(entry+8)   ; single-capture value ptr (guarded)\n  UlProbeAlignmentAnsiString(Ptr32FromMode, UShortFromUser)  ; per-value alignment+probe\n  UxTryCopyFromMode(dest, Ptr32FromMode, UShortFromUser)     ; fault-tolerant value copy\n}"
+    },
+    {
+      "name": "UlpGetMultipleKnownHeader (unpatched 0x1400DD284 / patched 0x1400DCD90) (known-header descriptor validator)",
+      "similarity": 0.6512,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Patched adds pointer-alignment validation on the descriptor pointer at [a2+8] (ptr & 7 for 64-bit, ptr & 3 for 32-bit, returning STATUS_INVALID_PARAMETER 0xC000000D) only inside the UxKirNewUma != 0 branch.",
+        "Patched single-captures the 0x18-byte descriptor fields via RtlReadULongFromUser / RtlReadUShortFromUser in the feature-on path; the retained UxKirNewUma == 0 branch reads them directly (movups [r14] at 0x1400DD300), identical to the unpatched build.",
+        "The count < 0x2710 (0x1400DD366) and index <= 0x1d (0x1400DD3D0) checks exist in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "Validates a single known-header descriptor from IOCTL input (index <= 0x1d, count < 0x2710, data pointer probed). The unpatched build, and the patched build when UxKirNewUma == 0, read the 0x18-byte descriptor directly after a UlProbeForRead. The added alignment/single-capture logic runs only when the staged feature is enabled; the legacy path is retained. No delivered change in default behavior.",
+      "assembly_diff": "; === UNPATCHED 0x1400DD284 and PATCHED 0x1400DCD90 (UxKirNewUma == 0 branch) ===\n00000001400DD2B2  mov     r14, [rdx+8]              ; descriptor ptr\n00000001400DD300  movups  xmm1, xmmword ptr [r14]   ; direct read of descriptor\n00000001400DD366  cmp     cx, ax                    ; count < 0x2710\n00000001400DD3D0  cmp     esi, 0x1d                 ; index <= 29\n\n; === PATCHED 0x1400DCD90 (UxKirNewUma != 0 branch, feature-on only) ===\nif (UxKirNewUma != 0) {\n  if ((ptr & 7) != 0) return 0xC000000D;   ; 64-bit alignment gate\n  if ((ptr & 3) != 0) return 0xC000000D;   ; 32-bit alignment gate\n  ; single-capture via RtlReadULongFromUser / RtlReadUShortFromUser\n}"
+    },
+    {
+      "name": "UlReceiveHttpRequestFastIo (unpatched 0x140014E50 / patched 0x140094DC0) (fast-I/O HTTP request receive handler)",
+      "similarity": 0.6071,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Patched adds a top-level structure capture UxCaptureUserMemory(struct_ptr, 0x10, alignment, mode, out) (0x140030D20) and UxKirNewUma-gated pointer-alignment checks (ptr & 3 / ptr & 7 returning 0xC000000D). These run only in the UxKirNewUma != 0 branch.",
+        "The retained UxKirNewUma == 0 branch parses the request structure inline, identical to the unpatched build.",
+        "Both versions require input length >= 0x10 and compare against a size threshold before capturing."
+      ],
+      "security_relevant": false,
+      "security_notes": "Fast-I/O handler for receiving an HTTP request into a user-supplied structure. The patched build adds a capture/alignment step gated on the staged feature UxKirNewUma; the legacy inline parse is retained in the flag-off branch. Default behavior matches the unpatched build.",
+      "assembly_diff": "; UNPATCHED 0x140014E50 and PATCHED 0x140094DC0 (UxKirNewUma == 0 branch): inline parse of the request structure\n; PATCHED 0x140094DC0 (UxKirNewUma != 0 branch, feature-on only):\n;   Consumer = UxCaptureUserMemory(a2, 0x10, alignment, a7, &captured)  ; capture+align validation\n;   if ((a4 & 3) != 0 || (a4 & 7) != 0) reject with 0xC000000D"
+    },
+    {
+      "name": "UlpComputeAuthHeaderSize (unpatched 0x1400DB618 / patched 0x1400DA0C0) (auth/known-header size accumulator)",
+      "similarity": 0.9078,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Patched routes each header entry through single-capture helpers (RtlReadULongFromUser / RtlReadUShortFromUser) in the UxKirNewUma != 0 branch; the retained UxKirNewUma == 0 branch reads the per-entry fields directly, identical to the unpatched build.",
+        "The WWW-Authenticate scheme-name validator (UlParseWwwAuthSchemeName) is the same function, rebased (unpatched 0x14012C854 / patched 0x1401364B4)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Iterates the user-supplied auth/known-header array and accumulates the total serialized size for pool allocation. The patched build adds single-capture reads only in the feature-on path; the legacy direct-read accumulation is retained in the flag-off branch. No delivered change in default behavior.",
+      "assembly_diff": "; UNPATCHED 0x1400DB618 and PATCHED 0x1400DA0C0 (UxKirNewUma == 0 branch): direct per-entry reads; validator rebased\n; PATCHED 0x1400DA0C0 (UxKirNewUma != 0 branch, feature-on only): single-capture per entry via RtlReadULongFromUser / RtlReadUShortFromUser"
+    },
+    {
+      "name": "config-structure validation code near 0x1400D8C06 (unpatched) / 0x1400D667C (patched) and 0x1400DDBA2 (unpatched) / 0x1400DD7B0 (patched)",
+      "similarity": 0.9658,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "These addresses fall inside larger validation helpers (e.g. 0x1400D8C06 lies within UlCaptureWideString @ 0x1400D8B28); they are not standalone function boundaries. The surrounding diffs are dominated by argument-renumbering and ETW/globals pointer rebasing (xmmword_140193CA0 -> xmmword_1401A4CE0, WPP traceguid rebasing).",
+        "The core validation logic in these helpers is unchanged between the two builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "response-header-set dispatch code near 0x1400DB274 (unpatched) / 0x1400D9B86 (patched)",
+      "similarity": 0.9827,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "These interior addresses sit in the code that dispatches to the header-iteration callee UlpComputeAuthHeaderSize. The callee signature changed (patched takes an additional mode/capture argument), propagating the feature-gated single-capture path downward.",
+        "Argument slot renumbering reflects the extra parameter; ETW call sites rebased."
+      ],
+      "security_relevant": false,
+      "security_notes": "Propagates the additional mode argument into the header-size accumulation path, enabling the UxKirNewUma-gated single-capture/alignment logic in the callee when the staged feature is on. No delivered change in default behavior.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxSslConnectionControl (unpatched 0x14009B0A0 / patched 0x14009C080) and UlSendResponseOrEntityBodyFastIoOld (unpatched 0x14009ECF0 / patched 0x14009FDA0) (large HTTP request/response parsers)",
+      "similarity": 0.9502,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Both large parsers reference the UxKirNewUma flag at multiple sites, threading the alignment + single-capture + fault-tolerant-copy path into the core request/response field parsing, gated on the staged feature. Old path retained in the flag-off branch.",
+        "The remaining diff is helper-rename and ETW/globals rebasing (UlProbeForRead / memmove call-site rebasing, xmmword_140193CA0 -> xmmword_1401A4CE0)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Primary HTTP request/response structure parsers. The patch threads the same UxKirNewUma-gated capture/validation path into them, consistent with the cluster-wide feature-staged refactor. No delivered change in default behavior.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "UlpCopySingleMultipleHeader (unpatched 0x1400DBD58 / patched 0x1400DB3B0) and cluster: UlpGetMultipleKnownHeader (0x1400DD284 / 0x1400DCD90), UlpComputeAuthHeaderSize (0x1400DB618 / 0x1400DA0C0), UlReceiveHttpRequestFastIo (0x140014E50 / 0x140094DC0)",
+      "entry_point": "http.sys IOCTL dispatch via the HTTP API (HttpSendHttpResponse, HttpReceiveHttpRequest, HttpSetServiceConfiguration) -> NtDeviceIoControlFile on the HTTP device stack",
+      "call_chain": [
+        "NtDeviceIoControlFile / DeviceIoControl on the HTTP device (HTTP API IOCTLs)",
+        "driver IOCTL dispatch (function-pointer routed)",
+        "UlReceiveHttpRequestFastIo (0x140014E50 / 0x140094DC0)",
+        "UlpComputeAuthHeaderSize (0x1400DB618 / 0x1400DA0C0)",
+        "UlpCopySingleMultipleHeader (0x1400DBD58 / 0x1400DB3B0)",
+        "UlpGetMultipleKnownHeader (0x1400DD284 / 0x1400DCD90)"
+      ],
+      "vulnerability_class": "No security-relevant change delivered. The patched build adds a feature-staged user-mode-access hardening path (pointer-alignment enforcement, single-capture reads, fault-tolerant copy) gated on UxKirNewUma, which is set from Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() at init and is off by default. The legacy path is retained verbatim in the flag-off branch, so shipped default behavior is identical to the unpatched build.",
+      "description": "Across the IOCTL structure-parsing functions the patched http.sys adds an alternate code path taken only when the global UxKirNewUma is nonzero. UxKirNewUma is assigned at initialization from Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline(), a Windows feature-staging flag (alongside the other UxKir* gates), and defaults to off. When it is clear, the parsers run the same logic as the unpatched build: one coarse UlProbeForRead of the header array, direct reads of each entry's length (word [rax]) and value pointer (qword [rax+8]), a per-value UlProbeAnsiString readability probe, a destination bounds check before the write (a7 < *v13 + length + 3), and a memmove copy at 0x1400DBED5. When the flag is set, the added path pre-validates array alignment (UlpProbeAlignmentOfHeaders 0x1400DDAF4), reads each field once via RtlReadUShortFromUser (0x1401C311C) / RtlReadULong64FromUser (0x1401C30A4) / RtlReadULongFromUser, enforces pointer alignment (ptr&7 / ptr&3 -> STATUS_INVALID_PARAMETER 0xC000000D), re-validates each value pointer (UlProbeAlignmentAnsiString 0x1400D4D74), and copies through UxTryCopyFromMode. Because the legacy path is retained in the UxKirNewUma == 0 branch and the flag is off by default, the patched binary as shipped behaves identically to the unpatched binary. The legacy path already probes each value pointer before copying and bounds-checks the destination before the write, and the header length is a 16-bit field, so no out-of-bounds read or write is demonstrable in either build's default path. This is a defense-in-depth, feature-staged hardening refactor, not a delivered fix for a reachable memory-safety defect.",
+      "trigger_conditions": "No demonstrable security trigger. The functions are reachable by a local user via the HTTP Server API (HttpInitialize + HttpCreateRequestQueue + HttpSendHttpResponse/HttpReceiveHttpRequest, or HttpSetServiceConfiguration), but in both builds' default path each value pointer is validated by UlProbeAnsiString and the destination write is guarded by the bounds check; the length is 16-bit. The added validation only executes when the staged feature Feature_NewUMAHttpSys is enabled at runtime, which does not change shipped default behavior.",
+      "primitive": "None demonstrable. The retained legacy path (both builds) probes each value pointer before the copy and bounds-checks the destination before the write, and the length field is 16-bit. Neither an out-of-bounds read nor an out-of-bounds write has been shown to be reachable in the default path.",
+      "evidence": "// UNPATCHED UlpCopySingleMultipleHeader (0x1400DBD58) == PATCHED 0x1400DB3B0 UxKirNewUma == 0 branch\nfor ( i = 0; i < a3; ++i ) {\n    v17 = &v9[16 * i];                       // 64-bit entry\n    v18 = *((volatile void **)v17 + 1);      // value pointer, captured once\n    v19 = *(unsigned __int16 *)v17;          // length (16-bit), captured once\n    if ( (_WORD)v19 != 0 ) {\n        UlProbeAnsiString(v18, v19, v16);                    // per-value readability probe\n        if ( &v13[v19 + *v23 + 3] <= &a8[a7] ) {             // destination bounds check\n            memmove(v13, v23 + 16, *v23);                    // copy name\n            memmove(v20 + 1, Src, v19);                      // copy value\n            v12 = UlSetParsedHeader(a6, v23 + 64, *v23, v20 + 1, v19);\n        } else return STATUS_INSUFFICIENT_RESOURCES;\n    }\n}\n\n// PATCHED-ONLY added path (executes only when UxKirNewUma != 0):\n//   UlpProbeAlignmentOfHeaders(a1, a3, a4);\n//   UShortFromUser = RtlReadUShortFromUser(entry);\n//   Ptr32FromMode  = RtlReadULong64FromUser(entry+8);\n//   UlProbeAlignmentAnsiString(Ptr32FromMode, UShortFromUser);\n//   UxTryCopyFromMode(dest, Ptr32FromMode, UShortFromUser);\n\n// Gate assignment at init (patched only):\n//   UxKirNewUma = Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() != 0;",
+      "assembly": "; ====== UNPATCHED 0x1400DBD58 == PATCHED 0x1400DB3B0 (UxKirNewUma == 0 branch), real instructions ======\n00000001400DBE4F  mov     rcx, [rax+8]              ; value pointer load (captured once)\n00000001400DBED5  call    memmove                  ; copy value\n; destination bounds check present before the write in both\n\n; ====== UNPATCHED 0x1400DD284 == PATCHED 0x1400DCD90 (UxKirNewUma == 0 branch) ======\n00000001400DD2B2  mov     r14, [rdx+8]             ; descriptor ptr\n00000001400DD300  movups  xmm1, xmmword ptr [r14]  ; direct read of descriptor\n00000001400DD366  cmp     cx, ax                   ; count < 0x2710\n00000001400DD3D0  cmp     esi, 0x1d                ; index <= 29\n\n; ====== PATCHED-ONLY additions execute only under UxKirNewUma != 0 ======\n; UlpProbeAlignmentOfHeaders (0x1400DDAF4), RtlReadUShortFromUser (0x1401C311C),\n; RtlReadULong64FromUser (0x1401C30A4), UlProbeAlignmentAnsiString (0x1400D4D74),\n; UxTryCopyFromMode; pointer-alignment gate ptr&7 / ptr&3 -> 0xC000000D",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlpCopySingleMultipleHeader (0x1400DBD58 unpatched / 0x1400DB3B0 patched)",
+            "address": "0x1400dbd58",
+            "why": "Header-string builder entry. In the patched build the loop branches on UxKirNewUma; the UxKirNewUma == 0 branch is identical to this unpatched function. Single-step to 0x1400dbe4f for the per-entry value pointer and 0x1400dbe58 for the 16-bit length."
+          },
+          {
+            "symbol": "http!UlpGetMultipleKnownHeader (0x1400DD284 unpatched / 0x1400DCD90 patched)",
+            "address": "0x1400dd284",
+            "why": "Known-header descriptor validator. [rdx+8] (loaded into r14 at 0x1400dd2b2) is the descriptor pointer, read via movups at 0x1400dd300 in the legacy path. The patched build alignment-checks and single-captures it only when UxKirNewUma != 0."
+          },
+          {
+            "symbol": "http!UlpComputeAuthHeaderSize (0x1400DB618 unpatched / 0x1400DA0C0 patched)",
+            "address": "0x1400db618",
+            "why": "Auth/known-header iteration and size accumulation. The legacy loop reads per-entry length and value pointer directly; the added single-capture path runs only when UxKirNewUma != 0."
+          },
+          {
+            "symbol": "http!UlpCopySingleMultipleHeader value copy",
+            "address": "0x1400dbed5",
+            "why": "The legacy value-copy memmove (retained in both builds). In the feature-on path this call site is replaced by UxTryCopyFromMode. The value pointer is probed by UlProbeAnsiString and the destination bounds-checked before this copy."
+          }
+        ],
+        "watch": [
+          "UxKirNewUma global = 0 unless Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() returns true; added checks run only when nonzero",
+          "array base in UlpCopySingleMultipleHeader = user header array base",
+          "header count (from arg3) < 0x2710 in both builds",
+          "per-entry length after 0x1400dbe58 = 16-bit length",
+          "value pointer after 0x1400dbe4f = per-entry value pointer (probed by UlProbeAnsiString before the copy in both builds)",
+          "r14 at 0x1400dd2b2 = descriptor pointer (alignment-checked only in the UxKirNewUma != 0 branch)"
+        ],
+        "key_offsets": [
+          "0x1400dbe4f: mov rcx,[rax+8] -- value-pointer load (feature-on path substitutes RtlReadULong64FromUser 0x1401C30A4)",
+          "0x1400dbe58: movzx r12d,[rax] -- 16-bit length load (feature-on path substitutes RtlReadUShortFromUser 0x1401C311C)",
+          "0x1400dbe88: destination bounds check (present in both builds)",
+          "0x1400dbed5: call memmove -- legacy value copy (feature-on path: UxTryCopyFromMode)",
+          "0x1400dd2b2: mov r14,[rdx+8] -- descriptor pointer (feature-on path adds ptr&7/ptr&3 -> 0xC000000D)",
+          "0x1400dd300: movups [r14] -- direct descriptor read (feature-on path substitutes RtlRead*FromUser)",
+          "Gate: UxKirNewUma; init assignment UxKirNewUma = Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() != 0"
+        ],
+        "trigger_setup": "The functions are reached from a local user-mode process: (1) HttpInitialize(HTTP_INITIALIZE_SERVER); (2) HttpCreateRequestQueue for a handle; (3) issue the corresponding HTTP API IOCTL carrying an HTTP_RESPONSE / request structure. This exercises the parsers, but no crafted input reaches an out-of-bounds condition in either build's default path, because the value pointer is probed and the destination bounds-checked before the copy.",
+        "expected_observation": "In both builds' default configuration (UxKirNewUma == 0), the parsers probe each value pointer and bounds-check the destination before copying; no out-of-bounds read or write occurs. Enabling Feature_NewUMAHttpSys (UxKirNewUma != 0) activates the added alignment/single-capture/fault-tolerant path, which rejects misaligned pointers with 0xC000000D and copies via UxTryCopyFromMode. There is no observable difference in the shipped default path.",
+        "notes": "Symbols are given as RealName (0xADDRESS). The added checks are gated by the global UxKirNewUma, assigned from the staged feature Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() at init (off by default). The legacy path is retained in the UxKirNewUma == 0 branch of every affected function, so the patched binary's default behavior matches the unpatched binary. The coarse checks count<0x2710 and index<=0x1d exist in both builds. This is a defense-in-depth, feature-staged hardening refactor, not a delivered fix."
+      }
+    }
+  ],
+  "summary": "The patched http.sys introduces a global UxKirNewUma, assigned at init from the staged feature Feature_NewUMAHttpSys__private_IsEnabledDeviceUsageNoInline() (off by default), and adds a UxKirNewUma-gated alternate path across the IOCTL structure-parsing functions (UlpCopySingleMultipleHeader 0x1400DBD58/0x1400DB3B0, UlpGetMultipleKnownHeader 0x1400DD284/0x1400DCD90, UlpComputeAuthHeaderSize 0x1400DB618/0x1400DA0C0, UlReceiveHttpRequestFastIo 0x140014E50/0x140094DC0). When the flag is set, the path pre-validates header-array alignment (UlpProbeAlignmentOfHeaders 0x1400DDAF4), reads each field once through user-memory helpers (RtlReadUShortFromUser 0x1401C311C, RtlReadULong64FromUser 0x1401C30A4, RtlReadULongFromUser), enforces pointer alignment (ptr&7 / ptr&3 -> 0xC000000D), captures the top-level structure (UxCaptureUserMemory 0x140030D20), re-validates each value pointer (UlProbeAlignmentAnsiString 0x1400D4D74), and copies through UxTryCopyFromMode. The legacy path (single UlProbeForRead, direct reads, UlProbeAnsiString, destination bounds check, memmove at 0x1400DBED5) is retained verbatim in the UxKirNewUma == 0 branch of every affected function and is identical to the unpatched build, so the patched binary's default behavior is unchanged. The legacy path already probes each value pointer and bounds-checks the destination before copying, and the header length is 16-bit; no out-of-bounds read or write is demonstrable in either build's default path. Verdict: no security-relevant change delivered; a feature-staged user-mode-access hardening refactor. Severity: informational; no CWE asserted."
+}

@@ -1,0 +1,111 @@
+{
+  "binaries": {
+    "title": "mup.sys - No security-relevant change (WIL feature-staged UNICODE_STRING length adjustment in MupiCheckForMailslotRequest)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.9762,
+    "matched": 345,
+    "changed": 1,
+    "identical": 344,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 13
+  },
+  "changed_functions": [
+    {
+      "name": "MupiCheckForMailslotRequest",
+      "address_unpatched": "0x14001aae0",
+      "address_patched": "0x14001bbb0",
+      "similarity": 0.9659,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Added a call to the WIL feature-staging gate Feature_364057912__private_IsEnabledDeviceUsageNoInline (0x140002494, patched build only) before computing String2.Length in the failed-remote-mailslot telemetry branch",
+        "UNPATCHED: String2.Length = end_of_name - separator (Buffer = separator + 2, so the length spans 2 bytes / one wide char past the end of the name content)",
+        "PATCHED: when the feature reports enabled, String2.Length = end_of_name - (separator + 2) (trims the 2-byte over-count); when it is not enabled (the default) the original end_of_name - separator computation is retained on the else branch",
+        "The length is consumed only inside a diagnostic/telemetry path: RtlCompareUnicodeString against a fixed 6-entry known-provider prefix table, and RtlHashUnicodeString inside MupWriteTelemetryOtherRemoteMailslotFailed whose hash is emitted to ETW telemetry"
+      ],
+      "security_relevant": false,
+      "security_notes": "MupiCheckForMailslotRequest runs on the IRP_MJ_CREATE path (called from MupCreate when MajorFunction==0 and there is no related file object). It inspects the create name (Length at +0x58, Buffer at +0x60), locates separators via MupFindMatchingChar, and compares the leading component against MupiMailSlotName. If the name is a mailslot request and mailslots are disabled by policy (MupEnableMailslotsByPolicy / MupEnableMailslots == 0), it enters a diagnostic branch that builds a second UNICODE_STRING (String2) from the remaining path segment with Buffer = separator + 2, compares it against a 6-entry known-provider prefix table (unk_140007080 unpatched / unk_140008080 patched), and calls MupWriteTelemetryKnownRemoteMailslotFailed or MupWriteTelemetryOtherRemoteMailslotFailed. In the unpatched build String2.Length is computed as (end_of_name - separator), which is 2 bytes larger than the Buffer span. The patched build adds a default-off WIL feature gate (Feature_364057912__private_IsEnabledDeviceUsageNoInline) that, when enabled, subtracts (separator + 2) instead. Because the fix is gated off by default with the old path retained, and the length is used only inside a telemetry path (the hash is written to ETW, no bytes are returned to user mode), no delivered, reachable out-of-bounds read, information disclosure, or crash is demonstrable. Whether the 2-byte read is even out of bounds depends on create-name buffer slack (create names are commonly null-terminated). This is WIL feature-staging churn plus a staged, telemetry-confined length adjustment, not a delivered security fix.",
+      "assembly_diff": "=== UNPATCHED (MupiCheckForMailslotRequest @ 0x14001aae0) — diagnostic-branch length computation ===\n\n000000014001AC06  movzx   ebx, word ptr [r13+58h]   ; ebx = name.Length (16-bit)\n000000014001AC0B  add     rbx, [r13+60h]            ; rbx = name.Buffer + name.Length = end pointer\n...\n000000014001AC7C  sub     bx, si                    ; bx = end - separator (2 bytes over the Buffer span)\n000000014001AC7F  lea     rax, [rsi+2]              ; rax = separator + 2 = String2.Buffer\n000000014001AC83  mov     [rsp+78h+String2.Length], bx        ; Length stored (over-counted by 2)\n000000014001AC88  lea     rsi, unk_140007080        ; 6-entry known-provider prefix table\n000000014001AC8F  mov     [rsp+78h+String2.MaximumLength], bx\n000000014001AC97  mov     [rsp+78h+String2.Buffer], rax       ; Buffer = separator + 2\n\n=== PATCHED (MupiCheckForMailslotRequest @ 0x14001bbb0) — same branch, feature-gated ===\n\n000000014001BCD3  movzx   ebx, word ptr [r13+58h]\n000000014001BCD8  add     rbx, [r13+60h]            ; rbx = end pointer\n...\n000000014001BD3D  lea     r14, [rsi+2]              ; r14 = separator + 2 (Buffer, pre-computed)\n000000014001BD41  call    cs:__imp_RtlInitUnicodeString\n000000014001BD4D  call    Feature_364057912__private_IsEnabledDeviceUsageNoInline   ; WIL feature-staging gate\n000000014001BD52  test    eax, eax\n000000014001BD54  jnz     short loc_14001BD5B       ; feature enabled -> corrected path\n000000014001BD56  sub     bx, si                    ; feature OFF (default): end - separator (original)\n000000014001BD59  jmp     short loc_14001BD5F\n000000014001BD5B  sub     bx, r14w                  ; feature ON: end - (separator + 2)\n000000014001BD5F  mov     [rsp+78h+String2.Length], bx\n000000014001BD64  lea     rsi, unk_140008080        ; 6-entry known-provider prefix table\n000000014001BD6B  mov     [rsp+78h+String2.MaximumLength], bx\n000000014001BD73  mov     [rsp+78h+String2.Buffer], r14       ; Buffer = separator + 2"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_364057912__private_IsEnabledDeviceUsageNoInline",
+      "Feature_364057912__private_IsEnabledFallback",
+      "wil_details_FeatureReporting_IncrementOpportunityInCache",
+      "wil_details_FeatureReporting_IncrementUsageInCache",
+      "wil_details_FeatureReporting_RecordUsageInCache",
+      "wil_details_FeatureReporting_ReportUsageToService",
+      "wil_details_FeatureReporting_ReportUsageToServiceDirect",
+      "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath",
+      "wil_details_GetCurrentFeatureEnabledState",
+      "wil_details_IsEnabledFallback",
+      "wil_details_MapReportingKind",
+      "wil_RtlStagingConfig_QueryFeatureState"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "MupiCheckForMailslotRequest",
+      "entry_point": "IRP_MJ_CREATE (CreateFile/NtCreateFile) -> MupCreate -> MupiCheckForMailslotRequest, reached only when the create name matches MupiMailSlotName and mailslots are disabled by policy",
+      "call_chain": [
+        "CreateFile/NtCreateFile -> IRP_MJ_CREATE -> MupCreate (0x140019550)",
+        "MupCreate -> MupiCheckForMailslotRequest (0x14001aae0 unpatched / 0x14001bbb0 patched) when MajorFunction==0 and no related file object",
+        "MupiCheckForMailslotRequest -> MupFindMatchingChar (separator search) -> constructs String2 with Buffer = separator + 2",
+        "MupiCheckForMailslotRequest -> RtlCompareUnicodeString (6-entry known-provider prefix loop, unk_140007080 / unk_140008080)",
+        "MupiCheckForMailslotRequest -> MupWriteTelemetryKnownRemoteMailslotFailed / MupWriteTelemetryOtherRemoteMailslotFailed (0x140004b80: calls RtlHashUnicodeString then _tlgWriteTransfer_EtwWriteTransfer to emit ETW telemetry)"
+      ],
+      "vulnerability_class": "Feature-staged length-computation adjustment (read-side over-count, CWE-125 family); confined to telemetry path; no delivered/reachable impact",
+      "description": "In the failed-remote-mailslot telemetry branch of MupiCheckForMailslotRequest, the unpatched build sets String2.Buffer = separator + 2 but computes String2.Length = end_of_name - separator (where end_of_name = name.Buffer + name.Length), so the length spans 2 bytes past the end of the name content. The patched build adds a WIL feature-staging gate (Feature_364057912__private_IsEnabledDeviceUsageNoInline); when the feature is enabled it computes end_of_name - (separator + 2) instead, and when it is disabled (the default) the original computation is retained. The length is consumed only by RtlCompareUnicodeString against a fixed 6-entry prefix table and by RtlHashUnicodeString inside MupWriteTelemetryOtherRemoteMailslotFailed, whose hash is emitted to ETW telemetry. No bytes reach the calling user-mode process, the change is off by default, and whether the extra 2-byte read is even out of bounds depends on create-name buffer slack. This is not a delivered, reachable security fix.",
+      "trigger_conditions": "1. IRP_MJ_CREATE with no related (relative) file object, so MupCreate calls MupiCheckForMailslotRequest. 2. The create name's leading component must match MupiMailSlotName under RtlCompareUnicodeString. 3. Mailslots must be disabled by policy: MupEnableMailslotsByPolicy (or MupEnableMailslots when it equals 2) must be 0, selecting the diagnostic/telemetry branch. 4. The second MupFindMatchingChar result must be non-NULL (a further separator after the mailslot component). Only under these conditions is String2 built and the 2-byte length difference between builds exercised.",
+      "primitive": "None demonstrable. The 2-byte length over-count is confined to a telemetry/diagnostic path (RtlCompareUnicodeString against a fixed prefix table; RtlHashUnicodeString feeding an ETW telemetry event). No bytes are returned to user mode, the corrected computation is disabled by default, and the read is only out of bounds if the create-name allocation has no trailing slack (create names are commonly null-terminated). No information disclosure, crash, or KASLR primitive is provable from the binaries.",
+      "evidence": "=== UNPATCHED decompilation (MupiCheckForMailslotRequest @ 0x14001aae0) ===\n\nif ( v18 != nullptr )                          // v18 = second separator pointer\n{\n    RtlInitUnicodeString(&String2, nullptr);\n    String2.Length        = v21 - (_WORD)v18;  // v21 = name.Buffer + name.Length (end)\n    String2.MaximumLength = v21 - (_WORD)v18;  // spans 2 bytes past end\n    v22 = 0;\n    String2.Buffer = v18 + 1;                  // Buffer = separator + 2 bytes\n    while ( RtlCompareUnicodeString((PCUNICODE_STRING)&unk_140007080 + v22, &String2, 1u) != 0 )\n    {\n        if ( ++v22 >= 6u )\n            goto LABEL_23;\n    }\n    MupWriteTelemetryKnownRemoteMailslotFailed();\nLABEL_23:\n    if ( v22 == 6 )\n        MupWriteTelemetryOtherRemoteMailslotFailed(&String2);\n}\n\n=== PATCHED decompilation (MupiCheckForMailslotRequest @ 0x14001bbb0) ===\n\nif ( v18 != nullptr )\n{\n    RtlInitUnicodeString(&String2, nullptr);\n    if ( (unsigned int)Feature_364057912__private_IsEnabledDeviceUsageNoInline() != 0 )\n        v22 = v21 - ((_WORD)v18 + 2);          // feature ON: end - (separator + 2)\n    else\n        v22 = v21 - (_WORD)v18;                // feature OFF (default): original behavior\n    String2.Length        = v22;\n    String2.MaximumLength = v22;\n    v23 = 0;\n    String2.Buffer = v18 + 1;                  // Buffer = separator + 2 bytes\n    while ( RtlCompareUnicodeString((PCUNICODE_STRING)&unk_140008080 + v23, &String2, 1u) != 0 )\n    {\n        if ( ++v23 >= 6u )\n            goto LABEL_26;\n    }\n    MupWriteTelemetryKnownRemoteMailslotFailed();\nLABEL_26:\n    if ( v23 == 6 )\n        MupWriteTelemetryOtherRemoteMailslotFailed(&String2);\n}",
+      "assembly": "=== UNPATCHED key region (MupiCheckForMailslotRequest @ 0x14001aae0) ===\n\n000000014001ABD7  lea     rcx, MupiMailSlotName     ; leading-component compare target\n000000014001ABE3  call    cs:__imp_RtlCompareUnicodeString\n000000014001ABEF  test    eax, eax\n000000014001ABF1  jnz     loc_14001ACFD            ; not the mailslot name -> return\n000000014001ABFC  movzx   eax, byte ptr cs:MupEnableMailslotsByPolicy\n000000014001AC06  movzx   ebx, word ptr [r13+58h]  ; name.Length\n000000014001AC0B  add     rbx, [r13+60h]           ; rbx = end pointer\n000000014001AC14  cmp     al, 2\n000000014001AC16  jnz     short loc_14001AC1F\n000000014001AC18  movzx   eax, cs:MupEnableMailslots\n000000014001AC1F  test    al, al\n000000014001AC21  jnz     loc_14001ACE9           ; mailslots enabled -> alloc file context\n000000014001AC60  test    rsi, rsi                 ; rsi = second separator; must be non-NULL\n000000014001AC63  jz      loc_14001AD04\n000000014001AC7C  sub     bx, si                   ; String2.Length = end - separator (over by 2)\n000000014001AC7F  lea     rax, [rsi+2]             ; String2.Buffer = separator + 2\n000000014001AC83  mov     [rsp+78h+String2.Length], bx\n000000014001AC88  lea     rsi, unk_140007080       ; 6-entry known-provider prefix table\n000000014001AC8F  mov     [rsp+78h+String2.MaximumLength], bx\n000000014001AC97  mov     [rsp+78h+String2.Buffer], rax\n000000014001ACB2  call    cs:__imp_RtlCompareUnicodeString   ; prefix-loop compare\n000000014001ACD2  call    MupWriteTelemetryKnownRemoteMailslotFailed\n000000014001ACE2  call    MupWriteTelemetryOtherRemoteMailslotFailed   ; -> RtlHashUnicodeString -> ETW\n\n=== PATCHED key region (MupiCheckForMailslotRequest @ 0x14001bbb0) ===\n\n000000014001BCA4  lea     rcx, MupiMailSlotName\n000000014001BCB0  call    cs:__imp_RtlCompareUnicodeString\n000000014001BCBE  jnz     loc_14001BDDD\n000000014001BCC9  movzx   eax, byte ptr cs:MupEnableMailslotsByPolicy\n000000014001BCD3  movzx   ebx, word ptr [r13+58h]\n000000014001BCD8  add     rbx, [r13+60h]           ; rbx = end pointer\n000000014001BD2D  test    rsi, rsi\n000000014001BD30  jz      loc_14001BDE4\n000000014001BD3D  lea     r14, [rsi+2]             ; r14 = separator + 2 (Buffer)\n000000014001BD41  call    cs:__imp_RtlInitUnicodeString\n000000014001BD4D  call    Feature_364057912__private_IsEnabledDeviceUsageNoInline\n000000014001BD52  test    eax, eax\n000000014001BD54  jnz     short loc_14001BD5B\n000000014001BD56  sub     bx, si                   ; feature OFF (default): end - separator\n000000014001BD59  jmp     short loc_14001BD5F\n000000014001BD5B  sub     bx, r14w                 ; feature ON: end - (separator + 2)\n000000014001BD5F  mov     [rsp+78h+String2.Length], bx\n000000014001BD64  lea     rsi, unk_140008080\n000000014001BD73  mov     [rsp+78h+String2.Buffer], r14\n000000014001BD92  call    cs:__imp_RtlCompareUnicodeString\n000000014001BDB2  call    MupWriteTelemetryKnownRemoteMailslotFailed\n000000014001BDC2  call    MupWriteTelemetryOtherRemoteMailslotFailed",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mup!MupiCheckForMailslotRequest",
+            "address": "0x14001aae0",
+            "why": "Entry of the function (unpatched). arg1 (rcx) is the create-name descriptor: word [rcx+0x58] = name Length, qword [rcx+0x60] = name Buffer."
+          },
+          {
+            "symbol": "mup!MupiCheckForMailslotRequest+0x19c",
+            "address": "0x14001ac7c",
+            "why": "The 'sub bx, si' that sets String2.Length = end - separator in the unpatched build. Buffer is separator + 2 (0x14001ac7f), so the length spans 2 bytes past the end of the name content."
+          },
+          {
+            "symbol": "mup!MupiCheckForMailslotRequest (patched)",
+            "address": "0x14001bd4d",
+            "why": "The added 'call Feature_364057912__private_IsEnabledDeviceUsageNoInline' WIL feature gate. eax != 0 selects 'sub bx, r14w' (end - (separator+2)); eax == 0 (default) selects 'sub bx, si' (original behavior)."
+          },
+          {
+            "symbol": "mup!MupWriteTelemetryOtherRemoteMailslotFailed",
+            "address": "0x140004b80",
+            "why": "The telemetry logger that consumes String2: it calls RtlHashUnicodeString then _tlgWriteTransfer_EtwWriteTransfer to emit an ETW event. The hash, not raw bytes, is what leaves the function; nothing is returned to the user-mode caller."
+          }
+        ],
+        "watch": [
+          "bx at 0x14001ac7c (unpatched) / after the branch at 0x14001bd5f (patched) — the String2.Length being stored",
+          "rsi at 0x14001ac7c — the second separator pointer; String2.Buffer = rsi + 2",
+          "byte cs:MupEnableMailslotsByPolicy and cs:MupEnableMailslots — must be 0 to reach the telemetry branch",
+          "eax after 0x14001bd4d (patched) — WIL feature state selecting corrected vs original length"
+        ],
+        "key_offsets": [
+          "0x14001ac7c (unpatched): 'sub bx, si' — String2.Length = end - separator (over by 2)",
+          "0x14001bd4d (patched): 'call Feature_364057912__private_IsEnabledDeviceUsageNoInline' — WIL feature-staging gate",
+          "0x14001bd56 (patched): 'sub bx, si' — feature-off path (default), original behavior",
+          "0x14001bd5b (patched): 'sub bx, r14w' — feature-on path, corrected length end - (separator+2)",
+          "0x14001abd7 / 0x14001bca4: 'lea rcx, MupiMailSlotName' — the leading-component compare target",
+          "0x140004b80: MupWriteTelemetryOtherRemoteMailslotFailed — calls RtlHashUnicodeString then emits ETW telemetry"
+        ],
+        "trigger_setup": "Reaching the changed branch requires an IRP_MJ_CREATE whose leading name component matches MupiMailSlotName, with mailslots disabled by policy (MupEnableMailslotsByPolicy / MupEnableMailslots == 0) and a further separator after the mailslot component. Even then, the 2-byte length difference only affects the length passed to RtlCompareUnicodeString and RtlHashUnicodeString inside the telemetry path; it is not returned to user mode and the corrected computation is disabled by default.",
+        "expected_observation": "In the unpatched build (and the patched build with the feature disabled), String2.Length equals (end_of_name - separator), 2 bytes larger than the (Buffer = separator+2)-to-end span. With the patched feature enabled, String2.Length equals (end_of_name - separator - 2). The difference is only observable inside the failed-remote-mailslot telemetry comparison/hash; no user-mode-visible data leak or crash is demonstrable.",
+        "notes": "Feature_364057912__private_IsEnabledDeviceUsageNoInline (0x140002494) reads Feature_364057912__private_featureState and, if not overridden, defers to Feature_364057912__private_IsEnabledFallback -> wil_details_IsEnabledFallback (standard WIL feature-staging query, default off). It is not a registry/configuration read. The 13 functions added in the patched build are all WIL feature-staging infrastructure supporting this gate."
+      }
+    }
+  ],
+  "summary": "The only behavioral difference between mup_unpatched.sys and mup_patched.sys is a WIL feature-staged change inside MupiCheckForMailslotRequest (0x14001AAE0 unpatched, 0x14001BBB0 patched), a function on the IRP_MJ_CREATE path (called from MupCreate) that detects remote-mailslot create attempts. In its failed-remote-mailslot telemetry branch it builds a UNICODE_STRING (String2) with Buffer = separator + 2 but, in the unpatched build, Length = end_of_name - separator (2 bytes / one wide char too large). The patched build adds a default-off WIL feature gate (Feature_364057912__private_IsEnabledDeviceUsageNoInline) that, when enabled, computes end_of_name - (separator + 2) instead; the original computation is retained on the else branch and runs by default. The length is consumed only by RtlCompareUnicodeString against a fixed 6-entry prefix table and by RtlHashUnicodeString inside MupWriteTelemetryOtherRemoteMailslotFailed, whose hash is emitted to ETW telemetry - no bytes reach user mode. An independent structural diff of all 345 shared functions confirms no other function changed; the 13 added functions are all WIL feature-staging infrastructure, and none are removed. This is staged-rollout / feature-gating churn, not a delivered, reachable security fix; severity: none."
+}

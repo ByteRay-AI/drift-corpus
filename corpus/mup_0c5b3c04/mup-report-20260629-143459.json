@@ -1,0 +1,97 @@
+{
+  "binaries": {
+    "title": "mup.sys - No security-relevant change: WIL feature-state cache library churn (bit 0x40000 marking + feature-usage provider registration)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.992,
+    "matched": 364,
+    "changed": 2,
+    "identical": 362,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "address": "0x14001238C",
+      "similarity": 0.976,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added two stack locals in the record passed to RtlRegisterFeatureUsageProvider: one initialized to 1, one initialized to 0",
+        "No change to memory-safety or request-handling logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage telemetry provider registration. Adjusts the registration record passed to RtlRegisterFeatureUsageProvider. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "address": "0x140003180",
+      "similarity": 0.9887,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: Added 'bts eax, 12h' at 0x1400031DC, unconditionally setting bit 18 (0x40000) of the recomputed WIL feature-enabled-state cache value at the top of each CAS iteration",
+        "PATCHED: The conditional merge mask changed from '& 0xFFFFF63E | 2' to '& 0xFFFBF63E | 0x40000 | 2', keeping bit 18 set on that branch as well",
+        "PATCHED: Removed the redundant early stack store previously at 0x1400031E9 (mov dword ptr [rsp+arg_8], eax)",
+        "The interlocked commit at 0x140003229 (lock cmpxchg [r15], esi) is unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a Windows Implementation Library (WIL) feature-staging function, not a UNC prefix cache. It recomputes WIL's cached feature-enabled-state value for a compile-time feature gate and commits it with _InterlockedCompareExchange. The patched build always sets bit 0x40000 in the recomputed value; that bit is internal to WIL's feature-state cache encoding and is consumed only by WIL's own IsEnabled checks. The function is reached only from wil_details_AreDependenciesEnabled (0x140002C3C) and wil_details_IsEnabledFallback (0x1400033FC), which evaluate compile-time WIL feature descriptors (e.g. Feature_364057912__private_featureState). It is NOT reachable from IRP_MJ_CREATE, a UNC path parser, or any attacker-controlled input, and the state field is a feature gate with no managed alloc/free object behind it. There is no use-after-free, no race with security impact, and no exploit primitive. This is statically-linked library servicing churn.",
+      "assembly_diff": "=== UNPATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (changed region) ===\n00000001400031D8  mov     eax, edi\n00000001400031DA  mov     ecx, edi\n00000001400031DC  cmp     [rsp+48h+arg_0], 0\n00000001400031E1  mov     esi, eax\n00000001400031E3  mov     dword ptr [rsp+48h+arg_8], eax\n00000001400031E7  jz      short loc_140003208\n00000001400031E9  mov     dword ptr [rsp+48h+arg_8], eax   ; redundant early store\n00000001400031ED  test    cl, 2\n00000001400031F0  jnz     short loc_140003208\n00000001400031F2  and     esi, 0FFFFF63Eh\n00000001400031F8  mov     eax, ebx\n00000001400031FA  and     eax, 9C1h\n00000001400031FF  or      esi, eax\n0000000140003201  or      esi, 2\n0000000140003204  mov     dword ptr [rsp+48h+arg_8], esi\n0000000140003227  mov     eax, edi\n0000000140003229  lock cmpxchg [r15], esi\n0000000140003234  jmp     short loc_1400031DC   ; retry loop\n\n=== PATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (changed region) ===\n00000001400031D8  mov     eax, edi\n00000001400031DA  mov     ecx, edi\n00000001400031DC  bts     eax, 12h              ; NEW: force bit 0x40000 each iteration\n00000001400031E0  cmp     [rsp+48h+arg_0], 0\n00000001400031E5  mov     esi, eax\n00000001400031E7  mov     dword ptr [rsp+48h+arg_8], eax\n00000001400031EB  jz      short loc_140003208\n00000001400031ED  test    cl, 2                 ; redundant early store removed\n00000001400031F0  jnz     short loc_140003208\n00000001400031F2  and     esi, 0FFFFF63Eh\n00000001400031F8  mov     eax, ebx\n00000001400031FA  and     eax, 9C1h\n00000001400031FF  or      esi, eax\n0000000140003201  or      esi, 2\n0000000140003204  mov     dword ptr [rsp+48h+arg_8], esi\n0000000140003227  mov     eax, edi\n0000000140003229  lock cmpxchg [r15], esi\n0000000140003234  jmp     short loc_1400031DC   ; retry loop (bts re-runs each iteration)"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x140003180",
+      "entry_point": "Not attacker-reachable. Called only by WIL feature-gate evaluation helpers wil_details_AreDependenciesEnabled (0x140002C3C) and wil_details_IsEnabledFallback (0x1400033FC), which evaluate compile-time feature descriptors.",
+      "call_chain": [
+        "wil_details_IsEnabledFallback (0x1400033FC) / wil_details_AreDependenciesEnabled (0x140002C3C)",
+        "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x140003180)"
+      ],
+      "vulnerability_class": "None. WIL feature-staging library behavior refinement.",
+      "description": "The function at 0x140003180 is wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState, part of the statically-linked Windows Implementation Library (WIL) feature-management code. It recomputes WIL's cached 'feature enabled state' packed value for a compile-time feature gate and commits it with an _InterlockedCompareExchange (lock cmpxchg) retry loop. The patched build unconditionally sets bit 18 (0x40000) of the recomputed value on every CAS iteration (bts eax, 12h at 0x1400031DC), where the unpatched build carried that bit only on the merge branch; the conditional mask was adjusted from & 0xFFFFF63E to & 0xFFFBF63E | 0x40000 accordingly, and a redundant early stack store was removed. This bit is internal to WIL's feature-state cache encoding and is consumed only by WIL's own IsEnabled checks. The state pointer is a compile-time WIL feature descriptor (e.g. Feature_364057912__private_featureState), not a per-request object. There is no path from IRP_MJ_CREATE on \\Device\\Mup or from a UNC path parser into this function, no attacker-influenced state field, no managed alloc/free object behind the state, and therefore no use-after-free, no race with security impact, and no exploit primitive. This is library servicing churn.",
+      "trigger_conditions": "Not applicable. The feature-state cache is driven by feature-staging configuration, not by attacker-controlled file I/O. The function is not reachable from a UNC path open or any IRP field.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED (decompiled, changed region):\n```\nv8 = v5;\nfor ( i = v5; ; i = v8 )\n{\n    v10 = v8;                 // 0x40000 not forced\n    LODWORD(v13) = v8;\n    if ( v12 != 0 )\n    {\n        LODWORD(v13) = v8;\n        if ( (i & 2) == 0 )\n        {\n            v10 = CurrentFeatureEnabledState & 0x9C1 | v8 & 0xFFFFF63E | 2;\n            LODWORD(v13) = v10;\n        }\n    }\n    if ( (v5 & 4) == 0 )\n        v10 = v10 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n    v8 = _InterlockedCompareExchange(a1, v10, v5);\n    if ( v5 == v8 ) break;\n    v5 = v8;\n}\n```\n\nPATCHED (decompiled, changed region):\n```\nv8 = v5;\nfor ( i = v5; ; i = v8 )\n{\n    v10 = v8 | 0x40000;       // bit 18 always set (bts eax, 12h)\n    LODWORD(v13) = v8 | 0x40000;\n    if ( v12 != 0 && (i & 2) == 0 )\n    {\n        v10 = CurrentFeatureEnabledState & 0x9C1 | v8 & 0xFFFBF63E | 0x40000 | 2;\n        LODWORD(v13) = v10;\n    }\n    if ( (v5 & 4) == 0 )\n        v10 = v10 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n    v8 = _InterlockedCompareExchange(a1, v10, v5);\n    if ( v5 == v8 ) break;\n    v5 = v8;\n}\n```",
+      "assembly": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x140003180 (UNPATCHED, mup_unpatched.sys) full assembly:\n0000000140003180  mov     [rsp+arg_10], rbx\n0000000140003185  push    rbp\n0000000140003186  push    rsi\n0000000140003187  push    rdi\n0000000140003188  push    r14\n000000014000318A  push    r15\n000000014000318C  sub     rsp, 20h\n0000000140003190  mov     rax, cs:g_wil_details_ensureSubscribedToFeatureConfigurationChanges\n0000000140003197  xor     ebp, ebp\n0000000140003199  and     [rsp+48h+arg_0], ebp\n000000014000319D  mov     r14, r8\n00000001400031A0  mov     [rsp+48h+arg_8], rdx\n00000001400031A5  mov     rdi, rdx\n00000001400031A8  mov     r15, rcx\n00000001400031AB  test    rax, rax\n00000001400031AE  jz      short loc_1400031B7\n00000001400031B0  call    _guard_dispatch_icall\n00000001400031B5  mov     ebp, eax\n00000001400031B7  lea     rdx, [rsp+48h+arg_0]\n00000001400031BC  mov     rcx, r14\n00000001400031BF  call    wil_details_GetCurrentFeatureEnabledState\n00000001400031C4  cmp     byte ptr [r14+1Ch], 0\n00000001400031C9  mov     rbx, rax\n00000001400031CC  jnz     short loc_1400031D8\n00000001400031CE  mov     ecx, ebp\n00000001400031D0  neg     ecx\n00000001400031D2  sbb     edx, edx\n00000001400031D4  and     [rsp+48h+arg_0], edx\n00000001400031D8  mov     eax, edi\n00000001400031DA  mov     ecx, edi\n00000001400031DC  cmp     [rsp+48h+arg_0], 0\n00000001400031E1  mov     esi, eax\n00000001400031E3  mov     dword ptr [rsp+48h+arg_8], eax\n00000001400031E7  jz      short loc_140003208\n00000001400031E9  mov     dword ptr [rsp+48h+arg_8], eax\n00000001400031ED  test    cl, 2\n00000001400031F0  jnz     short loc_140003208\n00000001400031F2  and     esi, 0FFFFF63Eh\n00000001400031F8  mov     eax, ebx\n00000001400031FA  and     eax, 9C1h\n00000001400031FF  or      esi, eax\n0000000140003201  or      esi, 2\n0000000140003204  mov     dword ptr [rsp+48h+arg_8], esi\n0000000140003208  test    dil, 4\n000000014000320C  jnz     short loc_140003227\n000000014000320E  mov     eax, esi\n0000000140003210  mov     ecx, ebx\n0000000140003212  and     ecx, 400h\n0000000140003218  btr     eax, 0Ah\n000000014000321C  mov     esi, ecx\n000000014000321E  or      esi, eax\n0000000140003220  or      esi, 4\n0000000140003223  mov     dword ptr [rsp+48h+arg_8], esi\n0000000140003227  mov     eax, edi\n0000000140003229  lock cmpxchg [r15], esi\n000000014000322E  jz      short loc_140003236\n0000000140003230  mov     edi, eax\n0000000140003232  mov     ecx, eax\n0000000140003234  jmp     short loc_1400031DC\n0000000140003236  test    dil, 4\n000000014000323A  jnz     short loc_140003258\n000000014000323C  mov     rax, cs:g_wil_details_subscribeFeatureStateCacheToConfigurationChanges\n0000000140003243  test    rax, rax\n0000000140003246  jz      short loc_140003258\n0000000140003248  movzx   edx, byte ptr [r14+1Ch]\n000000014000324D  mov     r8d, ebp\n0000000140003250  mov     rcx, r15\n0000000140003253  call    _guard_dispatch_icall\n0000000140003258  cmp     [rsp+48h+arg_0], 0\n000000014000325D  jnz     short loc_140003271\n000000014000325F  and     ebx, 9C1h\n0000000140003265  and     esi, 0FFFFF63Eh\n000000014000326B  or      ebx, esi\n000000014000326D  mov     dword ptr [rsp+48h+arg_8], ebx\n0000000140003271  mov     rax, [rsp+48h+arg_8]\n0000000140003276  mov     rbx, [rsp+48h+arg_10]\n000000014000327B  add     rsp, 20h\n000000014000327F  pop     r15\n0000000140003281  pop     r14\n0000000140003283  pop     rdi\n0000000140003284  pop     rsi\n0000000140003285  pop     rbp\n0000000140003286  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mup!wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+            "address": "0x140003180",
+            "why": "Entry to the WIL feature-state cache reevaluation function. RCX (a1) = pointer to the compile-time WIL feature-state field being updated. RDX (a2) = current packed state. R8 (a3) = WIL feature descriptor. This is a feature-gate cache updater, not a request-handling path."
+          },
+          {
+            "symbol": "mup!wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState+0x5c",
+            "address": "0x1400031DC",
+            "why": "The single instruction-level delta. UNPATCHED: 'cmp [rsp+arg_0], 0'. PATCHED: 'bts eax, 12h', forcing bit 0x40000 of the recomputed WIL cache value each CAS iteration."
+          },
+          {
+            "symbol": "mup!wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState+0xa9",
+            "address": "0x140003229",
+            "why": "lock cmpxchg [r15], esi — the interlocked commit of the recomputed WIL feature-cache value. Unchanged between builds. R15 points to the compile-time feature-state field."
+          }
+        ],
+        "watch": [
+          "ESI at 0x140003229 — value committed by lock cmpxchg; in the patched build it always carries bit 0x40000",
+          "R15 — pointer to the WIL compile-time feature-state field (not a per-request object)",
+          "R8 / a3 — WIL feature descriptor passed by the caller (e.g. Feature_364057912__private_featureState)"
+        ],
+        "key_offsets": [
+          "0x1400031DC: UNPATCHED 'cmp [rsp+arg_0], 0'; PATCHED 'bts eax, 12h' — the added instruction that forces bit 0x40000. This is the whole behavioral delta.",
+          "0x1400031E9: UNPATCHED redundant early store 'mov dword ptr [rsp+arg_8], eax' — removed in the patched build.",
+          "0x140003229: 'lock cmpxchg [r15], esi' — interlocked commit, unchanged."
+        ],
+        "trigger_setup": "Not applicable. The WIL feature-state cache is driven by feature-staging configuration; it is not reachable from a UNC path open or any attacker-controlled IRP field.",
+        "expected_observation": "In the patched build the committed WIL feature-cache value carries bit 0x40000. This is a library-internal encoding flag consumed only by WIL's own IsEnabled checks; it has no security consequence.",
+        "notes": "The function at RVA 0x3180 is wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState in both builds. It calls wil_details_GetCurrentFeatureEnabledState, g_wil_details_ensureSubscribedToFeatureConfigurationChanges, and g_wil_details_subscribeFeatureStateCacheToConfigurationChanges — all WIL feature-staging internals. Callers are wil_details_AreDependenciesEnabled (0x140002C3C) and wil_details_IsEnabledFallback (0x1400033FC). This is not a UNC prefix cache and not attacker-reachable."
+      }
+    }
+  ],
+  "summary": "The mup.sys patch contains no security-relevant change. Two functions have behavioral body changes and both are inside the statically-linked Windows Implementation Library (WIL) feature-staging code. wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x140003180) now unconditionally sets bit 0x40000 in the recomputed WIL feature-enabled-state cache value before its interlocked commit (bts eax, 12h at 0x1400031DC) and drops a redundant early store; this bit is a WIL cache-encoding flag consumed only by WIL's own IsEnabled checks, the state field is a compile-time feature gate, and the function is reached only from WIL feature-gate helpers (0x140002C3C, 0x1400033FC), not from IRP_MJ_CREATE or any UNC path parser. wil_details_RegisterFeatureUsageProvider (0x14001238C) adds two locals to the record passed to RtlRegisterFeatureUsageProvider (WIL feature-usage telemetry registration). A third difference is a WPP trace-stub symbol rename (WPP_SF_d to WPP_SF_D) with an identical body. None of these are memory-safety, race, or privilege-escalation fixes; there is no UNC prefix cache, no use-after-free, and no exploit primitive."
+}

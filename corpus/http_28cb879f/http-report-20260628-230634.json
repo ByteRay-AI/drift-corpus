@@ -1,0 +1,255 @@
+{
+  "binaries": {
+    "title": "http.sys - HTTP/2 Range and Trailer Known Issue Rollback (KIR) Servicing Diff",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9915,
+    "matched": 3584,
+    "changed": 13,
+    "identical": 3571,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlGenerateTrailers (sub_1C000CF94)",
+      "similarity": 0.7166,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the UxKirHttpReadingTrailersFromUm Known Issue Rollback gate that selected between two source-pointer handling paths for trailer entries",
+        "Unpatched: when the gate was set, the source pointer was taken from a value cached one line earlier; when clear, it was re-read from the entry structure (entry+8 / entry+16)",
+        "Patched consolidates to a single path that always re-reads the pointer from the entry structure",
+        "Both branches in both builds probe each source with UlProbeAnsiString (sub_1c0039258) and apply the identical bounds check 'if (len > remaining) return STATUS_INSUFFICIENT_RESOURCES (0xC000009A)' before every memmove (sub_1c0021580)",
+        "Function serializes parsed trailer entries (24-byte structures: name_len@0x0, value_len@0x2, name_ptr@0x8, value_ptr@0x10; count rejected if 0 or >= 0x2710) into a caller-supplied output buffer of size arg5"
+      ],
+      "security_relevant": false,
+      "security_notes": "UlGenerateTrailers (sub_1C000CF94) exists at the same address in both builds. Every name and value copy is guarded by a comparison of the 16-bit length against the running remaining-buffer counter (initialized from arg5); an over-length copy returns 0xC000009A (STATUS_INSUFFICIENT_RESOURCES) without copying. This guard is present in the unpatched build, the patched build, and both sides of the removed KIR branch. The only behavioral difference the gate controlled was whether the memmove source pointer was cached or re-read from the entry, which does not affect the bounds check or the amount copied. The output size (arg5) is supplied by callers UlFastSendHttpResponse (sub_1C00E31F0) and a second response-build site from a response-structure field (*(a4+152)); it is not derived from the range-response size arithmetic in UlPrepareParsedHeaderRangeResponse. No out-of-bounds write path is present.",
+      "assembly_diff": "0x1C000CF94  mov r11, rsp\n0x1C000CFB2  mov r14, r9            ; output buffer (arg4)\n             mov r15d, [rsp+0xd0]   ; output size (arg5)\n             mov edi, r15d          ; remaining counter\n0x1C000D021  movzx r12d, word [rsi+8] ; trailer count\n             mov eax, 0x2710         ; reject count >= 10000\n             cmp r12w, ax\n0x1C000D0A8  movzx r12d, word [r13+rax*8] ; name_len (16-bit)\n0x1C000D0E5  cmp cs:UxKirHttpReadingTrailersFromUm, 0  ; KIR gate (removed in patch)\n             call UlProbeAnsiString  ; sub_1c0039258\n0x1C000D12A  cmp ebx, edi            ; BOUNDS CHECK: name_len > remaining ?\n             jbe ...                 ; if too big -> 0xC000009A\n             call memmove            ; sub_1c0021580 (guarded copy)\n             add r14, rbx            ; out += name_len\n             sub edi, eax            ; remaining -= name_len\n; Patched removes the cmp cs:UxKirHttpReadingTrailersFromUm gate; keeps the cmp ebx, edi bounds check."
+    },
+    {
+      "name": "UlpCheckIfBypassRangeProcessing (sub_1C005F19C)",
+      "similarity": 0.7231,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the UxKirHKERangeRequestH2StatusCode gating around a 206 status trace and the UlpHkeBuilderModifyStatusCode (sub_1c01599d8) path",
+        "Simplified the condition ordering that decides whether range processing is bypassed for an already-206 response",
+        "Patched at 0x1C005F02C"
+      ],
+      "security_relevant": false,
+      "security_notes": "Decision helper for whether byte-range processing is bypassed. The removed code was gated on the UxKirHKERangeRequestH2StatusCode Known Issue Rollback flag and affected status-code tracing/reporting only. No memory-safety change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlPrepareParsedHeaderRangeResponse (sub_1C005E348)",
+      "similarity": 0.9774,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the UxKirHKERangeRequestH2StatusCode-gated block that force-set response status to 206 across three fields after the response was already sized and its headers generated",
+        "The allocation size arithmetic 'v24 = header_base + 80 * v23' (v23 = 2*range_count + 1 + overlap_count) is a 32-bit unsigned computation that is byte-for-byte IDENTICAL in both builds; the patch does not widen, cap, or add an overflow check to it",
+        "Allocates the header buffer via ExAllocatePool3(64, v24, 'UlyF', &UxLowPriorityPool, 1) and fills the header region via UlpGenerateRangeResponseHeaders (sub_1C005F748), which receives the remaining size as an explicit bound",
+        "Patched at 0x1C005E208"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the byte-range/multipart (206) response builder. The size expression v24 = v22 + 80 * v23 is unchanged between http_unpatched.c and http_patched.c (both read exactly 'v24 = v22 + 80 * v23'). The only change is removal of a KIR-gated status override that ran after sizing and filling, so it cannot feed back into the allocation size. The header region it sizes is filled by UlpGenerateRangeResponseHeaders under an explicit remaining-size bound and is a separate buffer from anything touched by UlGenerateTrailers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpGenerateRangeResponseHeaders (sub_1C005F748)",
+      "similarity": 0.879,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the UxKirHKERangeRequestH2StatusCode-gated call to UlpHkeBuilderModifyStatusCode (sub_1c01599d8) for 'Partial Content' status reporting",
+        "Emits Content-Range and Accept-Ranges headers for 206 responses under a caller-supplied remaining-size bound",
+        "Patched at 0x1C005F438"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpCompleteSendToExtensionWorker (sub_1C0061260)",
+      "similarity": 0.9709,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Range-response completion case (rcx_1 == 2) now has separate handling instead of sharing the rcx_1 == 1 cleanup path",
+        "Send-response completion callback (references sendresponse.h:0x358)",
+        "Patched at 0x1C0060F10"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpRebuildResponseHeaders (sub_1C013F860)",
+      "similarity": 0.8734,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactoring of HTTP/2 response header rebuild under PushLockExclusive",
+        "Feature-gate consolidation on UlReInitializeParsedHeaders (sub_1c0020ac4 / sub_1c0020e34) calls",
+        "Reordered pool-allocation cleanup and error-path handling",
+        "Patched at 0x1C013E860"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring of error paths and gate consolidation. Core header-processing and allocation logic is structurally equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlHkeBuilderCopyFixedHeaders (sub_1C015889C)",
+      "similarity": 0.965,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Consumes the new UxKirBranchCacheIgnoreResponseCaching gate: the response-caching field write '*(arg6+20) = *(arg6+8)' is now guarded by 'if (UxKirBranchCacheIgnoreResponseCaching != 0 && arg6)' instead of 'if (arg6)'",
+        "Callee addresses shifted by recompilation (memmove sub_1c0021580->sub_1c0021200, UlSetParsedHeader sub_1c00e23e0->sub_1c00e13e0); those callees are byte-identical across builds",
+        "Serializes fixed HTTP/2 HPACK headers into an output buffer",
+        "Patched at 0x1C015791C"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a memory-safety change. The per-header copy guard 'if (v11 < value_len + name_len + 4) return STATUS_INVALID_PARAMETER' and all memmove lengths are identical in both builds; only the new UxKirBranchCacheIgnoreResponseCaching gate wraps the response-caching field write.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxQuicConnectionCopyBindings (sub_1C0047B78)",
+      "similarity": 0.8581,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the UxKirWritingAndReadingUm Known Issue Rollback branch",
+        "Register renaming (r12->r15) and variable consolidation",
+        "Core copy/validation logic unchanged",
+        "Patched at 0x1C0047A68"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule (sub_1C01767B0)",
+      "similarity": 0.9156,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Environment-module startup routine. Removed the KIR initializers for UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, and UxKirHKERangeRequestH2StatusCode",
+        "Added the KIR initializer for UxKirBranchCacheIgnoreResponseCaching",
+        "Unpatched sets 5 KIR flags via setnz cs:... at 0x1C017683D-0x1C0176880; patched sets 3 at 0x1C017583D-0x1C0175864",
+        "Patched at 0x1C01757B0"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the environment-module startup routine (not DriverEntry). It is where the retired Known Issue Rollback gates stop being populated at runtime and the new gate (UxKirBranchCacheIgnoreResponseCaching) begins being populated. Retiring a KIR gate makes the previously toggled behavior permanent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementOpportunityInCache (sub_1C001EE38)",
+      "similarity": 0.9302,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-staging/telemetry cache helper",
+        "Compiler-generated do-while to while(true)+break transformation; register renaming",
+        "Final assignment now uses the loop's live result variable"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementUsageInCache (sub_1C001EF28)",
+      "similarity": 0.9303,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-staging/telemetry cache helper",
+        "Same do-while to while(true) compiler transformation; register renaming",
+        "Final assignment now uses the loop's live result variable"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_RecordUsageInCache (sub_1C001F020)",
+      "similarity": 0.9771,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-staging/telemetry helper",
+        "Same compiler loop transformation; register renaming throughout",
+        "Core atomic bit-manipulation logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000D25B",
+      "similarity": 0.9763,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Not a function entry: 0x1C000D25B ('mov ebx, eax') falls inside UlGenerateTrailers (sub_1C000CF94); no function begins there in either build",
+        "The delta at this address is part of the same UxKirHttpReadingTrailersFromUm gate consolidation already covered under UlGenerateTrailers"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "UlGenerateTrailers (sub_1C000CF94)",
+      "entry_point": "HTTP response send path (UlFastSendHttpResponse sub_1C00E31F0 -> UlGenerateTrailers sub_1C000CF94), trailer serialization",
+      "call_chain": [
+        "HTTP response build on HTTP.sys",
+        "UlFastSendHttpResponse (sub_1C00E31F0)",
+        "UlGenerateTrailers (sub_1C000CF94) trailer serialization"
+      ],
+      "vulnerability_class": "No security-relevant change (Known Issue Rollback gate removal). Reference CWE-190 was assessed and is not applicable to this diff.",
+      "description": "The patch is a Known Issue Rollback (KIR) servicing change. It retires three KIR gates (UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, UxKirHKERangeRequestH2StatusCode) and adds one (UxKirBranchCacheIgnoreResponseCaching), as seen in UxStartEnvironmentModule (sub_1C01767B0). In UlGenerateTrailers (sub_1C000CF94) the removed gate only selected between a cached and a re-read source pointer; every name/value copy is bounds-checked ('if (len > remaining) return STATUS_INSUFFICIENT_RESOURCES 0xC000009A') before each memmove in both builds and both branches, so there is no out-of-bounds write. In UlPrepareParsedHeaderRangeResponse (sub_1C005E348) the removed gate only force-set the response status to 206 after sizing; the 32-bit allocation size 'v24 = header_base + 80 * v23' is byte-for-byte identical in both builds and is not modified, capped, or overflow-checked by this patch. No integer-overflow or pool-overflow fix is present.",
+      "trigger_conditions": "Not applicable. This diff introduces and fixes no memory-safety condition. The trailer serializer's copies are length-checked against the remaining buffer in both builds, and the range-response size arithmetic is unchanged between builds.",
+      "primitive": "None. The differences are behavior toggles (source-pointer caching, a 206 status override, gate initialization) with no impact on buffer bounds or allocation sizes.",
+      "evidence": "// UlGenerateTrailers (sub_1C000CF94): guarded copy, present in BOTH builds and both KIR branches\n0x1C000D0E5  cmp cs:UxKirHttpReadingTrailersFromUm, 0   ; KIR gate (removed in patch)\n             call UlProbeAnsiString                     ; sub_1c0039258\n0x1C000D12A  cmp ebx, edi                               ; name_len > remaining ? BOUNDS CHECK\n             jbe ...                                    ; if too big -> 0xC000009A\n             call memmove                               ; sub_1c0021580 (guarded)\n\n// UlPrepareParsedHeaderRangeResponse (sub_1C005E348): size arithmetic identical in both builds\n// http_unpatched.c and http_patched.c both read:\n//   v24 = v22 + 80 * v23;   (v23 = 2*range_count + 1 + overlap_count; 32-bit unsigned)\n//   Pool = ExAllocatePool3(64, v24, 'UlyF', &UxLowPriorityPool, 1);\n\n// UxStartEnvironmentModule (sub_1C01767B0): KIR initializers\n// unpatched (5): UxKirChunkExtHeaderFix, UxKirSetCbtHardeningAsMedium, UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, UxKirHKERangeRequestH2StatusCode\n// patched   (3): UxKirChunkExtHeaderFix, UxKirBranchCacheIgnoreResponseCaching, UxKirSetCbtHardeningAsMedium",
+      "assembly": "sub_1c000cf94 (UlGenerateTrailers):\n0x1C000CF94  mov r11, rsp\n0x1C000CFB2  mov r14, r9            ; output buffer (arg4)\n             mov r15d, [rsp+0xd0]   ; output size (arg5)\n             mov edi, r15d          ; remaining counter\n0x1C000D021  movzx r12d, word [rsi+8]  ; trailer count (max 0x2710)\n             mov eax, 0x2710\n             cmp r12w, ax\n0x1C000D0A8  movzx r12d, word [r13+rax*8]  ; name_len (16-bit)\n0x1C000D0E5  cmp cs:UxKirHttpReadingTrailersFromUm, 0  ; KIR gate (removed in patch)\n             call sub_1c0039258     ; UlProbeAnsiString\n0x1C000D12A  cmp ebx, edi           ; BOUNDS CHECK\n             jbe ...\n             call sub_1c0021580     ; memmove (guarded)\n             add r14, rbx\n             sub edi, eax           ; remaining -= name_len",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlGenerateTrailers",
+            "address": "0x1c000cf94",
+            "why": "Entry of the trailer serializer. At entry: rcx=IRP, rdx=trailer list (count@+0x8, entries@+0x10), r8b=flags, r9=output buffer (arg4), [rsp+0xd0]=output buffer size (arg5). Watch r15d (size) and r14 (buffer)."
+          },
+          {
+            "symbol": "http!UlGenerateTrailers+0x151",
+            "address": "0x1c000d0e5",
+            "why": "The KIR gate 'cmp cs:UxKirHttpReadingTrailersFromUm, 0' (removed in the patched build). It only selects cached vs re-read source pointer; it does not affect the bounds check."
+          },
+          {
+            "symbol": "http!UlGenerateTrailers+0x196",
+            "address": "0x1c000d12a",
+            "why": "The bounds check 'cmp ebx, edi' (name_len vs remaining). Present in both builds and both branches; over-length returns 0xC000009A (STATUS_INSUFFICIENT_RESOURCES) and no copy occurs."
+          },
+          {
+            "symbol": "http!UlGenerateTrailers memmove site",
+            "address": "0x1c000d155",
+            "why": "The guarded memmove (sub_1c0021580) for the trailer name. Reached only after cmp ebx, edi passes, so the length never exceeds the remaining output space."
+          }
+        ],
+        "watch": [
+          "edi = remaining output-buffer space, initialized from arg5, decremented by each name_len/value_len after a passing bounds check",
+          "r14 = current write position; advances only by the checked length",
+          "r13 = decoded trailer entry array (24-byte entries: name_len@0, value_len@2, name_ptr@8, value_ptr@16)",
+          "cs:UxKirHttpReadingTrailersFromUm = removed KIR gate; selects cached vs re-read source pointer only",
+          "In UlPrepareParsedHeaderRangeResponse (sub_1C005E348): v24 = header_base + 80*v23 is identical in both builds"
+        ],
+        "key_offsets": [
+          "0x1c000d021: 'movzx r12d, word [rsi+8]' - trailer count (rejected if 0 or >= 0x2710)",
+          "0x1c000d0a8: 'movzx r12d, word [r13+rax*8]' - name_len",
+          "0x1c000d0e5: 'cmp cs:UxKirHttpReadingTrailersFromUm, 0' - KIR gate (removed in patch)",
+          "0x1c000d12a: 'cmp ebx, edi' - name_len bounds check (present both builds)",
+          "0x1c000d155: memmove (sub_1c0021580) for name - guarded by the check above",
+          "0x1c000d1ff: memmove (sub_1c0021580) for value - guarded by its own len<=remaining check"
+        ],
+        "trigger_setup": "Not applicable. No memory-safety condition is introduced or removed by this servicing diff. Trailer copies are length-checked in both builds and the range-response allocation size is unchanged.",
+        "expected_observation": "No differential crash is expected from this diff. Both builds reject over-length trailer copies with 0xC000009A and allocate the range-response header buffer with identical size arithmetic.",
+        "notes": "The Known Issue Rollback flags UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, and UxKirHKERangeRequestH2StatusCode are initialized in UxStartEnvironmentModule (sub_1C01767B0) from servicing/registry state. The patched build removes their initializers and adds one for UxKirBranchCacheIgnoreResponseCaching. The copy helper memmove (sub_1c0021580 unpatched / sub_1c0021200 patched) and the validator UlProbeAnsiString (sub_1c0039258 unpatched / sub_1c0039148 patched) are byte-identical; only their addresses shifted with recompilation."
+      }
+    }
+  ],
+  "summary": "This patch is a Known Issue Rollback (KIR) servicing change to http.sys. It retires three KIR gates (UxKirHttpReadingTrailersFromUm, UxKirWritingAndReadingUm, UxKirHKERangeRequestH2StatusCode) and adds one (UxKirBranchCacheIgnoreResponseCaching), visible in UxStartEnvironmentModule (sub_1C01767B0). In UlGenerateTrailers (sub_1C000CF94) the removed gate only chose between a cached and a re-read source pointer; every trailer name/value copy is bounds-checked against the remaining output buffer in both builds, returning STATUS_INSUFFICIENT_RESOURCES (0xC000009A) on over-length, so no out-of-bounds write exists. In UlPrepareParsedHeaderRangeResponse (sub_1C005E348) the removed gate only force-set the response status to 206 after sizing; the 32-bit allocation size 'v24 = header_base + 80 * v23' is byte-for-byte identical in both builds and is neither widened, capped, nor overflow-checked by this patch. No integer-overflow or pool-overflow vulnerability is fixed or introduced by this diff."
+}

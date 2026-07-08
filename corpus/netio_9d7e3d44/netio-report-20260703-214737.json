@@ -1,0 +1,179 @@
+{
+  "binaries": {
+    "title": "netio.sys - No security-relevant change (version-leap refactor and integrity hardening)",
+    "id_unpatched": "netio_unpatched.sys",
+    "id_patched": "netio_patched.sys",
+    "overall_similarity": 0.6138,
+    "matched": 1582,
+    "changed": 1250,
+    "identical": 332,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NetioParseIpFieldsFromIpHeader (IPv4 IP field parser - fragment flag handling)",
+      "unpatched_addr": "0x1C003E5AC",
+      "patched_addr": "0x140018AB8",
+      "similarity": 0.3249,
+      "change_type": "refactor",
+      "key_changes": [
+        "Rewrote the IPv4 fragment-flag classification from ~(flags>>5)&2 into an explicit DF (0x40) test",
+        "Patched sources the constant 2 from the address-family register cl, which is always 2 in the IPv4 branch",
+        "Output byte at parse offset 0x0D is identical for every possible flags value in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavior-preserving rewrite. For the IPv4 branch (address family == 2) the routine writes 0/1/2 to output offset 0x0D. Unpatched: word==0 -> 0; MF(0x20) set -> 1; else ~(flags>>5)&2 which equals 2 when DF(0x40) is clear and 0 when DF is set. Patched: word==0 -> 0; MF set -> 1; DF set -> 0; DF clear -> 2 (via cl == 2). The two implementations produce identical output for all inputs, so no packet can be classified differently and there is no filtering-bypass fix.",
+      "assembly_diff": "Unpatched (0x1C003E5AC): 00000001C003E616 shr al,5 / 00000001C003E619 not al / 00000001C003E61B and al,2 / 00000001C003E61D mov [rdx+0Dh],al\nPatched (0x140018AB8): 0000000140018B1C test al,40h / 0000000140018B1E jnz loc_140018B61 (DF set -> 0) / 0000000140018B20 mov [rdx+0Dh],cl (DF clear -> 2)"
+    },
+    {
+      "name": "NetioCopyNetBufferListInformation",
+      "unpatched_addr": "0x1C001BBB0",
+      "patched_addr": "0x1400167E0",
+      "similarity": 0.0523,
+      "change_type": "refactor",
+      "key_changes": [
+        "Inlined the atomic QoS provider reference helper (RoReferenceEx) that the unpatched build reached via a call to QosReference",
+        "Added a copy of the 8-byte field at structure offset 0x118 (dest+0x118 = src+0x118)",
+        "No non-atomic reference count exists in either build"
+      ],
+      "security_relevant": false,
+      "security_notes": "The reference count touched here is the global QoSProviderReference counter, not a per-NBL reference count. It is incremented atomically in both builds. The unpatched routine calls QosReference (0x1C003FE9C) -> RoReferenceEx (0x1C001C39C), which is a lock cmpxchg loop. The patched routine inlines that same loop (lock cmpxchg cs:QoSProviderReference, ecx at 0x14001682D). There is no non-atomic inc/add on any reference count, hence no race condition and no use-after-free. The one functional delta is an added copy of the field at offset 0x118, consistent with a structure-layout change across the version leap; no reachable use of an uninitialized destination field is demonstrable, so it is not an information-leak fix.",
+      "assembly_diff": "Unpatched RoReferenceEx (0x1C001C39C, reached via QosReference): 00000001C001C3A4 lea edx,[rax+2] / 00000001C001C3A7 lock cmpxchg [rcx],edx / 00000001C001C3AB jnz\nPatched NetioCopyNetBufferListInformation (0x1400167E0): 000000014001682A lea ecx,[rax+2] / 000000014001682D lock cmpxchg cs:QoSProviderReference,ecx / 0000000140016835 jnz. Added field copy: 00000001400168F6 mov rax,[rsi+118h] / 00000001400168FD mov [rbx+118h],rax"
+    },
+    {
+      "name": "WfpNblInfoClone",
+      "similarity": 0.3482,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added WFP_NBL_INFO magic-number validation (0x6E706657) in the clone path",
+        "Added KeBugCheckEx on corrupted NBL info"
+      ],
+      "security_relevant": false,
+      "security_notes": "Integrity/self-check hardening. The magic constant 0x6E706657 appears 2 times in the unpatched build and 67 times in the patched build; KeBugCheckEx sites rise from 19 to 58 across the subsystem. Broad self-check hardening consistent with a servicing rebuild, not a targeted runtime fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpNblInfoGet",
+      "similarity": 0.2468,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added WFP_NBL_INFO magic-number validation before returning the NBL info pointer",
+        "Added KeBugCheckEx for corrupted NBL info objects"
+      ],
+      "security_relevant": false,
+      "security_notes": "Integrity/self-check hardening only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpNblInfoSet",
+      "similarity": 0.2446,
+      "change_type": "hardening",
+      "key_changes": [
+        "Added WFP_NBL_INFO magic-number validation before setting the NBL info pointer",
+        "Added KeBugCheckEx for corrupted NBL info objects"
+      ],
+      "security_relevant": false,
+      "security_notes": "Integrity/self-check hardening only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioPhGetIpUlProtocol",
+      "similarity": 0.3249,
+      "change_type": "refactor",
+      "key_changes": [
+        "Restructured extraction of the upper-layer protocol from IP headers",
+        "Different traversal of IPv6 extension headers"
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation refactor of the same logical operation. No semantic security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioPhIsIcmpErrorForIcmpMessage",
+      "similarity": 0.564,
+      "change_type": "optimization",
+      "key_changes": [
+        "Replaced NetioPhGetDefaultIpHeaderSize call with hardcoded sizes (0x14 for IPv4, 0x28 for IPv6)",
+        "Replaced NdisAdvanceNetBufferDataStart with an inline NET_BUFFER advance for the contiguous case"
+      ],
+      "security_relevant": false,
+      "security_notes": "Performance optimization. The bounds check DataLength >= header_size + 16 is present and identical in both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioPhFindTcpOption",
+      "similarity": 0.9352,
+      "change_type": "refactor",
+      "key_changes": [
+        "Restructured the option-scan loop from nested if-goto to a flat while-break pattern",
+        "Same TCP option parsing logic and bounds checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "Control-flow restructuring. Both builds guard every option-byte dereference against the end pointer. No change to bounds checking.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FwppStreamInject",
+      "similarity": 0.5274,
+      "change_type": "telemetry",
+      "key_changes": [
+        "Added tracing throughout the injection path",
+        "Improved error-path handling and cleanup"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry and error-handling improvements. Core injection validation logic unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioPhParseArpPacket",
+      "patched_addr": "0x140052C00",
+      "change_type": "new_feature",
+      "key_changes": [
+        "New ARP-inspection routine present only in the patched build",
+        "Validates NetBuffer->DataLength >= 2*hwaddrlen + 16 and hwaddrlen <= 0x20 before memmove"
+      ],
+      "security_relevant": false,
+      "security_notes": "New function that exists only in the patched build; the unpatched build has no ARP parser and no in-module caller. It contains genuine input validation, but because it is a brand-new function rather than a check added to a pre-existing parsing path, it is a feature addition, not a fix to a prior vulnerability.",
+      "assembly_diff": "Patched (0x140052C00): 0000000140052C61 cmp [rbx+18h],esi / 0000000140052C64 jb reject / 0000000140052C6A cmp edi,20h / 0000000140052C6D ja reject"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "NetioCopyNetBufferListInformation",
+      "entry_point": "NBL clone/copy path during network processing",
+      "call_chain": [
+        "NBL clone/copy path",
+        "NetioCopyNetBufferListInformation",
+        "QoS provider reference (atomic in both builds)"
+      ],
+      "vulnerability_class": "No security-relevant change (compiler inlining of an already-atomic reference)",
+      "description": "The claimed non-atomic reference count and resulting use-after-free race do not exist. The reference count touched by this routine is the global QoSProviderReference counter, not a per-NBL reference count, and it is incremented atomically in both builds. The unpatched routine reaches the atomic compare-and-exchange loop through QosReference -> RoReferenceEx; the patched routine inlines the identical loop. The only functional delta is an added copy of the field at structure offset 0x118, consistent with a structure-layout change across this far-apart version comparison.",
+      "trigger_conditions": "None. There is no behavioral difference between the two builds in reference handling, so there is no state that an attacker can drive to a different outcome.",
+      "primitive": "None. The reference is atomic in both builds; there is no race window, premature free, or dangling pointer. The added 0x118 field copy does not create a demonstrable use-after-free or information leak.",
+      "evidence": "Unpatched decompilation: if ( v2 == 0 || (unsigned int)QosReference(v2) != 0 ) v2 = 0; where QosReference (0x1C003FE9C) calls RoReferenceEx (0x1C001C39C), an atomic lock cmpxchg loop. Patched decompilation inlines that loop: _InterlockedCompareExchange(&QoSProviderReference, QoSProviderReference + 2, QoSProviderReference). Patched adds a1[35] = *(a2 + 280) (offset 0x118).",
+      "assembly": "Unpatched RoReferenceEx (0x1C001C39C): 00000001C001C3A4 lea edx,[rax+2]; 00000001C001C3A7 lock cmpxchg [rcx],edx; 00000001C001C3AB jnz. Patched NetioCopyNetBufferListInformation (0x1400167E0): 000000014001682A lea ecx,[rax+2]; 000000014001682D lock cmpxchg cs:QoSProviderReference,ecx; 0000000140016835 jnz. Added copy: 00000001400168F6 mov rax,[rsi+118h]; 00000001400168FD mov [rbx+118h],rax."
+    },
+    {
+      "severity": "none",
+      "function": "NetioParseIpFieldsFromIpHeader",
+      "entry_point": "IPv4 receive/parse path",
+      "call_chain": [
+        "IPv4 receive/parse path",
+        "NetioParseIpFieldsFromIpHeader (fragment-flag handling)"
+      ],
+      "vulnerability_class": "No security-relevant change (behavior-preserving refactor)",
+      "description": "For the IPv4 branch (address family == 2) the routine writes a one-byte fragment classification value to output offset 0x0D. The unpatched code computes it via ~(flags>>5)&2 and the patched code via an explicit DF (0x40) test, but both produce identical output for every possible flags byte: word==0 -> 0; MF(0x20) set -> 1; MF clear and DF set -> 0; MF clear and DF clear -> 2. The patched constant 2 comes from register cl, which equals the address family (always 2 in this branch). No packet is classified differently between the two builds.",
+      "trigger_conditions": "None. The classification output is identical for all flag combinations, so no crafted packet produces a different result in one build versus the other.",
+      "primitive": "None. There is no filtering-bypass or type-confusion difference between the builds.",
+      "evidence": "Unpatched: *((_BYTE *)a2 + 13) = ~((unsigned __int8)v3 >> 5) & 2 (equals 2 iff DF clear, else 0). Patched: if ((v3 & 0x40) == 0) *((_BYTE *)a2 + 13) = 2 (same value set).",
+      "assembly": "Unpatched (0x1C003E5AC): 00000001C003E616 shr al,5; 00000001C003E619 not al; 00000001C003E61B and al,2; 00000001C003E61D mov [rdx+0Dh],al. Patched (0x140018AB8): 0000000140018B1C test al,40h; 0000000140018B1E jnz (DF set -> 0); 0000000140018B20 mov [rdx+0Dh],cl (DF clear -> 2)."
+    }
+  ],
+  "summary": "This is a far-apart comparison of two netio.sys builds (0.6138 similarity, 1250 changed functions), so the diff is dominated by recompilation churn and broad integrity/self-check hardening (WfpNblInfo magic-number 0x6E706657 checks growing from 2 to 67 occurrences, KeBugCheckEx sites from 19 to 58). No security-relevant change was delivered. NetioCopyNetBufferListInformation does not contain a non-atomic reference count: the global QoSProviderReference counter is incremented atomically in both builds (unpatched via QosReference -> RoReferenceEx, patched via the same loop inlined), so there is no race condition or use-after-free; the only functional delta is an added copy of the field at offset 0x118. NetioParseIpFieldsFromIpHeader rewrites the IPv4 fragment-flag test but produces byte-for-byte identical classification output for all inputs. A new ARP-inspection routine (NetioPhParseArpPacket) appears only in the patched build with its own input validation, but as a brand-new feature it is not a fix to a pre-existing vulnerable path. Overall verdict: no security-relevant change."
+}

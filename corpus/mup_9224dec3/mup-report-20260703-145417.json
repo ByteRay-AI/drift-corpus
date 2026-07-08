@@ -1,0 +1,81 @@
+{
+  "binaries": {
+    "title": "mup.sys - No security-relevant change (WIL feature-staging gate removed from UNC hardening prefix-table packing)",
+    "id_unpatched": "mup_unpatched.sys",
+    "id_patched": "mup_patched.sys",
+    "overall_similarity": 0.9757,
+    "matched": 349,
+    "changed": 1,
+    "identical": 348,
+    "unmatched_unpatched": 12,
+    "unmatched_patched": 0,
+    "note": "Tool headline reported 0 unmatched; independent content-matched diff shows one changed function plus ~12 WIL feature-staging/usage-reporting helpers removed from the patched build via dead-code elimination."
+  },
+  "changed_functions": [
+    {
+      "name": "MupiPackUncHardeningPrefixTableForFsctl",
+      "address_unpatched": "0x1C001657C",
+      "address_patched": "0x14001557C",
+      "similarity": 0.8041,
+      "change_type": "wil_feature_staging_churn",
+      "key_changes": [
+        "REMOVED: per-iteration call to Feature_447750459__private_IsEnabledDeviceUsageNoInline at 0x1C00165F3, a WIL feature-staging gate (cached in-memory read, not I/O)",
+        "COLLAPSED: the two feature-selected arms (feature-disabled 'if' path and feature-enabled 'else' path) into the single formerly-enabled path",
+        "RESTRUCTURED: enumeration loop moved from get-first-before-loop + get-next-at-bottom to get-next-at-top with a restart flag (dl=1 first iteration, dl=0 subsequent) — semantically equivalent",
+        "REGISTER ALLOCATION: output-size pointer (arg4) moved from rsi (spilled/reloaded from stack at 0x1C00166D1 in the unpatched build) to non-volatile r13; optimizer artifact of removing the branch, not a fix"
+      ],
+      "security_relevant": false,
+      "security_notes": "The removed call target Feature_447750459__private_IsEnabledDeviceUsageNoInline (0x1C0003CC4) is a compiler-generated WIL feature-staging accessor. Its steady-state path is a read of the cached in-memory global Feature_447750459__private_featureState, a bit test (bit 0x10 = cached), and a return of bit 0; no push lock, no WNF state query, no registry access, no blocking I/O. The one-time IsEnabledFallback branch runs at most once to populate the cache and does not acquire a lock held by the caller. Therefore there is no blocking operation performed inside the ExAcquirePushLockExclusiveEx critical section and no denial-of-service or deadlock condition. The only behavioral difference between the two feature arms (and hence between the builds, since the patch keeps the feature-enabled arm) is that the feature-disabled arm additionally writes *OutputSize = 0xFFFFFFFF (mov edi, 0xFFFFFFFF at 0x1C00166C2) when the 32-bit expression offset+0xF wraps, before returning STATUS_BUFFER_TOO_SMALL; the enabled/patched arm returns the same status without touching *OutputSize. Reaching that branch requires ~4 GB of accumulated output offset, which the 32-bit output buffer size never permits, so it is dead defensive code, not an attacker-reachable primitive. This change is staged-feature/library churn, not a security fix, and is not a regression in either direction."
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Feature_447750459__private_IsEnabledDeviceUsageNoInline @ 0x1C0003CC4",
+      "Feature_447750459__private_IsEnabledFallback @ 0x1C0003CFC",
+      "wil_details_FeatureReporting_IncrementOpportunityInCache @ 0x1C000414C",
+      "wil_details_FeatureReporting_IncrementUsageInCache @ 0x1C0004224",
+      "wil_details_FeatureReporting_RecordUsageInCache @ 0x1C0004308",
+      "wil_details_FeatureReporting_ReportUsageToService @ 0x1C0004488",
+      "wil_details_FeatureReporting_ReportUsageToServiceDirect @ 0x1C0004504",
+      "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x1C00045F0",
+      "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath @ 0x1C0004700",
+      "wil_details_GetCurrentFeatureEnabledState @ 0x1C0004754",
+      "wil_details_IsEnabledFallback @ 0x1C00048B4",
+      "wil_details_MapReportingKind @ 0x1C0004944"
+    ],
+    "added": [],
+    "note": "All removed functions are WIL feature-staging / usage-reporting helpers that became unreachable once the single feature-gate consumer (MupiPackUncHardeningPrefixTableForFsctl) stopped calling Feature_447750459. None implements a security check; their removal is a consequence of compiling out the feature gate."
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "MupiPackUncHardeningPrefixTableForFsctl",
+      "address_unpatched": "0x1C001657C",
+      "address_patched": "0x14001557C",
+      "entry_point": "FSCTL 0x100038 dispatched via MupFsControl (0x1C001A0D0), code compared at 0x1C001A0F8",
+      "call_chain": [
+        "MupFsControl (0x1C001A0D0): FSCTL dispatch, compares control code == 0x100038 at 0x1C001A0F8",
+        "MupFsctlGetUncHardeningPrefixTable (0x1C00154BC): prepares output buffer, calls packer at 0x1C00154F8",
+        "MupiPackUncHardeningPrefixTableForFsctl (0x1C001657C): acquires ExAcquirePushLockExclusiveEx on qword_1C000B218, enumerates prefix-table entries via MupiGetFirstOrNextUncHardeningPrefixEntry, and (unpatched only) calls Feature_447750459__private_IsEnabledDeviceUsageNoInline per iteration",
+        "Feature_447750459__private_IsEnabledDeviceUsageNoInline (0x1C0003CC4): cached feature-state read; removed in the patched build"
+      ],
+      "vulnerability_class": "None — WIL feature-staging gate removal (staged-feature / library churn). The previously assigned CWE-667 (Improper Locking) / CWE-400 (Uncontrolled Resource Consumption) is not supported: nothing blocking runs inside the held push lock.",
+      "description": "The unpatched MupiPackUncHardeningPrefixTableForFsctl calls a WIL feature-staging gate (Feature_447750459__private_IsEnabledDeviceUsageNoInline) once per prefix-table entry inside the loop that packs the UNC hardening prefix table while holding ExAcquirePushLockExclusiveEx on qword_1C000B218. The gate's fast path is a cached in-memory read: mov eax, cs:Feature_447750459__private_featureState; test al,0x10; and eax,1; ret. It performs no WNF query, no registry access, no I/O, and acquires no lock. The gate return value selects between two arms that compute the same 16-byte-aligned output offset; the arms differ only in an unreachable 32-bit overflow-guard detail (see security_notes). The patched build deletes the gate call, keeps the formerly-enabled arm, and hoists the get-next call to the top of the loop. Because the single consumer of the feature was removed, the patched build no longer contains the feature accessor or the WIL usage-reporting helpers it pulled in. There is no denial-of-service, deadlock, or memory-safety condition in either build.",
+      "trigger_conditions": "FSCTL 0x100038 against the MUP device (NtFsControlFile / DeviceIoControl) reaches the changed function, but produces no security-relevant difference between the two builds. No configuration makes the removed gate perform blocking work inside the lock.",
+      "primitive": "None. No reachable memory-corruption, denial-of-service, or deadlock primitive.",
+      "evidence": "; Feature_447750459__private_IsEnabledDeviceUsageNoInline @ 0x1C0003CC4 (cached read, not I/O):\n00000001C0003CCE  mov     eax, cs:Feature_447750459__private_featureState\n00000001C0003CD8  test    al, 10h                 ; bit 0x10 = already cached\n00000001C0003CDA  jz      short loc_1C0003CE1\n00000001C0003CDC  and     eax, 1                  ; cached: return enabled bit\n00000001C0003CDF  jmp     short loc_1C0003CF0\n00000001C0003CE1  call    Feature_447750459__private_IsEnabledFallback  ; one-time init only\n00000001C0003CF4  retn\n\n; Unpatched gate call site inside the locked loop @ 0x1C00165F3:\n00000001C00165F0  lea     ebx, [rdi+0Fh]\n00000001C00165F3  call    Feature_447750459__private_IsEnabledDeviceUsageNoInline\n00000001C00165F8  test    eax, eax\n00000001C00165FA  jnz     short loc_1C001662E     ; enabled -> else arm (== patched behavior)\n\n; Patched loop head with the gate deleted @ 0x14001557C:\n00000001400155DB  call    MupiGetFirstOrNextUncHardeningPrefixEntry   ; get-next at loop top\n00000001400155EC  lea     eax, [rdi+0Fh]                              ; no feature call\n00000001400155EF  cmp     eax, edi\n00000001400155F1  jb      loc_14001568A                              ; overflow -> STATUS_BUFFER_TOO_SMALL",
+      "assembly": "; ===== UNPATCHED: MupiPackUncHardeningPrefixTableForFsctl @ 0x1C001657C (loop region) =====\n00000001C00165B5  call    cs:__imp_KeEnterCriticalRegion\n00000001C00165C3  lea     rcx, qword_1C000B218\n00000001C00165CA  call    cs:__imp_ExAcquirePushLockExclusiveEx    ; acquire exclusive push lock\n00000001C00165D6  mov     dl, 1\n00000001C00165D8  lea     rcx, stru_1C000B220\n00000001C00165DF  call    MupiGetFirstOrNextUncHardeningPrefixEntry ; get first (before loop)\n00000001C00165E4  mov     r15, rax\n00000001C00165E7  test    rax, rax\n00000001C00165EA  jz      loc_1C00166D6\n00000001C00165F0  lea     ebx, [rdi+0Fh]                           ; offset + 15 (16-byte align)\n00000001C00165F3  call    Feature_447750459__private_IsEnabledDeviceUsageNoInline  ; feature gate (removed by patch)\n00000001C00165F8  test    eax, eax\n00000001C00165FA  jnz     short loc_1C001662E                      ; feature enabled -> else arm\n00000001C00165FC  cmp     ebx, edi                                 ; if arm (disabled): overflow check\n00000001C00165FE  jb      loc_1C00166C2                            ; overflow -> edi=0xFFFFFFFF, STATUS_BUFFER_TOO_SMALL\n00000001C0016604  mov     edi, ebx\n00000001C0016606  and     edi, 0FFFFFFF0h\n00000001C0016609  cmp     edi, r12d\n00000001C001660C  jb      short loc_1C0016620\n00000001C001662E  cmp     ebx, edi                                 ; else arm (enabled): overflow check\n00000001C0016630  jb      loc_1C00166CC                            ; overflow -> STATUS_BUFFER_TOO_SMALL, edi untouched\n00000001C0016636  and     ebx, 0FFFFFFF0h\n00000001C0016639  cmp     ebx, r12d\n00000001C001663C  jnb     short loc_1C001660E\n00000001C0016657  call    MupiPackUncHardeningPrefixTableEntryForFsctl  ; copy provider entry\n00000001C00166A8  call    MupiGetFirstOrNextUncHardeningPrefixEntry ; get next (loop bottom)\n00000001C00166B3  jnz     loc_1C00165F0                            ; loop back to feature gate\n00000001C00166C2  mov     edi, 0FFFFFFFFh                          ; if-arm overflow: *OutputSize = 0xFFFFFFFF\n00000001C00166CC  mov     ebx, 0C0000095h                         ; STATUS_BUFFER_TOO_SMALL\n00000001C00166DF  call    cs:__imp_ExReleasePushLockExclusiveEx    ; release push lock\n\n; ===== PATCHED: MupiPackUncHardeningPrefixTableForFsctl @ 0x14001557C (loop region) =====\n00000001400155B1  call    cs:__imp_KeEnterCriticalRegion\n00000001400155BF  lea     rcx, qword_14000A1F8\n00000001400155C6  call    cs:__imp_ExAcquirePushLockExclusiveEx\n00000001400155D2  mov     dl, 1                                    ; restart flag\n00000001400155D4  lea     rcx, stru_14000A200\n00000001400155DB  call    MupiGetFirstOrNextUncHardeningPrefixEntry ; get-next at loop TOP\n00000001400155E0  mov     rcx, rax\n00000001400155E3  test    rax, rax\n00000001400155E6  jz      loc_14001568F\n00000001400155EC  lea     eax, [rdi+0Fh]                           ; NO feature call\n00000001400155EF  cmp     eax, edi\n00000001400155F1  jb      loc_14001568A                            ; overflow -> STATUS_BUFFER_TOO_SMALL\n00000001400155F7  and     eax, 0FFFFFFF0h\n00000001400155FA  cmp     eax, r12d\n0000000140015623  call    MupiPackUncHardeningPrefixTableEntryForFsctl\n0000000140015674  jmp     loc_1400155DB                            ; loop, restart flag now 0\n000000014001568A  mov     ebx, 0C0000095h                          ; STATUS_BUFFER_TOO_SMALL\n0000000140015698  call    cs:__imp_ExReleasePushLockExclusiveEx",
+      "debugging_aids": {
+        "key_offsets": [
+          "0x1C00165CA: call ExAcquirePushLockExclusiveEx — exclusive lock on qword_1C000B218 (held across enumeration in both builds)",
+          "0x1C00165F3: call Feature_447750459__private_IsEnabledDeviceUsageNoInline — the removed WIL feature gate (cached read)",
+          "0x1C0003CCE: mov eax, cs:Feature_447750459__private_featureState — proves the gate is an in-memory cached read, not I/O",
+          "0x1C00166C2: mov edi, 0xFFFFFFFF — the sole behavioral delta (feature-disabled arm only), unreachable overflow guard",
+          "0x14001557C: patched packer with the gate deleted and get-next hoisted to the loop top"
+        ],
+        "notes": "Feature_447750459__private_IsEnabledDeviceUsageNoInline reads the cached global Feature_447750459__private_featureState and returns bit 0 when bit 0x10 (cached) is set; otherwise it calls Feature_447750459__private_IsEnabledFallback once. This is standard WIL feature-staging (flighting), which is not a security control and performs no blocking I/O inside the caller's push lock. The caller MupFsctlGetUncHardeningPrefixTable (0x1C00154BC) is invoked from MupFsControl (0x1C001A0D0) for FSCTL 0x100038."
+      }
+    }
+  ],
+  "summary": "The mup.sys (Multiple UNC Provider) patch removes a WIL feature-staging gate from MupiPackUncHardeningPrefixTableForFsctl (0x1C001657C unpatched, 0x14001557C patched), the routine that packs the UNC hardening prefix table for FSCTL 0x100038 while holding an exclusive push lock. The unpatched build calls Feature_447750459__private_IsEnabledDeviceUsageNoInline once per prefix-table entry to select between two nearly-identical offset-computation arms; the gate is a cached in-memory read of Feature_447750459__private_featureState, not a lock and not blocking I/O. The patched build deletes the gate, keeps the formerly-enabled arm, hoists the get-next call to the top of the loop, and (as a linker consequence) drops the now-dead WIL feature accessor and usage-reporting helpers. The only behavioral difference is an unreachable 32-bit overflow guard that writes *OutputSize = 0xFFFFFFFF in the feature-disabled arm. This is staged-feature / library churn with no reachable security impact: no denial-of-service, no deadlock (the earlier CWE-667 / CWE-400 framing is not supported), and no memory-safety condition. Verdict: No security-relevant change."
+}

@@ -1,0 +1,108 @@
+{
+  "binaries": {
+    "title": "csvnsflt.sys (Cluster Shared Volumes Namespace Filter) - Use-After-Free from unlocked global reads racing a locked free in CsvCamSetSecurityInfo",
+    "id_unpatched": "csvnsflt_unpatched.sys",
+    "id_patched": "csvnsflt_patched.sys",
+    "overall_similarity": 0.9912,
+    "matched": 137,
+    "changed": 1,
+    "identical": 136,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CsvCamSetSecurityInfo @ 0x1C0013304",
+      "similarity": 0.9045,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED region 1: reads the global EncryptionManager (an Encryption*) at 0x1C0013332 with no lock held, then dereferences the captured pointer at +0x20 (0x1C0013341) and +0x18 (0x1C0013348) and passes the +0x18 field to memcmp (0x1C0013353). The memcmp returns only an equal/not-equal boolean.",
+        "UNPATCHED region 2: the sequence-number update loop reads the global ReplayCacheManagerObject at 0x1C001361A with no lock held, dereferences it at +0x18/+0x10/+0x4, and writes it via xchg [rbx+0x20] (0x1C001363F) and lock cmpxchg [rbx+0x18] (0x1C0013645).",
+        "UNPATCHED: the ReplayCacheManagerObject compare block at 0x1C001342F-0x1C001346D is ALREADY protected by KeEnterCriticalRegion + ExAcquireResourceSharedLite(SigningLock) at 0x1C0013436/0x1C0013447, so that block is not the vulnerability. The unlocked regions are the EncryptionManager read (region 1) and the sequence-number loop (region 2).",
+        "UNPATCHED: the free/replace paths already hold SigningLock exclusive: the old EncryptionManager is freed at 0x1C0013401 under ExAcquireResourceExclusiveLite (0x1C00133E9); the old ReplayCacheManagerObject is freed at 0x1C001359F under ExAcquireResourceExclusiveLite (0x1C001356D). This confirms a lock imbalance: unlocked readers/updaters race a locked writer that frees the object.",
+        "PATCHED: adds KeEnterCriticalRegion + ExAcquireResourceSharedLite(SigningLock) ... ExReleaseResourceLite + KeLeaveCriticalRegion around region 1 (new block at 0x1C0013344-0x1C00133B0, read of EncryptionManager at 0x1C0013362) and around region 2 (new block at 0x1C0013648-0x1C00136E9, read of ReplayCacheManagerObject at 0x1C0013668). Direction is correct: the patched build is stricter."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched csvnsflt.sys contains a use-after-free caused by a lock imbalance in CsvCamSetSecurityInfo (0x1C0013304). Two objects, both protected by the global lock SigningLock (an RWLock over an ERESOURCE), are read/updated with no lock in this function while other branches of the same function free and replace them under the exclusive lock. EncryptionManager is a 0x28-byte PagedPool Encryption object (tag 0x41435643) holding BCrypt handles/buffers, freed by Encryption::scalar deleting destructor (which also releases the embedded BCrypt handles/buffers) at 0x1C0013401 under the exclusive lock. ReplayCacheManagerObject is a 0x1010-byte PagedPool object (tag 0x41435643) freed by ExFreePoolWithTag at 0x1C001359F under the exclusive lock. Region 1 (0x1C0013332-0x1C0013353) reads EncryptionManager and dereferences +0x20 and +0x18 with no lock; a concurrent replace path can free the object in the window, producing a stale read (the +0x18 field is used as a memcmp buffer pointer). Region 2 (0x1C0013617-0x1C0013645) reads ReplayCacheManagerObject and performs xchg/lock cmpxchg writes into its fields with no lock; a concurrent replace path can free it, producing a stale interlocked write. The memcmp result is only a boolean equal/not-equal and is not returned to the caller, so this is not an information-disclosure channel. The demonstrable impact is kernel memory corruption / bugcheck (denial of service); a full privilege-escalation chain is not demonstrated from the static diff. The patch wraps both previously-unlocked regions in ExAcquireResourceSharedLite so readers/updaters are serialized against the exclusive writer that frees the objects."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "CsvCamSetSecurityInfo @ 0x1C0013304",
+      "entry_point": "FilterSendMessage to the minifilter communication port; MessageNotifyCallback NfltMessage @ 0x1C0005F60, opcode 6 in the first DWORD of the message buffer",
+      "call_chain": [
+        "FilterSendMessage(hPort, buffer, bufLen, ...) - user-mode API",
+        "NfltMessage @ 0x1C0005F60: validates length, allocates a pool copy (tag 0x634D664E), ProbeForRead, memmove-copies the input, then switches on the first DWORD",
+        "NfltMessage: when first DWORD == 6 and bufLen >= 0x14, calls CsvCamSetSecurityInfo(buffer+4) at 0x1C0006299",
+        "CsvCamSetSecurityInfo @ 0x1C0013304: unlocked read of EncryptionManager (region 1) and unlocked read/update of ReplayCacheManagerObject (region 2), racing the exclusive-lock free/replace paths"
+      ],
+      "vulnerability_class": "Use-After-Free caused by a data race / missing synchronization (CWE-416, CWE-362); lock imbalance",
+      "description": "In the unpatched csvnsflt.sys, CsvCamSetSecurityInfo reads and updates two global objects with no lock while other branches of the same function free and replace them under SigningLock held exclusive. Region 1 (0x1C0013332-0x1C0013353): reads EncryptionManager and dereferences +0x20 and +0x18 (the +0x18 field is passed to memcmp) with no lock. Region 2 (0x1C0013617-0x1C0013645): the sequence-number update loop reads ReplayCacheManagerObject and writes its fields with xchg and lock cmpxchg, with no lock. The replace paths acquire ExAcquireResourceExclusiveLite and free the old object (EncryptionManager via Encryption::scalar deleting destructor at 0x1C0013401; ReplayCacheManagerObject via ExFreePoolWithTag at 0x1C001359F) before installing a new one. A second concurrent opcode-6 message can free an object between the moment a reader captures the global pointer and the moment it dereferences (region 1, a stale read) or performs the interlocked update (region 2, a stale write). Both objects are PagedPool tag 0x41435643. The memcmp on the region-1 path returns only a boolean equal/not-equal and does not return the compared bytes to the caller, so this path is not an information-disclosure channel. The patch adds KeEnterCriticalRegion + ExAcquireResourceSharedLite(SigningLock) around both regions and releases after, serializing readers/updaters against the exclusive writer.",
+      "trigger_conditions": "1. Open the minifilter communication port via FilterConnectCommunicationPort (subject to the port security descriptor). 2. Send an opcode-6 message: first DWORD == 6, total length >= 0x14; NfltMessage passes buffer+4 to CsvCamSetSecurityInfo as arg1, which reads arg1[2] (+0x8, the size compared against EncryptionManager+0x20) and arg1[3] (+0xC, the bytes passed to memcmp). 3. Issue concurrent opcode-6 messages: one interleaving keeps a thread on the unlocked read path (region 1) and the unlocked sequence-number update (region 2); another interleaving with a mismatching size or data drives the allocation/replace path that takes the exclusive lock and frees the old object. 4. The free must land in the window between the reader capturing the global pointer (0x1C0013332 for region 1, 0x1C001361A for region 2) and the subsequent dereference or interlocked write.",
+      "primitive": "Kernel use-after-free on PagedPool objects (tag 0x41435643). Region 1 is a stale read of a freed Encryption object (fields +0x20 and +0x18, with +0x18 used as a memcmp buffer pointer). Region 2 is a stale interlocked write (xchg/lock cmpxchg) into a freed ReplayCacheManager object. The demonstrable impact is kernel memory corruption leading to a bugcheck (denial of service). The memcmp result is only a boolean and is not an information-leak channel. Escalating the use-after-free to controlled memory corruption or privilege escalation would require reclaiming the freed allocation with attacker-controlled contents inside the race window; that is not demonstrated from the static diff and depends on pool state and timing.",
+      "evidence": "=== UNPATCHED CsvCamSetSecurityInfo @ 0x1C0013304 (region 1: unlocked read of EncryptionManager) ===\nif ( a1[2] != 0 )\n{\n    v3 = 1;\n    if ( EncryptionManager != nullptr\n      && ((v6 = *((_DWORD *)EncryptionManager + 8), a1[2] != v6)          // deref +0x20, NO lock\n            ? (v7 = false)\n            : (v7 = memcmp(a1 + 3, *((const void **)EncryptionManager + 3), v6) == 0),  // deref +0x18, boolean result\n          v7) )\n    {\n        v3 = 0;\n    }\n    else\n    {\n        // allocate + Encryption::Initialize, then under EXCLUSIVE lock free the old object:\n        KeEnterCriticalRegion();\n        ExAcquireResourceExclusiveLite(*SigningLock, 1u);\n        if ( EncryptionManager != nullptr )\n            Encryption::`scalar deleting destructor'(EncryptionManager);   // FREE old object\n        EncryptionManager = v9;                                            // install new object\n        ExReleaseResourceLite(*SigningLock);\n        KeLeaveCriticalRegion();\n    }\n}\n// region 2: the sequence-number loop reads/writes ReplayCacheManagerObject with NO lock\n\n=== PATCHED CsvCamSetSecurityInfo @ 0x1C0013304 (region 1 now locked) ===\nif ( a1[2] > 0 )\n{\n    KeEnterCriticalRegion();\n    ExAcquireResourceSharedLite(*SigningLock, 1u);          // NEW: shared lock before the read\n    if ( EncryptionManager != nullptr )\n    {\n        v6 = *((_DWORD *)EncryptionManager + 8);\n        if ( a1[2] != v6 )\n            v7 = false;\n        else\n            v7 = memcmp(a1 + 3, *((const void **)EncryptionManager + 3), v6) == 0;\n    }\n    ExReleaseResourceLite(*SigningLock);                    // NEW: release after the read\n    KeLeaveCriticalRegion();\n}\n// region 2 is likewise wrapped in a shared lock",
+      "assembly": "=== UNPATCHED region 1: unlocked read of EncryptionManager (csvnsflt_unpatched.sys) ===\n00000001C001331C  mov     eax, [rcx+8]                                  ; eax = arg1[2] (user-supplied size)\n00000001C001332A  test    eax, eax\n00000001C001332C  jz      loc_1C001342F\n00000001C0013332  mov     rdx, cs:?EncryptionManager@@3PEAVEncryption@@EA ; read global, NO lock held\n00000001C001333C  test    rdx, rdx\n00000001C001333F  jz      short loc_1C001336D\n00000001C0013341  mov     ecx, [rdx+20h]                                ; deref of possibly-freed object\n00000001C0013344  cmp     eax, ecx\n00000001C0013346  jnz     short loc_1C001335F\n00000001C0013348  mov     rdx, [rdx+18h]                                ; Buf2 = pointer field of possibly-freed object\n00000001C001334C  mov     r8d, ecx                                      ; Size\n00000001C001334F  lea     rcx, [rsi+0Ch]                                ; Buf1 = user data\n00000001C0013353  call    memcmp                                        ; boolean result only\n\n=== UNPATCHED: exclusive-lock free that region 1 races ===\n00000001C00133D1  mov     rbx, cs:?SigningLock@@3PEAVRWLock@@EA\n00000001C00133D8  call    cs:__imp_KeEnterCriticalRegion\n00000001C00133E9  call    cs:__imp_ExAcquireResourceExclusiveLite       ; EXCLUSIVE\n00000001C00133F5  mov     rcx, cs:?EncryptionManager@@3PEAVEncryption@@EA\n00000001C00133FF  jz      short loc_1C0013406\n00000001C0013401  call    ??_GEncryption@@QEAAPEAXI@Z                    ; frees old EncryptionManager\n00000001C001340D  mov     cs:?EncryptionManager@@3PEAVEncryption@@EA, rdi ; install new object\n00000001C0013417  call    cs:__imp_ExReleaseResourceLite\n00000001C0013423  call    cs:__imp_KeLeaveCriticalRegion\n\n=== UNPATCHED region 2: unlocked read/update of ReplayCacheManagerObject ===\n00000001C0013617  mov     edi, [rsi+4]\n00000001C001361A  mov     rbx, cs:?ReplayCacheManagerObject@@...         ; read global, NO lock held\n00000001C0013621  mov     esi, [rbx+18h]                                ; deref of possibly-freed object\n00000001C001363F  xchg    rax, [rbx+20h]                                ; write into possibly-freed object\n00000001C0013645  lock cmpxchg [rbx+18h], edi                           ; interlocked write into possibly-freed object\n; the old ReplayCacheManagerObject is freed under the exclusive lock at 0x1C001359F (ExFreePoolWithTag)\n\n=== PATCHED: shared lock added around region 1 ===\n00000001C001333A  mov     rbx, cs:?SigningLock@@3PEAVRWLock@@EA\n00000001C0013344  call    cs:__imp_KeEnterCriticalRegion                ; NEW\n00000001C0013356  call    cs:__imp_ExAcquireResourceSharedLite          ; NEW shared lock before the read\n00000001C0013362  mov     rdx, cs:?EncryptionManager@@3PEAVEncryption@@EA\n00000001C001336E  mov     eax, [rdx+20h]\n00000001C0013376  mov     rdx, [rdx+18h]\n00000001C0013381  call    memcmp\n00000001C00133A4  call    cs:__imp_ExReleaseResourceLite                ; NEW release after the read\n00000001C00133B0  call    cs:__imp_KeLeaveCriticalRegion                ; NEW\n\n=== PATCHED: shared lock added around region 2 ===\n00000001C0013641  mov     rbx, cs:?SigningLock@@3PEAVRWLock@@EA\n00000001C0013648  call    cs:__imp_KeEnterCriticalRegion                ; NEW\n00000001C0013659  call    cs:__imp_ExAcquireResourceSharedLite          ; NEW shared lock before the loop\n00000001C0013668  mov     rbx, cs:?ReplayCacheManagerObject@@...\n00000001C001366F  mov     esi, [rbx+18h]\n00000001C001368D  xchg    rax, [rbx+20h]\n00000001C0013693  lock cmpxchg [rbx+18h], edi\n00000001C00136DD  call    cs:__imp_ExReleaseResourceLite                ; NEW release after the loop\n00000001C00136E9  call    cs:__imp_KeLeaveCriticalRegion                ; NEW",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csvnsflt_unpatched!NfltMessage",
+            "address": "0x1C0005F60",
+            "why": "Message dispatch entry. The message is copied via memmove into a pool buffer after ProbeForRead; the first DWORD selects the opcode. Opcode 6 with length >= 0x14 calls CsvCamSetSecurityInfo(buffer+4) at 0x1C0006299."
+          },
+          {
+            "symbol": "csvnsflt_unpatched!CsvCamSetSecurityInfo",
+            "address": "0x1C0013304",
+            "why": "Function entry. rcx = arg1 (buffer+4). arg1[2] (rcx+0x8) is the size compared against EncryptionManager+0x20; must be non-zero to enter region 1."
+          },
+          {
+            "symbol": "csvnsflt_unpatched!CsvCamSetSecurityInfo+0x2e",
+            "address": "0x1C0013332",
+            "why": "Region 1: unlocked capture of EncryptionManager into rdx. Set a write breakpoint on the EncryptionManager global to catch a concurrent thread replacing it."
+          },
+          {
+            "symbol": "csvnsflt_unpatched!CsvCamSetSecurityInfo+0x3d",
+            "address": "0x1C0013341",
+            "why": "Region 1: first deref of the captured pointer (mov ecx,[rdx+0x20]). A fault here on a freed/unmapped page confirms the use-after-free fired."
+          },
+          {
+            "symbol": "csvnsflt_unpatched!CsvCamSetSecurityInfo+0xfd",
+            "address": "0x1C0013401",
+            "why": "Exclusive-lock free of the old EncryptionManager (call Encryption::scalar deleting destructor). rcx = object being freed; if it matches the value captured at 0x1C0013332 in the racing thread, the region-1 use-after-free is imminent."
+          },
+          {
+            "symbol": "csvnsflt_unpatched!CsvCamSetSecurityInfo",
+            "address": "0x1C001361A",
+            "why": "Region 2: unlocked read of ReplayCacheManagerObject before the xchg (0x1C001363F) and lock cmpxchg (0x1C0013645) writes. Racing the free at 0x1C001359F corrupts freed pool."
+          }
+        ],
+        "watch": [
+          "rdx at 0x1C0013332 = captured EncryptionManager pointer (region 1). If it differs from the current EncryptionManager global by the time 0x1C0013341 executes, the object was replaced during the window.",
+          "rcx at 0x1C0013401 = object passed to Encryption::scalar deleting destructor (freed). Compare against the rdx captured at 0x1C0013332 in the racing thread.",
+          "The EncryptionManager global - watch for it changing (write breakpoint) during the race window.",
+          "rbx at 0x1C001361A = captured ReplayCacheManagerObject pointer (region 2); written unlocked at 0x1C001363F/0x1C0013645; freed at 0x1C001359F.",
+          "Pool tag 0x41435643 - both raced objects use this tag."
+        ],
+        "key_offsets": [
+          "0x1C0013332: 'mov rdx, cs:EncryptionManager' - region-1 unlocked capture. In the patched build a KeEnterCriticalRegion + ExAcquireResourceSharedLite block is inserted before the read (0x1C0013344-0x1C0013356) and a release after (0x1C00133A4-0x1C00133B0).",
+          "0x1C0013341: 'mov ecx,[rdx+0x20]' - region-1 stale read if the object was freed.",
+          "0x1C0013348: 'mov rdx,[rdx+0x18]' - region-1 stale read of a buffer pointer field.",
+          "0x1C0013353: 'call memcmp' - compares user bytes against the object's +0x18 buffer; returns a boolean only.",
+          "0x1C00133D1: start of the exclusive-lock block that frees the old EncryptionManager (writer half of the region-1 race).",
+          "0x1C0013401: 'call Encryption::scalar deleting destructor' - frees old EncryptionManager (object + embedded BCrypt handles/buffers).",
+          "0x1C001361A: 'mov rbx, cs:ReplayCacheManagerObject' - region-2 unlocked read; patched build adds a shared lock before it (0x1C0013641-0x1C0013659).",
+          "0x1C001363F: 'xchg rax,[rbx+0x20]' and 0x1C0013645 'lock cmpxchg [rbx+0x18],edi' - region-2 unlocked writes into the object.",
+          "0x1C001359F: 'call ExFreePoolWithTag' - exclusive-lock free of the old ReplayCacheManagerObject (writer half of the region-2 race)."
+        ],
+        "trigger_setup": "1. Ensure the driver is loaded (it loads on Cluster Shared Volumes nodes; the minifilter registers a communication port). 2. From a process able to open the port (subject to the port security descriptor), call FilterConnectCommunicationPort to obtain hPort. 3. Build a message: bytes[0..3] = 6 (opcode, little-endian DWORD), then the struct at +4: [+0] id, [+4] seq, [+8] size (compared against EncryptionManager+0x20), [+0xC] data. Total length >= 0x14. 4. Spawn threads calling FilterSendMessage(hPort, buffer, bufLen, ...). One interleaving keeps a thread on the unlocked read/update path; another with a mismatching size or data drives the allocation/replace path that takes the exclusive lock and frees the old object. 5. The race: a reader captures the global pointer (0x1C0013332 or 0x1C001361A) while another thread frees it (0x1C0013401 or 0x1C001359F), then the reader dereferences/writes the freed object.",
+        "expected_observation": "A bugcheck (for example a page fault) at an access within CsvCamSetSecurityInfo around 0x1C0013341 (region-1 deref) or 0x1C001363F/0x1C0013645 (region-2 writes) when the raced object has been freed. The faulting address lies in freed PagedPool (tag 0x41435643). A write breakpoint on the EncryptionManager or ReplayCacheManagerObject global captures the moment a concurrent thread replaces the pointer, showing the race interleaving.",
+        "notes": "SigningLock is the single RWLock (over an ERESOURCE) that protects both EncryptionManager and ReplayCacheManagerObject. The unpatched bug is a lock imbalance: the free/replace paths hold the lock exclusive, but the region-1 read and the region-2 sequence-number update hold no lock. The patch adds ExAcquireResourceSharedLite around both regions so readers/updaters are serialized against the exclusive writer. The binaries carry symbol names for these globals (EncryptionManager, ReplayCacheManagerObject, SigningLock); no public PDB is required. Image base in this analysis is 0x1C0000000; apply the runtime base offset when setting breakpoints. Opcode dispatch in NfltMessage: 1/8 queue async work items, 2 -> NfltActivateVolume, 3/9 -> NfltCleanupVolume, 4 -> NfltSetDownLevel, 5 -> CsvCamSetCnlInfo, 6 -> CsvCamSetSecurityInfo (this finding), 0xa -> NfltPauseVolume."
+      }
+    }
+  ],
+  "summary": "The patch fixes a use-after-free caused by a lock imbalance (CWE-416, CWE-362) in csvnsflt.sys (the Windows Cluster Shared Volumes Namespace Filter) in CsvCamSetSecurityInfo @ 0x1C0013304. The unpatched driver reads the global EncryptionManager and dereferences it (region 1), and reads/updates the global ReplayCacheManagerObject via interlocked writes (region 2), both with no lock held, while other branches of the same function free and replace those objects while holding SigningLock exclusive. A caller reaches this code via FilterSendMessage to the minifilter communication port (opcode 6, length >= 0x14), and by issuing concurrent opcode-6 messages can have one thread free an object while another dereferences (stale read) or writes (stale interlocked write) it, yielding a kernel use-after-free on PagedPool tag 0x41435643. The region-1 memcmp result is only a boolean and is not an information-leak channel; the demonstrable impact is memory corruption / bugcheck, and a full privilege-escalation chain is not demonstrated from the static diff. The patch adds ExAcquireResourceSharedLite around both previously-unlocked regions."
+}

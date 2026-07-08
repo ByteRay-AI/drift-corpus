@@ -1,0 +1,209 @@
+{
+  "binaries": {
+    "id_unpatched": "csvvbus_unpatched.sys",
+    "id_patched": "csvvbus_patched.sys",
+    "overall_similarity": 0.959,
+    "matched": 256,
+    "changed": 7,
+    "identical": 249,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VxVolumerSetStorageProp",
+      "similarity": 0.9173,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Integer overflow fix: The property-parsing loop bounds check 'if (remaining < size + 8) break;' computes size+8 with 32-bit arithmetic. When the attacker-controlled size field at offset 0xC in a property entry is >= 0xFFFFFFF8, the addition wraps around to a small value, bypassing the bounds check entirely.",
+        "The patch replaces the naive 'add eax, 0x8' (at 0x1c0009fd4) with overflow-checked arithmetic at 0x1c000a02b using 'lea eax, [rcx+0x8]; cmp eax, ecx; cmovnb edx, eax; sbb edi, edi; and edi, 0xc0000095', which detects the overflow and returns STATUS_INTEGER_OVERFLOW (0xC0000095) instead of proceeding with corrupted bounds.",
+        "In the unpatched build the naive 'size + 8' appears in two places: the loop-top bounds check (add eax,8 at 0x1c0009fd4) and the do-while continuation condition (add eax,8 at 0x1c000a1f8). The patch restructures the loop so each iteration reaches the single overflow-checked bounds test at 0x1c000a02b and removes the duplicated continuation check.",
+        "After the bounds check is bypassed, the code allocates a buffer via WdfMemoryCreate with the size field (r12_1) and then calls memset(arg_8, 0, r12_1) and memmove(arg_8, current+8, r12_1) at 0x1c000a078. Because the overflow only triggers when the size field is >= 0xFFFFFFF8, that same huge value is passed as the allocation size, so WdfMemoryCreate fails (js at 0x1c000a055 -> STATUS_INSUFFICIENT_RESOURCES) before any copy occurs; the demonstrable effect of the missing check is that an entry claiming more data than the buffer holds passes the remaining-bytes test, not a directly reachable controlled pool overflow."
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-190 (Integer Overflow or Wraparound). An attacker who can send IOCTL 0x7780064 to the CSV VBus device with a crafted input buffer containing a property entry whose size field (at struct offset +0xC) is set to a value >= 0xFFFFFFF8 causes a 32-bit integer overflow in the 'size + 8' bounds check, letting an entry that claims more data than the buffer holds pass the remaining-bytes test. Because the size field must be >= 0xFFFFFFF8 to overflow and that same value is used as the WdfMemoryCreate allocation size, the oversized allocation fails before the memset/memmove executes, so a controlled pool overflow is not directly reachable from this code; the practical impact is a bounds-check bypass / oversized allocation attempt. The patch adds an explicit overflow guard, hardening this parsing loop.",
+      "assembly_diff": "UNPATCHED loop-top bounds check (0x1c0009fd0):\n  0x1c0009fd0  mov     eax, [r8+0xc]     ; attacker-controlled size field from IOCTL input\n  0x1c0009fd4  add     eax, 0x8          ; *** OVERFLOW: wraps to small value for size >= 0xFFFFFFF8 ***\n  0x1c0009fd7  cmp     r15d, eax         ; remaining_bytes < (overflowed_size + 8)?\n  0x1c0009fda  jb      0x1c000a237       ; break if insufficient room (BYPASSED by overflow)\n\nUNPATCHED do-while continuation check (0x1c000a1ee):\n  0x1c000a1ee  mov     eax, [r8+0xc]     ; size field\n  0x1c000a1f2  mov     ecx, r13d         ; end pointer (low 32)\n  0x1c000a1f5  sub     ecx, r8d          ; remaining = end - current\n  0x1c000a1f8  add     eax, 0x8          ; *** SAME OVERFLOW ***\n  0x1c000a1fb  cmp     ecx, eax          ; remaining >= (overflowed) size+8?\n  0x1c000a1fd  jb      0x1c000a237       ; exit loop (BYPASSED)\n\nPATCHED single guarded bounds check (0x1c000a02b); the duplicated continuation check is removed and each iteration jumps back to reach this test:\n  0x1c000a02b  mov     ecx, [r8+0xc]     ; size field\n  0x1c000a02f  or      edx, 0xffffffff   ; sentinel = MAX_UINT\n  0x1c000a032  lea     eax, [rcx+0x8]    ; size + 8\n  0x1c000a035  cmp     eax, ecx          ; overflow check: result < original?\n  0x1c000a037  cmovnb  edx, eax          ; use result only if no overflow\n  0x1c000a03a  sbb     edi, edi          ; capture carry flag\n  0x1c000a03c  and     edi, 0xc0000095   ; STATUS_INTEGER_OVERFLOW on overflow\n  0x1c000a042  cmp     eax, ecx\n  0x1c000a044  jb      0x1c000a2a6       ; overflow -> STATUS_INTEGER_OVERFLOW path\n  0x1c000a04a  cmp     r12d, edx\n  0x1c000a04d  jb      0x1c000a2d9       ; insufficient buffer -> break"
+    },
+    {
+      "name": "CsvCamSetSecurityInfoSafe",
+      "similarity": 0.9202,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Race condition / TOCTOU fix: at 0x1c00184a4 the unpatched code reads the global EncryptionManager pointer and dereferences it at 0x1c00184b3 (+0x20) and 0x1c00184bb (+0x18) WITHOUT holding any lock. A concurrent thread taking the exclusive-lock path at 0x1c0018544 can free EncryptionManager via Encryption::scalar deleting destructor and replace it, creating a Use-After-Free window.",
+        "The patched version (function at 0x1c00172d0) acquires SigningLock in shared mode (KeEnterCriticalRegion at 0x1c0017337 + ExAcquireResourceSharedLite at 0x1c0017349) BEFORE reading EncryptionManager at 0x1c0017355 and dereferencing it, then releases at 0x1c0017398/0x1c00173a4, preventing concurrent modification.",
+        "Additionally, the patch adds a missing lock acquisition around the ReplayCacheManagerObject Global-Seq-Number update (the 'if (!r15)' branch): the unpatched branch at 0x1c001877d performs interlocked updates on the shared object with no ERESOURCE held, while the patched branch at 0x1c001762d wraps it in KeEnterCriticalRegion (0x1c0017634) + ExAcquireResourceSharedLite (0x1c0017645)."
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-367 (Time-of-Check Time-of-Use / TOCTOU) leading to CWE-416 (Use-After-Free). The EncryptionManager global can be concurrently freed while CsvCamSetSecurityInfoSafe reads and dereferences it without synchronization. An attacker who can trigger concurrent IOCTLs (one calling CsvCamSetSecurityInfoSafe via the security info path, another freeing the EncryptionManager via the exclusive-lock replacement path) can cause a Use-After-Free in kernel mode. The function is called from VxBusControlEvtIoDeviceControl, an IOCTL handler reachable through the CSV VBus device. Exploitability depends on the attacker's ability to create precise timing between two IOCTL operations.",
+      "assembly_diff": "UNPATCHED (0x1c0018450) - reads and dereferences EncryptionManager WITHOUT any lock:\n  0x1c001849b  test    r8d, r8d                 ; encryption size field [arg1+8]\n  0x1c001849e  jz      0x1c00185a2\n  0x1c00184a4  mov     rdx, cs:EncryptionManager ; *** read, NO LOCK HELD ***\n  0x1c00184ae  test    rdx, rdx\n  0x1c00184b1  jz      0x1c00184e0\n  0x1c00184b3  mov     eax, [rdx+0x20]          ; deref +0x20 without synchronization\n  0x1c00184bb  mov     rdx, [rdx+0x18]          ; deref +0x18 (Buf2)\n  0x1c00184c6  call    memcmp                   ; compare using unsynchronized pointer\n  ; the exclusive-lock path that frees/replaces EncryptionManager is at 0x1c0018544\n\nPATCHED (0x1c00172d0) - acquires SigningLock SHARED before reading EncryptionManager:\n  0x1c0017324  test    r8d, r8d\n  0x1c0017327  jz      0x1c001747d\n  0x1c00172d... (0x1c001732d)  mov  rbx, cs:SigningLock\n  0x1c0017337  call    KeEnterCriticalRegion\n  0x1c0017343  mov     rcx, [rbx]\n  0x1c0017346  mov     dl, r15b                 ; Wait=TRUE\n  0x1c0017349  call    ExAcquireResourceSharedLite\n  0x1c0017355  mov     rdx, cs:EncryptionManager ; read - now under shared lock\n  0x1c0017361  mov     eax, [rdx+0x20]          ; safe deref\n  0x1c001736a  mov     rdx, [rdx+0x18]\n  0x1c0017375  call    memcmp\n  0x1c001738e  mov     rcx, cs:SigningLock\n  0x1c0017398  call    ExReleaseResourceLite\n  0x1c00173a4  call    KeLeaveCriticalRegion"
+    },
+    {
+      "name": "VxVolumeEvtIoDeviceControl",
+      "similarity": 0.8521,
+      "change_type": "behavioral",
+      "key_changes": [
+        "IOCTL dispatch table reordering: switch-case order changed (e.g., 0x560020 vs 0x560014 as first comparison value, 0x7780010 vs 0x56c04c as second)",
+        "WPP trace GUID changed from WPP_4c7a3858601231cb411a1098415a493e_Traceguids to WPP_a427aa065d383dbcc3d83bde0d75a462_Traceguids (version difference)",
+        "Register allocation changed (r14->rbp for arg8, esi->r14d for IOCTL code)",
+        "All data references shifted due to binary layout differences (e.g., 0x1c0020040 -> 0x1c001f040)",
+        "Restructured the switch/dispatch tree (case comparison order changed). The handler functions VxVolumerActivateNetworkPath, VxVolumerEnableCache, VxVolumerDisableCache, VxVolumerPurgeCache and VxVolumerCacheConfig are NOT removed: each still has a function header in both the unpatched and patched binaries, so any apparent case removal is a dispatch-tree reordering/relocation, not deleted functionality"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VxVolumeSetTargetPath",
+      "similarity": 0.9425,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and address reference changes due to version/build differences",
+        "Basic block count increased from 134 to 151 but core logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AddChildPdoCallback",
+      "similarity": 0.9749,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Data reference address changes (0x1c0020018 etc. to relocated addresses)",
+        "Minor register allocation differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RtlUnicodeStringPrintf",
+      "similarity": 0.6089,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Inlined the RtlUnicodeStringValidateDestWorker validation logic directly instead of calling it as a separate function",
+        "Added explicit bounds checking: checks Length alignment, MaximumLength alignment, Length <= MaximumLength, MaximumLength <= 0xfffe",
+        "Core formatting logic (_vsnwprintf) unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a refactor of a standard RTL helper function where validation was inlined rather than called. The validation logic is equivalent. No security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RtlStringLengthWorkerW",
+      "similarity": 0.989,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Parameterized a hardcoded maximum length constant (0x104) to use the function argument (arg2) instead",
+        "Variable renamed from rdx to arg2 throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Standard RTL helper refactor - parameterizing a hardcoded constant. No security impact.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "VxVolumerSetStorageProp",
+      "entry_point": "IOCTL 0x7780064 (METHOD_BUFFERED) sent to \\Device\\CSVVolume%d or \\Device\\VClusBus",
+      "call_chain": ["DeviceIoControl(IOCTL 0x7780064)", "VxVolumeEvtIoDeviceControl (WDF EvtIoDeviceControl callback)", "VxVolumerSetStorageProp"],
+      "vulnerability_class": "integer overflow / bounds-check bypass (CWE-190)",
+      "description": "The VxVolumerSetStorageProp function processes a variable-length array of storage property entries from IOCTL input. For each entry, it reads a 32-bit size field at struct offset +0xC and checks whether the remaining input buffer has at least size+8 bytes: 'if (remaining < size + 8) break;'. The addition 'size + 8' is performed in 32-bit arithmetic without overflow detection (add eax,8 at 0x1c0009fd4, and again at 0x1c000a1f8). When the attacker sets the size field to a value >= 0xFFFFFFF8, the sum wraps around to a small value (e.g., size=0xFFFFFFF8 yields size+8=0x00000000), causing the bounds check to pass even though there is insufficient data. The code then allocates a buffer of the attacker-controlled size via WdfMemoryCreate (WDF function 0x600) and, on success, memmoves that many bytes. Crucially, the same size value that triggers the overflow (>= 0xFFFFFFF8) is also the allocation size, so the ~4GB WdfMemoryCreate fails (js 0x1c000a204 -> STATUS_INSUFFICIENT_RESOURCES) before the memset/memmove run; the subsequent loop advance by the +0x4 next-offset field is itself bounds-checked (compares against the buffer end and requires >0x10 bytes remaining). The demonstrable effect of the missing overflow check is therefore that an entry claiming more data than the buffer holds passes the remaining-bytes test, not a directly reachable pool corruption. The patch (function at 0x1c0009dac) adds an explicit overflow guard at 0x1c000a02b that returns STATUS_INTEGER_OVERFLOW.",
+      "trigger_conditions": "1. Open a handle to the CSV VBus device (e.g., \\\\Device\\CSVVolume0 or via the \\\\DosDevices\\VClusBus symlink). Requires the system to be a CSV cluster node or the attacker having local access to create appropriate handles.\n2. Send IOCTL 0x7780064 with an input buffer of at least 0x10 bytes (to pass the 'arg4 >= 0x10' check).\n3. The input buffer is parsed as an array of property entry structures, each starting with: [type:DWORD at +0x0][next_offset:DWORD at +0x4][reserved:DWORD at +0x8][data_size:DWORD at +0xC][data_bytes...].\n4. Set the data_size field (+0xC) of a property entry to 0xFFFFFFF8 (or 0xFFFFFFF9, 0xFFFFFFFA, 0xFFFFFFFB, 0xFFFFFFFC, 0xFFFFFFFD, 0xFFFFFFFE, 0xFFFFFFFF) so that data_size + 8 wraps to 0-7.\n5. Set the next_offset field (+0x4) to a non-zero value to continue loop iteration past the buffer boundary.\n6. The total input buffer length must be >= 0x10 to enter the processing loop.",
+      "primitive": "Bounds-check bypass: the 'remaining < size + 8' guard can be defeated by a size field >= 0xFFFFFFF8. In this code path the same value is used as the allocation size, so the oversized WdfMemoryCreate fails before any copy, and the loop advance is separately bounds-checked; a controlled out-of-bounds read/write is not directly reachable here. The finding is a genuine CWE-190 hardening gap rather than a demonstrated memory-corruption primitive.",
+      "evidence": "// UNPATCHED VxVolumerSetStorageProp - vulnerable loop (0x1c0009d54)\n\ndo\n{\n    // 0x1c0009f91 - loop top\n    uint64_t r12_1 = r8_3[3];           // data_size from input (+0xC) - ATTACKER CONTROLLED\n    int32_t r15_2 = r13_1 - r8_3;       // remaining bytes in input buffer\n    \n    // ... WPP tracing ...\n    \n    if (r15_2 < r8_3[3] + 8)            // *** INTEGER OVERFLOW: r8_3[3]+8 wraps ***\n        break;                          //   when r8_3[3] >= 0xFFFFFFF8, check is bypassed\n    \n    // Allocation and copy with attacker-controlled size (0x1c000a048 / 0x1c000a078)\n    rax_38 = WdfMemoryCreate(..., r12_1, &arg_18, &arg_8);  // allocate r12_1 (data_size) bytes\n    // NOTE: to overflow the check above, r12_1 must be >= 0xFFFFFFF8, so this\n    // allocation of ~4GB fails first (js 0x1c000a204) and the copy is not reached\n    memset(arg_8, 0, r12_1);\n    memmove(arg_8, &var_98[2], r12_1);  // src = current entry + 8\n    \n    // ... property type dispatch (4, 6, 7, 8, 0xb, 0xe) ...\n    \n    // Loop advance using next_offset (bounds-checked)\n    int32_t rcx_19 = var_98[1];         // next_offset from input (+0x4)\n    if (!rcx_19) break;\n    r8_3 = rcx_19 + var_80_1;          // advance pointer\n    var_98 = r8_3;\n    if (r8_3 >= r13_1) break;           // stop if past end\n    if (r13_1 - r8_3 <= 0x10) break;    // stop if < header remains\n} while (r13_1 - r8_3 >= r8_3[3] + 8); // *** SAME 'size + 8' overflow (0x1c000a1f8) ***\n\n// PATCHED version adds overflow check before the bounds comparison:\n//   int32_t rcx_12 = r8_3[3];\n//   int32_t rdx_5 = -1;\n//   bool c_1 = rcx_12 + 8 < rcx_12;    // overflow detection\n//   if (!c_1) rdx_5 = rcx_12 + 8;     // only use if no overflow\n//   rdi_1 = (rdi_1 - rdi_1) & 0xc0000095;  // STATUS_INTEGER_OVERFLOW\n//   if (rcx_12 + 8 < rcx_12) { ... error handling ... }",
+      "assembly": "; UNPATCHED VxVolumerSetStorageProp (fn @ 0x1c0009d54) - vulnerable bounds check\n; At loop top 0x1c0009f91:\n0x1c0009f91: mov     r12d, [r8+0xc]                ; r12 = data_size (attacker-controlled)\n0x1c0009f95: mov     r15d, r13d                     ; r15 = end_of_buffer (low 32)\n0x1c0009f98: sub     r15d, r8d                      ; r15 = remaining bytes\n; ...WPP tracing...\n; Bounds check at 0x1c0009fd0:\n0x1c0009fd0: mov     eax, [r8+0xc]                 ; reload data_size\n0x1c0009fd4: add     eax, 0x8                       ; *** VULNERABLE: 32-bit overflow ***\n0x1c0009fd7: cmp     r15d, eax                      ; remaining < (size+8)?\n0x1c0009fda: jb      0x1c000a237                    ; break if insufficient (BYPASSED)\n; Then WdfMemoryCreate([rax+600h]) at 0x1c000a048 with size=r12; on failure js 0x1c000a204;\n; memset at 0x1c000a064 and memmove at 0x1c000a078 use r15(=data_size)\n\n; Do-while continuation check at 0x1c000a1ee:\n0x1c000a1ee: mov     eax, [r8+0xc]                 ; data_size\n0x1c000a1f2: mov     ecx, r13d                      ; end pointer\n0x1c000a1f5: sub     ecx, r8d                       ; remaining\n0x1c000a1f8: add     eax, 0x8                       ; *** SAME OVERFLOW ***\n0x1c000a1fb: cmp     ecx, eax                       ; remaining >= (overflowed) size+8?\n0x1c000a1fd: jb      0x1c000a237                    ; exit loop (BYPASSED)\n\n; PATCHED version (fn @ 0x1c0009dac) - single overflow-safe check at 0x1c000a02b:\n0x1c000a02b: mov     ecx, [r8+0xc]\n0x1c000a02f: or      edx, 0xffffffff\n0x1c000a032: lea     eax, [rcx+0x8]\n0x1c000a035: cmp     eax, ecx            ; overflow check\n0x1c000a037: cmovnb  edx, eax            ; use only if no overflow\n0x1c000a03a: sbb     edi, edi\n0x1c000a03c: and     edi, 0xc0000095     ; STATUS_INTEGER_OVERFLOW\n0x1c000a044: jb      0x1c000a2a6         ; overflow taken -> error\n0x1c000a04d: jb      0x1c000a2d9         ; insufficient buffer -> break",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csvvbus_unpatched!VxVolumerSetStorageProp",
+            "address": "0x1c0009d54",
+            "why": "Break at function entry to inspect the IOCTL input buffer. rcx=arg1 (WDF request object), rdx=arg2 (WDF request), r8=arg3 (input buffer length), r9=arg4 (output buffer). The WDF framework will have already retrieved the input buffer. Step to the WdfRequestRetrieveInputBuffer call result to see the raw input buffer pointer in var_98 (stack at rbp-0x31) and its length."
+          },
+          {
+            "symbol": "csvvbus_unpatched!VxVolumerSetStorageProp @ 0x1c0009fd0",
+            "address": "0x1c0009fd0",
+            "why": "This is the vulnerable bounds check. At this point: r8 = pointer to current property entry in input buffer, r8+0xC = attacker-controlled data_size field, r15d = remaining bytes in buffer. The 'add eax, 0x8' at 0x1c0009fd4 is the overflow instruction. Watch eax before and after the add to see the wrap."
+          },
+          {
+            "symbol": "csvvbus_unpatched!VxVolumerSetStorageProp @ 0x1c000a1ee",
+            "address": "0x1c000a1ee",
+            "why": "The second occurrence of the naive 'size + 8' in the do-while continuation. Same overflow pattern: 'mov eax, [r8+0xc]' at 0x1c000a1ee, 'add eax, 0x8' at 0x1c000a1f8. Watch for the 32-bit wrap."
+          }
+        ],
+        "watch": [
+          "r8+0xC (dword) = data_size field from attacker IOCTL input — set to 0xFFFFFFF8 to trigger overflow",
+          "eax after 'add eax, 0x8' at 0x1c0009fd4 — should wrap to 0x00000000 when data_size=0xFFFFFFF8",
+          "r15d = remaining bytes in input buffer — compare against wrapped eax to see bypass",
+          "r12d = data_size passed to WdfMemoryCreate (0x1c000a048) and to memset/memmove — will be 0xFFFFFFF8 (huge), so the allocation fails (js 0x1c000a204) before the copy",
+          "r8+0x4 (dword) = next_offset field — controls how far the pointer advances (out-of-bounds)",
+          "rbp-0x39 (var_98) = current property entry pointer — advances past buffer end on loop iteration"
+        ],
+        "key_offsets": [
+          "0x1c0009fd4: 'add eax, 0x8' — THE vulnerable integer overflow instruction (replaced by guarded check in patch)",
+          "0x1c0009fd7: 'cmp r15d, eax' — the bypassed comparison",
+          "0x1c0009fda: 'jb 0x1c000a237' — the break that gets bypassed",
+          "0x1c000a1f8: second 'add eax, 0x8' in do-while condition — same overflow",
+          "0x1c0009f91: loop top — r8 points to current property entry",
+          "0x1c000a078: memmove call — copies data_size bytes (only reached if the oversized allocation at 0x1c000a048 succeeds, which it does not for the overflow-triggering sizes)"
+        ],
+        "trigger_setup": "1. Ensure the target is a Windows Failover Cluster node with CSV enabled, or locally load csvvbus.sys.\n2. Open a handle to a CSV volume device (e.g., \\\\.\\C: on a CSV volume, or directly to \\Device\\CSVVolume0 via NtOpenFile).\n3. Prepare an input buffer of at least 0x10 bytes structured as a property entry array:\n   - Bytes 0x0-0x3: PropertyType (DWORD) — set to 4 (valid type)\n   - Bytes 0x4-0x7: NextEntryOffset (DWORD) — set to 0x18 (points to next entry)\n   - Bytes 0x8-0xB: Reserved (DWORD) — 0\n   - Bytes 0xC-0xF: DataSize (DWORD) — *** SET TO 0xFFFFFFF8 ***\n   - Bytes 0x10+: Data bytes (will be copied via memcpy)\n4. Send via DeviceIoControl with dwIoControlCode=0x7780064, lpInBuffer=crafted buffer, nInBufferSize>=0x10.\n5. The WDF EvtIoDeviceControl callback VxVolumeEvtIoDeviceControl dispatches to VxVolumerSetStorageProp.",
+        "expected_observation": "At 0x1c0009fd0, eax is loaded with 0xFFFFFFF8. After 'add eax, 0x8' at 0x1c0009fd4, eax wraps to 0x00000000. The subsequent 'cmp r15d, 0' at 0x1c0009fd7 does not take the break (jb not taken since remaining > 0), so the bounds check is bypassed. The code then calls WdfMemoryCreate at 0x1c000a048 with size = data_size = 0xFFFFFFF8. Because that ~4GB allocation fails, the 'js 0x1c000a204' at 0x1c000a055 is taken, rsi is set to 0xC000009A (STATUS_INSUFFICIENT_RESOURCES) and the loop breaks; the memset (0x1c000a064) and memmove (0x1c000a078) are not reached. Note: the allocation size is data_size itself, not size+8, so choosing values such as 0xFFFFFFF9 does NOT yield a small allocation - any value large enough to overflow 'size + 8' is also too large to allocate. The observable outcome is the bypassed remaining-bytes check followed by a failed allocation.",
+        "notes": "IOCTL 0x7780064 decodes as device type 0x778, function 0x19, and METHOD_BUFFERED (0x0). It is dispatched in VxVolumeEvtIoDeviceControl by a subtraction chain based at 0x7780044 (0x7780044 + 0x20 == 0x7780064 selects the VxVolumerSetStorageProp case at 0x1c001134d). Access is typically restricted to cluster service context. On a non-cluster system, the device may not be present. For PoC purposes, testing on a CSV-enabled cluster node is required, or using a kernel debugger to call the function directly. The property entry structure at offset +0x0 is the type (4=device, 6/7/8/0xb/0xe = other), +0x4 is next offset, +0x8 reserved, +0xC is data size. The data follows immediately after the 0x10-byte header."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "CsvCamSetSecurityInfoSafe",
+      "entry_point": "VxBusControlEvtIoDeviceControl (IOCTL handler on \\Device\\VClusBus)",
+      "call_chain": ["DeviceIoControl to \\Device\\VClusBus", "VxBusControlEvtIoDeviceControl", "CsvCamSetSecurityInfoSafe"],
+      "vulnerability_class": "race condition / TOCTOU leading to use-after-free",
+      "description": "The CsvCamSetSecurityInfoSafe function reads and dereferences the global EncryptionManager pointer WITHOUT holding the SigningLock. In the unpatched version, the code does: 'void* EncryptionManager_2 = EncryptionManager; if (EncryptionManager_2) { rax_2 = *(EncryptionManager_2 + 0x20); ... memcmp(&arg1[3], *(EncryptionManager_2 + 0x18), rax_2); }' — all without synchronization. A concurrent thread that calls into the exclusive-lock path (which frees the old EncryptionManager via 'Encryption::scalar deleting destructor' and replaces it with a new one) can free the EncryptionManager object between the pointer read and its dereference, creating a Use-After-Free. Additionally, the replay cache access path ('if (!r15)' branch) also accesses the CsvCamTickCountFunc shared state without holding the lock.",
+      "trigger_conditions": "1. Requires concurrent access to the CSV VBus control device from two threads.\n2. Thread A: Send an IOCTL to VxBusControlEvtIoDeviceControl that routes to CsvCamSetSecurityInfoSafe with arg2 >= 0x10 and a non-zero encryption type field (arg1[2] != 0). This enters the EncryptionManager read path WITHOUT the lock.\n3. Thread B: Concurrently trigger the exclusive-lock replacement path (the 'if (!r15)' branch which acquires SigningLock exclusively, frees CsvCamTickCountFunc, and replaces it, or the Encryption::Initialize path which frees old EncryptionManager under exclusive lock).\n4. The race window is between the 'mov rcx, qword [rel EncryptionManager]' read and the subsequent dereference 'mov eax, dword [rdx+0x20]' or the memcmp call.\n5. Timing must be precise — the attacker needs Thread B to free EncryptionManager while Thread A holds the stale pointer.",
+      "primitive": "Use-After-Free: dereference of a freed 0x28-byte paged-pool allocation (EncryptionManager, tag 0x41435643 allocated by ExAllocatePoolWithTag at 0x1c00184e5). The unsynchronized read dereferences '*(EncryptionManager_2 + 0x20)' (a size) and '*(EncryptionManager_2 + 0x18)' (a pointer passed to memcmp). If the freed block is reclaimed before the dereference, those reads come from whatever reoccupied it, so the outcome ranges from a kernel crash to information disclosure via the memcmp. A reliable read/write primitive is not demonstrated and would depend on paged-pool reclaim reliability.",
+      "evidence": "// UNPATCHED CsvCamSetSecurityInfoSafe (0x1c0018450)\n\n// *** NO LOCK when reading EncryptionManager ***\nif (r8_1)  // encryption type non-zero\n{\n    void* EncryptionManager_2 = EncryptionManager;  // READ WITHOUT LOCK\n    r14 = 1;\n    \n    if (EncryptionManager_2)\n    {\n        rax_2 = *(EncryptionManager_2 + 0x20);     // *** DEREF WITHOUT LOCK - UAF ***\n        if (r8_1 != rax_2)\n            rax_2 = 0;\n        else\n            rax_2 = !memcmp(&arg1[3], *(EncryptionManager_2 + 0x18), rax_2); // *** UAF ***\n    }\n    // ... proceeds to allocate new Encryption without shared lock ...\n}\n\n// Concurrent path (same function, 'if (!r15)' branch at 0x1c001877d):\nif (!r15)  // Global-Seq / replay cache update\n{\n    // *** NO ERESOURCE when updating the shared ReplayCacheManagerObject ***\n    ReplayCacheManagerObject_3 = ReplayCacheManagerObject;\n    // interlocked xchg/cmpxchg on [+0x18]/[+0x20] with no lock held\n}\n\n// PATCHED version acquires SigningLock shared BEFORE all EncryptionManager access:\nif (r8_1)\n{\n    int64_t* SigningLock_2 = SigningLock;\n    rsi = 1;\n    KeEnterCriticalRegion();\n    ExAcquireResourceSharedLite(*SigningLock_2, 1);  // *** LOCK ADDED ***\n    void* EncryptionManager_2 = EncryptionManager;    // safe read\n    // ... safe access ...\n    ExReleaseResourceLite(**&SigningLock);             // *** UNLOCK ADDED ***\n    KeLeaveCriticalRegion();\n}\n// And for the replay cache path:\nif (!r15)\n{\n    int64_t* SigningLock_6 = SigningLock;\n    KeEnterCriticalRegion();                            // *** LOCK ADDED ***\n    ExAcquireResourceSharedLite(*SigningLock_6, 1);\n    // ... safe access ...\n    ExReleaseResourceLite(**&SigningLock);              // *** UNLOCK ADDED ***\n    KeLeaveCriticalRegion();\n}",
+      "assembly": "; UNPATCHED CsvCamSetSecurityInfoSafe (fn @ 0x1c0018450) - reads/derefs EncryptionManager with NO lock\n; After the size-field test (test r8d,r8d at 0x1c001849b):\n  0x1c00184a4  mov     rdx, cs:EncryptionManager  ; *** read, NO LOCK HELD ***\n  0x1c00184ae  test    rdx, rdx\n  0x1c00184b1  jz      0x1c00184e0\n  0x1c00184b3  mov     eax, [rdx+0x20]            ; deref +0x20 (no synchronization)\n  0x1c00184bb  mov     rdx, [rdx+0x18]            ; deref +0x18 (Buf2)\n  0x1c00184bf  lea     rcx, [rsi+0x0c]            ; Buf1 = arg1+0xC\n  0x1c00184c6  call    memcmp\n; No ERESOURCE is held anywhere in this branch; the exclusive-lock path that frees and\n; replaces EncryptionManager (scalar deleting destructor) is at 0x1c0018544, so a\n; concurrent replace can free the object between the read at 0x1c00184a4 and the deref.\n\n; Replay/Global-Seq update path ('if (!r15)' branch) at 0x1c001877d - also NO ERESOURCE:\n  0x1c001877d  mov     rbx, cs:ReplayCacheManagerObject\n  0x1c001879a  mov     rcx, [r14]\n  0x1c00187ad  xchg    rax, [rbx+0x20]           ; interlocked update, no lock held\n  0x1c00187b4  lock cmpxchg [rbx+0x18], edi\n\n; PATCHED version (fn @ 0x1c00172d0) - SigningLock SHARED acquired BEFORE EncryptionManager read:\n  0x1c001732d  mov     rbx, cs:SigningLock\n  0x1c0017337  call    KeEnterCriticalRegion\n  0x1c0017343  mov     rcx, [rbx]\n  0x1c0017346  mov     dl, r15b                   ; Wait=1\n  0x1c0017349  call    ExAcquireResourceSharedLite\n  0x1c0017355  mov     rdx, cs:EncryptionManager  ; read under shared lock\n  0x1c0017361  mov     eax, [rdx+0x20]\n  0x1c001736a  mov     rdx, [rdx+0x18]\n  0x1c0017375  call    memcmp\n  0x1c001738e  mov     rcx, cs:SigningLock\n  0x1c0017398  call    ExReleaseResourceLite\n  0x1c00173a4  call    KeLeaveCriticalRegion\n; The patched 'if (!r15)' branch at 0x1c001762d likewise wraps the Global-Seq update in\n; KeEnterCriticalRegion (0x1c0017634) + ExAcquireResourceSharedLite (0x1c0017645).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csvvbus_unpatched!CsvCamSetSecurityInfoSafe",
+            "address": "0x1c0018450",
+            "why": "Function entry. rcx=arg1 (security info buffer), edx=arg2 (buffer size). The EncryptionManager read occurs after the size/structure validation checks pass (arg2 >= 0x10, r8_1 = arg1[2] != 0)."
+          },
+          {
+            "symbol": "csvvbus_unpatched!CsvCamSetSecurityInfoSafe @ 0x1c00184a4",
+            "address": "0x1c00184a4",
+            "why": "The EncryptionManager global pointer read without lock: 'mov rdx, cs:EncryptionManager'. This is the TOCTOU start — rdx now holds the EncryptionManager pointer that could be freed by a concurrent thread on the exclusive-lock replace path (0x1c0018544)."
+          },
+          {
+            "symbol": "csvvbus_unpatched!CsvCamSetSecurityInfoSafe @ 0x1c00184b3",
+            "address": "0x1c00184b3",
+            "why": "The dereference of EncryptionManager->+0x20 ('mov eax, [rdx+0x20]') and, at 0x1c00184bb, +0x18, both without lock. If EncryptionManager was freed between 0x1c00184a4 and here, this is the UAF read point."
+          }
+        ],
+        "watch": [
+          "cs:EncryptionManager = global pointer — read WITHOUT lock at 0x1c00184a4",
+          "cs:SigningLock = ERESOURCE global — never acquired in this branch in the unpatched build",
+          "rdx at 0x1c00184a4 = EncryptionManager pointer — becomes stale/UAF if a concurrent free occurs",
+          "rdx+0x20 at 0x1c00184b3 = deref of potentially freed object — UAF read here",
+          "cs:EncryptionManager vs rdx — if they differ after the breakpoint, a concurrent modification occurred"
+        ],
+        "key_offsets": [
+          "0x1c00184a4: 'mov rdx, cs:EncryptionManager' — EncryptionManager read WITHOUT lock (TOCTOU start)",
+          "0x1c00184b3: 'mov eax, [rdx+0x20]' (and +0x18 at 0x1c00184bb) — deref of EncryptionManager — UAF read point",
+          "0x1c001877d: Global-Seq/replay update path ('if (!r15)') — also missing ERESOURCE in unpatched",
+          "0x1c0018544: exclusive-lock path where EncryptionManager is freed (scalar deleting destructor) and replaced"
+        ],
+        "trigger_setup": "1. Open two handles to the CSV VBus control device (\\\\Device\\VClusBus or \\\\DosDevices\\VClusBus).\n2. Thread A: Send an IOCTL that routes to CsvCamSetSecurityInfoSafe with a crafted security info buffer where arg2 >= 0x10 and arg1[2] (encryption type) is non-zero. This enters the unlocked EncryptionManager read path.\n3. Thread B: Concurrently send an IOCTL that triggers the EncryptionManager replacement path (the exclusive-lock path at ~0x1c0018544 that calls Encryption::scalar deleting destructor on the old EncryptionManager and sets EncryptionManager = new_object).\n4. The race window is small — use many iterations or timing manipulation (thread priority, CPU affinity) to increase reliability.\n5. To observe a reclaim (rather than a clean freed-memory access), issue paged-pool allocations of a similar size between the free and the dereference. Reliable reclaim of paged pool is not demonstrated here.",
+        "expected_observation": "With a kernel debugger: set breakpoint at 0x1c00184a4 (EncryptionManager read) and at 0x1c00184b3 (deref). If EncryptionManager was freed between these two points, the deref at 0x1c00184b3 will access freed/reclaimed pool memory. With pool tracking enabled (verifier), this shows as a 'Use after free' BugCheck C4 (DRIVER_VERIFIER_DETECTED_VIOLATION) or 0x50 (PAGE_FAULT_IN_NONPAGED_AREA). Without verifier, the behavior depends on what data occupies the freed allocation — could be silent information disclosure via memcmp or a crash. In the patched build both this read and the deref sit inside the SigningLock shared critical section (0x1c0017349 to 0x1c0017398), closing the window.",
+        "notes": "The EncryptionManager object is allocated with ExAllocatePoolWithTag(PagedPool, 0x28, tag 0x41435643 -> 'CVCA') at 0x1c00184e5: 0x28 bytes from paged pool. A reclaim would target paged-pool allocations of similar size. The race requires the system to be in a CSV configuration where encryption keys are being set/rotated. The SigningLock is an ERESOURCE (read-write lock) accessed via ExAcquireResourceSharedLite/ExAcquireResourceExclusiveLite."
+      }
+    }
+  ],
+  "summary": "The patch changes two areas of csvvbus.sys (Windows Cluster Shared Volume Bus Driver). The security-significant finding is a race condition/TOCTOU (CWE-367) leading to Use-After-Free (CWE-416) in CsvCamSetSecurityInfoSafe (unpatched @ 0x1c0018450, patched @ 0x1c00172d0): the EncryptionManager global pointer is read (0x1c00184a4) and dereferenced (0x1c00184b3/0x1c00184bb) without holding SigningLock, while the same function's exclusive-lock path (0x1c0018544-0x1c0018580) frees the old EncryptionManager via a scalar deleting destructor and installs a new one, so a concurrent invocation can create a Use-After-Free. The function is reachable from the IOCTL handler VxBusControlEvtIoDeviceControl. The patch acquires SigningLock in shared mode (KeEnterCriticalRegion + ExAcquireResourceSharedLite at 0x1c0017337/0x1c0017349) before the EncryptionManager access and releases it at 0x1c0017398/0x1c00173a4, and adds the same lock to the 'if (!r15)' Global-Seq update branch (0x1c001762d). Severity High. The second change is a low-severity CWE-190 integer overflow in VxVolumerSetStorageProp (unpatched @ 0x1c0009d54, patched @ 0x1c0009dac): the property-parsing loop's bounds check computes 'size + 8' using 32-bit arithmetic without overflow detection (add eax,8 at 0x1c0009fd4, repeated at 0x1c000a1f8), letting a crafted size field >= 0xFFFFFFF8 (via IOCTL 0x7780064) bypass the remaining-bytes check. Because that same oversized value is also the WdfMemoryCreate allocation size, the allocation fails (js at 0x1c000a055) before any memset/memmove, so no memory corruption is reachable; the practical impact is only a bypassed bounds check. The patch replaces the naive addition with overflow-checked arithmetic returning STATUS_INTEGER_OVERFLOW (guard at 0x1c000a02b). This is a hardening fix, not a reachable memory-safety bug."
+}

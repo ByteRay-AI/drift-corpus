@@ -1,0 +1,377 @@
+{
+  "binary": "pciidex.sys",
+  "kb": "KB5073723",
+  "release_date": "2026-01-13",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-20809",
+      "title": "Windows Kernel Memory Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20810",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-590",
+          "name": "Free of Memory not on the Heap"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20814",
+      "title": "DirectX Graphics Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-20818",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 6.2
+    },
+    {
+      "id": "CVE-2026-20820",
+      "title": "Windows Common Log File System Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20825",
+      "title": "Windows Hyper-V Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 4.4
+    },
+    {
+      "id": "CVE-2026-20831",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20836",
+      "title": "DirectX Graphics Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-20840",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2023-31096",
+      "title": "MITRE: CVE-2023-31096 Windows Agere Soft Modem Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-121",
+          "name": "Stack-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20857",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20860",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-843",
+          "name": "Access of Resource Using Incompatible Type ('Type Confusion')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20919",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20921",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20922",
+      "title": "Windows NTFS Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20926",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20927",
+      "title": "Windows SMB Server Denial of Service Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Denial of Service",
+      "cvss": 5.3
+    },
+    {
+      "id": "CVE-2026-20934",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20940",
+      "title": "Windows Cloud Files Mini Filter Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-822",
+          "name": "Untrusted Pointer Dereference"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20848",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2024-55414",
+      "title": "Windows Motorola Soft Modem Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-20929",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.5
+    },
+    {
+      "id": "CVE-2026-20936",
+      "title": "Windows NDIS Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 4.3
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.17763.1",
+    "sha256": "a352dec995f9e74ddcded0f3118193f5223dc9658a0aa2c1848ee0ee42e14b58",
+    "file": "pciidex_patched.sys",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "PCI IDE Bus Driver Extension",
+      "FileVersion": "10.0.17763.1 (WinBuild.160101.0800)",
+      "InternalName": "pciidex.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "pciidex.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.1"
+    }
+  },
+  "prev": {
+    "version": "10.0.10240.19086",
+    "sha256": "a2cf1657c59411d92ddec759d3083c71ede626395410b80e0edef14900f4b721",
+    "kb_numbers": [
+      "KB5006675",
+      "KB5007207",
+      "KB5008230",
+      "KB5009585",
+      "KB5010789",
+      "KB5010358",
+      "KB5011491",
+      "KB5012653",
+      "KB5013963",
+      "KB5014710",
+      "KB5015832",
+      "KB5016639",
+      "KB5017327",
+      "KB5018425",
+      "KB5020440",
+      "KB5019970",
+      "KB5021243",
+      "KB5022297",
+      "KB5022858",
+      "KB5023713",
+      "KB5025234",
+      "KB5026382",
+      "KB5027230",
+      "KB5028622",
+      "KB5028186",
+      "KB5029259",
+      "KB5030220",
+      "KB5031377",
+      "KB5032199",
+      "KB5033379",
+      "KB5034134",
+      "KB5034774",
+      "KB5035858",
+      "KB5036925",
+      "KB5037788",
+      "KB5039225",
+      "KB5040448",
+      "KB5041782",
+      "KB5043083",
+      "KB5044286",
+      "KB5046665",
+      "KB5048703",
+      "KB5050013",
+      "KB5052040",
+      "KB5053618",
+      "KB5055547",
+      "KB5058387",
+      "KB5060998",
+      "KB5062561",
+      "KB5063889",
+      "KB5065430",
+      "KB5066837"
+    ],
+    "win_versions": [],
+    "file": "pciidex_unpatched.sys",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "PCI IDE Bus Driver Extension",
+      "FileVersion": "10.0.10240.19086 (th1.211004-1917)",
+      "InternalName": "pciidex.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "pciidex.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.10240.19086"
+    },
+    "selection_tier": 3,
+    "selection_tier_description": "any strictly older distinct version"
+  }
+}

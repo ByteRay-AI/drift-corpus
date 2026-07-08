@@ -1,0 +1,199 @@
+{
+  "binaries": {
+    "id_unpatched": "hidusb_unpatched.sys",
+    "id_patched": "hidusb_patched.sys",
+    "overall_similarity": 0.5635,
+    "matched": 75,
+    "changed": 60,
+    "identical": 15,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "HumParseHidInterface",
+      "similarity": 0.5538,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added missing bounds check: 'cmp eax, edi; jbe' verifying descriptor bLength <= buffer_size before computing remaining size. Without this check, if a USB device provides bLength > buffer_size, the subtraction (buffer_size - bLength) wraps to a huge unsigned value, bypassing all subsequent bounds checks and causing out-of-bounds reads.",
+        "Added new error path 'USB_InterfaceDescriptorOverflow' when descriptor length exceeds buffer size.",
+        "Reorganized control flow for tighter validation at each descriptor parsing step."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version reads bLength (first byte of interface descriptor) and checks bLength >= 9, then immediately computes remaining = buffer_size - bLength without verifying bLength <= buffer_size. A malicious USB device supplying bLength=0xFF with a buffer_size of ~9-32 bytes causes an integer underflow: remaining wraps to ~0xFFFFFF00, making all subsequent 'cmp remaining, 2; jae' checks pass. The parser then walks through subsequent descriptors reading bLength and bDescriptorType bytes far past the allocated pool buffer, causing kernel out-of-bounds reads. These reads eventually reach an unmapped page and crash the system (DoS). The bytes read out of bounds are consumed only by the parser's control-flow decisions and are not returned to the attacker, so this is not an information-disclosure primitive; an out-of-bounds read cannot corrupt the pool, so it is not a write or code-execution primitive. The patched version adds 'if (bLength <= buffer_size)' before the subtraction, with the new 'USB_InterfaceDescriptorOverflow' error string.",
+      "assembly_diff": "UNPATCHED (vulnerable - missing bounds check):\n  0x1c0003034: movzx   eax, byte [r12]    ; eax = bLength\n  0x1c0003039: cmp     al, 0x9            ; if (bLength >= 9)\n  0x1c000303b: jae     0x1c00030c9        ; proceed to parse\n  ...\n  0x1c00030c9: sub     edi, eax           ; remaining = buffer_size - bLength (UNDERFLOW!)\n  0x1c00030cb: cmp     edi, 0x2           ; unsigned compare - always true if wrapped\n  0x1c00030ce: jae     0x1c000315c        ; proceed to loop with corrupted bounds\n\nPATCHED (fixed - adds bounds check):\n  0x140002eba: movzx   eax, byte [rdx]    ; eax = bLength\n  0x140002ebd: cmp     al, 0x9            ; if (bLength >= 9)\n  0x140002ebf: jae     0x140002fba        ; proceed to bounds check\n  ...\n  0x140002fba: cmp     eax, edi           ; NEW: bLength vs buffer_size\n  0x140002fbc: jbe     0x140003036        ; only proceed when bLength <= buffer_size\n  ; else fall through to error path at 0x14000302a: 'USB_InterfaceDescriptorOverflow'\n  0x140003036: sub     edi, eax           ; safe subtraction (bLength <= buffer_size)"
+    },
+    {
+      "name": "HumInitDevice",
+      "similarity": 0.7553,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Extracted HID interface parsing logic into new function HumGetHidInfo(), which wraps USBD_ParseConfigurationDescriptorEx + HumParseHidInterface calls.",
+        "Telemetry reorganization from _TlgWrite to _tlgWriteTransfer_EtwWriteTransfer."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumSelectConfiguration",
+      "similarity": 0.2369,
+      "change_type": "hardening",
+      "key_changes": [
+        "Migrated ExAllocatePoolWithTag(NonPagedPoolNx, ...) to ExAllocatePool2(0x40, ...) - safer pool allocation API.",
+        "WPP tracing reorganization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumGetDescriptorRequest",
+      "similarity": 0.4396,
+      "change_type": "hardening",
+      "key_changes": [
+        "Migrated ExAllocatePoolWithTag(NonPagedPoolNx, ...) to ExAllocatePool2(0x40, ...).",
+        "Restructured error handling paths for pool allocation failure.",
+        "WPP tracing reorganization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumGetConfigDescriptor",
+      "similarity": 0.4272,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Reordered validation logic - the size check (arg_20 < 9) now happens before reading wTotalLength from first descriptor fetch.",
+        "Added explicit free of P_1 on second-fetch failure path before returning error.",
+        "WPP tracing reorganization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumWriteReport",
+      "similarity": 0.8483,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed completion routine from HumWriteCompletion to HumGetSetReportCompletion.",
+        "Changed pending request count check from HumIncrementPendingRequestCount to inline rdi[8] check.",
+        "Migrated to ExAllocatePool2.",
+        "Reordered URB field assignments."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumGetDeviceDescriptor",
+      "similarity": 0.0997,
+      "change_type": "cosmetic",
+      "key_changes": ["Pure WPP tracing reorganization - WPP_RECORDER_INITIALIZED guard added."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumReadCompletion",
+      "similarity": 0.7721,
+      "change_type": "cosmetic",
+      "key_changes": ["Control flow reordering of error status checks for WPP tracing. No behavioral change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumGetMsGenreDescriptor",
+      "similarity": 0.648,
+      "change_type": "hardening",
+      "key_changes": [
+        "Migrated ExAllocatePoolWithTag to ExAllocatePool2.",
+        "Reordered URB field initialization.",
+        "WPP tracing reorganization."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HumGetHidInfo (NEW in patched)",
+      "similarity": 0.0143,
+      "change_type": "behavioral",
+      "key_changes": [
+        "New wrapper function in patched binary that encapsulates the USBD_ParseConfigurationDescriptorEx + HumParseHidInterface call sequence previously inlined in HumInitDevice."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "HumParseHidInterface",
+      "entry_point": "USB device enumeration (IRP_MN_START_DEVICE via HumPnP)",
+      "call_chain": [
+        "USB device plug-in → PnP Manager IRP_MN_START_DEVICE",
+        "HumPnP (0x1c000c220) → HumInitDevice (0x1c0002b20)",
+        "HumInitDevice → HumGetConfigDescriptor → HumGetDescriptorRequest (fetches config descriptor from USB device)",
+        "HumInitDevice → USBD_ParseConfigurationDescriptorEx (finds HID interface descriptor)",
+        "HumInitDevice → HumParseHidInterface (0x1c0002f20) [VULNERABLE]"
+      ],
+      "vulnerability_class": "integer underflow leading to out-of-bounds read (CWE-191/CWE-125)",
+      "description": "HumParseHidInterface parses USB HID interface descriptors from a connected USB device. The function receives (device_extension, interface_descriptor_ptr, buffer_remaining_size, &output_hid_desc_ptr). It reads bLength (first byte of the interface descriptor) and checks bLength >= 9, but does NOT verify bLength <= buffer_remaining_size before computing: remaining = buffer_remaining_size - bLength. If a malicious USB device supplies a crafted interface descriptor where bLength (e.g., 0xFF) exceeds the actual buffer size (typically ~9 to a few hundred bytes), the subtraction wraps around to ~0xFFFFFF00 as an unsigned 32-bit value. This corrupted 'remaining' value passes all subsequent unsigned bounds checks (cmp remaining, 2; jae), allowing the descriptor parsing loop to read bLength/bDescriptorType bytes and walk pointer offsets far past the allocated pool buffer, causing kernel out-of-bounds memory reads.",
+      "trigger_conditions": "A malicious USB device must present a malformed HID configuration descriptor where: (1) The configuration descriptor is valid enough to pass HumGetConfigDescriptor (at least 9 bytes, valid wTotalLength). (2) An interface descriptor within it has bInterfaceClass=3 (HID) so USBD_ParseConfigurationDescriptorEx finds it. (3) The interface descriptor's bLength field is set to a value >= 9 but greater than the remaining buffer size passed to HumParseHidInterface (arg3 = P - rax_3 + result_2, computed in HumInitDevice). For example, bLength=0xFF in a buffer where only ~20 bytes remain. (4) The interface descriptor's bNumEndpoints (offset 4) is set to a value that causes the parser loop to iterate, maximizing OOB reads. The trigger occurs automatically when the device is enumerated by Windows upon USB insertion.",
+      "primitive": "Out-of-bounds kernel pool read. The parser reads attacker-influenced offsets (bLength, bDescriptorType, bNumEndpoints) from memory past the pool buffer boundary. The demonstrable impact is a BSOD when the out-of-bounds walk reaches an unmapped page (denial of service). The bytes read out of bounds are consumed only for the parser's control-flow decisions and are not returned to the attacker, so this path does not disclose kernel memory; an out-of-bounds read cannot corrupt the pool, so it is not a write or code-execution primitive.",
+      "evidence": "UNPATCHED HumParseHidInterface core logic (WPP stripped):\n\n  if (arg3 >= 9) {                          // buffer_size >= 9\n      uint32_t rax_3 = *r12;                 // bLength = first byte of descriptor\n      if (rax_3 >= 9) {                      // bLength >= 9\n          // MISSING: no check that rax_3 <= arg3 !!\n          int32_t rdi_1 = arg3 - rax_3;      // UNDERFLOW: if bLength > buffer_size, wraps to ~0xFFFFFF00\n          if (rdi_1 >= 2) {                  // unsigned compare: 0xFFFFFF00 >= 2 → TRUE (bypassed!)\n              // ... enters descriptor parsing loop with corrupted bounds ...\n              void* rbx_2 = &r12[*r12];      // pointer advanced by bLength past buffer start\n              char rcx_10 = *rbx_2;          // OOB READ: reads bLength of next descriptor past buffer\n              // ... loop continues reading OOB memory ...\n          }\n      }\n  }\n\nPATCHED HumParseHidInterface adds:\n  if (UserData_1 <= rdi) {                  // NEW CHECK: bLength <= buffer_size\n      uint32_t UserData_3 = rdi - UserData_1; // safe subtraction\n      // ... proceeds with parsing ...\n  } else {\n      // error path: 'USB_InterfaceDescriptorOverflow'\n  }",
+      "assembly": "=== UNPATCHED HumParseHidInterface (key vulnerable section) ===\n; Function prologue\n0x1c0002f20: mov     r11, rsp\n0x1c0002f23: push    rbp\n0x1c0002f24: push    rsi\n0x1c0002f25: push    r13\n0x1c0002f27: lea     rbp, [r11-0x5f]\n0x1c0002f2b: sub     rsp, 0xb0\n0x1c0002f32: mov     rax, qword [rel 0x1c0009040]\n0x1c0002f39: xor     rax, rsp\n0x1c0002f3c: mov     qword [rbp+0x17], rax\n; arg2(rdx)=descriptor_buf → r12, arg3(r8d)=buffer_size → edi, arg4(r9)=output_ptr → r15\n0x1c0002f40: mov     qword [r11-0x20], rdi\n0x1c0002f44: xor     esi, esi              ; rsi = 0 (endpoint counter)\n0x1c0002f46: mov     qword [r11-0x28], r12\n0x1c0002f4a: mov     edi, r8d              ; edi = buffer_size (arg3)\n0x1c0002f4d: mov     qword [r11-0x30], r14\n0x1c0002f51: mov     r12, rdx              ; r12 = descriptor_buf (arg2)\n0x1c0002f54: mov     qword [r11-0x38], r15\n0x1c0002f58: mov     r13, rcx              ; r13 = device_extension (arg1)\n0x1c0002f5b: mov     r15, r9               ; r15 = output_ptr (arg4)\n0x1c0002f5e: mov     r14d, esi             ; r14 = 0\n;\n; WPP tracing...\n;\n0x1c0002fa0: mov     qword [r15], rsi      ; *output_ptr = 0\n;\n; CHECK 1: buffer_size >= 9\n0x1c0002fa3: cmp     edi, 0x9\n0x1c0002fa6: jae     0x1c0003034           ; if buffer_size >= 9, proceed\n;\n; [error path: buffer too small]\n;\n; === VULNERABLE SECTION ===\n0x1c0003034: movzx   eax, byte [r12]       ; eax = bLength (first byte of descriptor)\n0x1c0003039: cmp     al, 0x9\n0x1c000303b: jae     0x1c00030c9           ; if bLength >= 9, proceed to parse\n;\n; [error path: descriptor too small]\n;\n; *** BUG: No check that bLength <= buffer_size ***\n; Direct subtraction without bounds check:\n0x1c00030c9: sub     edi, eax              ; edi = buffer_size - bLength (WRAPS if bLength > buffer_size!)\n0x1c00030cb: cmp     edi, 0x2\n0x1c00030ce: jae     0x1c000315c           ; unsigned compare passes with wrapped value!\n;\n; [error path: remaining < 2 - never reached when wrapped]\n;\n; Proceeds into descriptor parsing loop with corrupted 'edi' (remaining size):\n0x1c000315c: mov     eax, dword [r13+0x40]\n0x1c0003160: and     eax, 0xfffffffe\n0x1c0003163: mov     dword [r13+0x40], eax\n0x1c0003167: movzx   ebx, byte [r12]       ; rbx = bLength again\n0x1c000316c: add     rbx, r12              ; rbx = &descriptor_buf[bLength] → may point past buffer!\n0x1c000316f: movzx   ecx, byte [rbx]       ; *** OOB READ: reads bLength of next descriptor ***\n0x1c0003172: cmp     cl, 0x2\n0x1c0003175: jae     0x1c0003206           ; proceed if >= 2\n;\n; ... parsing loop continues, reading more OOB data ...\n;\n; Inside loop (0x1c00032bd area):\n; rdx = r12[4] = bNumEndpoints (from interface descriptor, attacker-controlled)\n; Loop: iterate rdx times through endpoint descriptors\n; Each iteration: reads byte [rbx+1] (bDescriptorType), byte [rbx] (bLength)\n; Advances: rbx_2 += rcx_17 (descriptor length) - may go OOB\n; Checks: rdi_1 -= rax_15 (subtract descriptor length from remaining)\n;         if (temp1_1 - rax_15 < 0) goto error - but rdi_1 is already huge from underflow\n;\n0x1c00032bd: movzx   edx, byte [r12+0x4]   ; rdx = bNumEndpoints (loop count)\n0x1c00032c3: test    edx, edx\n0x1c00032c5: je      0x1c0003311           ; if 0 endpoints, skip loop\n;\n; Loop body reads OOB:\n0x1c00032d0: movzx   eax, byte [rbx+0x1]   ; read bDescriptorType (possibly OOB)\n0x1c00032d4: cmp     al, 0x5               ; endpoint descriptor type?\n0x1c00032d6: jne     0x1c00032e8\n0x1c00032d8: movzx   eax, byte [rbx]        ; read bLength (possibly OOB)\n0x1c00032db: cmp     al, 0x7               ; endpoint bLength must be 7\n0x1c00032dd: jne     0x1c00033ae\n; ...\n0x1c00032f0: movzx   ecx, byte [rbx]        ; rcx_17 = current descriptor bLength\n0x1c00032f3: test    cl, cl                 ; check for zero\n0x1c00032f5: je      0x1c00034c1           ; error if zero\n0x1c00032fb: movzx   eax, cl                ; eax = current descriptor bLength\n0x1c00032fe: sub     edi, eax               ; rdi_1 -= bLength (still huge from underflow)\n0x1c0003300: js      0x1c0003439            ; signed check - won't trigger with huge edi\n0x1c0003306: movzx   eax, cl\n0x1c0003309: add     rbx, rax               ; rbx += bLength → advances further OOB\n;\n; Loop termination check (r14d is incremented at 0x1c00032e3 when a valid endpoint matches):\n0x1c000330c: cmp     r14d, edx              ; processed count == bNumEndpoints?\n0x1c000330f: jnz     0x1c00032c7            ; loop back for next descriptor\n; ... continues reading OOB ...",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hidusb!HumParseHidInterface",
+            "address": "0x1c0002f20",
+            "why": "Entry point of the vulnerable function. arg2 (rdx) = pointer to interface descriptor buffer, arg3 (r8d) = remaining buffer size. Inspect these to verify the buffer size vs. bLength discrepancy."
+          },
+          {
+            "symbol": "hidusb!HumParseHidInterface+0x1a9",
+            "address": "0x1c00030c9",
+            "why": "The vulnerable subtraction instruction 'sub edi, eax'. At this point: edi = buffer_size (arg3), eax = bLength (byte read from descriptor). If eax > edi, the subtraction wraps. This is the exact instruction where the integer underflow occurs. Step over this to observe edi wrapping to a huge value."
+          },
+          {
+            "symbol": "hidusb!HumParseHidInterface+0x247",
+            "address": "0x1c0003167",
+            "why": "The first OOB read. movzx ebx, byte [r12] loads bLength, then add rbx, r12 computes &buf[bLength]. If bLength > actual_buffer_size, rbx points past the buffer. The subsequent movzx ecx, byte [rbx] at 0x1c000316f is the first actual out-of-bounds memory read."
+          }
+        ],
+        "watch": [
+          "edi (r8d at entry) = buffer_size passed from HumInitDevice (P - rax_3 + result_2)",
+          "eax at 0x1c0003034 = bLength value read from first byte of interface descriptor (attacker-controlled via USB device)",
+          "edi at 0x1c00030c9 after 'sub edi, eax' = wrapped remaining size (should be negative/huge if bug triggered)",
+          "rbx at 0x1c000316f = pointer that may be past the allocated pool buffer (first OOB read target)",
+          "r12[4] (byte at r12+4) = bNumEndpoints - controls how many iterations the OOB loop runs"
+        ],
+        "key_offsets": [
+          "0x1c0002fa3: 'cmp edi, 0x9' - first buffer size check (buffer_size >= 9)",
+          "0x1c0003034: 'movzx eax, byte [r12]' - reads attacker-controlled bLength",
+          "0x1c0003039: 'cmp al, 0x9' - checks bLength >= 9",
+          "0x1c00030c9: 'sub edi, eax' - VULNERABLE INSTRUCTION: integer underflow when bLength > buffer_size",
+          "0x1c00030cb: 'cmp edi, 0x2' - bounds check that is bypassed due to unsigned wraparound",
+          "0x1c00030ce: 'jae 0x1c000315c' - jump into parsing loop with corrupted bounds",
+          "0x1c000316f: 'movzx ecx, byte [rbx]' - FIRST OUT-OF-BOUNDS READ",
+          "0x1c00032bd: 'movzx edx, byte [r12+0x4]' - reads bNumEndpoints for loop count",
+          "0x1c00032d0: 'movzx eax, byte [rbx+0x1]' - OOB read of bDescriptorType in loop",
+          "0x1c00032fe: 'sub edi, eax' - OOB loop subtraction (keeps wrapping as a huge value)"
+        ],
+        "trigger_setup": "Connect a malicious USB device (e.g., using a programmable USB device like Raspberry Pi Pico, Teensy, Facedancer, or similar USB fuzzing hardware) that presents a HID-class configuration descriptor with the following crafted fields: (1) Valid USB configuration descriptor header (bLength=9, bDescriptorType=2, wTotalLength matching actual data). (2) An interface descriptor with bInterfaceClass=3 (HID), bLength set to a value >= 9 but larger than the remaining buffer (e.g., bLength=0xFF=255). (3) bNumEndpoints (interface descriptor offset 4) set to a non-zero value (e.g., 2) to force the parsing loop to iterate. The device must successfully complete the USB enumeration GET_DESCRIPTOR(CONFIGURATION) request. When Windows enumerates the device, hidusb.sys will call HumInitDevice → HumGetConfigDescriptor → HumParseHidInterface with the crafted descriptor, triggering the underflow.",
+        "expected_observation": "With kernel debugging enabled and Special Pool (Driver Verifier) active on hidusb.sys: BSOD with bugcheck 0x19 (BAD_POOL_HEADER) or 0xC2 (BAD_POOL_CALLER) at the first read past the pool buffer boundary. Without Special Pool: BSOD 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) once the out-of-bounds walk reaches an unmapped page, or no observable effect if the adjacent pool memory happens to be mapped. At the breakpoint at 0x1c00030c9, observe edi (buffer_size) being small (e.g., ~20) and eax (bLength) being large (e.g., 0xFF). After 'sub edi, eax', edi will be ~0xFFFFFF00 (wrapped). The loop at 0x1c00032bd will iterate reading from memory well past the allocated buffer.",
+        "notes": "The buffer passed to HumParseHidInterface is the full configuration descriptor minus the offset to the interface descriptor found by USBD_ParseConfigurationDescriptorEx. The size arg3 = P - rax_3 + result_2, where P = start of config descriptor buffer, rax_3 = offset to interface descriptor, result_2 = actual descriptor length returned by HumGetConfigDescriptor. A USB device controls all descriptor content. The vulnerability is reachable by any locally present attacker who can plug in a USB device (physical access or compromised USB peripheral). The demonstrable impact is a kernel crash (denial of service); the out-of-bounds bytes are not returned to the attacker."
+      }
+    }
+  ],
+  "summary": "The patch fixes an integer underflow vulnerability (CWE-191/CWE-125) in HumParseHidInterface, the USB HID interface descriptor parser in hidusb.sys. The unpatched version reads the interface descriptor's bLength field and checks bLength >= 9, then immediately computes remaining_size = buffer_size - bLength WITHOUT verifying bLength <= buffer_size. A malicious USB device can supply bLength=0xFF with a small buffer, causing the subtraction to wrap to ~0xFFFFFF00, which bypasses all subsequent unsigned bounds checks and allows the descriptor parsing loop to read kernel pool memory far past the allocated buffer (out-of-bounds read). The fix adds a 'cmp eax, edi; jbe' check (if bLength <= buffer_size) before the subtraction, with a new 'USB_InterfaceDescriptorOverflow' error path. The vulnerability is triggered automatically when Windows enumerates a malicious USB device, requiring only physical USB access. A PoC would need a programmable USB device presenting a crafted HID configuration descriptor with an oversized bLength field in the interface descriptor."
+}

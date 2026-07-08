@@ -1,0 +1,162 @@
+{
+  "binaries": {
+    "title": "mqac.sys (Microsoft Message Queuing AC driver) - No security-relevant change (compiler rebuild with function inlining)",
+    "id_unpatched": "mqac_unpatched.sys",
+    "id_patched": "mqac_patched.sys",
+    "overall_similarity": 0.6206,
+    "matched": 517,
+    "changed": 413,
+    "identical": 104,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "ACDeviceControl (IOCTL dispatcher) — unpatched 0x14000B100, patched 0x1C000C880",
+      "similarity": 0.9541,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Case 0x1965108F: unpatched calls CSMAllocator::ReleaseFreeHeaps(DeviceExtension+0x140) once; patched performs three CPoolAllocator::PurgeHeaps calls on +0x10, +0x50, +0x90 directly. This is pure inlining: ReleaseFreeHeaps @ 0x1400117E0 is exactly those three PurgeHeaps calls, so both builds purge the same three offsets. No dangling reference in either build.",
+        "ProbeForRead inlined into MmUserProbeAddress bounds checks across several IOCTL paths (modernization).",
+        "Per-IOCTL buffer-size checks restructured but byte-equivalent in effect."
+      ],
+      "security_relevant": false,
+      "security_notes": "The suspected use-after-free is not real. The unpatched single call to CSMAllocator::ReleaseFreeHeaps @ 0x1400117E0 already purges the free-heap lists at context offsets +0x10, +0x50, +0x90 (its entire body is three CPoolAllocator::PurgeHeaps calls). The patched dispatcher inlines that helper. Semantics are identical; nothing is left dangling. CPoolAllocator::PurgeHeaps releases already-free heap views (allocator maintenance), not live-object teardown.",
+      "assembly_diff": "// UNPATCHED ACDeviceControl @ 0x14000B100, case 0x1965108F:\n//   000000014000B6A9  mov  rcx, [rcx+140h]        ; DeviceExtension+0x140\n//   000000014000B6B0  call CSMAllocator::ReleaseFreeHeaps  ; single call\n// UNPATCHED CSMAllocator::ReleaseFreeHeaps @ 0x1400117E0 (callee):\n//   00000001400117E9  add  rcx, 10h ; call CPoolAllocator::PurgeHeaps   ; +0x10\n//   00000001400117F2  lea  rcx, [rbx+50h] ; call CPoolAllocator::PurgeHeaps  ; +0x50\n//   00000001400117FB  lea  rcx, [rbx+90h] ; call CPoolAllocator::PurgeHeaps  ; +0x90\n// PATCHED ACDeviceControl @ 0x1C000C880, case 0x1965108F (ReleaseFreeHeaps inlined):\n//   00000001C000CDC5  mov  rbx, [rax+140h]        ; DeviceExtension+0x140\n//   00000001C000CDCC  lea  rcx, [rbx+10h] ; call CPoolAllocator::PurgeHeaps  ; +0x10\n//   00000001C000CDD5  lea  rcx, [rbx+50h] ; call CPoolAllocator::PurgeHeaps  ; +0x50\n//   00000001C000CDDE  lea  rcx, [rbx+90h] ; call CPoolAllocator::PurgeHeaps  ; +0x90"
+    },
+    {
+      "name": "ACPutRestoredPacket (restored-packet handler) — unpatched 0x140008AD4, patched 0x1C0009F50",
+      "similarity": 0.86,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "CQEntry::Buffer @ 0x14000263C inlined (returns NULL when *(entry+0x10)==0xFFFFFFFF). Both builds fold NULL into v12 = (buf+4) & -(buf!=0) and branch if (v12==0) return 0xC000009A before any dereference.",
+        "GUID compare helper replaced with RtlCompareMemory(..., 0x10).",
+        "CTransaction::RestorePacket @ 0x140021A64 inlined into the transactional tail. Its NULL check (asm 0x140021A99) and sign check (asm 0x140021AA5) already exist in the unpatched build; nothing was added."
+      ],
+      "security_relevant": false,
+      "security_notes": "The suspected null-pointer dereference is not real. The NULL guard on the packet buffer (if (v12==0) return 0xC000009A) is present identically in both builds before any dereference. The 'added' NULL check and sign check on the transactional path are the body of CTransaction::RestorePacket @ 0x140021A64, which the patched build inlines into ACPutRestoredPacket. Both checks exist in the unpatched build.",
+      "assembly_diff": "// NULL + sign checks already present in UNPATCHED CTransaction::RestorePacket @ 0x140021A64:\n//   0000000140021A87  call CQEntry::Buffer\n//   0000000140021A96  and  rax, r10             ; (buf+4) & -(buf!=0)\n//   0000000140021A99  jnz  short loc_140021AA2  ; NULL check\n//   0000000140021A9B  mov  eax, 0C000009Ah      ; error return on NULL\n//   0000000140021AA2  mov  al, [rax+0Ch]\n//   0000000140021AA5  test al, al\n//   0000000140021AA7  jns  short loc_140021ABB  ; sign check\n// PATCHED ACPutRestoredPacket @ 0x1C0009F50 inlines this same logic; no new check added."
+    },
+    {
+      "name": "ACCreateRemoteProxy — 0x14000644C",
+      "similarity": 0.937,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "ProbeForRead inlined to MmUserProbeAddress bounds check.",
+        "ExAllocatePoolWithTag replaced with ExAllocatePoolWithTagPriority(NonPagedPoolNx, ...).",
+        "Custom free wrapper replaced with direct ExFreePoolWithTag."
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler modernization: probe inlining, NonPagedPoolNx allocation, direct ExFreePoolWithTag. No semantic security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACPutRestoredPacket dispatch (see above) — covered by primary entry",
+      "similarity": 0.86,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Duplicate of the ACPutRestoredPacket inlining analysis; retained for completeness."
+      ],
+      "security_relevant": false,
+      "security_notes": "See ACPutRestoredPacket entry: inlining of CQEntry::Buffer, CQEntry::ReleaseBuffer, and CTransaction::RestorePacket. No new validation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACBeginGetPacket2Remote — 0x140005328",
+      "similarity": 0.9653,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "GUID compare helper inlined to RtlCompareMemory; handler argument sourced via conditional pointer."
+      ],
+      "security_relevant": false,
+      "security_notes": "GUID comparison inlined; no security-semantic change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACAssociateQueue — 0x140004E38",
+      "similarity": 0.8512,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "ProbeForRead inlined to MmUserProbeAddress check.",
+        "Error-path free modernized: custom free replaced with ExFreePoolWithTag.",
+        "Share-access validation preserved but restructured."
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler modernization; share-access authorization checks preserved.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACCreateQueue — 0x140005F20",
+      "similarity": 0.9355,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "ProbeForRead calls inlined to MmUserProbeAddress bounds checks.",
+        "Index-lookup helper inlined with NULL/zero guard present in both builds.",
+        "ExAllocatePool modernized to ExAllocatePoolWithTagPriority(NonPagedPoolNx)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Probe inlining and pool modernization; the index guard exists in both builds. No new security-relevant behavior.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CUserHeader constructor — 0x1400138D8",
+      "similarity": 0.9052,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Subtraction-based pointer comparison rewritten as direct equality comparison of the same fields."
+      ],
+      "security_relevant": false,
+      "security_notes": "Control-flow simplification; semantically equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACSendMessage — 0x140009478",
+      "similarity": 0.9273,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "ProbeForRead inlined to MmUserProbeAddress check.",
+        "Local zero-fill is memset(..., 0x118) in BOTH builds (identical size; no 0x110->0x118 change and no added +0x78 zero-init)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Probe inlining and helper inlining. The previously suspected uninitialized-memory zero-init addition is not present; the memset size is identical (0x118) in both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ACPutRemotePacket — 0x140008950",
+      "similarity": 0.9355,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Device-context resolution restructured before lookup.",
+        "Refcount decrement helper inlined (*(ctx+0x94) -= 1).",
+        "Added WPP trace of refcount value after decrement."
+      ],
+      "security_relevant": false,
+      "security_notes": "Helper inlining and refcount tracing; no semantic security change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "downgraded_findings": [
+    {
+      "original_severity": "high",
+      "final_status": "no_security_relevant_change",
+      "function": "ACDeviceControl (IOCTL dispatcher, case 0x1965108F) — unpatched 0x14000B100, patched 0x1C000C880",
+      "original_class": "Use-After-Free / incomplete object cleanup (CWE-416)",
+      "reason": "Compiler inlining, not a fix. The unpatched case 0x1965108F calls CSMAllocator::ReleaseFreeHeaps @ 0x1400117E0, whose entire body is three CPoolAllocator::PurgeHeaps calls on context offsets +0x10, +0x50, +0x90. The patched dispatcher inlines those three calls. Both builds purge the same three offsets, so no list entry or sub-context is left dangling and there is no use-after-free. CPoolAllocator::PurgeHeaps releases already-free heap views, not live objects.",
+      "evidence": "// UNPATCHED ACDeviceControl case 0x1965108F: 000000014000B6A9 mov rcx,[rcx+140h]; 000000014000B6B0 call CSMAllocator::ReleaseFreeHeaps\n// UNPATCHED CSMAllocator::ReleaseFreeHeaps @ 0x1400117E0: PurgeHeaps(+0x10) @ 0x1400117E9; PurgeHeaps(+0x50) @ 0x1400117F2; PurgeHeaps(+0x90) @ 0x1400117FB\n// PATCHED ACDeviceControl case 0x1965108F @ 0x1C000CDC1: PurgeHeaps(+0x10) @ 0x1C000CDCC; PurgeHeaps(+0x50) @ 0x1C000CDD5; PurgeHeaps(+0x90) @ 0x1C000CDDE"
+    },
+    {
+      "original_severity": "medium",
+      "final_status": "no_security_relevant_change",
+      "function": "ACPutRestoredPacket — unpatched 0x140008AD4, patched 0x1C0009F50",
+      "original_class": "Null-pointer dereference / missing bounds validation (CWE-476/CWE-129)",
+      "reason": "Compiler inlining, not a fix. CQEntry::Buffer @ 0x14000263C returns NULL when the entry handle field is 0xFFFFFFFF; both builds guard it with if (v12==0) return 0xC000009A before any dereference. The transactional NULL check and sign check that appeared to be added are the body of CTransaction::RestorePacket @ 0x140021A64 (NULL check at asm 0x140021A99, sign check at asm 0x140021AA5), which the patched build inlines into ACPutRestoredPacket. Both checks are present in the unpatched build; no dereference of a NULL result occurs in either build.",
+      "evidence": "// UNPATCHED ACPutRestoredPacket @ 0x140008AD4: v11=CQEntry::Buffer(v10); v12=((v11+4)&-(v11!=0)); if(v12==0) return 0xC000009A;\n// UNPATCHED CTransaction::RestorePacket @ 0x140021A64: 0140021A96 and rax,r10; 0140021A99 jnz (NULL check); 0140021A9B mov eax,0C000009Ah; 0140021AA5 test al,al; 0140021AA7 jns (sign check)\n// PATCHED ACPutRestoredPacket @ 0x1C0009F50 inlines CQEntry::Buffer, CQEntry::ReleaseBuffer, and CTransaction::RestorePacket with the identical guards."
+    }
+  ],
+  "summary": "No security-relevant change was found in mqac.sys between the two builds. Both behaviors originally suspected as vulnerabilities are compiler-inlining artifacts. (1) The suspected use-after-free in the IOCTL dispatcher (ACDeviceControl, case 0x1965108F): the unpatched single call CSMAllocator::ReleaseFreeHeaps @ 0x1400117E0 already purges the free-heap lists at context offsets +0x10, +0x50, +0x90 (its body is three CPoolAllocator::PurgeHeaps calls); the patched dispatcher inlines those three calls. Identical semantics, no dangling reference. (2) The suspected null-pointer dereference in ACPutRestoredPacket: the packet-buffer NULL guard (if (v12==0) return 0xC000009A) is present in both builds before any dereference, and the transactional NULL/sign checks are the body of CTransaction::RestorePacket @ 0x140021A64 (checks at asm 0x140021A99 and 0x140021AA5), which the patched build inlines. Remaining driver-wide differences are toolchain churn: WIL feature-staging code, renamed WPP trace macros, alternate memset intrinsics, Control Flow Guard dispatch thunks, ProbeForRead inlining, and NonPagedPoolNx allocation modernization. No omitted security-relevant change was identified across the changed functions."
+}

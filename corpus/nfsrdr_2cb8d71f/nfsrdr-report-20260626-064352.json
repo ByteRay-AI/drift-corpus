@@ -1,0 +1,80 @@
+{
+  "binaries": {
+    "id_unpatched": "nfsrdr_unpatched.sys",
+    "id_patched": "nfsrdr_patched.sys",
+    "overall_similarity": 0.993,
+    "matched": 376,
+    "changed": 1,
+    "identical": 375,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "XdrDecodeString",
+      "similarity": 0.9401,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Removed the redundant error-state early-out 'cmp dword ptr [rcx+108h], 0' (0x1C0012C47) and 'jl loc_1C0012CDD' (0x1C0012C56) that branched straight to XdrDecodeOpaqueSlow when the XDR stream error-status field at offset 0x108 was negative",
+        "Patched build loads the current buffer segment unconditionally ('mov r9, [rcx+48h]' at 0x1C0012C47), always computes the available byte count, and branches to XdrDecodeOpaqueSlow only when available < requested",
+        "XdrDecodeOpaqueSlow (0x1C0037C7C unpatched, relocated to 0x1C0037C6C patched) performs the same error-state check at its own entry (cmp [rcx+108h], edi at 0x1C0037CA4; jl at 0x1C0037CAA) and returns no-op when the field is negative, so both builds converge to the same no-copy outcome when the stream is in error",
+        "Register reallocation: unpatched uses rbx=arg1 / edi=arg2 / rsi=arg3; patched uses rdi=arg1 / ebx=arg2 / rsi=arg3",
+        "The trailing single-byte null-terminator write is byte-for-byte identical in both builds (unpatched 'mov byte ptr [rdi+rsi], 0' at 0x1C0012CEA; patched 'mov byte ptr [rbx+rsi], 0' at 0x1C0012CDD) and is not modified by the patch"
+      ],
+      "security_relevant": false,
+      "security_notes": "XdrDecodeString decodes an XDR opaque string from a network-supplied NFS/RPC reply into a caller-provided buffer. The only functional change is the removal of a redundant early-out on the XDR stream error-status field at context+0x108. In the unpatched build, when that field is negative the function branches directly to XdrDecodeOpaqueSlow; in the patched build it always computes the available byte count first and branches to XdrDecodeOpaqueSlow only when the current segment lacks enough bytes. XdrDecodeOpaqueSlow re-checks the same error field and returns without copying when it is negative, so both builds produce the same no-copy result when the stream is in error. The only reachable behavioral difference is the narrow case where the error field is negative and the current segment already holds enough bytes, in which the patched build performs the bounded memmove fast path instead of the no-op slow path; that copy is bounded by available >= requested and the callers discard the output whenever the error field is negative, so it carries no security impact in either direction. The trailing null-terminator write output[length] = 0 is identical in both builds and is in bounds: both callers cap the decoded length at 0x40 (64) and supply buffers of at least 256 bytes. MapGetUnixCredsFromSid (0x1C0011514) uses char[256] (v78) with the guard 'if (v28 <= 0x40)'; MapGetUnixCredsFromNTUserName (0x1C0011DA0) uses ExAllocatePoolWithTag(PagedPool, 0x100, ...) (256 bytes) with the guard 'if (v54 > 0x40)' skipping the call for larger lengths. The maximum write index is output[64], well inside the allocation. There is no out-of-bounds write, no information disclosure (callers test context+0x108 around the call and discard the output on error), and no added or removed bounds check. This is a redundant-check removal / control-flow simplification, not a security fix.",
+      "assembly_diff": "Unpatched XdrDecodeString (0x1C0012C38) full assembly:\n0x1C0012C38: mov [rsp+arg_0], rbx\n0x1C0012C3D: mov [rsp+arg_8], rsi\n0x1C0012C42: push rdi\n0x1C0012C43: sub rsp, 20h\n0x1C0012C47: cmp dword ptr [rcx+108h], 0    ; REMOVED IN PATCH: XDR stream error-status gate\n0x1C0012C4E: mov rsi, r8                     ; arg3 (output buffer)\n0x1C0012C51: mov edi, edx                    ; arg2 (string length)\n0x1C0012C53: mov rbx, rcx                    ; arg1 (XDR context)\n0x1C0012C56: jl loc_1C0012CDD                ; REMOVED IN PATCH: if error, go to slow path\n0x1C0012C5C: mov r9, [rcx+48h]               ; current buffer segment ptr\n0x1C0012C60: test r9, r9\n0x1C0012C63: jnz short loc_1C0012C69\n0x1C0012C65: xor eax, eax                     ; available = 0\n0x1C0012C67: jmp short loc_1C0012C8C\n0x1C0012C69: mov edx, [r9+40h]               ; read_pos\n0x1C0012C6D: sub edx, [r9+38h]               ; consumed = read_pos - start\n0x1C0012C71: mov r8d, [r9+4Ch]               ; buffer_size\n0x1C0012C75: cmp r8d, edx\n0x1C0012C78: jb short loc_1C0012C81\n0x1C0012C7A: mov ecx, r8d\n0x1C0012C7D: sub ecx, edx                     ; available = buffer_size - consumed\n0x1C0012C7F: jmp short loc_1C0012C84\n0x1C0012C81: or ecx, 0FFFFFFFFh\n0x1C0012C84: xor eax, eax\n0x1C0012C86: cmp r8d, edx\n0x1C0012C89: cmovnb eax, ecx                  ; eax = available bytes\n0x1C0012C8C: cmp eax, edi                     ; available >= requested?\n0x1C0012C8E: jb short loc_1C0012CDD           ; if available < length -> slow path\n0x1C0012C90: test r9, r9\n0x1C0012C93: jnz short loc_1C0012C99\n0x1C0012C95: xor edx, edx\n0x1C0012C97: jmp short loc_1C0012C9D\n0x1C0012C99: mov rdx, [r9+40h]               ; Src = read_pos\n0x1C0012C9D: mov r8, rdi                     ; Size = length\n0x1C0012CA0: mov rcx, rsi                    ; dest = output\n0x1C0012CA3: call memmove                    ; bounded copy (available >= length)\n0x1C0012CA8: mov rax, [rbx+48h]\n0x1C0012CAC: add [rax+40h], rdi\n0x1C0012CB0: mov rcx, [rbx+48h]\n0x1C0012CB4: test rcx, rcx\n0x1C0012CB7: jnz short loc_1C0012CC3\n0x1C0012CB9: mov r8, [rcx+40h]\n0x1C0012CBD: xor eax, eax\n0x1C0012CBF: xor edx, edx\n0x1C0012CC1: jmp short loc_1C0012CCE\n0x1C0012CC3: mov rdx, [rcx+40h]              ; XDR 4-byte alignment padding\n0x1C0012CC7: mov rax, [rcx+38h]\n0x1C0012CCB: mov r8, rdx\n0x1C0012CCE: sub rax, rdx\n0x1C0012CD1: and eax, 3\n0x1C0012CD4: add rax, r8\n0x1C0012CD7: mov [rcx+40h], rax\n0x1C0012CDB: jmp short loc_1C0012CEA\n0x1C0012CDD: mov r8, rsi                     ; arg3 = output buffer\n0x1C0012CE0: mov edx, edi                    ; arg2 = length\n0x1C0012CE2: mov rcx, rbx                    ; arg1 = XDR context\n0x1C0012CE5: call XdrDecodeOpaqueSlow        ; also no-op when [rcx+108h] < 0\n0x1C0012CEA: mov byte ptr [rdi+rsi], 0       ; output[length] = 0 (in bounds; identical in patched)\n0x1C0012CEE: mov rbx, [rsp+28h+arg_0]\n0x1C0012CF3: mov rsi, [rsp+28h+arg_8]\n0x1C0012CF8: add rsp, 20h\n0x1C0012CFC: pop rdi\n0x1C0012CFD: retn\n\nPatched XdrDecodeString (0x1C0012C38) removes the two lines marked REMOVED IN PATCH, loads 'mov r9, [rcx+48h]' at 0x1C0012C47, uses rdi=arg1 / ebx=arg2, and the sink becomes 'mov byte ptr [rbx+rsi], 0' at 0x1C0012CDD."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "XdrDecodeString",
+      "entry_point": "NFS/RPC network reply processing via MapGetUnixCredsFromSid / MapGetUnixCredsFromNTUserName (credential mapping)",
+      "call_chain": [
+        "NFS server RPC reply (network-originated XDR-encoded data)",
+        "MapGetUnixCredsFromSid (0x1C0011514) or MapGetUnixCredsFromNTUserName (0x1C0011DA0) - decodes a length, validates it <= 0x40, calls XdrDecodeString with a buffer of at least 256 bytes",
+        "XdrDecodeString (0x1C0012C38) - decodes an XDR opaque string, writes an in-bounds null terminator at output[length]"
+      ],
+      "vulnerability_class": "No security-relevant change (redundant XDR error-state early-out removed)",
+      "description": "The patch removes a redundant early-out in XdrDecodeString. In the unpatched build, when the XDR stream error-status field at context+0x108 is negative the function branches directly to XdrDecodeOpaqueSlow (cmp dword ptr [rcx+108h], 0 at 0x1C0012C47; jl loc_1C0012CDD at 0x1C0012C56). In the patched build those two instructions are gone: the function always computes the available byte count from the current buffer segment and branches to XdrDecodeOpaqueSlow only when available < requested. XdrDecodeOpaqueSlow (0x1C0037C7C) performs the same error-state check at its entry and returns without copying when the field is negative, so both builds produce the same no-copy result when the stream is in error. The trailing single-byte null-terminator write (mov byte ptr [rdi+rsi], 0 at 0x1C0012CEA unpatched; mov byte ptr [rbx+rsi], 0 at 0x1C0012CDD patched) is byte-for-byte identical in both builds and is not modified by the patch. It is in bounds: both callers cap the decoded length at 0x40 (64) and supply buffers of at least 256 bytes (MapGetUnixCredsFromSid uses char[256]; MapGetUnixCredsFromNTUserName uses a 0x100-byte pool allocation), so the maximum write index is output[64]. There is no out-of-bounds write, no information disclosure (callers test context+0x108 around the call and discard the output on error), and no added or removed bounds check.",
+      "trigger_conditions": "Not applicable. There is no reachable memory-safety primitive in either build. The decoded length is capped at 0x40 by both callers and the output buffers are at least 256 bytes, so the null-terminator write is always in bounds. The change is a redundant-check removal.",
+      "primitive": "None. No out-of-bounds write, no information disclosure, and no reachable behavioral difference for callers, which discard the output when the stream error field is negative.",
+      "evidence": "Unpatched XdrDecodeString @ 0x1C0012C38 (decompiled):\n\n__int64 __fastcall XdrDecodeString(__int64 a1, unsigned int a2, void *a3)\n{\n    size_t v4 = a2;\n    if ( *(int *)(a1 + 264) < 0 )     // 264 = 0x108, REMOVED IN PATCH\n        goto LABEL_17;                // -> XdrDecodeOpaqueSlow\n    v6 = *(_DWORD **)(a1 + 72);       // buffer segment (0x48)\n    // ... compute available bytes v7 ...\n    if ( v7 < (unsigned int)v4 )\n    { LABEL_17: result = XdrDecodeOpaqueSlow(a1, (unsigned int)v4, a3); }\n    else { memmove(a3, v11, v4); /* advance + XDR align */ }\n    *((_BYTE *)a3 + v4) = 0;          // in bounds: v4 <= 0x40, buffer >= 256\n    return result;\n}\n\nPatched XdrDecodeString @ 0x1C0012C38 (decompiled): the 'if ( *(int *)(a1 + 264) < 0 ) goto LABEL_17;' early-out is absent; the buffer segment is loaded unconditionally and the fast/slow decision is made solely on 'available < requested'. The line '*((_BYTE *)a3 + v5) = 0;' is unchanged.\n\nCaller MapGetUnixCredsFromSid @ 0x1C0011514:\n    char v78[256];                    // output buffer, 256 bytes\n    if ( *(int *)(v74 + 264) >= 0 )   // stream not in error\n        if ( v28 <= 0x40 )            // length capped at 64\n            XdrDecodeString(v74, v28, v78);   // writes v78[v28] = 0, v28 <= 0x40\n\nCaller MapGetUnixCredsFromNTUserName @ 0x1C0011DA0:\n    PoolWithTag = ExAllocatePoolWithTag(PagedPool, 0x100u, ...);  // 256 bytes\n    if ( v54 > 0x40 ) { /* skip */ } else\n        XdrDecodeString(v100, v54, PoolWithTag);   // writes PoolWithTag[v54] = 0, v54 <= 0x40\n\nXdrDecodeOpaqueSlow @ 0x1C0037C7C (entry check, no-op when error):\n0x1C0037CA4: cmp [rcx+108h], edi     ; edi = 0\n0x1C0037CAA: jl loc_1C0037DE1        ; return without copying when 0x108 < 0",
+      "assembly": "See changed_functions[0].assembly_diff for the full unpatched XdrDecodeString listing (0x1C0012C38). The only instructions absent from the patched build are 'cmp dword ptr [rcx+108h], 0' (0x1C0012C47) and 'jl loc_1C0012CDD' (0x1C0012C56); the null-terminator write and the rest of the body are preserved with register reallocation.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "nfsrdr!XdrDecodeString",
+            "address": "0x1C0012C38",
+            "why": "Entry: RCX = XDR context (arg1), EDX = decoded string length (arg2), R8 = output buffer (arg3). Callers cap EDX at 0x40 and supply buffers of at least 256 bytes, so the trailing null-terminator write is in bounds."
+          },
+          {
+            "symbol": "nfsrdr!XdrDecodeString (unpatched sink)",
+            "address": "0x1C0012CEA",
+            "why": "The null-terminator write 'mov byte ptr [rdi+rsi], 0'. RDI = length (<= 0x40), RSI = output buffer base (>= 256 bytes). The write lands at output[length], within the buffer. Identical operation in the patched build at 0x1C0012CDD ('mov byte ptr [rbx+rsi], 0')."
+          }
+        ],
+        "watch": [
+          "EDX at XdrDecodeString entry (0x1C0012C38) = decoded string length; capped at 0x40 by both callers.",
+          "R8 at XdrDecodeString entry = output buffer pointer; char[256] in MapGetUnixCredsFromSid, 0x100-byte pool allocation in MapGetUnixCredsFromNTUserName.",
+          "[RCX+0x108] at XdrDecodeString entry = XDR stream error-status field; XdrDecodeOpaqueSlow re-checks it and callers discard the output when it is negative."
+        ],
+        "key_offsets": [
+          "0x1C0012C47: 'cmp dword ptr [rcx+108h], 0' - the removed redundant error-state check (unpatched only).",
+          "0x1C0012C56: 'jl loc_1C0012CDD' - the removed conditional branch to the slow path (unpatched only).",
+          "0x1C0012CEA: 'mov byte ptr [rdi+rsi], 0' - the in-bounds null-terminator write, identical in both builds (patched at 0x1C0012CDD).",
+          "0x1C0037CA4-0x1C0037CAA: XdrDecodeOpaqueSlow entry check that makes it a no-op when context+0x108 is negative."
+        ],
+        "trigger_setup": "Not applicable. The buffers are at least 256 bytes and the decoded length is capped at 0x40 in both callers, so no out-of-bounds condition is reachable.",
+        "expected_observation": "At 0x1C0012CEA the null-terminator write lands at output[length] with length <= 0x40 and the buffer at least 256 bytes, i.e. inside the allocation. No overflow or corruption occurs. Behavior is equivalent between the two builds for all caller-reachable inputs.",
+        "notes": "nfsrdr.sys is the Windows NFS Redirector. Image base in the disassembly is 0x1C0000000 (ASLR not applied in this static view). Relevant symbols: XdrDecodeString at 0x1C0012C38 (both builds); XdrDecodeOpaqueSlow at 0x1C0037C7C unpatched / 0x1C0037C6C patched; MapGetUnixCredsFromSid at 0x1C0011514; MapGetUnixCredsFromNTUserName at 0x1C0011DA0. XDR context layout: offset 0x48 = current buffer segment ptr (segment: 0x38 = start, 0x40 = read position, 0x4C = total size); offset 0x108 = stream error-status field. The single changed function is XdrDecodeString; an independent content diff confirms no other function body changed."
+      }
+    }
+  ],
+  "summary": "The patch modifies exactly one function, XdrDecodeString (0x1C0012C38), in nfsrdr.sys. It removes a redundant early-out ('cmp dword ptr [rcx+108h], 0' / 'jl' at 0x1C0012C47-0x1C0012C56) that branched straight to XdrDecodeOpaqueSlow when the XDR stream error-status field was negative; the patched build instead always computes the available byte count and branches to the slow path only on 'available < requested'. XdrDecodeOpaqueSlow re-checks the same error field and returns no-op when it is negative, so both builds converge to the same no-copy outcome when the stream is in error. The trailing single-byte null-terminator write (output[length] = 0) is byte-for-byte identical in both builds and is in bounds: both callers cap the decoded length at 0x40 and supply buffers of at least 256 bytes (char[256] in MapGetUnixCredsFromSid; a 0x100-byte pool allocation in MapGetUnixCredsFromNTUserName). There is no out-of-bounds write, no information disclosure, and no added or removed bounds check. This is a redundant-check removal / control-flow simplification with no reachable security impact; no CWE applies."
+}

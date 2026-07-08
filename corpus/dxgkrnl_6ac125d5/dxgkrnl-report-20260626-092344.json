@@ -1,0 +1,697 @@
+{
+  "binaries": {
+    "id_unpatched": "dxgkrnl_unpatched.sys",
+    "id_patched": "dxgkrnl_patched.sys",
+    "overall_similarity": 0.99,
+    "matched": 6897,
+    "changed": 38,
+    "identical": 6859,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DXGDEVICE::UnpinDeviceResources / DxgkpValidateResourcesForPinOperation",
+      "similarity": 0.3535,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Function entirely rewritten: unpatched was DXGDEVICE::UnpinDeviceResources (iterates allocations and disables pinned ones); patched replaced with DxgkpValidateResourcesForPinOperation which validates resources before pin operations",
+        "New validation function checks allocation flags: rejects allocations where *(allocation+0x30)+4 has flag 0x2000 OR allocation+0x48 has flag 0x800",
+        "Added Feature_253710648 gate for mutex acquisition (DXGAUTOMUTEX::Acquire)",
+        "In unpatched version, UnpinDeviceResources did not validate resources before disabling them; the new function adds a validation pass"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched code lacked a validation function for pin operations. Resources with flags 0x2000 (non-pinnable) or 0x800 (already pinned) were not validated before pin/unpin operations, leading to potential race conditions and inconsistent state. The patch introduces explicit validation and makes mutex acquisition conditional on Feature_253710648 (feature staging flag).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGPROCESS::EvictAllResources",
+      "similarity": 0.5716,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured iteration logic for resource eviction",
+        "Added Feature_253710648 gate for mutex acquisition"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgEnumHandleChildrenCB",
+      "similarity": 0.6263,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured handle enumeration callback",
+        "Added mutex acquisition gated by Feature_253710648"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::PinResources",
+      "similarity": 0.6369,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added call to new DxgkpValidateResourcesForPinOperation() before proceeding with pin operations",
+        "Added Feature_253710648 gate for DXGAUTOMUTEX::Acquire on each resource",
+        "Unpatched version validated allocation flags (0x2000, 0x800) inline in a pre-check loop; patched version extracts this into the new validation function AND adds mutex protection during the pin operation loop",
+        "The mutex is now acquired per-resource during the pin iteration loop, protecting concurrent access to allocation state"
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched version, the pin operation loop modifies allocation flags (sets 0x800 at allocation+0x48) and calls GPU paging callbacks without holding a mutex on the resource. This creates a race window where another thread can modify or free the allocation while pin operations are in progress. The DXGAUTOMUTEX::Acquire per-resource lock is absent from the unpatched build; the patch adds it, gated behind the newly-introduced Feature_253710648 staging flag (0 occurrences in unpatched, present only in patched).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkGetDeviceStateInternal",
+      "similarity": 0.6702,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured device state query logic",
+        "Likely cosmetic/structural changes from compiler optimization differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGCHANNELENDPOINTPROXY::FreeHandle",
+      "similarity": 0.6859,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring of handle free logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::DestroyDeferredAllocations",
+      "similarity": 0.7674,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured deferred allocation destruction",
+        "Added Feature_253710648 gate for mutex operations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ADAPTER_RENDER::FreeResourceHandleAndWaitForZeroReferences",
+      "similarity": 0.7682,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring around reference count waiting"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::UnpinResource",
+      "similarity": 0.8199,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Changed bounds check from 'jb' (jump-if-below) to 'jae' (jump-if-above-or-equal) with null rdx_2 assignment, making the failure path explicit",
+        "Added Feature_253710648 gate for DXGAUTOMUTEX::Acquire on the resource during unpin iteration",
+        "In unpatched version, the mutex is not held while iterating allocations to unpin them, creating a race condition",
+        "Added explicit handling of r14 (arg2/handle) in warning log context"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version iterates allocations and unpins them without holding the resource mutex (DXGAUTOMUTEX). This allows concurrent modification of the allocation list while unpinning is in progress, potentially leading to use-after-free of allocation objects or inconsistent state.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::PinDirectFlipResources",
+      "similarity": 0.8207,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added Feature_253710648 gate for mutex acquisition during direct flip pin operations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::DisablePinnedHardware",
+      "similarity": 0.8258,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring of pinned hardware disable logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::AppendAllocationListToResourceOrDevice",
+      "similarity": 0.8303,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured allocation list append logic",
+        "Added Feature_253710648 gate for mutex"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::DestroyClientResource",
+      "similarity": 0.8693,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring around resource destruction"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::GetDeviceExecutionState",
+      "similarity": 0.8729,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured execution state query"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkCddEvict",
+      "similarity": 0.8753,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured CDD eviction logic",
+        "Added Feature_253710648 gate for mutex"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkCddMakeResident",
+      "similarity": 0.8753,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured CDD make-resident logic",
+        "Added Feature_253710648 gate for mutex"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::OpenCddPrimaryHandle",
+      "similarity": 0.8817,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured CDD primary handle open logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MapGpuVirtualAddressToAllocation",
+      "similarity": 0.8823,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured GPU VA mapping logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::CheckMultiPlaneOverlaySupport3",
+      "similarity": 0.8832,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured multi-plane overlay support check"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGCONTEXT::RenderKmLda",
+      "similarity": 0.8952,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Replaced ExTryAcquirePushLockSharedEx/ExAcquirePushLockSharedEx pattern with DXGPUSHLOCK::AcquireShared gated by Feature_253710648",
+        "Added DXGAUTOMUTEX::Acquire/Release around DMA buffer processing",
+        "Changed locking strategy from try-acquire (ExTryAcquirePushLockSharedEx) to DXGPUSHLOCK::AcquireShared gated behind the newly-introduced Feature_253710648 staging flag for resource access during render"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched version uses ExTryAcquirePushLockSharedEx (which can fail to acquire), potentially proceeding without proper synchronization during render operations. The patch replaces it with DXGPUSHLOCK::AcquireShared, gated behind the newly-introduced Feature_253710648 staging flag (patched-only; absent from the unpatched build). Race condition during kernel-mode rendering (KmLda = Kernel-mode LDA/Linked Display Adapter).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::ReportDeviceResources",
+      "similarity": 0.8995,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring around resource reporting"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgEscapeEvictWorker",
+      "similarity": 0.9173,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured escape evict worker",
+        "Added Feature_253710648 gate for mutex"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkOpenSyncObjectFromNtHandle2Impl",
+      "similarity": 0.9261,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured sync object open logic (structural/register reallocation)",
+        "No feature-flag change: DXGSYNCOBJECTLOCK::AcquireShared is present unconditionally in BOTH builds; Feature_2505606457 does not appear in this function in either build"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDXGIKEYEDMUTEX::OpenSharedSurfForDevice",
+      "similarity": 0.9287,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured shared surface open logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "REMOTEVSYNCMAPPING::AddMapping",
+      "similarity": 0.931,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring of VSync mapping"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkCreateSynchronizationObjectImpl",
+      "similarity": 0.944,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured sync object creation (structural/register reallocation)",
+        "No feature-flag change: Feature_2505606457 does not appear in this function in either build"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::TerminateAllocations",
+      "similarity": 0.9622,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured allocation termination logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage",
+      "similarity": 0.9648,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "CRITICAL: DXGSHAREDVMOBJECT::AddReference is gated behind Feature_1259646266 in unpatched version. When the flag is disabled, the shared VM object pointer is used (read from at +0x8 and +0x0) WITHOUT taking a reference, and the cleanup loop that calls ReleaseReference is also skipped.",
+        "In patched version, AddReference is called unconditionally, the pointer is stored in the var_150 array, and the cleanup loop runs unconditionally",
+        "This is a guest-VM-reachable UAF: a malicious guest can free the DXGSHAREDVMOBJECT via another channel operation while ProcessChannelMessage still holds a dangling pointer"
+      ],
+      "security_relevant": true,
+      "security_notes": "Use-After-Free (CWE-416): In the unpatched DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage (handling message type 1, size 0x58), when iterating shared VM objects from the guest's handle table, DXGSHAREDVMOBJECT::AddReference(r12_4) is only called if Feature_1259646266__private_IsEnabledDeviceUsage() returns true. If the feature flag is disabled (default in many builds), the object pointer is dereferenced (reading *(r12_4 + 8) and *r12_4) and used to populate output data WITHOUT holding a reference. A concurrent operation that frees the shared VM object (e.g., via DestroyBundleObjectCallback on message type 3) creates a UAF: the freed memory is read and potentially used for further kernel operations. The cleanup loop at the end also skips ReleaseReference when the flag is disabled, so even if AddReference was somehow called, the reference would leak or mismatch.",
+      "assembly_diff": "Unpatched (0x1c028c3a0), per-handle loop body:\n  00000001C028C73C  mov     r12, [r8+r12*8]        ; look up DXGSHAREDVMOBJECT from handle table\n  00000001C028C740  test    r12, r12\n  00000001C028C743  jz      loc_1C028C7CC\n  00000001C028C749  call    Feature_1259646266__private_IsEnabledDeviceUsage  ; 0x1c00281dc\n  00000001C028C74E  test    eax, eax\n  00000001C028C750  jz      short loc_1C028C75F    ; flag disabled: skip AddReference and ref store\n  00000001C028C752  mov     rcx, r12\n  00000001C028C755  call    ?AddReference@DXGSHAREDVMOBJECT@@QEAAJXZ  ; 0x1c0238ed8\n  00000001C028C75A  mov     [rbp+r13*8+110h+var_150], r12\n  00000001C028C75F  mov     rax, [r12+8]           ; read object+0x8 without a reference held\n  00000001C028C764  mov     [rbp+r13*8+110h+var_D0], rax\n  00000001C028C769  mov     eax, [r12]             ; read object+0x0 without a reference held\n  00000001C028C76D  mov     [rsi+r13*4+18h], eax\n\nPatched (0x1c028c490), same loop body:\n  00000001C028C82C  mov     r12, [r8+r12*8]\n  00000001C028C830  test    r12, r12\n  00000001C028C833  jz      short loc_1C028C8AF\n  00000001C028C835  mov     rcx, r12\n  00000001C028C838  call    ?AddReference@DXGSHAREDVMOBJECT@@QEAAJXZ  ; 0x1c0238a98, no feature-flag gate\n  00000001C028C83D  mov     rax, [r12+8]\n  00000001C028C842  mov     [rbp+r13*8+110h+var_D0], rax\n  00000001C028C847  mov     eax, [r12]\n  00000001C028C84B  mov     [rsi+r13*4+18h], eax\n  00000001C028C856  mov     [rbp+r13*8+110h+var_150], r12  ; ref store, unconditional"
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusBlt",
+      "similarity": 0.9691,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "CRITICAL: Device-to-context ownership validation is gated behind Feature_611095865 in unpatched version. When disabled, a guest VM can supply a context handle belonging to a DIFFERENT device, enabling cross-device GPU memory access (BLT) on memory the guest should not have access to.",
+        "In patched version, the check (*(rcx_10 + 0x10) != r14_1, verifying context belongs to device) is unconditional",
+        "The check at 0x1c023d1e0 calls Feature_611095865__private_IsEnabledDeviceUsage() and only rejects mismatched device/context if the flag returns true"
+      ],
+      "security_relevant": true,
+      "security_notes": "Cross-Device Memory Access (CWE-863/Confused Deputy): In the unpatched VmBusBlt handler (processing DXGKVMB_COMMAND_BLT from a guest VM), the function validates that the supplied DXGCONTEXT belongs to the supplied DXGDEVICE by checking *(context + 0x10) != device. However, this check is gated behind Feature_611095865. When the flag is disabled, a malicious guest can supply a context handle from device A with a device handle from device B, causing a GPU BLT (memory copy) operation to read/write memory across device boundaries. This breaks GPU memory isolation between different devices or different guest VMs sharing the same GPU. The patch removes the feature flag gate, making the ownership check mandatory.",
+      "assembly_diff": "Unpatched (0x1c023d020):\n  00000001C023D1E0  call    Feature_611095865__private_IsEnabledDeviceUsage  ; 0x1c0026b38\n  00000001C023D1E5  mov     rcx, [rsp+1A0h+var_148]  ; context object\n  00000001C023D1EA  test    eax, eax\n  00000001C023D1EC  jz      short loc_1C023D20E      ; flag disabled: skip the ownership check\n  00000001C023D1EE  cmp     [rcx+10h], r14           ; context->device vs supplied device\n  00000001C023D1F2  jz      short loc_1C023D20E      ; match: proceed\n  00000001C023D1F4  call    cs:__imp_WdLogNewEntry5_WdError  ; mismatch: reject\n  00000001C023D20E  add     rcx, 1D0h               ; proceed: lock context and run BLT\n\nPatched (0x1c023cbe0):\n  00000001C023CD57  mov     rcx, [rsp+1A0h+var_148]  ; context object\n  00000001C023CD5C  test    rcx, rcx\n  00000001C023CD5F  jnz     short loc_1C023CDA3\n  00000001C023CDA3  cmp     [rcx+10h], r14           ; context->device vs supplied device, no feature gate\n  00000001C023CDA7  jz      short loc_1C023CDC3      ; match: proceed\n  00000001C023CDA9  call    cs:__imp_WdLogNewEntry5_WdError  ; mismatch: reject\n  00000001C023CDC3  add     rcx, 1D0h               ; proceed: lock context and run BLT"
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusSignalSyncObjectCblt",
+      "similarity": 0.9751,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "DXGSYNCOBJECTLOCK::AcquireShared is gated behind Feature_2505606457 in unpatched version. When disabled, SignalSynchronizationObjectFromCpu is called WITHOUT the sync object lock, creating a race condition on sync object state.",
+        "In patched version, AcquireShared is unconditional"
+      ],
+      "security_relevant": true,
+      "security_notes": "Race Condition (CWE-362): In the unpatched VmBusSignalSyncObjectCblt handler, the DXGSYNCOBJECTLOCK (global sync object lock) is only acquired shared if Feature_2505606457 is enabled. When disabled, SignalSynchronizationObjectFromCpu operates without the global lock, allowing concurrent modification of synchronization object state from multiple VMBus messages. This can lead to inconsistent sync object state, double-signaling, or use-after-free of sync object internals. Guest-VM-reachable via VMBus CDD GDI command channel.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DxgkDestroyAllocationInternal",
+      "similarity": 0.9758,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring around allocation destruction"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGDEVICE::CreateAllocation",
+      "similarity": 0.9758,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring of allocation creation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SignalSynchronizationObjectFromCpu",
+      "similarity": 0.9786,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "DXGGLOBAL::IsSyncObjectLockSharedOwner assertion is gated behind Feature_2505606457 in unpatched version. When disabled, the function does not verify that the caller holds the global sync object shared lock before proceeding.",
+        "In patched version, the IsSyncObjectLockSharedOwner check and assertion are unconditional",
+        "This is a defense-in-depth assertion that catches missing lock acquisition"
+      ],
+      "security_relevant": true,
+      "security_notes": "Missing Lock Check (CWE-662): In the unpatched SignalSynchronizationObjectFromCpu, the assertion verifying IsSyncObjectLockSharedOwner is gated behind Feature_2505606457. When the flag is disabled, the function proceeds to signal sync objects without verifying the global sync object lock is held. This allows callers (including VMBus handlers) to signal sync objects without proper synchronization, creating race conditions on sync object state.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusSignalSyncObject",
+      "similarity": 0.9798,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same pattern as VmBusSignalSyncObjectCblt: DXGSYNCOBJECTLOCK::AcquireShared gated behind Feature_2505606457",
+        "When disabled, SignalSynchronizationObjectFromCpu is called without the global sync object lock"
+      ],
+      "security_relevant": true,
+      "security_notes": "Race Condition (CWE-362): Same as VmBusSignalSyncObjectCblt. The DXGSYNCOBJECTLOCK::AcquireShared call before SignalSynchronizationObjectFromCpu is gated behind Feature_2505606457. Guest-VM-reachable via VMBus CDD GDI command channel.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_GLOBAL_VMBUS::VmBusCreateNtSharedObject",
+      "similarity": 0.9819,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Resource reference creation (DXGRESOURCEREFERENCE) for type 0x4 (DXGRESOURCE) is gated behind Feature_309893433 in unpatched version. When disabled, the resource reference is NOT created, but the function proceeds to share the object anyway.",
+        "In patched version, the resource reference lookup is unconditional",
+        "This affects the VmBusCreateNtSharedObject handler which creates NT shared objects from guest VM requests"
+      ],
+      "security_relevant": true,
+      "security_notes": "Missing Validation/Reference (CWE-704/Incomplete): In the unpatched VmBusCreateNtSharedObject, when the handle table entry type is 0x4 (DXGRESOURCE), the code creates a DXGRESOURCEREFERENCE to safely reference the resource. However, this reference creation is gated behind Feature_309893433. When disabled, the code skips the resource reference entirely (jumps to label_1c023fe13 with no reference), but still proceeds to share the object via DxgkShareObjectsInternal. This means the shared object may reference a resource without proper reference counting, potentially leading to UAF when the resource is destroyed.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "critical",
+      "function": "DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage",
+      "entry_point": "VMBus channel message (Remote Object Channel), message type 1, packet size 0x58 — guest VM to host kernel via GPU paravirtualization VMBus",
+      "call_chain": [
+        "Guest VM sends VMBus packet to DXG_HOST_REMOTEOBJECTCHANNEL",
+        "VmBusProcessPacket dispatches to ProcessChannelMessage",
+        "ProcessChannelMessage handles message type 1 (CreateBundle) with size 0x58",
+        "Iterates shared VM object handles from arg2+0x18 array",
+        "DXGSHAREDVMOBJECT looked up from handle table — AddReference SKIPPED if Feature_1259646266 disabled",
+        "Object dereferenced at +0x8 and +0x0 without reference (UAF window)"
+      ],
+      "vulnerability_class": "Use-After-Free (CWE-416) — missing reference count on DXGSHAREDVMOBJECT",
+      "description": "In the unpatched DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage at address 0x1c028c3a0, when processing a message of type 1 (CreateBundle, size 0x58) from a guest VM, the handler iterates over an array of shared VM object handles (at arg2+0x18, count at arg2+0x10). For each handle, it looks up the DXGSHAREDVMOBJECT from the handle table. The critical flaw is that DXGSHAREDVMOBJECT::AddReference(r12_4) is only called if Feature_1259646266__private_IsEnabledDeviceUsage() returns true. If the feature flag is disabled, the function skips AddReference entirely but STILL dereferences the object pointer: it reads *(r12_4 + 8) to populate var_d8 and *r12_4 to write back into the message buffer. The cleanup loop, whose feature check is at 0x1c028c937, also skips ReleaseReference when the flag is disabled. This means the object can be freed by a concurrent operation (e.g., a type 3 DestroyBundle message sent on another VMBus channel or thread) while ProcessChannelMessage still holds and dereferences the raw pointer, creating a classic use-after-free. The freed pool memory could be reclaimed with attacker-controlled data, leading to kernel information disclosure or arbitrary kernel read/write.",
+      "trigger_conditions": "1. Feature_1259646266__private_IsEnabledDeviceUsage() must return FALSE (default in many builds — this is a staged feature flag). 2. Guest VM must send a type 1 message (CreateBundle) with size 0x58 to the Remote Object Channel. 3. arg2+0x14 must have bit 0 set (indicates shared VM objects present). 4. arg2+0x10 > 0 and <= 0x10 (number of shared VM objects). 5. Each handle at arg2+0x18 must resolve to a valid DXGSHAREDVMOBJECT (type 0xd) in the handle table. 6. A concurrent type 3 message (DestroyBundle) targeting the same shared VM object handle frees the object during the iteration window. 7. Because no AddReference is taken, the object is not kept alive by this path; the concurrent free must occur between the handle-table lookup (mov r12, [r8+r12*8] at 0x1c028c73c) and the two reads (mov rax, [r12+8] at 0x1c028c75f and mov eax, [r12] at 0x1c028c769). The handle-table shared push lock is not released until 0x1c028c805, after the loop completes.",
+      "primitive": "Kernel Use-After-Free → potential arbitrary kernel read/write via pool reclamation. The attacker controls the freed object's memory contents through kernel pool spray (NtCreateWorkerFactory/NtSetInformationWorkerFactory), enabling write-what-where via corrupted object vtable or function pointers, ultimately leading to guest-to-host VM escape or kernel privilege escalation.",
+      "evidence": "From unpatched decompilation of 0x1c028c3a0 (per-handle loop body):\n```\nv35 = *((DXGSHAREDVMOBJECT **)v30 + 2 * (unsigned int)v34);\nif ( v35 == nullptr )\n    break;\nif ( (unsigned int)Feature_1259646266__private_IsEnabledDeviceUsage() != 0 )  // GATED!\n{\n    DXGSHAREDVMOBJECT::AddReference(v35, v36);\n    v66[v32] = v35;                       // ref-array store (var_150), also gated\n}\nv67[v32]    = *((void **)v35 + 1);        // read object+0x8 without a reference held\na2[v32 + 6] = *(_DWORD *)v35;             // read object+0x0 without a reference held\n```\nAnd the cleanup loop (feature check at 0x1c028c937) is also gated:\n```\nif ( (unsigned int)Feature_1259646266__private_IsEnabledDeviceUsage() != 0 )  // GATED!\n{\n    // walks the var_150 array and calls DXGSHAREDVMOBJECT::ReleaseReference on each entry\n}\n```\nPatched decompilation of 0x1c028c490 calls AddReference unconditionally and stores into the var_150 release array unconditionally.",
+      "assembly": "Unpatched assembly (0x1c028c3a0) - per-handle loop body:\n  00000001C028C73C  mov     r12, [r8+r12*8]      ; look up DXGSHAREDVMOBJECT from handle table\n  00000001C028C740  test    r12, r12\n  00000001C028C743  jz      loc_1C028C7CC        ; skip if null\n  00000001C028C749  call    Feature_1259646266__private_IsEnabledDeviceUsage  ; 0x1c00281dc\n  00000001C028C74E  test    eax, eax\n  00000001C028C750  jz      short loc_1C028C75F  ; flag disabled: skip AddReference and the ref store\n  00000001C028C752  mov     rcx, r12\n  00000001C028C755  call    ?AddReference@DXGSHAREDVMOBJECT@@QEAAJXZ  ; 0x1c0238ed8\n  00000001C028C75A  mov     [rbp+r13*8+110h+var_150], r12\n  00000001C028C75F  mov     rax, [r12+8]         ; read object+0x8 without a reference held\n  00000001C028C764  mov     [rbp+r13*8+110h+var_D0], rax\n  00000001C028C769  mov     eax, [r12]           ; read object+0x0 without a reference held\n  00000001C028C76D  mov     [rsi+r13*4+18h], eax\n  00000001C028C772  mov     eax, [rsp+210h+var_1E0]\n  00000001C028C776  inc     eax\n  00000001C028C778  mov     [rsp+210h+var_1E0], eax\n  00000001C028C77C  cmp     eax, [rsi+10h]\n  00000001C028C77F  jnb     loc_1C028C805\n  00000001C028C785  mov     r12, [rsp+210h+var_1D8]\n  00000001C028C78A  jmp     loc_1C028C6D4        ; next handle\n\nPatched assembly (0x1c028c490) - same loop body:\n  00000001C028C82C  mov     r12, [r8+r12*8]\n  00000001C028C830  test    r12, r12\n  00000001C028C833  jz      short loc_1C028C8AF\n  00000001C028C835  mov     rcx, r12\n  00000001C028C838  call    ?AddReference@DXGSHAREDVMOBJECT@@QEAAJXZ  ; 0x1c0238a98, no feature-flag gate\n  00000001C028C83D  mov     rax, [r12+8]         ; reference now held\n  00000001C028C842  mov     [rbp+r13*8+110h+var_D0], rax\n  00000001C028C847  mov     eax, [r12]\n  00000001C028C84B  mov     [rsi+r13*4+18h], eax\n  00000001C028C850  mov     eax, [rsp+210h+var_1E0]\n  00000001C028C854  inc     eax\n  00000001C028C856  mov     [rbp+r13*8+110h+var_150], r12  ; ref store, unconditional\n  00000001C028C85B  mov     [rsp+210h+var_1E0], eax\n  00000001C028C85F  cmp     eax, [rsi+10h]\n  00000001C028C862  jnb     loc_1C028C8E8\n  00000001C028C868  mov     r12, [rsp+210h+var_1D8]\n  00000001C028C86D  jmp     loc_1C028C7C4",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dxgkrnl!Feature_1259646266__private_IsEnabledDeviceUsage",
+            "address": "0x1c00281dc",
+            "why": "Break here to check if the feature flag is disabled (returns 0/al=0). If it returns false, the UAF path is active. Patch the return value to 0 to force the vulnerable path, or observe the default behavior."
+          },
+          {
+            "symbol": "DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage",
+            "address": "0x1c028c3a0",
+            "why": "Entry point for guest VM channel messages. Set conditional breakpoint on r8d==0x58 (arg3=packet size) and [rdx+0x8]==1 (message type 1) to catch the vulnerable CreateBundle path."
+          },
+          {
+            "symbol": "DXGSHAREDVMOBJECT::AddReference",
+            "address": "0x1c0238ed8",
+            "why": "In unpatched binary, this is only called when Feature_1259646266 is enabled. If you never see this called during ProcessChannelMessage type-1 handling, the UAF path is active and objects are being used without references."
+          },
+          {
+            "symbol": "DXGSHAREDVMOBJECT::ReleaseReference",
+            "address": "0x1c023bfbc",
+            "why": "Cleanup function also gated by the same flag. Monitor to verify reference count imbalances."
+          }
+        ],
+        "watch": [
+          "rax return value of Feature_1259646266__private_IsEnabledDeviceUsage at 0x1c028c74e (test eax, eax) — if 0, UAF path active",
+          "r12 register at 0x1c028c75f — holds the DXGSHAREDVMOBJECT* being dereferenced without reference (UAF target)",
+          "r13 register — iteration index into the shared VM object array",
+          "[rsi+0x10] — count of shared VM objects being processed",
+          "[rsi+0x14] bit 0 — must be set to enter the shared VM object processing loop",
+          "[r12+0x8] and [r12] — fields read from potentially-freed DXGSHAREDVMOBJECT (reference-less reads)"
+        ],
+        "key_offsets": [
+          "0x1c028c73c: mov r12, [r8+r12*8] — handle-table lookup of the DXGSHAREDVMOBJECT",
+          "0x1c028c749: call Feature_1259646266__private_IsEnabledDeviceUsage — the feature flag check that gates AddReference",
+          "0x1c028c74e: test eax, eax — test result of feature flag",
+          "0x1c028c750: jz short loc_1C028C75F — conditional jump that SKIPS AddReference and the ref store (the vulnerable branch)",
+          "0x1c028c75f: mov rax, [r12+8] — FIRST reference-less dereference (reads freed object field)",
+          "0x1c028c769: mov eax, [r12] — SECOND reference-less dereference (reads freed object field)",
+          "0x1c028c3d9: cmp r8d, 0xc — minimum packet size check",
+          "0x1c028c4c1: cmp ebx, 58h — size-0x58 (CreateBundle) branch reached after sub ecx, 1 / jz at 0x1c028c413/0x1c028c416"
+        ],
+        "trigger_setup": "From a Hyper-V guest VM with GPU paravirtualization (GPU-PV) enabled: 1) Create a DXGDEVICE and DXGCONTEXT via standard D3DKMT APIs. 2) Create a shared VM object (DXGSHAREDVMOBJECT) via the appropriate D3DKMT call. 3) Send a Remote Object Channel message type 1 (CreateBundle) with size 0x58 containing the shared VM object handle. 4) Concurrently (from another thread or via a second VMBus channel), send a type 3 (DestroyBundle) message to free the same shared VM object. The race window is between the handle-table lookup at 0x1c028c73c and the reference-less reads at 0x1c028c75f / 0x1c028c769 (the handle-table shared push lock is not released until 0x1c028c805, after the loop). Pool spray with NtCreateWorkerFactory objects sized to match the DXGSHAREDVMOBJECT allocation to reclaim the freed memory with controlled data.",
+        "expected_observation": "When the UAF fires: if the freed memory is not reclaimed, expect a BSOD with bugcheck 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) or 0xC2 (BAD_POOL_CALLER) when dereferencing the freed DXGSHAREDVMOBJECT at 0x1c028c75f. If the memory IS reclaimed with controlled data via pool spray, the values read from [r12+0x8] and [r12] will contain attacker-controlled data, which gets written into var_d8 and the message response buffer — enabling kernel information disclosure or arbitrary data injection into kernel structures.",
+        "notes": "The DXGSHAREDVMOBJECT pool allocation tag can be found by searching for the allocation in the kernel pool. The object is looked up from the handle table via index = (handle >> 6) & 0xffffff, with the table base at DXGPROCESS+0xf0. Feature flag 1259646266 is a staged rollout flag — in many production builds it defaults to disabled, making this vulnerability exploitable in default configurations. The same flag also gates the cleanup loop, meaning even if you force the flag on for the allocation path, the cleanup may still leak references."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusBlt",
+      "entry_point": "VMBus channel message (VirtualGPU channel) — guest VM sends DXGKVMB_COMMAND_BLT via VmBusProcessPacket dispatch",
+      "call_chain": [
+        "Guest VM sends VMBus BLT command packet",
+        "VmBusProcessPacket dispatches to VmBusBlt",
+        "VmBusBlt looks up DXGDEVICE from rax_4+0x18 and DXGCONTEXT from rax_4+0x1c",
+        "Device-to-context ownership check at 0x1c023d1e0 is GATED by Feature_611095865",
+        "When disabled, BLT proceeds with mismatched device/context — cross-device memory access"
+      ],
+      "vulnerability_class": "Cross-device memory access / authorization bypass (CWE-863)",
+      "description": "In the unpatched VmBusBlt handler at 0x1c023d020, when processing a DXGKVMB_COMMAND_BLT from a guest VM, the function acquires a DXGDEVICE (from the command's device handle at +0x18) and a DXGCONTEXT (from the context handle at +0x1c). It then checks whether the context belongs to the device via *(context + 0x10) != device. However, this ownership check is gated behind Feature_611095865__private_IsEnabledDeviceUsage(). When the flag is disabled, the check is skipped entirely, and the BLT operation proceeds with an arbitrary device/context pairing. This allows a malicious guest VM to supply a context from one device and a device handle from another, causing a GPU memory copy (BLT) across device boundaries — reading or writing GPU memory belonging to a different device or potentially a different guest VM.",
+      "trigger_conditions": "1. Feature_611095865__private_IsEnabledDeviceUsage() must return FALSE (default in many builds). 2. Guest VM sends a DXGKVMB_COMMAND_BLT packet via VMBus. 3. The adapter must have bit at *(adapter+0xa5) set (GPU paravirtualization enabled). 4. The BLT size field at command+0x48 must pass bounds checks (<= 0xFFFFFFFF, +0x50 must not overflow, total within packet size). 5. The device handle at command+0x18 and context handle at command+0x1c must be valid but from different devices. 6. The mismatched device/context pair bypasses the ownership check because the feature flag is disabled.",
+      "primitive": "Cross-device GPU memory read/write — a guest VM can read or write GPU memory belonging to another device or guest, breaking GPU memory isolation. This can lead to information disclosure of another guest's GPU memory contents or corruption of another guest's GPU state.",
+      "evidence": "From unpatched pseudocode at 0x1c023d1e0:\n```\nif (var_150)\n{\n    int32_t rax_14 = Feature_611095865__private_IsEnabledDeviceUsage();\n    uint64_t rcx_13 = var_150;  // context\n    \n    if (rax_14 && *(rcx_13 + 0x10) != r14_1)  // GATED!\n    {\n        // reject: context doesn't belong to device\n        rcx_10 = WdLogNewEntry5_WdError();\n        goto label_1c023d1b0;\n    }\n    \n    // proceeds with BLT using mismatched device/context if flag disabled!\n    DXGPUSHLOCK::AcquireExclusive(rcx_13 + 0x1d0);\n    ...\n    DXGCONTEXT::BltFromVm(rcx_19, rdx_8, r8_3, 0, ...);\n}\n```\nPatched removes the flag check:\n```\nif (*(rcx_10 + 0x10) != r14_1)  // UNCONDITIONAL\n{\n    rcx_11 = WdLogNewEntry5_WdError(rcx_10);\n    goto reject;\n}\n```",
+      "assembly": "Unpatched VmBusBlt key assembly at 0x1c023d020:\n  0x1c023d1e0: call    Feature_611095865__private_IsEnabledDeviceUsage  ; 0x1c0026b38\n  0x1c023d1e5: mov     rcx, [rsp+1A0h+var_148]  ; context object\n  0x1c023d1ea: test    eax, eax\n  0x1c023d1ec: jz      short loc_1C023D20E      ; SKIP ownership check if disabled!\n  0x1c023d1ee: cmp     [rcx+10h], r14           ; context->device vs supplied device\n  0x1c023d1f2: jz      short loc_1C023D20E      ; match: proceed\n  0x1c023d1f4: call    cs:__imp_WdLogNewEntry5_WdError  ; mismatch: reject\n  0x1c023d20e: add     rcx, 1D0h               ; proceed with BLT (lock context)\n  0x1c023d215: call    ?AcquireExclusive@DXGPUSHLOCK@@QEAAXXZ",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusBlt",
+            "address": "0x1c023d020",
+            "why": "Entry point for guest VM BLT commands. Break here to inspect the device handle (rdi+0x18) and context handle (rdi+0x1c) from the command packet."
+          },
+          {
+            "symbol": "Feature_611095865__private_IsEnabledDeviceUsage",
+            "address": "0x1c0026b38",
+            "why": "Check the return value. If it returns 0 (disabled), the device-to-context ownership check is bypassed and any device/context pairing will be accepted."
+          },
+          {
+            "symbol": "DXGCONTEXT::BltFromVm",
+            "address": "0x1c028029c",
+            "why": "The actual BLT operation. Inspect rcx (context) and the device argument to verify they belong to different devices when the ownership check is bypassed."
+          }
+        ],
+        "watch": [
+          "rdi register after 0x1c023d0b6 — points to the BLT command struct (DXGKVMB_COMMAND_BLT)",
+          "[rdi+0x18] — device handle supplied by guest",
+          "[rdi+0x1c] — context handle supplied by guest (may be from a different device)",
+          "r14_1 — resolved DXGDEVICE* for the supplied device handle",
+          "var_148/rcx at 0x1c023d1e5 — resolved DXGCONTEXT* — check [rcx+0x10] to see which device it actually belongs to",
+          "rax return of Feature_611095865 at 0x1c023d1ea — if 0, ownership check bypassed"
+        ],
+        "key_offsets": [
+          "0x1c023d1e0: call Feature_611095865 — the flag check gating ownership validation",
+          "0x1c023d1ec: je 0x1c023d20e — the jump that bypasses the ownership check when flag is disabled",
+          "0x1c023d1ee: cmp [rcx+0x10], r14 — the actual device/context ownership comparison",
+          "0x1c023d20e: add rcx, 0x1d0 — proceed point where BLT continues regardless of ownership",
+          "0x1c023d2d6: call DXGCONTEXT::BltFromVm — the actual cross-device memory operation"
+        ],
+        "trigger_setup": "From a Hyper-V guest VM with GPU-PV: 1) Create two DXGDEVICE objects (Device A and Device B) and a DXGCONTEXT under Device A. 2) Send a DXGKVMB_COMMAND_BLT via the VMBus channel with the device handle set to Device B but the context handle set to the context from Device A. 3) In the unpatched binary with Feature_611095865 disabled, the BLT will proceed despite the mismatch, performing a GPU memory copy using Device B's device with Device A's context. 4) This reads/writes GPU allocations accessible through Device A's context but attributed to Device B, breaking memory isolation.",
+        "expected_observation": "No crash — the BLT succeeds silently. The guest can observe the cross-device memory contents in the BLT destination allocation. To verify, compare GPU allocation contents between devices before and after the BLT. In the patched binary, the same operation returns STATUS_INVALID_PARAMETER (0xC000000D) and logs a WdError.",
+        "notes": "The device ownership check compares context->m_pDevice (at context+0x10) against the supplied device pointer. The Feature_611095865 flag is a device-usage staging flag that defaults to disabled in many builds. When enabled (patched behavior), the check becomes unconditional and rejects any mismatched device/context pairing."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusSignalSyncObject / VmBusSignalSyncObjectCblt / SignalSynchronizationObjectFromCpu",
+      "entry_point": "VMBus channel message — guest VM sends DXGKVMB_COMMAND_CDDGDICOMMAND via VmBusProcessPacket dispatch (signal sync object path)",
+      "call_chain": [
+        "Guest VM sends VMBus sync object signal command",
+        "VmBusProcessPacket dispatches to VmBusSignalSyncObject or VmBusSignalSyncObjectCblt",
+        "Handler calls DXGSYNCOBJECTLOCK::AcquireShared — GATED by Feature_2505606457",
+        "When disabled, SignalSynchronizationObjectFromCpu is called without the global sync object lock",
+        "Concurrent sync object operations can corrupt state"
+      ],
+      "vulnerability_class": "Race condition / missing lock (CWE-362, CWE-662)",
+      "description": "In the unpatched VmBusSignalSyncObject (0x1c0250980) and VmBusSignalSyncObjectCblt (0x1c00dc040), the DXGSYNCOBJECTLOCK::AcquireShared call (acquiring the global sync object lock in shared mode) is gated behind Feature_2505606457__private_IsEnabledDeviceUsage(). When the flag is disabled, SignalSynchronizationObjectFromCpu is called without holding the global sync object lock. Similarly, in SignalSynchronizationObjectFromCpu itself, the IsSyncObjectLockSharedOwner assertion is gated by the same flag. This allows concurrent VMBus messages from a guest VM to signal sync objects simultaneously without synchronization, potentially corrupting sync object internal state, double-signaling, or causing use-after-free of sync object data structures.",
+      "trigger_conditions": "1. Feature_2505606457__private_IsEnabledDeviceUsage() must return FALSE. 2. Guest VM sends a DXGKVMB_COMMAND_CDDGDICOMMAND with sync object signal parameters. 3. The command must have valid device handle and sync object count. 4. Two concurrent sync signal commands targeting the same sync object must race. 5. The race window is between entering SignalSynchronizationObjectFromCpu and modifying sync object state without the global lock.",
+      "primitive": "Race condition on kernel sync object state — potential for double-signal, inconsistent state, or use-after-free of sync object internals. This can be leveraged for kernel memory corruption by spraying the freed sync object memory.",
+      "evidence": "From unpatched VmBusSignalSyncObject pseudocode:\n```\nDXGSYNCOBJECTLOCK var_118;\nDXGSYNCOBJECTLOCK::DXGSYNCOBJECTLOCK(&var_118, DXGGLOBAL::GetGlobal(), false);\n\nif (Feature_2505606457__private_IsEnabledDeviceUsage())  // GATED!\n    DXGSYNCOBJECTLOCK::AcquireShared(&var_118);\n\nvar_164 = SignalSynchronizationObjectFromCpu(&var_138, *(arg1 + 0x30), rbx_3);\nDXGSYNCOBJECTLOCK::~DXGSYNCOBJECTLOCK(&var_118);\n```\nPatched:\n```\nDXGSYNCOBJECTLOCK::DXGSYNCOBJECTLOCK(&var_118, DXGGLOBAL::GetGlobal(), false);\nDXGSYNCOBJECTLOCK::AcquireShared(&var_118);  // UNCONDITIONAL\nvar_164 = SignalSynchronizationObjectFromCpu(...);\n```",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "Feature_2505606457__private_IsEnabledDeviceUsage",
+            "address": "0x1c00269e8",
+            "why": "Check return value — if 0, the DXGSYNCOBJECTLOCK::AcquireShared is skipped, leaving SignalSynchronizationObjectFromCpu unprotected."
+          },
+          {
+            "symbol": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusSignalSyncObject",
+            "address": "0x1c0250980",
+            "why": "Entry point for guest VM sync object signal commands. Monitor the path to SignalSynchronizationObjectFromCpu to verify lock is not held."
+          },
+          {
+            "symbol": "SignalSynchronizationObjectFromCpu",
+            "address": "0x1c029343c",
+            "why": "The core sync object signaling logic. In unpatched, the IsSyncObjectLockSharedOwner assertion is gated — verify it's not checked."
+          }
+        ],
+        "watch": [
+          "Feature_2505606457 return value — if 0, lock is not acquired",
+          "rbx_3 — DXGDEVICE* used for sync object signaling",
+          "var_138 / [rax_4+0x30] — device handle from guest",
+          "[rax_4+0x18] — sync object count from guest command"
+        ],
+        "key_offsets": [
+          "In VmBusSignalSyncObject: the Feature_2505606457 call before AcquireShared",
+          "In VmBusSignalSyncObjectCblt at 0x1c00dc040: same pattern around the DXGSYNCOBJECTLOCK::AcquireShared",
+          "In SignalSynchronizationObjectFromCpu at 0x1c029343c: the IsSyncObjectLockSharedOwner assertion gated by the same flag"
+        ],
+        "trigger_setup": "From a guest VM: 1) Create a monitored fence/sync object. 2) Send two concurrent DXGKVMB_COMMAND_CDDGDICOMMAND packets targeting the same sync object via different VMBus channels or threads. 3) In the unpatched binary, both will proceed without the global sync object lock, racing on internal sync object state.",
+        "expected_observation": "Potential BSOD with bugcheck 0xC4 (DRIVER_VERIFIER_DETECTED_VIOLATION) if Driver Verifier is enabled with synchronization checks. Otherwise, silent corruption of sync object state — sync object may be signaled twice, or its internal list may be corrupted leading to subsequent access violations.",
+        "notes": "The Feature_2505606457 flag gates both the lock acquisition in VMBus handlers AND the assertion in SignalSynchronizationObjectFromCpu. This is a coordinated rollout: when the flag is disabled, both the lock and its verification are absent."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "DXG_HOST_GLOBAL_VMBUS::VmBusCreateNtSharedObject",
+      "entry_point": "VMBus channel message — guest VM sends shared object creation command via VmBusProcessPacket (global channel)",
+      "call_chain": [
+        "Guest VM sends VMBus command to create NT shared object",
+        "VmBusProcessPacket dispatches to VmBusCreateNtSharedObject",
+        "Handle table lookup finds entry type 0x4 (DXGRESOURCE)",
+        "Resource reference creation GATED by Feature_309893433",
+        "When disabled, resource is shared without proper reference"
+      ],
+      "vulnerability_class": "Missing reference count / incomplete validation (CWE-911, CWE-704)",
+      "description": "In the unpatched VmBusCreateNtSharedObject at 0x1c023faf0, when the handle table entry type is 0x4 (DXGRESOURCE), the code creates a DXGRESOURCEREFERENCE to safely hold a reference to the resource. However, this reference creation is gated behind Feature_309893433__private_IsEnabledDeviceUsage(). When the flag is disabled, the code skips the resource reference creation entirely (jumps directly to label_1c023fe13 without creating var_78) but still proceeds to share the object via DxgkShareObjectsInternal and allocate a handle. This means the shared object may reference a resource without proper reference counting, potentially leading to use-after-free when the original resource is destroyed while the shared reference remains.",
+      "trigger_conditions": "1. Feature_309893433__private_IsEnabledDeviceUsage() must return FALSE. 2. Guest VM sends a VmBusCreateNtSharedObject command with a handle resolving to entry type 0x4 (DXGRESOURCE). 3. The resource must be shareable (flags check passes). 4. After sharing, the original resource is destroyed while the shared object remains.",
+      "primitive": "Use-after-free of DXGRESOURCE via shared object reference without proper reference counting — potential for kernel memory corruption when the shared object is later accessed after the resource is freed.",
+      "evidence": "From unpatched pseudocode:\n```\nif (rax_7 == 0x4)\n{\n    if (Feature_309893433__private_IsEnabledDeviceUsage())  // GATED!\n    {\n        // resource reference lookup and creation\n        DXGRESOURCEREFERENCE::DXGRESOURCEREFERENCE(&arg_18, rdx_13);\n        DXGRESOURCEREFERENCE::MoveAssign(&var_78, &arg_18);\n        DXGRESOURCEREFERENCE::~DXGRESOURCEREFERENCE(&arg_18);\n    }\n    \n    goto label_1c023fe13;  // skip to sharing without reference if flag disabled!\n}\n```\nPatched:\n```\nif (rax_7 == 0x4)\n{\n    // UNCONDITIONAL resource reference creation\n    DXGRESOURCEREFERENCE::DXGRESOURCEREFERENCE(&arg_18, rdx_13);\n    DXGRESOURCEREFERENCE::MoveAssign(&var_78, &arg_18);\n    DXGRESOURCEREFERENCE::~DXGRESOURCEREFERENCE(&arg_18);\n    goto label_1c023f9b6;\n}\n```",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "DXG_HOST_GLOBAL_VMBUS::VmBusCreateNtSharedObject",
+            "address": "0x1c023faf0",
+            "why": "Entry point for guest VM shared object creation commands. Break here to inspect the handle being shared and its entry type."
+          },
+          {
+            "symbol": "Feature_309893433__private_IsEnabledDeviceUsage",
+            "address": "search for this function",
+            "why": "Check if the resource reference creation is skipped for type 0x4 entries."
+          }
+        ],
+        "watch": [
+          "rax_7 — handle table entry type (0x4 = DXGRESOURCE)",
+          "rdx_13 — resolved DXGRESOURCE pointer",
+          "var_78 — DXGRESOURCEREFERENCE that may be uninitialized if flag disabled"
+        ],
+        "key_offsets": [
+          "0x1c023fd7d: Feature_309893433 check before resource reference creation",
+          "0x1c023fe13: label jumped to when reference creation is skipped"
+        ],
+        "trigger_setup": "From a guest VM: 1) Create a DXGRESOURCE. 2) Send a VmBusCreateNtSharedObject command with the resource handle. 3) In unpatched with flag disabled, the resource is shared without a reference. 4) Destroy the original resource. 5) Access the shared object — UAF on the resource.",
+        "expected_observation": "BSOD or memory corruption when accessing the shared object after the original resource is freed. Pool header corruption if the freed memory is reclaimed.",
+        "notes": "This is a lower-severity variant of the same pattern — missing reference counting gated by a feature flag. The attack requires controlling the timing of resource destruction relative to shared object access."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "DXGDEVICE::PinResources / DXGDEVICE::UnpinResource / DXGCONTEXT::RenderKmLda",
+      "entry_point": "User-mode D3DKMT API calls (D3DKMTSetAllocationPriority, render submission) from a local process, or via VMBus from a guest VM",
+      "call_chain": [
+        "Application/guest calls pin/unpin resource API",
+        "DXGDEVICE::PinResources or UnpinResource processes allocations",
+        "DXGAUTOMUTEX::Acquire per-resource GATED by Feature_253710648",
+        "When disabled, allocation list is modified without per-resource locking",
+        "Concurrent operations can corrupt allocation state"
+      ],
+      "vulnerability_class": "Race condition / missing lock (CWE-362)",
+      "description": "In the unpatched versions of DXGDEVICE::PinResources (0x1c0257234), DXGDEVICE::UnpinResource (0x1c0173028), and DXGCONTEXT::RenderKmLda (0x1c028fd5c), there is NO per-resource mutex held while iterating and modifying allocation lists (setting flag 0x800 at allocation+0x48, calling GPU paging callbacks). This creates race windows where concurrent pin/unpin/render operations on the same device can corrupt allocation linked lists (the +0x40 next pointer chain) or double-set/clear the pinned flag. The patch (PinResources 0x1c0256f28) introduces the per-resource DXGAUTOMUTEX::Acquire lock, but gates it behind the newly-introduced Feature_253710648__private_IsEnabledDeviceUsage() staging flag (0 occurrences in the unpatched build, present only in the patched build). This is a staged rollout: with the flag disabled the lock is still not taken, so the fix only takes effect once the flag is enabled. This locking-based hardening aligns with the KB's assigned CWE-362 race-condition CVEs (CVE-2026-20814, CVE-2026-20836).",
+      "trigger_conditions": "1. Feature_253710648__private_IsEnabledDeviceUsage() must return FALSE. 2. Two concurrent operations on the same DXGDEVICE that access the same allocation chain (e.g., two threads calling D3DKMTSetAllocationPriority, or pin + render simultaneously). 3. The race window is during allocation list iteration where +0x40 next pointers and +0x48 flags are modified without locks.",
+      "primitive": "Race condition on allocation linked list — potential for list corruption, use-after-free of allocation objects, or inconsistent pin state leading to GPU memory management corruption.",
+      "evidence": "Unpatched PinResources has no mutex around the allocation iteration. Patched PinResources (0x1c0256f28) adds it, gated behind the new staging flag:\n```\nv10 = Feature_253710648__private_IsEnabledDeviceUsage() != 0;  // NEW flag, patched-only\nDXGAUTOMUTEX var_50;\nDXGAUTOMUTEX::DXGAUTOMUTEX(&var_50, &rbp_1[0x50], 0);\n\nif (v10)  // gated: lock only taken when the flag is enabled\n    DXGAUTOMUTEX::Acquire(&var_50);\n\n// allocation iteration (unlocked in unpatched, and still unlocked in patched when flag disabled):\nrbx = *(rbp_1 + 0x18);  // first allocation\nwhile (rbx) {\n    *(rbx + 0x48) |= 0x800;  // set pinned flag\n    rbx = *(rbx + 0x40);     // next allocation\n}\n```",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "DXGDEVICE::PinResources",
+            "address": "0x1c0257234",
+            "why": "Monitor allocation list traversal. Check if DXGAUTOMUTEX::Acquire is called before iterating allocations."
+          },
+          {
+            "symbol": "Feature_253710648__private_IsEnabledDeviceUsage",
+            "address": "0x1c00261dc",
+            "why": "Check return value — if 0, per-resource mutex is not acquired during pin/unpin operations."
+          }
+        ],
+        "watch": [
+          "Feature_253710648 return value (stored in bl/bpl) — if 0, mutex not acquired",
+          "rbx during allocation iteration — allocation pointer being modified without lock",
+          "[rbx+0x48] — pinned flag being set without synchronization",
+          "[rbx+0x40] — next allocation pointer (corruption risk)"
+        ],
+        "key_offsets": [
+          "Patched PinResources at 0x1c0256f28: Feature_253710648 call near function start (unpatched PinResources 0x1c0257234 has no such call)",
+          "Patched UnpinResource: Feature_253710648 call before allocation iteration (absent in unpatched 0x1c0173028)",
+          "Patched RenderKmLda: Feature_253710648 gating DXGPUSHLOCK::AcquireShared (absent in unpatched 0x1c028fd5c)"
+        ],
+        "trigger_setup": "From a local process: 1) Create a DXGDEVICE with multiple allocations. 2) From two threads simultaneously, call D3DKMT pin/unpin operations on the same allocations. 3) In unpatched with flag disabled, the allocation list is traversed without locking, allowing concurrent corruption.",
+        "expected_observation": "BSOD with bugcheck 0x50 (PAGE_FAULT) if allocation linked list is corrupted (next pointer freed/modified by concurrent thread), or inconsistent pin state leading to GPU memory management errors.",
+        "notes": "The Feature_253710648 flag is the same one gating the new DxgkpValidateResourcesForPinOperation function. It's a staged rollout for the entire pin/unpin locking redesign."
+      }
+    }
+  ],
+  "summary": "The patch fixes a family of security vulnerabilities in the Windows DirectX Graphics Kernel (dxgkrnl.sys) related to Hyper-V GPU paravirtualization (GPU-PV). The core issue is that multiple security-critical operations — reference counting (AddReference), device ownership validation, sync object locking, and per-resource mutex acquisition — were gated behind staged feature rollout flags (Feature_1259646266, Feature_611095865, Feature_2505606457, Feature_309893433, Feature_253710648) that default to disabled in many builds. The most critical vulnerability is a Use-After-Free in DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage where DXGSHAREDVMOBJECT pointers from a guest VM's handle table are dereferenced without calling AddReference, exploitable via concurrent VMBus messages from a malicious guest to achieve guest-to-host VM escape. A PoC would need to: (1) confirm the relevant feature flags are disabled, (2) create shared VM objects via D3DKMT APIs in a GPU-PV guest, (3) send a type-1 Remote Object Channel message while concurrently freeing the target object via a type-3 message, and (4) reclaim the freed pool allocation with controlled data via kernel pool spray."
+}

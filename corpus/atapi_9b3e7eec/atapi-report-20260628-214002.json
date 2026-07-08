@@ -1,0 +1,354 @@
+{
+  "binaries": {
+    "title": "atapi.sys (Windows ATA/ATAPI Miniport Driver) - Missing 0xFF floating-bus status check added in AtapiNoDeviceConnected",
+    "id_unpatched": "atapi_unpatched.sys",
+    "id_patched": "atapi_patched.sys",
+    "overall_similarity": 0.9583,
+    "matched": 51,
+    "changed": 18,
+    "identical": 33,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AtapiNoDeviceConnected (sub_1C0001FC8)",
+      "similarity": 0.9379,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "ADDED: explicit check for status byte == 0xFF (floating bus / no device present) at function entry, setting return value to 1 (error detected)",
+        "Unpatched version only checks for 0x7F (diagnostic mode) and 0x00 (with arg3 flag); 0xFF falls through and returns 0 (no error)",
+        "Callers (AtapiSendAtaIdentify (sub_1C00020C0), AtapiSendAtaCommand (sub_1C0002200)) removed their own 0xFF pre-checks in the patched version, relying on the callee's new internal check",
+        "Register renamed from rbp to rbx for the status byte variable"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched AtapiNoDeviceConnected (sub_1C0001FC8) fails to detect the 0xFF floating-bus status as an error condition. In ATA/ATAPI, reading 0xFF from the status register indicates no device is present (floating bus) or the device has been disconnected. The function returns 0 (no error) for this status, which could cause the driver to proceed with command processing on a non-existent device. While both callers in the unpatched binary perform their own 0xFF pre-checks before calling this function, the gap represents a defense-in-depth failure: if the status transitions to 0xFF during the function's internal retry loop (triggered by 0x7F or 0x00 initial status), the updated 0xFF status is not detected as an error, and the function returns success. This could lead to incorrect device state management, data transfer attempts on disconnected devices, or denial of service through inconsistent internal state.",
+      "assembly_diff": "Unpatched AtapiNoDeviceConnected (sub_1C0001FC8) entry:\n  0x1c0001fe5: mov     bpl, byte [rdx]        ; load status byte into bpl\n  0x1c0001fe8: xor     dil, dil               ; rdi = 0 (default: no error)\n  ...\n  0x1c0001ff7: cmp     bpl, 0x7f              ; check for diagnostic mode\n  0x1c0001ffb: je      0x1c000200f            ; if 0x7F, enter retry loop\n  0x1c0001ffd: test    r8b, r8b               ; check arg3\n  0x1c0002000: je      0x1c0002098            ; if arg3==0, skip (return 0 for ALL other values including 0xFF)\n  0x1c0002006: test    bpl, bpl               ; check if status == 0\n  0x1c0002009: jne     0x1c0002098            ; if non-zero (includes 0xFF!), return 0 (NO ERROR)\n\nPatched AtapiNoDeviceConnected (sub_1C0001FD8) entry:\n  0x1c0001ff5: mov     bl, byte [rdx]         ; load status byte into bl\n  0x1c0001ff7: xor     dil, dil               ; rdi = 0 (default: no error)\n  ...\n  0x1c0002006: cmp     bl, 0xff               ; NEW: check for floating bus\n  0x1c0002009: jne     0x1c0002015            ; if NOT 0xFF, continue normal checks\n  0x1c000200b: mov     edi, 0x1               ; rdi = 1 (ERROR for 0xFF)\n  0x1c0002010: jmp     0x1c00020b3            ; return 1\n  0x1c0002015: cmp     bl, 0x7f               ; check for diagnostic mode (was first check in unpatched)\n  0x1c0002018: jz      0x1c000202b            ; ..."
+    },
+    {
+      "name": "AtapiSendAtaCommand (sub_1C0002200)",
+      "similarity": 0.9518,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED: explicit 'cmp al, 0xff; jz' pre-check (0x1c000226c) before calling status validation; 0xFF handling now delegated to the callee AtapiNoDeviceConnected (sub_1C0001FD8)",
+        "CODEGEN (no behavioral effect): 'mov al, byte [rcx+rdi+0xb]' (0x1c00023a3) replaced with 'movzx eax, byte [rcx+rdi+0xb]' (0x1c00023d0). The unpatched path already executes 'movzx eax, al' (0x1c00023b4) before 'imul esi, eax', so the value entering the multiply is identical in both builds",
+        "Register allocation changes"
+      ],
+      "security_relevant": true,
+      "security_notes": "The only security-relevant change here is the removal of this caller's own 0xFF status pre-check, delegated to the callee AtapiNoDeviceConnected (sub_1C0001FD8) which now performs it internally. The 'mov al' -> 'movzx eax' change is a compiler codegen difference with no behavioral impact: the unpatched code zero-extends the multiplier via 'movzx eax, al' at 0x1c00023b4 before the 'imul esi, eax' at 0x1c00023b7, so the multiplier value used in the transfer-size computation is the same in both builds.",
+      "assembly_diff": "Unpatched (AtapiSendAtaCommand PIO transfer-size path):\n  0x1c000238c: movzx   eax, byte [rbx+0x6]    ; eax = device_id (zero-extended)\n  0x1c0002394: add     rax, 0x3               ; rax = device_id + 3\n  0x1c000239f: imul    rcx, rax, 0x38         ; rcx = per-device offset\n  0x1c00023a3: mov     al, byte [rcx+rdi+0xb] ; load multiplier byte (low byte)\n  0x1c00023ab: test    al, al\n  0x1c00023ad: jz      0x1c00023ba\n  0x1c00023b4: movzx   eax, al                ; zero-extension BEFORE the multiply\n  0x1c00023b7: imul    esi, eax               ; esi = block_size * multiplier\n\nPatched (same logical block):\n  0x1c00023cc: imul    rcx, rax, 0x38\n  0x1c00023d0: movzx   eax, byte [rcx+rdi+0xb] ; zero-extension hoisted to load time\n  0x1c00023d9: test    al, al\n  0x1c00023db: jz      0x1c00023e5\n  0x1c00023e2: imul    esi, eax               ; identical multiplier value"
+    },
+    {
+      "name": "AtapiProcessInterrupt (sub_1C0002AA0)",
+      "similarity": 0.9163,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "CODEGEN (no behavioral effect): 'mov al, byte [rcx+rbp+0xb]' (0x1c0002c25) replaced with 'movzx eax, byte [rcx+rbp+0xb]' (0x1c0002c3f); the unpatched path already zero-extends via 'movzx eax, al' (0x1c0002c37) before 'imul r14d, eax', so the multiplier value is identical in both builds",
+        "Control flow restructuring: separate branches for 'status & 2' and '!(flags & 8)' merged into combined 'status & 2 || !(flags & 8)' condition",
+        "Instruction equivalences: 'test word [...], 0x200' -> 'bt word [...], 9'; 'test word [...], 0x100' -> 'bt word [...], 8'",
+        "Register reallocation throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "The 'mov al' -> 'movzx eax' change mirrors AtapiSendAtaCommand and is a compiler codegen difference with no behavioral impact: the unpatched code executes 'movzx eax, al' at 0x1c0002c37 before 'imul r14d, eax' at 0x1c0002c3a, so the multiplier value entering the transfer-size multiplication is the same in both builds. The remaining changes are functionally equivalent control-flow and instruction rewrites.",
+      "assembly_diff": "Unpatched (AtapiProcessInterrupt PIO transfer-size path):\n  0x1c0002c21: imul    rcx, rax, 0x38\n  0x1c0002c25: mov     al, byte [rcx+rbp+0xb]     ; load multiplier byte\n  0x1c0002c29: mov     r14d, dword [rcx+rbp+0x20] ; block size\n  0x1c0002c2e: test    al, al\n  0x1c0002c30: jz      0x1c0002c3e\n  0x1c0002c37: movzx   eax, al                    ; zero-extension BEFORE the multiply\n  0x1c0002c3a: imul    r14d, eax\n\nPatched (same logical block):\n  0x1c0002c3f: movzx   eax, byte [rcx+rbp+0xb]    ; zero-extension hoisted to load time\n  0x1c0002c44: mov     r14d, dword [rcx+rbp+0x20]\n  0x1c0002c49: test    al, al\n  ; ... imul r14d, eax with identical multiplier value"
+    },
+    {
+      "name": "AtapiSendAtaIdentify (sub_1C00020C0)",
+      "similarity": 0.8824,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED: explicit 'cmp dl, 0xff; je error' check before calling status validation (0x1c0002164-0x1c0002167)",
+        "Restructured: 0xFF pre-check and AtapiNoDeviceConnected (sub_1C0001FC8) call replaced with direct AtapiNoDeviceConnected (sub_1C0001FD8) call that handles 0xFF internally",
+        "Register allocation: rsi→rbp, rdi→rsi, r14→r15 for various variables"
+      ],
+      "security_relevant": true,
+      "security_notes": "The 0xFF status pre-check was removed from this caller and delegated to AtapiNoDeviceConnected (sub_1C0001FD8). In the unpatched version, when status is 0xFF: the caller jumps to result=5, stores 0xFF in rbx+3. In the patched version: AtapiNoDeviceConnected (sub_1C0001FD8) detects 0xFF, returns 1; caller enters else-branch, stores arg_8 (0xFF) in rbx+3, result=5. Functionally equivalent for this specific caller, but the callee now provides defense-in-depth.",
+      "assembly_diff": "Unpatched:\n  0x1c0002164: cmp     dl, 0xff         ; explicit 0xFF check\n  0x1c0002167: je      0x1c00021da     ; jump to error\n  ...\n  0x1c0002174: call    0x1c0001fc8     ; call WITHOUT internal 0xFF check\n\nPatched:\n  ; no explicit 0xFF check - directly calls callee\n  call    0x1c0001fd8     ; callee handles 0xFF internally"
+    },
+    {
+      "name": "AtapiSendAtapiCommand (sub_1C0002500)",
+      "similarity": 0.9397,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation changes (rbp→direct memory operand for transfer count)",
+        "Transfer count clamping logic unchanged: values >= 0x10000 are clamped to 0xFFFE",
+        "Function pointer address updates for self-references"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHandleMiniportCommand (sub_1C000272C)",
+      "similarity": 0.9143,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Control flow restructuring: nested if-else chains flattened; conditions inverted (if !rdx || *rdx != 0x101 → if rdx && *rdx == 0x101)",
+        "All conditions and comparison values unchanged",
+        "Function pointer/callee address updates"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WaitOnBusyUntil (sub_1C00012C8)",
+      "similarity": 0.9184,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Error handler call (AtapiDeviceErrorHistoryLog (sub_1C0001008)) moved from after-loop fallthrough into the loop body's counter-exhaustion branch",
+        "Functionally equivalent: when loop counter reaches 0, both versions call the error handler; when status becomes >= 0, both return the status"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the ATA status polling function. The code restructuring moves the error handler invocation inline but produces identical behavior for all input conditions.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiInitializeDevice (sub_1C0001D64)",
+      "similarity": 0.9338,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Loop counter arithmetic restructured: 'rax += 1; ... if (rax - 1 >= N)' → 'rax_2 = r8; r8 += 1; ... if (rax_2 >= N)' — eliminates the subtraction",
+        "Register allocation changes (rax→r8 for loop counter)",
+        "Stack initialization patterns changed (xor eax,eax; mov → mov rsi,0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiWaitStatusAsync (sub_1C0003730)",
+      "similarity": 0.9808,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Function pointer comparisons updated for shifted addresses (AtapiResetAtapiDevices (sub_1C00039C0)→AtapiResetAtapiDevices (sub_1C00039D0), etc.)",
+        "Callback function pointer updated: AtaPortRequestCallback(..., AtapiWaitStatusAsync (sub_1C0003740), ...)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiResetAtapiDevices (sub_1C00039C0)",
+      "similarity": 0.9676,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Function pointer updates for callee addresses",
+        "Stack variable initialization reordered"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwStartIo (sub_1C0001700)",
+      "similarity": 0.9694,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Instruction equivalence: 'test ... & 0x200' → 'TEST_BITW(..., 9)'; 'test ... & 0x100' → 'TEST_BITW(..., 8)'",
+        "Callee address updates"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetDmaTransferModeAsync (sub_1C0003C80)",
+      "similarity": 0.972,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Loop counter arithmetic (same pattern as AtapiInitializeDevice (sub_1C0001D64))",
+        "Function pointer address updates"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiHwBuildIo (sub_1C0001690)",
+      "similarity": 0.9744,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Instruction equivalence: 'test ... & 0x200' → 'TEST_BITW(..., 9)' in two locations",
+        "Transfer size validation logic unchanged (0x2000 boundary, 0x1FFF mask check)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetBlockSizeAsync (sub_1C0003EC0)",
+      "similarity": 0.9823,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Function pointer address updates",
+        "Stack initialization reordered"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetupGeometryAsync (sub_1C0003DF0)",
+      "similarity": 0.9835,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation (rbx added for arg1 preservation)",
+        "Stack initialization reordered; subtraction moved earlier"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiSetPioTransferModeAsync (sub_1C0003BD0)",
+      "similarity": 0.9864,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Loop counter arithmetic restructuring",
+        "Function pointer address updates"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon (sub_1C0003FFC)",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable type changed from int64_t to uint32_t for alignment check value (corresponds to different register usage)",
+        "Callee address update"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AtapiCompleteRequest (sub_1C0002DDC)",
+      "similarity": 0.9911,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Instruction equivalence: 'test ... & 0x200' → 'TEST_BITW(..., 9)'",
+        "Callee address updates throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "AtapiNoDeviceConnected (sub_1C0001FC8)",
+      "entry_point": "ATA/ATAPI device I/O via the AtaPort miniport interface (IRB dispatch through AtapiHwStartIo (sub_1C0001700) to the ATA command state handlers AtapiSendAtaIdentify (sub_1C00020C0) / AtapiSendAtaCommand (sub_1C0002200))",
+      "call_chain": [
+        "Storage stack IRB dispatch -> AtapiHwStartIo (sub_1C0001700) (request start handler) -> AtapiSendAtaIdentify (sub_1C00020C0)/AtapiSendAtaCommand (sub_1C0002200) (ATA command state handlers) -> AtapiNoDeviceConnected (sub_1C0001FC8) (status classification)"
+      ],
+      "vulnerability_class": "Improper handling of an exceptional condition (CWE-755)",
+      "description": "The unpatched status classifier AtapiNoDeviceConnected (sub_1C0001FC8) does not treat the 0xFF floating-bus status byte as an error condition. In ATA/ATAPI, a status-register read of 0xFF indicates no device is electrically present (the bus floats and pull-up resistors set all bits). The function acts only on 0x7F (diagnostic mode) and 0x00 (with arg3 set), letting 0xFF fall through to return 0 (no error). Both ATA-command callers (AtapiSendAtaIdentify (sub_1C00020C0) and AtapiSendAtaCommand (sub_1C0002200)) already pre-check 0xFF before the call, so a 0xFF present at call time is handled by the caller. The gap the patch closes is a narrow window: AtapiNoDeviceConnected re-reads the status register inside its retry loop (entered for an initial status of 0x7F, or 0x00 with arg3) and writes the new value back through *arg2 = AtaPortReadPortUchar(...) without re-checking it for 0xFF. If the device becomes absent during that window, the unpatched function returns 0. The caller's signed status test (0xFF has the sign bit set) then routes the request to result code 6 rather than the device-error code 5 that the caller's own 0xFF pre-check produces. The patched callee returns 1 for 0xFF, so the caller routes to result code 5 in this case as well.",
+      "trigger_conditions": "1. Hot-unplug scenario: an ATA device backed by this miniport is physically removed (USB enclosure, hot-swap bay) while I/O is in progress. The device initially returns 0x7F or 0x00, causing AtapiNoDeviceConnected (sub_1C0001FC8) to enter its retry loop; during the loop the status port reads 0xFF and *arg2 is updated to 0xFF, which the unpatched function does not classify as an error. 2. Malicious/emulated device that returns 0x7F to the first status poll and 0xFF to a later poll, hitting the same window. This is a device/timing condition; no attacker-controlled IRB data is required.",
+      "primitive": "Classification difference only: in the unpatched build an absent device that appears mid-loop is classified as retry-class (result 6) rather than device-error (result 5). The realistic worst case is a reliability issue (a retry rather than a failure on a removed or crafted-hardware device), reachable only via physical device removal or malicious/emulated hardware. No memory corruption, information disclosure, or control-flow primitive is produced by this change.",
+      "evidence": "Unpatched AtapiNoDeviceConnected (sub_1C0001FC8) pseudocode showing missing 0xFF check:\n\n  char AtapiNoDeviceConnected (sub_1c0001fc8)(void* arg1, char* arg2, char arg3, char arg4)\n  {\n      int64_t rbp;\n      rbp = *arg2;              // status byte\n      int64_t rdi = 0;          // default: no error\n      \n      if (rbp == 0x7f)          // checks 0x7F only\n      {\n          // retry loop: re-reads status, updates *arg2\n          do {\n              AtaPortStallExecution(0x1388);\n              rax_1 = AtaPortReadPortUchar(*(arg1 + 0x48));\n              *arg2 = rax_1;    // status may become 0xFF here!\n              if (rax_1 != rbp) break;\n              i += 1;\n          } while (i < 3);\n          // ... NO re-check for 0xFF after loop\n      }\n      else if (arg3 && !rbp)    // checks 0x00 with arg3\n          goto label_1c000200f;\n      \n      // 0xFF falls through here → returns 0 (NO ERROR)\n      return rdi;\n  }\n\nPatched AtapiNoDeviceConnected (sub_1C0001FD8) adds:\n      if (rbx == 0xff)          // NEW: detect floating bus\n          rdi = 1;              // return error",
+      "assembly": "AtapiNoDeviceConnected (sub_1C0001FC8) (unpatched) full assembly:\n  0x1c0001fc8: mov     rax, rsp\n  0x1c0001fcb: mov     qword [rax+0x8], rbx\n  0x1c0001fcf: mov     qword [rax+0x10], rbp\n  0x1c0001fd3: mov     qword [rax+0x18], rsi\n  0x1c0001fd7: mov     qword [rax+0x20], rdi\n  0x1c0001fdb: push    r12\n  0x1c0001fdd: push    r14\n  0x1c0001fdf: push    r15\n  0x1c0001fe1: sub     rsp, 0x20\n  0x1c0001fe5: mov     bpl, byte [rdx]          ; load status byte\n  0x1c0001fe8: xor     dil, dil                 ; rdi = 0 (default no error)\n  0x1c0001feb: mov     r12b, r9b\n  0x1c0001fee: mov     r14b, r8b\n  0x1c0001ff1: mov     r15, rdx\n  0x1c0001ff4: mov     rsi, rcx\n  0x1c0001ff7: cmp     bpl, 0x7f                ; check 0x7F (diagnostic)\n  0x1c0001ffb: je      0x1c000200f\n  0x1c0001ffd: test    r8b, r8b                 ; check arg3\n  0x1c0002000: je      0x1c0002098              ; if arg3==0 → return 0 (0xFF NOT caught!)\n  0x1c0002006: test    bpl, bpl                 ; check if status==0\n  0x1c0002009: jne     0x1c0002098              ; if non-zero (incl 0xFF) → return 0\n  ; --- retry loop (entered for 0x7F or 0x00+arg3) ---\n  0x1c000200f: xor     ebx, ebx\n  0x1c0002011: lea     edi, [rbx+0x1]           ; rdi = 1\n  0x1c0002014: mov     ecx, 0x1388\n  0x1c0002019: call    qword [rel 0x1c0008088]  ; AtaPortStallExecution\n  0x1c0002025: mov     rcx, qword [rsi+0x48]\n  0x1c0002029: call    qword [rel 0x1c0008090]  ; AtaPortReadPortUchar(status port)\n  0x1c0002035: mov     byte [r15], al           ; *arg2 = new status (could be 0xFF!)\n  0x1c0002038: cmp     al, bpl                  ; compare with original status\n  0x1c000203b: jne     0x1c0002044              ; if changed, exit loop\n  0x1c000203d: add     ebx, edi                 ; i++\n  0x1c000203f: cmp     ebx, 0x3                 ; i < 3?\n  0x1c0002042: jl      0x1c0002014\n  ; --- after loop: NO 0xFF re-check ---\n  0x1c0002044: test    r14b, r14b\n  0x1c0002047: je      0x1c0002092\n  0x1c0002049: test    al, al\n  0x1c000204b: jne     0x1c0002092\n  0x1c0002092: cmp     al, 0x7f                 ; only checks 0x7F again\n  0x1c0002094: sete    dil                      ; rdi = (al == 0x7F) — 0xFF gives FALSE\n  ; --- return path ---\n  0x1c0002098: mov     rbx, qword [rsp+0x40]   ; epilogue\n  0x1c000209d: mov     al, dil                  ; return value = rdi (0 for 0xFF!)\n  0x1c00020a0: mov     rdi, qword [rsp+0x58]\n  0x1c00020a5: mov     rbp, qword [rsp+0x48]\n  0x1c00020aa: mov     rsi, qword [rsp+0x50]\n  0x1c00020af: add     rsp, 0x20\n  0x1c00020b3: pop     r15\n  0x1c00020b5: pop     r14\n  0x1c00020b7: pop     r12\n  0x1c00020b9: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "atapi!AtapiNoDeviceConnected (sub_1c0001fc8)",
+            "address": "0x1c0001fc8",
+            "why": "Break at the status validation function entry. Check bpl (low byte of rbp = arg2 status byte at rdx) for value 0xFF. If bpl=0xFF, the function will incorrectly return 0 (no error) in the unpatched version."
+          },
+          {
+            "symbol": "atapi!AtapiNoDeviceConnected (sub_1c0001fc8)+0x4d",
+            "address": "0x1c0002014",
+            "why": "Break at the retry loop entry. This is reached when initial status was 0x7F or 0x00+arg3. Watch as AtaPortReadPortUchar at +0x29 may read 0xFF from the status port and store it back to *arg2 at +0x35 without any 0xFF error detection."
+          },
+          {
+            "symbol": "atapi!AtapiNoDeviceConnected (sub_1c0001fc8)+0xca",
+            "address": "0x1c0002092",
+            "why": "Post-loop classification. Verify that 'cmp al, 0x7f; setz dil' only sets dil=1 for al==0x7F; al=0xFF leaves dil=0 (returns 0 in the unpatched build)."
+          },
+          {
+            "symbol": "atapi!AtapiSendAtaIdentify (sub_1c00020c0)+0xa4",
+            "address": "0x1c0002164",
+            "why": "Caller's own 0xFF pre-check ('cmp dl, 0xff; jz'). Present in the unpatched build, removed in the patched build. Confirms a 0xFF present at call time is caught by the caller; the callee gap only matters when the status flips to 0xFF inside the callee's retry loop."
+          },
+          {
+            "symbol": "atapi!AtapiSendAtaCommand (sub_1c0002200)+0x6c",
+            "address": "0x1c000226c",
+            "why": "AtapiSendAtaCommand's own 0xFF pre-check ('cmp al, 0xff; jz'). Present in the unpatched build, removed in the patched build; 0xFF handling is delegated to the callee's new entry guard."
+          }
+        ],
+        "watch": [
+          "bpl = status byte (arg2, at function entry of AtapiNoDeviceConnected (sub_1c0001fc8)) — watch for value 0xFF",
+          "byte [r15] = updated status after AtaPortReadPortUchar in retry loop — watch for transition to 0xFF",
+          "dil = return value — 0 for 0xFF in unpatched; 1 in patched (via the new entry guard at 0x1c0002006)"
+        ],
+        "key_offsets": [
+          "0x1c0001ff7: cmp bpl, 0x7f — the only status value check in the main path (0xFF passes through)",
+          "0x1c0002006 (unpatched): test bpl, bpl — checks for 0x00; 0xFF is non-zero so jumps to the return-0 path",
+          "0x1c0002006 (patched): cmp bl, 0xff — the added floating-bus guard (jnz; mov edi,1; jmp ret)",
+          "0x1c0002035: mov byte [r15], al — stores the re-read status to *arg2 without a 0xFF check (unpatched)",
+          "0x1c0002092: cmp al, 0x7f — post-loop check only catches 0x7F, not 0xFF"
+        ],
+        "trigger_setup": "1. Connect an ATA/ATAPI device backed by this miniport (USB enclosure, SATA drive). 2. Start an I/O operation. 3. Physically disconnect the device during I/O. The status polling reads 0xFF from the floating bus. In the unpatched driver, if AtapiNoDeviceConnected (sub_1C0001FC8) was entered with an initial status of 0x7F or 0x00 (arg3) and the device becomes absent during the retry loop, *arg2 is updated to 0xFF but the function still returns 0. Alternatively, use a malicious/emulated device that returns 0x7F to the first status poll and 0xFF to a later poll.",
+        "expected_observation": "In the unpatched driver: AtapiNoDeviceConnected (sub_1C0001FC8) returns 0 (al=0) despite the re-read status byte being 0xFF; the caller's signed status test routes the request to result code 6. In the patched driver: AtapiNoDeviceConnected (sub_1C0001FD8) returns 1 for a 0xFF status, so the caller routes to result code 5 (the same device-error code its own 0xFF pre-check produces).",
+        "notes": "Verified structure offsets: IRB offset 0x06 = Target (device ID, read as 'mov dl, [rdx+6]' in the callers); IRB offset 0x10 = Flags (read as 'mov edx, [rbx+10h]' and bit-tested). Channel extension: offset 0x48 = status I/O port handle (read in the retry loop); per-device entries at (Target+3)*0x38 with offset 0x0b = sector-size multiplier and 0x20 = block size. Addresses are relative to image base 0x1C0000000; rebase to the loaded image base before use."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "AtapiSendAtaCommand (sub_1C0002200)",
+      "entry_point": "ATA command processing via state machine handler invoked through timer callback AtapiWaitStatusAsync (sub_1C0003730) → AtapiSendAtaCommand (sub_1C0002200)",
+      "call_chain": [
+        "AtapiWaitStatusAsync (sub_1C0003730) (timer/state machine callback) → (*(arg1 + 0x120))(arg1) → AtapiSendAtaCommand (sub_1C0002200) (ATA read/write state handler) → AtaPortWritePortBufferUshort/AtaPortReadPortBufferUshort (data transfer)"
+      ],
+      "vulnerability_class": "No security-relevant change (compiler codegen difference)",
+      "description": "The patched AtapiSendAtaCommand (sub_1C0002200) loads the per-device sector-size multiplier byte with 'movzx eax, byte [rcx+rdi+0xb]' (0x1c00023d0) where the unpatched build used 'mov al, byte [rcx+rdi+0xb]' (0x1c00023a3). This is behaviorally identical: the unpatched code already executes 'movzx eax, al' at 0x1c00023b4 before the 'imul esi, eax' at 0x1c00023b7, so the multiplier value entering the multiplication is the same in both builds. The upper bits of rax carried over from the earlier 'add rax, 3' (device_id + 3, itself bounded to at most 0x102 by the zero-extending 'movzx eax, byte [rbx+0x6]') never reach the multiply because of that intervening 'movzx eax, al'. The patch merely hoists the zero-extension into the load. The same pattern applies to AtapiProcessInterrupt (sub_1C0002AA0). This is a compiler-output difference, not a fix.",
+      "trigger_conditions": "None. The change has no observable behavioral effect in either build.",
+      "primitive": "None. There is no transfer-size miscalculation: the unpatched code zero-extends the multiplier byte before the multiply, so the transfer count computed at 'imul esi, eax' is identical to the patched build.",
+      "evidence": "Unpatched AtapiSendAtaCommand (sub_1C0002200) at 0x1c000238c (ATA PIO transfer-size path):\n\n  0x1c000238c: movzx   eax, byte [rbx+0x6]      ; eax = device_id (zero-extended, 0..255)\n  0x1c0002390: mov     r12, qword [rdi+0x78]    ; data buffer pointer\n  0x1c0002394: add     rax, 0x3                  ; rax = device_id + 3 (<= 0x102)\n  0x1c0002398: mov     r15d, dword [rdi+0x80]   ; remaining bytes\n  0x1c000239f: imul    rcx, rax, 0x38           ; rcx = (device_id+3)*0x38 (rax unchanged)\n  0x1c00023a3: mov     al, byte [rcx+rdi+0xb]   ; load multiplier byte into low byte of rax\n  0x1c00023a7: mov     esi, dword [rcx+rdi+0x20]; esi = block_size\n  0x1c00023ab: test    al, al                    ; multiplier == 0?\n  0x1c00023ad: je      0x1c00023ba\n  0x1c00023b4: movzx   eax, al                   ; zero-extension BEFORE the multiply\n  0x1c00023b7: imul    esi, eax                  ; block_size *= multiplier (clean value)\n\nPatched at the same logical location:\n  0x1c00023d0: movzx   eax, byte [rcx+rdi+0xb]  ; zero-extension hoisted to load time\n  0x1c00023d5: mov     esi, dword [rcx+rdi+0x20]\n  0x1c00023d9: test    al, al\n  0x1c00023db: je      0x1c00023e5\n  0x1c00023e2: imul    esi, eax                  ; identical multiplier value",
+      "assembly": "Basic block in unpatched AtapiSendAtaCommand (sub_1C0002200) (PIO transfer-size calculation):\n  0x1c000238c: movzx   eax, byte [rbx+0x6]\n  0x1c0002390: mov     r12, qword [rdi+0x78]\n  0x1c0002394: add     rax, 0x3\n  0x1c0002398: mov     r15d, dword [rdi+0x80]\n  0x1c000239f: imul    rcx, rax, 0x38\n  0x1c00023a3: mov     al, byte [rcx+rdi+0xb]    ; non-zero-extending load, but zero-extended below before use\n  0x1c00023a7: mov     esi, dword [rcx+rdi+0x20]\n  0x1c00023ab: test    al, al\n  0x1c00023ad: je      0x1c00023ba\n  0x1c00023af: test    dl, 0x10\n  0x1c00023b2: je      0x1c00023ba\n  0x1c00023b4: movzx   eax, al                    ; zero-extension before the multiply\n  0x1c00023b7: imul    esi, eax\n  0x1c00023ba: mov     rcx, qword [rbp+0x40]\n  0x1c00023be: test    esi, esi\n  0x1c00023c0: mov     eax, 0x200\n  0x1c00023c5: cmovz   esi, eax\n  0x1c00023c8: cmp     r15d, esi\n  0x1c00023cb: cmovb   esi, r15d                  ; clamp to remaining",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "atapi!AtapiSendAtaCommand (sub_1c0002200)+0x1a3",
+            "address": "0x1c00023a3",
+            "why": "Sector-multiplier load ('mov al, byte [rcx+rdi+0xb]'). The low byte of rax gets the multiplier; any upper bits carried from the earlier 'add rax, 3' are irrelevant because the value is zero-extended at 0x1c00023b4 before use."
+          },
+          {
+            "symbol": "atapi!AtapiSendAtaCommand (sub_1c0002200)+0x1b4",
+            "address": "0x1c00023b4",
+            "why": "'movzx eax, al' — the zero-extension that makes eax equal to the multiplier byte before the multiply. This is present in the unpatched build, which is why the codegen change to a load-time movzx is behaviorally identical."
+          },
+          {
+            "symbol": "atapi!AtapiSendAtaCommand (sub_1c0002200)+0x1b7",
+            "address": "0x1c00023b7",
+            "why": "'imul esi, eax' — block_size *= multiplier. eax equals the multiplier byte in both builds; the transfer size computed here is the same."
+          }
+        ],
+        "watch": [
+          "al at 0x1c00023a3 = sector-size multiplier byte",
+          "eax at 0x1c00023b7 = zero-extended multiplier (equals al) in both builds",
+          "esi at 0x1c00023b7 = block_size before multiply; identical result in both builds",
+          "r15d = remaining bytes in transfer (clamp limit)"
+        ],
+        "key_offsets": [
+          "0x1c000238c: movzx eax, byte [rbx+0x6] — loads device_id (0..255, zero-extended)",
+          "0x1c000239f: imul rcx, rax, 0x38 — stores to rcx; rax still holds device_id+3",
+          "0x1c00023a3: mov al, byte [rcx+rdi+0xb] — non-zero-extending load (unpatched)",
+          "0x1c00023b4: movzx eax, al — zero-extension before the multiply (unpatched)",
+          "0x1c00023b7: imul esi, eax — transfer-size multiplication with the clean multiplier value"
+        ],
+        "trigger_setup": "Not applicable. The 'mov al' -> 'movzx eax' change has no observable behavioral effect; there is no state that distinguishes the two builds at runtime for this code path.",
+        "expected_observation": "Identical behavior in both builds. In the unpatched code, 'mov al' loads the multiplier byte and 'movzx eax, al' at 0x1c00023b4 zero-extends it before 'imul esi, eax', so the transfer size computed is the same as the patched build's load-time 'movzx eax, byte [mem]'. Any upper bits left in rax by the earlier 'add rax, 3' never reach the multiplication.",
+        "notes": "The unpatched code at 0x1c00023a3-0x1c00023b7 performs 'mov al' (loads the byte) then 'movzx eax, al' (zero-extends) BEFORE 'imul esi, eax', so any upper bits of rax are discarded before use. The patched build's 'movzx eax, byte [mem]' simply moves the zero-extension to load time, producing identical behavior. This is a compiler-output difference, not a security-relevant change. The same applies to AtapiProcessInterrupt (sub_1C0002AA0). The only genuine behavioral change in the patch is the 0xFF status check added in AtapiNoDeviceConnected (sub_1C0001FD8)."
+      }
+    }
+  ],
+  "summary": "This patch adds a missing floating-bus (0xFF) status check to the Windows ATA/ATAPI miniport driver (atapi.sys). The unpatched status classifier AtapiNoDeviceConnected (sub_1C0001FC8) does not treat a 0xFF status byte (no device electrically present) as an error — it acts only on 0x7F (diagnostic) and 0x00 (with arg3), returning 0 (no error) for 0xFF. The patched AtapiNoDeviceConnected (sub_1C0001FD8) adds an explicit 0xFF check at function entry that returns 1 (error). Both ATA-command callers (AtapiSendAtaIdentify, AtapiSendAtaCommand) already pre-checked 0xFF before the call, so the delivered delta is a narrow window: the function re-reads the status register inside its retry loop and writes it back through *arg2 without re-checking for 0xFF. When the device becomes absent during that window, the unpatched build classifies it as retry-class (result 6) rather than device-error (result 5). This is an error-handling correctness fix (CWE-755) of low severity, reachable only via physical device removal or malicious/emulated hardware; it produces no memory-safety, information-disclosure, or control-flow primitive. The remaining 17 changed functions contain only compiler-level differences (register allocation, instruction equivalences like test->bt, control-flow restructuring, and a mov al -> movzx eax codegen change that is behaviorally identical in both builds) with no behavioral impact."
+}

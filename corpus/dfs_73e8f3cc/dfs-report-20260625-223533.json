@@ -1,0 +1,265 @@
+{
+  "binaries": {
+    "id_unpatched": "dfs_unpatched.sys",
+    "id_patched": "dfs_patched.sys",
+    "overall_similarity": 0.9075,
+    "matched": 112,
+    "changed": 79,
+    "identical": 33,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DfsReferralParseStringEntry",
+      "similarity": 0.7521,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored from 6-argument to 3-argument interface: alignment offset and bounds-checking moved from caller (DfsFltFsctlGetReferralEx) into the function itself",
+        "Unpatched: caller computes alignment externally via ((addr+1)&0xfffe)-addr and passes it as r9w (arg4), along with remaining size (arg5) and start pointer (arg6); function reads length field at [alignment_offset + start_ptr]",
+        "Patched: function reads start pointer from *arg1, computes alignment internally as ((ptr+1)&0xfffe)-ptr, and tracks remaining size via *arg2",
+        "Unpatched uses 'sub r10d, eax' (32-bit) for size subtraction with 16-bit length comparison; patched uses consistent pointer-based arithmetic"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The alignment value is the 2-byte padding ((ptr+1)&0xfffe)-ptr, which is 0 or 1 and depends only on the pointer's low bit; computing it in 16-bit registers is exact. The unpatched build computes it in the caller (and r9w,di; sub r9w,dx) and passes it as r9w; the patched build computes the identical value internally (and ax,di; sub ax,r11w -- still 16-bit register ops). Both builds then run the identical four bounds checks ((size-align)>=2, length even, (size-align-2)>=length, remaining>=second_align) and return the same validated length. This is a pure 6-arg to 3-arg interface refactoring, not a truncation fix.",
+      "assembly_diff": "mov     qword [rsp+0x8], rbx\nmov     qword [rsp+0x10], rdi\nmov     r10d, dword [rsp+0x28]\nmov     rbx, rdx\nmov     r11, qword [rsp+0x30]\nmov     rdi, rcx\nmovzx   eax, r9w\nsub     r10d, eax\nmovzx   eax, r9w\ncmp     r10d, 0x2\njb      0x1c0001e8b\nmovzx   r9d, word [rax+r11]\ntest    r9b, 0x1\njne     0x1c0001e8b\nlea     rcx, [r11+0x2]\nmov     edx, 0xfffffffe\nadd     rcx, rax\nadd     r10d, edx\nmovzx   eax, r9w\ncmp     r10d, eax\njb      0x1c0001e8b\nsub     r10d, eax\nlea     eax, [rcx+0x1]\nand     eax, edx\nsub     eax, ecx\nmovzx   edx, ax\ncmp     r10d, edx\njb      0x1c0001e8b\nsub     r10d, edx\nmov     word [r8], r9w\nlea     rax, [rcx+0x1]\nmov     word [r8+0x2], r9w\nand     rax, 0xfffffffffffffffe\nmov     qword [r8+0x8], rax\nmov     eax, dword [rbx]\nsub     eax, r10d\nmov     dword [rbx], r10d\nadd     qword [rdi], rax\nxor     eax, eax\njmp     0x1c0001e90\nmov     rbx, qword [rsp+0x8]\nmov     rdi, qword [rsp+0x10]\nretn"
+    },
+    {
+      "name": "DfsFltFsctlGetReferralEx",
+      "similarity": 0.8267,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored calls to DfsReferralParseStringEntry: unpatched passes 6 args (including externally-computed alignment r9w and separate size/pointer args); patched passes 3 args (pointer to pointer, pointer to size, output UNICODE_STRING)",
+        "Unpatched caller computes alignment for first call via: lea r9d,[rbx+0x8d]; and r9w,di; sub r9w,dx — uses 16-bit truncation of 64-bit address",
+        "Unpatched caller computes alignment for second call via: lea r9d,[rcx+1]; and r9w,di; sub r9w,cx — recomputes from updated var_58 pointer",
+        "Pool allocation API change: ExAllocatePoolWithTag(NonPagedPoolNx, size, tag) → ExAllocatePool2(0x42, size, tag)",
+        "WPP tracing GUIDs changed and stack variable initialization improved (memset before use)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The caller was updated to match the new 3-argument DfsReferralParseStringEntry interface (the 0/1 alignment padding it previously computed is now computed inside the callee, identically) and the pool allocation was migrated from ExAllocatePoolWithTag to ExAllocatePool2. The allocation is sized length1+length2+0xBC and the two memmove copies move exactly length1 and length2 bytes into it, so the copy always fits. No pool overflow is reachable in either build.",
+      "assembly_diff": "; Unpatched key instructions (0x1c000232c):\nlea     rdx, [rbx+8Ch]\nmov     [rbp+47h+var_80], ecx\nlea     r9d, [rdx+1]\nmov     [rbp+47h+Buf2], rdx\nmov     edi, 0FFFEh\nand     r9w, di\nsub     r9w, dx\nmovzx   eax, r9w\ncmp     ecx, eax\njb      loc_1C00026FA\nmov     [rsp+0C0h+var_98], rdx\nlea     r8, [rbp+47h+DestinationString]\nmov     dword ptr [rsp+0C0h+var_A0], ecx\nlea     rdx, [rbp+47h+var_80]\nlea     rcx, [rbp+47h+Buf2]\ncall    DfsReferralParseStringEntry\n;\n; Patched key instructions (0x140001d9c):\nmov     [rbp+47h+var_80], eax\nlea     r8, [rbp+47h+DestinationString]\nlea     rax, [rbx+8Ch]\nlea     rdx, [rbp+47h+var_80]\nmov     qword ptr [rbp+47h+Buf2], rax\nlea     rcx, [rbp+47h+Buf2]\ncall    DfsReferralParseStringEntry"
+    },
+    {
+      "name": "DfsFltFsctlGetReferral",
+      "similarity": 0.9154,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Pool API: ExAllocatePoolWithTag(NonPagedPoolNx,...) → ExAllocatePool2(0x42,...)",
+        "WPP tracing refactored",
+        "Control flow restructured but same validation logic for referral version checks (v2 vs v0x17)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfspFltAddDfsVolume",
+      "similarity": 0.8023,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Pool API: ExAllocatePoolWithTag(rbx_1+1,...) → ExAllocatePool2(0x102,...) where rbx_1+1=1 was PagedPool",
+        "Lock release changed from DfsFltReleaseDfsVolumeListLock() to explicit ExReleaseResourceLite + KeLeaveCriticalRegion",
+        "Loop refactored from for-loop to do-while with explicit label"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UpdateUserBuffer",
+      "similarity": 0.8889,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Significant refactoring of MDL-based buffer mapping and scatter-gather copy logic",
+        "Loop restructured: unpatched iterates linked list with explicit i_1=*i_1 advancement; patched uses 'for(;i;i=*i)' idiom",
+        "MmMapLockedPagesSpecifyCache calls and memcpy size computations reorganized but functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UpCallCreateQueueEx",
+      "similarity": 0.6538,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Queue structure layout changed: max_entries field moved from offset 0x10 (SpinLock[2]=0xa) to offset 0x8 (SpinLock[1]=0xa)",
+        "Pool API: ExAllocatePoolWithTag(NonPagedPoolNx,...) → ExAllocatePool2(0x42,...)",
+        "FreeRequest return value no longer reassigned (SpinLock = FreeRequest(...) → just FreeRequest(...))",
+        "Error handling simplified from ~(SpinLock-SpinLock)&0xc000009a to explicit rdi tracking"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UpCallCompleteQueueRequest",
+      "similarity": 0.8822,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Queue count field offset changed from 0x10 to 0xc to match new struct layout in UpCallCreateQueueEx",
+        "Validation check *(rbx+0x10) moved inside conditional block with combined rbx null check"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltFsctlAttachToFileSystem",
+      "similarity": 0.9315,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Cleanup path simplified: unpatched uses r14 flag set after DfsFltAddShareToDfsShareList and checks 'if(rbx_1 && r14) DfsFltRemoveShareFromDfsShareList' at function exit; patched calls DfsFltRemoveShareFromDfsShareList directly in the error path",
+        "Stack variables zero-initialized with memset before use",
+        "Size validation checks reordered but logically equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltFsctlDetachFromFileSystem",
+      "similarity": 0.9496,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Control flow flattened from nested if-else to sequential checks",
+        "Same cleanup logic for DfsFltReleaseDfsVolumeReference and DfsFltRemoveShareFromDfsShareList"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FinalizeRequest",
+      "similarity": 0.9291,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Indirect call 'rax_5(arg2[4])' replaced with '_guard_dispatch_icall()' for CFG protection",
+        "Control flow restructured with outer 'if(temp0)' check",
+        "Error path for temp0==0x80 now returns early with STATUS before FreeUserBuffer"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltFormPrefix",
+      "similarity": 0.9126,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The '*arg1 <= 0' empty-prefix guard before DfsFltConcatenateFilePath ('cmp [ptr],0; jbe skip' at 0x1C000B19A unpatched / 0x14000D722 patched) is present in BOTH builds",
+        "Pool API: ExAllocatePoolWithTag(PagedPool,...) → ExAllocatePool2(0x102,...)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The empty-prefix skip check (cmp [ptr],0; jbe) before the first DfsFltConcatenateFilePath call exists identically in both unpatched (0x1C000B19A) and patched (0x14000D722) builds. The only difference is the pool API migration to ExAllocatePool2.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltFsctlSetDfsnShareInfo",
+      "similarity": 0.9899,
+      "change_type": "cosmetic",
+      "key_changes": ["Control flow flattened", "Zero-init of DestinationString struct"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfspFltConvertStringSidToSid",
+      "similarity": 0.9854,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added arg3 parameter (Value, initialized from caller-supplied size)",
+        "UNICODE_STRING struct properly initialized with zero before use",
+        "WPP tracing refactored (GUIDs removed from call sites)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltHandleFsControl",
+      "similarity": 0.9837,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP trace GUID changed",
+        "Minor instruction reordering: 'rbx_1 = 0; *arg6 = 0;' vs '*arg6 = rbx_1;' and '*(arg6+8) = 4' moved"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DfsFltFsctlTranslatePath",
+      "similarity": 0.9888,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Stack variable zero-initialization improved (memset &var_288, 0, 0x40)",
+        "UNICODE_STRING pointer arithmetic corrected: 'var_288[8] += rcx_9 >> 1 << 1' instead of direct assignment"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "DfsReferralParseStringEntry / DfsFltFsctlGetReferralEx",
+      "entry_point": "FSCTL_DFS_GET_REFERRALS_EX (0x601b0) via NtDeviceIoControlFile / DeviceIoControl to the DFS minifilter control device",
+      "call_chain": ["NtDeviceIoControlFile(FSCTL 0x601b0)", "DfsFltHandleDeviceRequests", "DfsFltHandleFsControl", "DfsFltFsctlGetReferralEx", "DfsReferralParseStringEntry"],
+      "vulnerability_class": "None (interface refactoring; no out-of-bounds read or pool overflow in either build)",
+      "description": "This finding was a false positive; there is no truncation vulnerability. The value computed by 'lea r9d,[rdx+0x1]; and r9w,di; sub r9w,dx' in the unpatched caller DfsFltFsctlGetReferralEx (0x1c0002240) is the 2-byte alignment padding ((ptr+1)&0xfffe)-ptr, which equals ptr&1 (0 or 1). It depends only on the pointer's low bit, so computing it in 16-bit registers is exact -- there is no loss versus 64-bit arithmetic. In the unpatched build the caller passes this 0/1 value as r9w (arg4) to DfsReferralParseStringEntry (0x1c0001e04); in the patched build DfsReferralParseStringEntry (0x140002210) computes the identical value internally (and ax,di; sub ax,r11w -- also 16-bit register ops). Both builds then perform the identical four bounds checks ((size-align)>=2, length even, (size-align-2)>=length, remaining>=second_align) and return the same validated UNICODE_STRING.Length. The caller sizes its pool allocation length1+length2+0xBC and each memmove copies exactly lengthN bytes, so the copy always fits. The only change is a 6-argument to 3-argument interface refactoring plus a pool API migration (ExAllocatePoolWithTag -> ExAllocatePool2). No bounds check was added, removed, or altered, and no out-of-bounds condition exists in either build.",
+      "trigger_conditions": "Not exploitable. The FSCTL path parses referral strings with the same validation in both builds. The alignment value is always 0 or 1, and the parser rejects any string whose length field is odd or does not fit within the remaining (size - alignment - 2) bytes. The pool allocation is sized to the validated lengths and the copies never exceed it, so no crafted input on this path produces an out-of-bounds read or pool overflow.",
+      "primitive": "None. There is no attacker-controlled size/allocation mismatch on this path in either build.",
+      "evidence": "// Unpatched DfsFltFsctlGetReferralEx (0x1c0002240) - alignment computed in caller:\nint align = ((data_ptr + 1) & 0xfffe) - (data_ptr & 0xffff);  // == data_ptr & 1 (0 or 1)\nif (rcx_3 < align) error;                                     // caller pre-checks size>=align\nresult = DfsReferralParseStringEntry(&var_58, &var_88, &DestinationString, align, rcx_3, data_ptr);\n// ... allocation path (unchanged in behavior):\nint32_t r13_2 = DestinationString + DestinationString_1 + 0xbc;  // size from validated lengths\nvoid* P = ExAllocatePoolWithTag(NonPagedPoolNx, r13_2, 0x46736644);\nmemmove(&P[0xB0], DestinationString.Buffer, DestinationString.Length);  // copies exactly Length\n\n// Patched DfsFltFsctlGetReferralEx (0x140001cb8) - alignment computed in callee:\nresult = DfsReferralParseStringEntry(&var_60, &var_88, &var_80);  // 3 args\n// Inside DfsReferralParseStringEntry (0x140002210):\nint64_t r11 = *arg1;  // pointer\nint32_t r9 = *arg2;    // size\nuint16_t align = ((r11 + 1) & 0xfffe) - (uint16_t)r11;  // same 0/1 padding, 16-bit ops",
+      "assembly": "DfsReferralParseStringEntry (0x1c0001e04) - UNPATCHED:\nmov     qword [rsp+0x8], rbx\nmov     qword [rsp+0x10], rdi\nmov     r10d, dword [rsp+0x28]     ; arg5 = remaining size\nmov     rbx, rdx                    ; arg2 = &size\nmov     r11, qword [rsp+0x30]      ; arg6 = start pointer\nmov     rdi, rcx                    ; arg1 = &pointer\nmovzx   eax, r9w                    ; eax = alignment (arg4, from caller)\nsub     r10d, eax                   ; r10d = size - alignment\nmovzx   eax, r9w                    ; reload alignment\ncmp     r10d, 0x2                   ; (size - alignment) >= 2?\njb      0x1c0001e8b                ; if not, error\nmovzx   r9d, word [rax+r11]        ; read length from [alignment + start]\ntest    r9b, 0x1                    ; length odd?\njne     0x1c0001e8b                ; if odd, error\nlea     rcx, [r11+0x2]              ; rcx = start + 2\nmov     edx, 0xfffffffe\nadd     rcx, rax                    ; rcx = start + 2 + alignment\nadd     r10d, edx                   ; r10d -= 2\nmovzx   eax, r9w                    ; eax = length value\ncmp     r10d, eax                   ; remaining >= length?\njb      0x1c0001e8b\nsub     r10d, eax                   ; remaining -= length\nlea     eax, [rcx+0x1]              ; compute second alignment\nand     eax, edx                    ; align down\nsub     eax, ecx                    ; alignment offset\nmovzx   edx, ax\ncmp     r10d, edx                   ; remaining >= 2nd alignment?\njb      0x1c0001e8b\nsub     r10d, edx                   ; final remaining\nmov     word [r8], r9w              ; store length to output\nlea     rax, [rcx+0x1]\nmov     word [r8+0x2], r9w\nand     rax, 0xfffffffffffffffe\nmov     qword [r8+0x8], rax         ; store aligned pointer\nmov     eax, dword [rbx]            ; old size\nsub     eax, r10d                   ; consumed = old - new\nmov     dword [rbx], r10d           ; update size\nadd     qword [rdi], rax            ; advance pointer\nxor     eax, eax                    ; STATUS_SUCCESS\njmp     0x1c0001e90\nmov     rbx, qword [rsp+0x8]\nmov     rdi, qword [rsp+0x10]\nretn\n\nDfsFltFsctlGetReferralEx (0x1c0002240) - UNPATCHED caller key section (0x1c000232c):\nlea     rdx, [rbx+8Ch]                   ; data start at arg1+0x8c\nmov     [rbp+47h+var_80], ecx            ; save remaining size\nlea     r9d, [rdx+1]                     ; r9d = (arg1+0x8d) truncated to 32-bit\nmov     [rbp+47h+Buf2], rdx              ; save data pointer\nmov     edi, 0FFFEh\nand     r9w, di                          ; r9w = (addr+1) & 0xfffe [16-bit!]\nsub     r9w, dx                          ; r9w -= (addr & 0xffff) [16-bit!]\nmovzx   eax, r9w                         ; alignment = 0 or 1\ncmp     ecx, eax                         ; size >= alignment?\njb      loc_1C00026FA                    ; error if not\nmov     [rsp+0C0h+var_98], rdx           ; arg6 = data pointer\nlea     r8, [rbp+47h+DestinationString]  ; arg3 = output UNICODE_STRING\nmov     dword ptr [rsp+0C0h+var_A0], ecx ; arg5 = size\nlea     rdx, [rbp+47h+var_80]            ; arg2 = &size\nlea     rcx, [rbp+47h+Buf2]              ; arg1 = &pointer\ncall    DfsReferralParseStringEntry      ; 6-arg call",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dfs_unpatched!DfsReferralParseStringEntry",
+            "address": "0x1c0001e04",
+            "why": "Entry point of the vulnerable parsing function. At entry: r9w (arg4) holds the externally-computed alignment offset, r11 will be loaded with arg6 (start pointer at [rsp+0x30]), r10d will be loaded with arg5 (remaining size at [rsp+0x28]). Check if r9w correctly matches the actual alignment of the pointer in [rsp+0x30]."
+          },
+          {
+            "symbol": "dfs_unpatched!DfsFltFsctlGetReferralEx+0x103",
+            "address": "0x1c0002343",
+            "why": "The alignment computation before the first call to DfsReferralParseStringEntry. At this point: rdx = arg1+0x8c (data pointer), ecx = *(arg1+0x88) (remaining size). The lea/and/sub sequence (0x1c0002336 lea r9d,[rdx+1]; 0x1c0002343 and r9w,di; 0x1c0002347 sub r9w,dx) computes r9w (alignment). Verify r9w is 0 or 1 and matches the actual alignment of rdx."
+          },
+          {
+            "symbol": "dfs_unpatched!DfsFltFsctlGetReferralEx+0x25a",
+            "address": "0x1c000249a",
+            "why": "The pool allocation: ExAllocatePoolWithTag is called with size r13d = DestinationString + DestinationString_1 + 0xbc. Check r13d against the memmove sizes that follow (0x1c0002548, 0x1c0002587) to verify the allocation is large enough."
+          },
+          {
+            "symbol": "dfs_unpatched!DfsFltHandleFsControl",
+            "address": "0x1c0009d7c",
+            "why": "FSCTL dispatcher. arg1 contains the IOCTL code. Set conditional breakpoint for arg1 == 0x601b0 to catch the FSCTL_DFS_GET_REFERRALS_EX path."
+          }
+        ],
+        "watch": [
+          "r9w at DfsReferralParseStringEntry entry — the 2-byte alignment padding; always 0 (even pointer) or 1 (odd pointer). It cannot take any other value.",
+          "r10d after 'sub r10d, eax' at 0x1c0001e22 — this is (remaining_size - alignment). The caller already checked size >= alignment, so no underflow occurs.",
+          "r9d after 'movzx r9d, word [rax+r11]' at 0x1c0001e2f — the 16-bit length field at [alignment + start_ptr]; the following checks require it to be even and to fit in the remaining size.",
+          "r13d at the ExAllocatePoolWithTag call at 0x1c000249a — allocation size = string1_len + string2_len + 0xbc; the memmove sizes (string1_len, string2_len) are always <= this.",
+          "ecx at DfsFltHandleFsControl entry — IOCTL code, 0x601b0 for the referral path"
+        ],
+        "key_offsets": [
+          "0x1c0001e22: 'sub r10d, eax' — size-alignment subtraction; if alignment (eax from r9w) is incorrect, this produces wrong remaining size",
+          "0x1c0001e2f: 'movzx r9d, word [rax+r11]' — reads length from [alignment + base]; wrong alignment reads wrong offset",
+          "0x1c0001e4d: 'cmp r10d, eax' — bounds check using potentially corrupted size; if bypassed, memcpy proceeds with bad size",
+          "0x1c0002336-0x1c000234b: 'lea r9d,[rdx+0x1]; and r9w,di; sub r9w,dx' — the 16-bit alignment computation in the caller (first parser call)",
+          "0x1c000249a: 'call ExAllocatePoolWithTag' — allocation with size from parsed referral strings",
+          "0x1c0002548 and 0x1c0002587: 'call memmove' — copies referral string data into pool allocation"
+        ],
+        "trigger_setup": "1. The DFS minifilter (DfsFlt) control device must be accessible. On a system with DFS Namespace service, open a handle via CreateFile to the DFS filter device. 2. Use DeviceIoControl with dwIoControlCode=0x601b0 (FSCTL_DFS_GET_REFERRALS_EX, also known as FSCTL_DFS_GET_REFERRALS_EX). 3. The input buffer (lpInBuffer) must be at least 0x88 bytes and contain a valid DFS referral request header. Key fields: at byte 0x00: version (2 or 0x17 for v2/v4 referral). At byte 0x80: a 32-bit size field (offset to referral entry, must be >= 9). At byte 0x88: second 32-bit size field (remaining data size). At byte 0x8c: referral string data begins. 4. The string length fields are validated (must be even and fit within the remaining size); the pool allocation is sized to the validated lengths and the copies always fit, so no crafted input overflows on this path. 5. Note: ExGetPreviousMode() must return 0 (KernelMode) or the function returns early — this means the attack vector is via the minifilter's internal FSCTL dispatch path (IRP_MJ_FILE_SYSTEM_CONTROL), reachable through DFS server or other kernel-mode DFS consumers.",
+        "expected_observation": "No crash. The alignment value is always 0 or 1, the parser rejects malformed lengths, and the pool allocation is always large enough for the two memmove copies. The request completes with STATUS_SUCCESS or a parse error (e.g. 0xC000000D). This behavior is identical in the unpatched and patched builds.",
+        "notes": "The unpatched build splits the alignment computation between caller and callee; the patched build performs it inside DfsReferralParseStringEntry. Both use 16-bit register operations and produce the same 0/1 padding, and both run the identical bounds checks -- this is an interface refactoring, not a truncation fix. The ExGetPreviousMode() check at entry means the path is reached from kernel context. The FSCTL 0x601b0 dispatch is in DfsFltHandleFsControl at 0x1c0009d7c. Key input buffer offsets: 0x00=version, 0x80=first_size, 0x88=second_size, 0x8c=string_data_start, 0x86=flags (bit 0 controls second string parsing)."
+      }
+    }
+  ],
+  "summary": "This patch contains no security-relevant fix. The most-changed function, DfsReferralParseStringEntry (sub_1C0001E04 / sub_140002210), was refactored from a 6-argument to a 3-argument interface: the unpatched build computes the 2-byte alignment padding in the caller DfsFltFsctlGetReferralEx and passes it in; the patched build computes the identical value inside the callee. The alignment padding is 0 or 1 (it depends only on the pointer's low bit) and is computed with 16-bit register operations in BOTH builds, so there is no truncation and no bounds bypass; both builds run the same four length/size checks and the caller's pool allocation and memmove copies use the same validated lengths. The originally reported out-of-bounds read / pool overflow does not exist in either build. The DfsFltFormPrefix '*arg1 <= 0' empty-prefix guard is present in BOTH builds (not added by the patch). The remaining changes across the binary are modernizations: ExAllocatePoolWithTag -> ExAllocatePool2 migration (with zero-initialization), CFG-protected indirect calls (_guard_dispatch_icall), stack zero-initialization (memset), and WPP/ETW tracing refactoring."
+}

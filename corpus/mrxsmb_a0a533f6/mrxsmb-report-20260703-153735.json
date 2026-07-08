@@ -1,0 +1,48 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - No security-relevant change (WIL feature-staging library rebuild)",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9925,
+    "matched": 1256,
+    "changed": 2,
+    "identical": 1254,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "address": "0x1400409A8",
+      "similarity": 0.9887,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched adds 'bts eax, 12h' at 0x140040A04, forcing bit 18 (0x40000) of the recomputed cached feature-enabled-state value before it is committed with 'lock cmpxchg [r15], esi' at 0x140040A51.",
+        "Patched removes one now-redundant 'mov dword ptr [rsp+48h+arg_8], eax' store (the unpatched build wrote that stack slot twice, at 0x140040A0B and 0x140040A11; the patched build writes it once). Net function size unchanged.",
+        "The value being reevaluated (edi) is produced by wil_details_GetCurrentFeatureEnabledState (0x140040B1C), which reads the OS feature-configuration/staging store via wil_RtlStagingConfig_QueryFeatureState. It is not derived from any SMB message."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a WIL (Windows Implementation Library) feature-staging routine that is statically linked into mrxsmb.sys and many other Windows binaries. It reevaluates and atomically stores the cached enabled-state of a feature. The patched build forces an internal cache flag (bit 18 / 0x40000) on and drops a duplicate store. Bit 0x40000 here is an internal WIL feature-state-cache flag, not an SMB encryption-enforcement flag. The function is called only by wil_details_AreDependenciesEnabled (0x140040458) and wil_details_IsEnabledFallback (0x140040C34); there is no SMB NEGOTIATE / TREE_CONNECT / SESSION_SETUP path into it, and the input is not attacker-controlled. This is servicing churn from a WIL library rebuild, not a security fix.",
+      "assembly_diff": "UNPATCHED (loop entry at 0x140040A04):\n  0000000140040A00  mov     eax, edi\n  0000000140040A02  mov     ecx, edi\n  0000000140040A04  cmp     [rsp+48h+arg_0], 0\n  0000000140040A09  mov     esi, eax\n  0000000140040A0B  mov     dword ptr [rsp+48h+arg_8], eax\n  0000000140040A0F  jz      short loc_140040A30\n  0000000140040A11  mov     dword ptr [rsp+48h+arg_8], eax\n  0000000140040A15  test    cl, 2\n\nPATCHED (loop entry at 0x140040A04):\n  0000000140040A00  mov     eax, edi\n  0000000140040A02  mov     ecx, edi\n  0000000140040A04  bts     eax, 12h          ; ADDED: forces bit 18 (0x40000)\n  0000000140040A08  cmp     [rsp+48h+arg_0], 0\n  0000000140040A0D  mov     esi, eax\n  0000000140040A0F  mov     dword ptr [rsp+48h+arg_8], eax\n  0000000140040A13  jz      short loc_140040A30\n  0000000140040A15  test    cl, 2\n\nThe duplicate store present at 0x140040A0B and 0x140040A11 in the unpatched build collapses to a single store at 0x140040A0F in the patched build."
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "address": "0x1400849EC",
+      "similarity": 0.976,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Patched adds 'and [rsp+48h+var_C], 0' at 0x1400849F0 and 'mov [rsp+48h+var_10], 1' at 0x140084A2D, initializing two additional fields of the on-stack structure passed to RtlRegisterFeatureUsageProvider.",
+        "Registers the WIL feature-usage telemetry provider (callback wil_details_OnFeatureUsageProviderFlushNotification)."
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-usage-provider registration bookkeeping. The added stores initialize two more fields of the provider structure passed to RtlRegisterFeatureUsageProvider. Library churn; not a security fix and not attacker-reachable.",
+      "assembly_diff": "PATCHED adds:\n  00000001400849F0  and     [rsp+48h+var_C], 0\n  0000000140084A2D  mov     [rsp+48h+var_10], 1\nbefore:\n  0000000140084A41  call    cs:__imp_RtlRegisterFeatureUsageProvider"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. An independent content-matched diff of mrxsmb_unpatched.sys vs mrxsmb_patched.sys shows exactly two functions with instruction-level changes, both belonging to the statically linked WIL (Windows Implementation Library) feature-staging/feature-usage infrastructure: wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (0x1400409A8) and wil_details_RegisterFeatureUsageProvider (0x1400849EC). The first forces an internal WIL feature-state-cache flag (bit 18 / 0x40000) on before an atomic cache write and removes a duplicate store; its input comes from the OS feature-configuration store, not from SMB/network data, and it is reached only from WIL feature-check helpers, not from SMB message processing. The second initializes two extra fields of the structure passed to RtlRegisterFeatureUsageProvider. Bit 0x40000 here is an internal WIL cache flag and is unrelated to SMB encryption. These are servicing changes from a WIL library rebuild, not a security fix; there is no SMB encryption-enforcement bypass and no attacker-reachable primitive."
+}

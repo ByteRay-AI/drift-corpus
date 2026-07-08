@@ -1,0 +1,119 @@
+{
+  "binaries": {
+    "id_unpatched": "bowser_unpatched.sys",
+    "id_patched": "bowser_patched.sys",
+    "overall_similarity": 0.9923,
+    "matched": 279,
+    "changed": 3,
+    "identical": 276,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "BowserAllocateName",
+      "similarity": 0.9898,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added memset(buffer, 0, NameLength + 0x42) call immediately after ExAllocatePoolWithTag allocation and before field initialization — the unpatched version leaves the newly allocated BROWSER_NAME structure partially uninitialized",
+        "In unpatched: allocates pool via ExAllocatePoolWithTag(PagedPool, NameLength+0x42, 'LBbn') then writes fields at offsets 0x0, 0x4, 0x8, 0x10, 0x18, 0x20, 0x28, 0x2a, 0x30, 0x38 and the inline name buffer at 0x40, leaving the alignment padding at 0x2C-0x2F and 0x3C-0x3F as uninitialized kernel pool residue",
+        "In patched: inserts memset call at 0x1c0002200 with r8=NameLength+0x42, edx=0, rcx=buffer to zero the entire allocation before any field writes"
+      ],
+      "security_relevant": true,
+      "security_notes": "Uninitialized kernel pool memory disclosure (CWE-908/CWE-200). The BROWSER_NAME structure allocated for browser name registration leaves a 4-byte UNICODE_STRING alignment gap at offset 0x2C-0x2F uninitialized. When the name is later enumerated via EnumNames/BowserEnumerateNamesInDomain, the worker EnumerateNamesTransportNameWorker copies the 16-byte name UNICODE_STRING at offsets 0x28-0x37 (including the 0x2C-0x2F gap) into each output record, which is then forwarded to the user-mode output buffer, leaking 4 bytes of paged-pool residue per enumerated name. The bytes are a fixed structure-padding window, not a specific pointer or object field. This function is also reached from the internal browser routines BowserBecomeMaster (0x1c0016c3c) and UpdateStatus (0x1c001aa38); the directly user-reachable variant is AddBowserName via the IOCTL dispatch.",
+      "assembly_diff": "UNPATCHED (BowserAllocateName @ 0x1c0017718) — allocation and initialization without zeroing:\n0x1c0017788: movzx   edx, word [rsi]           ; load NameLength from UNICODE_STRING\n0x1c001778b: mov     r8d, 0x6e62424c           ; pool tag 'LBbn'\n0x1c0017791: add     rdx, 0x42                 ; total size = NameLength + 0x42\n0x1c0017795: mov     ecx, edi                  ; PoolType (PagedPool)\n0x1c0017797: call    qword [rel 0x1c000c018]  ; ExAllocatePoolWithTag\n0x1c00177a3: mov     rbx, rax                  ; rbx = allocated buffer\n0x1c00177a6: test    rax, rax\n0x1c00177a9: jne     0x1c00177b5\n; *** MISSING: no memset(rax, 0, NameLength+0x42) here ***\n0x1c00177b5: mov     dword [rax], 0x400006     ; offset 0x00: flags — but rest uninitialized\n0x1c00177bb: lea     rdx, [rel 0x1c00094a0]    ; BowserNameHead\n0x1c00177c2: mov     dword [rax+0x4], edi      ; offset 0x04: refcount\n0x1c00177c5: lea     rcx, [rbx+0x8]            ; offset 0x08: list Flink\n0x1c00177c9: add     rax, 0x18                 ; offset 0x18\n0x1c00177cd: mov     qword [rax+0x8], rax      ; self-referential\n0x1c00177d1: mov     qword [rax], rax          ; self-referential\n0x1c00177d4: mov     dword [rbx+0x38], r15d    ; offset 0x38: domain info\n; padding at offsets 0x2C-0x2F and 0x3C-0x3F is NEVER written → uninitialized\n\nPATCHED (BowserAllocateName @ 0x1c0017738) — adds memset before field writes:\n0x1c00177c3: mov     rbx, rax                  ; rbx = allocated buffer\n0x1c00177c6: test    rax, rax\n0x1c00177c9: jne     0x1c00177d5\n0x1c00177d5: movzx   r8d, word [rsi]           ; NameLength\n0x1c00177d9: xor     edx, edx                  ; fill = 0\n0x1c00177db: add     r8, 0x42                  ; total size\n0x1c00177df: mov     rcx, rbx                  ; buffer pointer\n0x1c00177e2: call    0x1c0002200               ; memset(buffer, 0, NameLength+0x42)\n0x1c00177e7: mov     dword [rbx], 0x400006     ; fields initialized from a zeroed base\n0x1c00177ed: lea     rax, [rbx+0x18]\n0x1c00177f1: mov     dword [rbx+0x4], edi"
+    },
+    {
+      "name": "AsyncCreateTransportName",
+      "similarity": 0.9903,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Identical fix pattern as BowserAllocateName: added memset(rax_2, 0, *(arg1+0x20) + 0x42) after ExAllocatePoolWithTag allocation",
+        "Unpatched version allocates BROWSER_NAME structure via ExAllocatePoolWithTag without zeroing, leaving uninitialized fields between the selectively-written offsets"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same uninitialized pool memory disclosure as BowserAllocateName, triggered via the transport name creation path. The allocation uses the name length from arg1+0x20 (the transport's UNICODE_STRING Length) plus 0x42 for the structure overhead. Same structure layout, same uninitialized gaps, same EnumNames disclosure path.",
+      "assembly_diff": "UNPATCHED (AsyncCreateTransportName @ 0x1c000f4d0):\n0x1c000f532: movzx   edx, word [rdi+0x20]      ; NameLength from transport's UNICODE_STRING\n0x1c000f536: lea     ecx, [rax+0x1]            ; PoolType\n0x1c000f539: add     rdx, 0x42                 ; total size\n0x1c000f53d: mov     r8d, 0x6e62424c           ; 'LBbn'\n0x1c000f543: call    qword [rel 0x1c000c018]  ; ExAllocatePoolWithTag\n; *** MISSING memset ***\n0x1c000f55b: mov     dword [rax], 0x400006     ; field init begins without zeroing\n0x1c000f568: mov     dword [rax+0x4], 0x1\n...\n\nPATCHED — adds memset before field writes:\n0x1c000f55b: movzx   r8d, word [rdi+0x20]\n0x1c000f560: xor     edx, edx\n0x1c000f562: add     r8, 0x42\n0x1c000f566: mov     rcx, rax\n0x1c000f569: call    0x1c0002200               ; memset\n0x1c000f56e: mov     dword [rbx], 0x400006\n..."
+    },
+    {
+      "name": "AddBowserName",
+      "similarity": 0.9921,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Identical fix: added memset(P_2, 0, SourceString + 0x42) after ExAllocatePoolWithTag in the AddBowserName IOCTL handler path",
+        "This is the most directly attacker-reachable variant — AddBowserName is called directly from the BowserCommonDeviceIoControlFile IOCTL dispatch (case at 0x1c00111e1)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same uninitialized pool disclosure, but this function is directly invoked from the IOCTL dispatch table, making it the most direct attacker entry point. The attacker calls the AddBowserName FSCTL (device type 0x13, METHOD_NEITHER) to create a browser name with the uninitialized structure, then calls the EnumNames FSCTL to read it back, leaking kernel pool memory.",
+      "assembly_diff": "UNPATCHED (AddBowserName @ 0x1c0012330):\nExAllocatePoolWithTag(PagedPool, SourceString + 0x42, 0x6e62424c)\n; *** MISSING memset ***\n*P_2 = 0x400006                              ; offset 0x00 only\n*(P_2 + 4) = 1                               ; offset 0x04 only\n*(P_2 + 0x20) = P_2 + 0x18\n*(P_2 + 0x18) = P_2 + 0x18\n*(P + 0x38) = r14                            ; offset 0x38 only\n; padding gaps at 0x2C-0x2F and 0x3C-0x3F\n\nPATCHED:\nmemset(P_2, 0, SourceString + 0x42)         ; zero entire allocation\n*P = 0x400006                                ; then initialize fields\n..."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "BowserAllocateName / AddBowserName / AsyncCreateTransportName",
+      "entry_point": "IOCTL via \\Device\\LanmanDatagramReceiver. BowserCommonDeviceIoControlFile computes IoControlCode - 0x130007 at 0x1c0010f86 and jumps through the switch table at 0x1c0010fa9. AddBowserName is dispatched at case 0x13000C (block @ 0x1c00111e1, call @ 0x1c0011253). EnumNames disclosure sink is dispatched at case 0x130017 (block @ 0x1c0011197, call @ 0x1c00111bf).",
+      "call_chain": [
+        "NtDeviceIoControlFile / DeviceIoControl on \\Device\\LanmanDatagramReceiver",
+        "BowserFsdDeviceIoControlFile (0x1c0010ad0) → IRP_MJ_DEVICE_CONTROL dispatch",
+        "BowserCommonDeviceIoControlFile (0x1c0010b60) → IOCTL switch dispatch",
+        "AddBowserName (0x1c0012330) → ExAllocatePoolWithTag without memset → uninitialized BROWSER_NAME",
+        "EnumNames (0x1c0019e50) → BowserEnumerateNamesInDomain (0x1c0017a7c) → EnumerateNamesTransportNameWorker (0x1c0017bf0) copies the name UNICODE_STRING (0x28-0x37, incl. the 0x2C-0x2F gap) to the user output buffer"
+      ],
+      "vulnerability_class": "Uninitialized Memory / Kernel Information Disclosure (CWE-908, CWE-200)",
+      "description": "The Windows Browser driver (bowser.sys) allocates the BROWSER_NAME structure via ExAllocatePoolWithTag(PagedPool, NameLength + 0x42, 'LBbn') in three functions (BowserAllocateName, AsyncCreateTransportName, AddBowserName) but does NOT zero the allocation before initializing select fields. Two gaps are never written: the 4-byte UNICODE_STRING alignment padding at 0x2C-0x2F and the 4-byte gap at 0x3C-0x3F. When a name is later enumerated via the EnumNames IOCTL handler → BowserEnumerateNamesInDomain → EnumerateNamesTransportNameWorker, the worker copies the 16-byte name UNICODE_STRING at offsets 0x28-0x37 (movups/movdqu at 0x1c0017cb3-0x1c0017cb7) into each output record; that copy carries the uninitialized 0x2C-0x2F bytes, which are forwarded to the user-mode output buffer. The 0x3C-0x3F gap is not read by the enumeration path and is not shown to reach user mode. The demonstrable leak is 4 bytes of paged-pool residue per enumerated name at a fixed structure-padding offset. The patch adds memset(buffer, 0, NameLength + 0x42) immediately after each allocation, zeroing the disclosed bytes. Reaching the AddBowserName case requires opening \\Device\\LanmanDatagramReceiver and passing BowserSecurityCheck (bypassed for system threads); the EnumNames case is not gated by BowserSecurityCheck in its own dispatch block.",
+      "trigger_conditions": "1. Open a handle to \\Device\\LanmanDatagramReceiver (device-object ACL applies). 2. Send IoControlCode 0x13000C, which the dispatcher routes to the AddBowserName case (gated by BowserSecurityCheck at 0x1c001123e unless the caller is a system thread). The UNICODE_STRING Length in the input determines the allocation size (Length + 0x42). 3. Send IoControlCode 0x130017, which the dispatcher routes to the EnumNames case, enumerating names back to a user-mode buffer. 4. In the unpatched build, the 4 bytes at each output record's +4 offset (copied from BROWSER_NAME offset 0x2C-0x2F) contain paged-pool residue; in the patched build they read as zero.",
+      "primitive": "Kernel paged-pool information disclosure. The disclosure is a fixed 4-byte window per enumerated name (the UNICODE_STRING alignment padding at 0x2C-0x2F); the leak size is independent of NameLength. The bytes hold whatever previously occupied that offset in the reused pool block. They sit at a structure-padding offset rather than a specific pointer or object field, so no reliable pointer disclosure is demonstrated from this position.",
+      "evidence": "UNPATCHED BowserAllocateName pseudocode (from diff_function_diff):\n    if (rax_2)\n    {\n        // 0x1c00177b5\n        *rax_2 = 0x400006;                    // ONLY writes offset 0\n        *(rax_2 + 4) = 1;                     // ONLY writes offset 4\n        *(rax_2 + 0x20) = rax_2 + 0x18;       // ONLY writes offset 0x20\n        *(rax_2 + 0x18) = rax_2 + 0x18;       // writes offset 0x18\n        *(rbx_1 + 0x38) = r15;                // writes offset 0x38\n        // NO memset — padding at offsets 0x2C-0x2F and 0x3C-0x3F is UNINITIALIZED\n        ...\n    }\n\nPATCHED BowserAllocateName pseudocode:\n    if (rax_2)\n    {\n        memset(rbx_1, 0, *arg1 + 0x42);       // *** NEW: zeros entire allocation ***\n        *rbx_1 = 0x400006;\n        *(rbx_1 + 4) = 1;\n        *(rbx_1 + 0x20) = rbx_1 + 0x18;\n        *(rbx_1 + 0x18) = rbx_1 + 0x18;\n        *(rbx_1 + 0x38) = r15;\n        ...\n    }",
+      "assembly": "BowserAllocateName @ 0x1c0017718 (UNPATCHED) — vulnerable allocation and field initialization:\n\n0x1c0017788  movzx   edx, word [rsi]           ; edx = NameLength (from UNICODE_STRING.Length)\n0x1c001778b  mov     r8d, 0x6e62424c           ; r8d = pool tag 'LBbn'\n0x1c0017791  add     rdx, 0x42                 ; rdx = NameLength + 0x42 (total alloc size)\n0x1c0017795  mov     ecx, edi                  ; ecx = PoolType\n0x1c0017797  call    qword [rel 0x1c000c018]  ; ExAllocatePoolWithTag → rax = buffer\n0x1c001779e  nop     dword [rax+rax]\n0x1c00177a3  mov     rbx, rax                  ; rbx = allocated buffer\n0x1c00177a6  test    rax, rax\n0x1c00177a9  jne     0x1c00177b5               ; if allocated, go to init\n; ===== NO memset HERE — this is the vulnerability =====\n0x1c00177b5  mov     dword [rax], 0x400006     ; [buf+0x00] = flags (4 bytes written)\n0x1c00177bb  lea     rdx, [rel 0x1c00094a0]    ; rdx = &BowserNameHead\n0x1c00177c2  mov     dword [rax+0x4], edi      ; [buf+0x04] = refcount (4 bytes)\n0x1c00177c5  lea     rcx, [rbx+0x8]            ; rcx = &buf[0x08]\n0x1c00177c9  add     rax, 0x18                 ; rax = &buf[0x18]\n0x1c00177cd  mov     qword [rax+0x8], rax      ; [buf+0x20] = &buf[0x18]\n0x1c00177d1  mov     qword [rax], rax          ; [buf+0x18] = &buf[0x18]\n0x1c00177d4  mov     dword [rbx+0x38], r15d    ; [buf+0x38] = domain (4 bytes)\n0x1c00177d8  mov     rax, qword [rel 0x1c00094a0] ; rax = BowserNameHead\n0x1c00177df  cmp     qword [rax+0x8], rdx      ; list integrity check\n0x1c00177e3  je      0x1c00177ec\n; Insert into BowserNameHead linked list:\n0x1c00177ec  mov     qword [rcx], rax          ; [buf+0x08] = Flink\n0x1c00177ef  lea     r13, [rbx+0x28]           ; r13 = &buf[0x28] (UNICODE_STRING name field)\n0x1c00177f3  mov     qword [rcx+0x8], rdx      ; [buf+0x10] = Blink\n0x1c00177f7  mov     rdx, rsi                  ; rdx = &NameString\n0x1c00177fa  mov     qword [rax+0x8], rcx      ; BowserNameHead->Blink = &buf[0x08]\n0x1c00177fe  lea     rax, [rbx+0x40]           ; rax = &buf[0x40] (inline name buffer)\n0x1c0017802  mov     qword [rel 0x1c00094a0], rcx ; BowserNameHead = &buf[0x08]\n0x1c0017809  mov     rcx, r13                  ; rcx = &buf[0x28]\n0x1c001780c  mov     qword [rbx+0x30], rax     ; [buf+0x30] = &buf[0x40] (name buffer ptr)\n0x1c0017810  movzx   eax, word [rsi]           ; eax = NameLength\n0x1c0017813  add     ax, 0x2                   ; name length + null terminator\n0x1c0017817  mov     word [rbx+0x2a], ax       ; [buf+0x2a] = name max length\n; PADDING AT OFFSETS 0x2C-0x2F AND 0x3C-0x3F\n; IS NEVER WRITTEN → CONTAINS STALE KERNEL POOL RESIDUE",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "bowser!BowserAllocateName",
+            "address": "0x1c0017718",
+            "why": "Break on the vulnerable allocation function. After the ExAllocatePoolWithTag call at 0x1c0017797 returns (step to 0x1c00177a3), inspect rbx/rax to see the newly allocated buffer. Then step to 0x1c00177b5 to confirm no memset was called — the buffer contains stale pool data. Watch rsi (arg1) which points to the UNICODE_STRING containing the NameLength."
+          },
+          {
+            "symbol": "bowser!AddBowserName",
+            "address": "0x1c0012330",
+            "why": "This is the most directly attacker-reachable path — called from the IOCTL dispatch at 0x1c0011253. Break here when the AddBowserName FSCTL is sent. arg3+0x3c contains SourceString (the name), arg3+0x38 contains the domain identifier. The ExAllocatePoolWithTag call allocates SourceString.Length + 0x42 bytes."
+          },
+          {
+            "symbol": "bowser!BowserCommonDeviceIoControlFile",
+            "address": "0x1c0010b60",
+            "why": "The IOCTL dispatch entry point. r15/var_f8 holds the IoControlCode from the IRP stack location. The switch at 0x1c0010fa9 dispatches based on (IoControlCode - 0x130007). Case for AddBowserName jumps to 0x1c00111e1; case for EnumNames jumps to 0x1c0011197."
+          },
+          {
+            "symbol": "bowser!EnumNames",
+            "address": "0x1c0019e50",
+            "why": "The disclosure sink. This function calls BowserEnumerateNamesInDomain which walks the BowserNameHead linked list and copies each BROWSER_NAME structure's data to the user output buffer. The uninitialized gaps in the structure are copied verbatim to user mode."
+          }
+        ],
+        "watch": [
+          "rsi (in BowserAllocateName) — pointer to UNICODE_STRING; word [rsi] = NameLength; this determines allocation size (NameLength + 0x42)",
+          "rbx (after 0x1c00177a3) — the newly allocated, uninitialized BROWSER_NAME buffer; dump bytes at rbx+0x2C and rbx+0x3C to see leaked pool residue",
+          "var_f8/r15 (in BowserCommonDeviceIoControlFile) — the IoControlCode; must be in range 0x130007–0x130097 for valid dispatch",
+          "0x1c00094a0 (BowserNameHead global) — the linked list head; all allocated BROWSER_NAME structures are inserted here and enumerable via EnumNames"
+        ],
+        "key_offsets": [
+          "0x1c0017797 — ExAllocatePoolWithTag call in BowserAllocateName (via [0x1c000c018])",
+          "0x1c00177b5 — Field initialization starts here WITHOUT prior memset (vulnerability site in unpatched)",
+          "Patched equivalent: memset call to 0x1c0002200 is inserted at 0x1c00177e2 (between 0x1c00177c9 and the field init block)",
+          "0x1c0017cb3-0x1c0017cb7 — EnumerateNamesTransportNameWorker copies the 16-byte name UNICODE_STRING (0x28-0x37, carrying the 0x2C-0x2F gap) into the output record",
+          "0x1c0011253 — Call to AddBowserName from IOCTL dispatch (most direct attacker path)",
+          "0x1c00111bf — Call to EnumNames from IOCTL dispatch (disclosure sink path)",
+          "0x1c0010f86 — lea eax,[r15-130007h]; switch index and range check (145 cases)",
+          "0x1c0010fa9 — Indirect switch jump through the compiler-generated table"
+        ],
+        "trigger_setup": "1. Open \\Device\\LanmanDatagramReceiver via NtCreateFile/ZwCreateFile (device-object ACL applies). 2. Send IoControlCode 0x13000C, which the dispatcher routes to the AddBowserName case (gated by BowserSecurityCheck at 0x1c001123e unless the caller is a system thread); this allocates the uninitialized BROWSER_NAME structure. 3. Send IoControlCode 0x130017, which the dispatcher routes to the EnumNames case, enumerating registered names into an output buffer. 4. Parse the returned records; the 4 bytes at each record's +4 offset (from BROWSER_NAME offset 0x2C-0x2F) hold leaked paged-pool residue.",
+        "expected_observation": "In the unpatched binary, each enumeration record returned via EnumNames contains non-zero paged-pool residue in the 4 bytes at record offset +4 (copied from BROWSER_NAME offset 0x2C-0x2F). In the patched binary those same 4 bytes read as 0x00 due to the added memset. A kernel debugger will show the buffer at rbx immediately after the ExAllocatePoolWithTag return (before 0x1c00177b5) containing residual data at rbx+0x2C in the unpatched version.",
+        "notes": "Pool tag is 'LBbn' (0x6e62424c), allocated from PagedPool. The allocation size grows with the name length, but the inline name buffer is fully written by RtlCopyUnicodeString, so the leaked bytes are the fixed 4-byte UNICODE_STRING padding at 0x2C-0x2F regardless of name length. A second 4-byte gap at 0x3C-0x3F is uninitialized in the allocation but is not read by the enumeration path and is not shown to reach user mode. IOCTL codes are read from the switch table cases in BowserCommonDeviceIoControlFile: 0x13000C dispatches to the AddBowserName case and 0x130017 to the EnumNames case (switch computed at 0x1c0010f86, indirect jump at 0x1c0010fa9)."
+      }
+    }
+  ],
+  "summary": "The patch fixes an uninitialized kernel paged-pool memory disclosure (CWE-908/CWE-200) in the Windows Browser driver (bowser.sys). Three functions — BowserAllocateName, AsyncCreateTransportName, and AddBowserName — allocate the BROWSER_NAME structure via ExAllocatePoolWithTag(PagedPool, NameLength + 0x42, 'LBbn') but do not zero the allocation before initializing their fields, leaving a 4-byte UNICODE_STRING alignment gap at offset 0x2C-0x2F uninitialized. When a name is enumerated via the EnumNames IOCTL handler (BowserEnumerateNamesInDomain → EnumerateNamesTransportNameWorker), the worker copies the 16-byte name UNICODE_STRING at 0x28-0x37 into each output record, carrying the 0x2C-0x2F gap to the user-mode buffer and leaking 4 bytes of paged-pool residue per enumerated name. The fix adds a memset(buffer, 0, NameLength + 0x42) call immediately after each allocation. A PoC would open \\Device\\LanmanDatagramReceiver, send IoControlCode 0x13000C (AddBowserName case) to create a name with the uninitialized structure, then send IoControlCode 0x130017 (EnumNames case) to read back the leaked bytes."
+}

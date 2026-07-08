@@ -1,0 +1,352 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9805,
+    "matched": 1098,
+    "changed": 14,
+    "identical": 1084,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdAddConnectedReference",
+      "address_unpatched": "0x1C0047C0C",
+      "similarity": 0.2164,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds an EvaluateCurrentState(&g_Feature_3289849145_60513071) check; when enabled, the connected-reference counter update is made atomic with respect to the lock",
+        "When the feature is disabled, the original behavior is preserved",
+        "Part of the in-flight synchronization mechanism drained by AfdTLListenComplete"
+      ],
+      "security_relevant": true,
+      "security_notes": "Part of the feature-gated synchronization change (Finding 1). Gated by g_Feature_3289849145_60513071; original behavior retained when disabled.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdConnect",
+      "address_unpatched": "0x1C0047FD0",
+      "similarity": 0.2511,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Connect/accept dispatch function; changes are primarily offset shifts due to the new endpoint field at +0xf8",
+        "Calls to AfdCreateConnection updated to the patched address",
+        "Several structure field accesses shifted by +8 bytes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLListenComplete",
+      "address_unpatched": "0x1C00597D0",
+      "address_patched": "0x1C005A960",
+      "similarity": 0.2987,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: after overwriting [rbx+0x10]/[rbx+0x18], adds a spin-wait 'while (*(rbx+0xf8)) _mm_pause()' before invoking the old function pointer, gated by EvaluateCurrentState(&g_Feature_3289849145_60513071)",
+        "UNPATCHED: overwrites [rbx+0x10] (context) and [rbx+0x18] (function pointer) then immediately invokes the old function pointer via the CFG guard dispatch, without draining in-flight operations",
+        "The racy code is in the success path (status >= 0); the status < 0 error path takes a spinlock and is unchanged in substance",
+        "Endpoint field inserted at +0xf8 shifts later offsets (e.g. 0x158 -> 0x160)"
+      ],
+      "security_relevant": true,
+      "security_notes": "RACE CONDITION (Finding 1), feature-gated: the unpatched AfdTLListenComplete swaps the endpoint dispatch function pointer ([rbx+0x18]) and context ([rbx+0x10]) and invokes the old pointer without draining concurrent TDI I/O-control operations. The patch adds a per-endpoint in-flight counter at [rbx+0xf8], maintained by the endpoint dispatch helpers and spin-waited on here after the swap and before the old-pointer invocation. Both the counter maintenance and the wait are gated by g_Feature_3289849145_60513071 with the original no-wait behavior retained when disabled.",
+      "assembly_diff": "UNPATCHED AfdTLListenComplete @ 0x1C00597D0 (success path):\n00000001C005982A  mov     rax, [rbx+18h]                 ; old function pointer\n00000001C005982E  lea     rdx, AfdTLDontCareIOCompletion\n00000001C0059835  mov     rcx, [rbx+10h]                 ; old context\n00000001C0059843  mov     [rbx+10h], r15                 ; overwrite context (no wait)\n00000001C0059847  mov     [rbx+18h], r14                 ; overwrite function ptr (no wait)\n00000001C0059850  mov     rax, [rax]\n00000001C0059853  call    cs:__guard_dispatch_icall_fptr ; CFG-guarded indirect call\n\nPATCHED AfdTLListenComplete @ 0x1C005A960 (success path):\n00000001C005A9BA  mov     r12, [rbx+10h]                 ; old context\n00000001C005A9BE  lea     rcx, g_Feature_3289849145_60513071_FeatureDescriptorDetails\n00000001C005A9C5  mov     r13, [rbx+18h]                 ; old function pointer\n00000001C005A9D5  mov     [rbx+10h], r15\n00000001C005A9D9  mov     [rbx+18h], r14\n00000001C005A9DD  call    EvaluateCurrentState\n00000001C005A9E2  test    eax, eax\n00000001C005A9E4  jz      short loc_1C005A9F6            ; feature off -> skip wait\n00000001C005A9E8  pause\n00000001C005A9EA  mov     rax, [rbx+0F8h]                ; in-flight counter\n00000001C005A9F1  test    rax, rax\n00000001C005A9F4  jnz     short loc_1C005A9E8            ; spin until drained\n00000001C005AA0C  mov     rax, [r13+0]\n00000001C005AA13  call    cs:__guard_dispatch_icall_fptr"
+    },
+    {
+      "name": "AfdTLConnectEventHandler",
+      "address_unpatched": "0x1C0056800",
+      "similarity": 0.3608,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function with mostly offset shifts and callee address changes",
+        "Structure accesses shifted by +8 in patched version due to the new +0xf8 field"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSetInformation",
+      "address_unpatched": "0x1C00543F0",
+      "similarity": 0.6739,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function with offset shifts and callee address changes",
+        "No new security checks added"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLDelayAcceptListenComplete",
+      "address_unpatched": "0x1C0068280",
+      "similarity": 0.7272,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Dispatcher: updated callee addresses to the relocated patched targets"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdTLPauseUnPause",
+      "address_unpatched": "0x1C0058550",
+      "similarity": 0.8123,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: adds EvaluateCurrentState(&g_Feature_3289849145_60513071) gate; when enabled, increments/decrements the endpoint in-flight counter at +0xf8 around the TDI dispatch call",
+        "UNPATCHED: performs the TDI dispatch without any in-flight counter",
+        "Structure offsets shifted by +8 bytes due to the new +0xf8 field"
+      ],
+      "security_relevant": true,
+      "security_notes": "Part of the feature-gated synchronization change (Finding 1). Increments the endpoint in-flight counter drained by AfdTLListenComplete.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdQueryCompartmentId",
+      "address_unpatched": "0x1C00357D0",
+      "similarity": 0.8946,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: adds EvaluateCurrentState(&g_Feature_3289849145_60513071) gate with in-flight counter increment/decrement at endpoint +0xf8 around the TDI dispatch call",
+        "UNPATCHED: performs the TDI dispatch without an in-flight counter"
+      ],
+      "security_relevant": true,
+      "security_notes": "Part of the feature-gated synchronization change (Finding 1). The counter at endpoint +0xf8 is the same one drained in AfdTLListenComplete.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdDoDatagramConnect",
+      "address_unpatched": "0x1C0059588",
+      "address_patched": "0x1C005A358",
+      "similarity": 0.9056,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: when EvaluateCurrentState(&g_Feature_566223161_61092118) is enabled, caches (BYTE1(*(rbx+8)) & 1) (bit 0x100) BEFORE ObfDereferenceObject(a1) and uses the cached value for the ExFreePoolWithTag decision",
+        "UNPATCHED: reads *(rbx+8) & 0x100 AFTER ObfDereferenceObject(a1)",
+        "When the feature is disabled, the patched build retains the original post-dereference read",
+        "Structure offsets shifted by +8 bytes"
+      ],
+      "security_relevant": true,
+      "security_notes": "Feature-gated defensive lifetime hardening (Finding 2): in the unpatched cleanup path, ObfDereferenceObject(a1) is called then *(rbx+8) is read to decide whether to free MasterIrp, where rbx = *(a1+0x18). If the dereference frees the allocation backing rbx, the read would touch freed memory. Whether the dereference actually frees that allocation is not demonstrable from these binaries. Gated by g_Feature_566223161_61092118 with the original read retained when disabled.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCreateConnection",
+      "address_unpatched": "0x1C00491B0",
+      "address_patched": "0x1C0049240",
+      "similarity": 0.9365,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "VALIDATION FIX: patched REMOVES the EvaluateCurrentState(&g_Feature_1484999993_59735560) gate that wrapped the device-consistency validation",
+        "UNPATCHED: when that feature is disabled, the ObReferenceObjectByHandle + IoGetDeviceAttachmentBaseRef comparison is skipped, allowing a handle from a different device to be associated with the AFD connection",
+        "Patched always performs the device-consistency validation whenever a handle is supplied"
+      ],
+      "security_relevant": true,
+      "security_notes": "Device-consistency validation made unconditional (Finding 3). The unpatched build gates the check that the supplied handle's device stack matches the connection's transport device behind g_Feature_1484999993_59735560; when disabled the check is skipped. The patched build removes the gate. The gate symbol is absent from the patched binary.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCreateConnection_Old",
+      "address_unpatched": "0x1C0015AF8",
+      "similarity": 0.96,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same gate removal as AfdCreateConnection: the EvaluateCurrentState(&g_Feature_1484999993_59735560) wrapper around the device-consistency validation is removed",
+        "Patched version always performs ObReferenceObjectByHandle + IoGetDeviceAttachmentBaseRef comparison"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same device-consistency validation change as AfdCreateConnection (Finding 3).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCleanupCore",
+      "address_unpatched": "0x1C004A560",
+      "similarity": 0.9646,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Endpoint cleanup/teardown; changes are offset shifts (+8 bytes) and callee address updates",
+        "Accesses shifted from the 0x158 to the 0x160 region consistent with the new +0xf8 field"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetInformation",
+      "address_unpatched": "0x1C0036010",
+      "similarity": 0.9717,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Offset shifts and callee address changes throughout",
+        "No new security checks added"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetAddress",
+      "address_unpatched": "0x1C0035A00",
+      "similarity": 0.9733,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PATCHED: adds EvaluateCurrentState(&g_Feature_3289849145_60513071) gate with in-flight counter increment/decrement at endpoint +0xf8 around the TDI dispatch call in the recv paths",
+        "UNPATCHED: performs the TDI dispatch without an in-flight counter"
+      ],
+      "security_relevant": true,
+      "security_notes": "Part of the feature-gated synchronization change (Finding 1). Increments the endpoint in-flight counter drained by AfdTLListenComplete.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-362",
+      "function": "AfdTLListenComplete",
+      "address_unpatched": "0x1C00597D0",
+      "address_patched": "0x1C005A960",
+      "delivery": "feature-gated (staged) behind g_Feature_3289849145_60513071; original no-wait behavior retained when disabled",
+      "entry_point": "AFD IOCTL dispatch via NtDeviceIoControlFile on \\Device\\Afd (TDI listen-completion path)",
+      "call_chain": [
+        "TDI listen completion -> AfdTLListenComplete (success path, status >= 0)",
+        "In-flight counter maintained by endpoint dispatch helpers AfdGetAddress (0x1C0035A00), AfdQueryCompartmentId (0x1C00357D0), AfdTLPauseUnPause (0x1C0058550) and AfdAddConnectedReference (0x1C0047C0C), reachable from AFD IOCTL dispatch"
+      ],
+      "vulnerability_class": "race condition / TOCTOU on endpoint dispatch-pointer swap",
+      "description": "In the success path (IRP status >= 0), the unpatched AfdTLListenComplete loads the endpoint's dispatch context ([rbx+0x10]) and function pointer ([rbx+0x18]), overwrites both with the new values, and immediately invokes the old function pointer through the CFG guard dispatch, without draining TDI I/O-control operations that may be in flight on the same endpoint. The patch adds a per-endpoint in-flight counter at [rbx+0xf8], incremented/decremented by the endpoint dispatch helpers, and makes AfdTLListenComplete spin-wait for it to reach zero after the swap and before the old-pointer invocation. The counter maintenance and the wait are gated by EvaluateCurrentState(&g_Feature_3289849145_60513071); when the feature is disabled the original no-wait behavior is retained.",
+      "trigger_conditions": "1) Create an AFD endpoint via \\Device\\Afd. 2) Issue TDI I/O-control operations reaching the endpoint dispatch helpers so the in-flight counter at endpoint +0xf8 is non-zero (only meaningful when g_Feature_3289849145_60513071 is enabled). 3) Concurrently drive a TDI listen completion so AfdTLListenComplete runs with status >= 0, swapping the endpoint dispatch pointers. Without the drain, the old function pointer is invoked while an in-flight dispatch is still running on the same endpoint.",
+      "primitive": "Kernel data race on the endpoint dispatch fields ([rbx+0x10]/[rbx+0x18]) with respect to concurrent TDI operations. The indirect call is CFG-guarded (__guard_dispatch_icall_fptr). No exploitation primitive beyond a potential race-induced fault is established from these binaries; the fix is feature-gated.",
+      "evidence": "UNPATCHED AfdTLListenComplete success path swaps [rbx+0x10]/[rbx+0x18] and invokes the old pointer with no drain (see assembly). PATCHED adds, gated by EvaluateCurrentState(&g_Feature_3289849145_60513071):\n    while (*(rbx + 0xf8) != 0)\n        _mm_pause();\nbefore the guarded indirect call.",
+      "assembly": "UNPATCHED AfdTLListenComplete @ 0x1C00597D0 (success path):\n00000001C005982A  mov     rax, [rbx+18h]                 ; old function pointer\n00000001C005982E  lea     rdx, AfdTLDontCareIOCompletion\n00000001C0059835  mov     rcx, [rbx+10h]                 ; old context\n00000001C0059843  mov     [rbx+10h], r15                 ; overwrite context (no wait)\n00000001C0059847  mov     [rbx+18h], r14                 ; overwrite function ptr (no wait)\n00000001C0059850  mov     rax, [rax]\n00000001C0059853  call    cs:__guard_dispatch_icall_fptr ; CFG-guarded indirect call\n\nPATCHED AfdTLListenComplete @ 0x1C005A960 (success path):\n00000001C005A9BA  mov     r12, [rbx+10h]                 ; old context\n00000001C005A9BE  lea     rcx, g_Feature_3289849145_60513071_FeatureDescriptorDetails\n00000001C005A9C5  mov     r13, [rbx+18h]                 ; old function pointer\n00000001C005A9D5  mov     [rbx+10h], r15\n00000001C005A9D9  mov     [rbx+18h], r14\n00000001C005A9DD  call    EvaluateCurrentState\n00000001C005A9E2  test    eax, eax\n00000001C005A9E4  jz      short loc_1C005A9F6            ; feature off -> skip wait\n00000001C005A9E8  pause\n00000001C005A9EA  mov     rax, [rbx+0F8h]                ; in-flight counter\n00000001C005A9F1  test    rax, rax\n00000001C005A9F4  jnz     short loc_1C005A9E8            ; spin until drained\n00000001C005AA0C  mov     rax, [r13+0]\n00000001C005AA13  call    cs:__guard_dispatch_icall_fptr",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched.sys!AfdTLListenComplete",
+            "address": "0x1C00597D0",
+            "why": "Entry. rbx (set at 0x1C005980C from [r10+0x18]) is the endpoint. ebp is the IRP status; must be >= 0 for the success path. Inspect [rbx+0x10]/[rbx+0x18] before and after the swap at 0x1C0059843/0x1C0059847."
+          },
+          {
+            "symbol": "afd_unpatched.sys!AfdTLListenComplete+0x5a",
+            "address": "0x1C005982A",
+            "why": "Loads the old function pointer from [rbx+0x18]; start of the unsynchronized region."
+          },
+          {
+            "symbol": "afd_unpatched.sys!AfdTLListenComplete+0x83",
+            "address": "0x1C0059853",
+            "why": "The CFG-guarded indirect call through the old function pointer; end of the unsynchronized region."
+          }
+        ],
+        "watch": [
+          "rbx = AFD endpoint structure (loaded at 0x1C005980C)",
+          "rbx+0x10 = endpoint dispatch context (overwritten at 0x1C0059843 with r15)",
+          "rbx+0x18 = endpoint dispatch function pointer (overwritten at 0x1C0059847 with r14)",
+          "rbx+0xf8 = in-flight counter (added in patch; spin-waited before the old-pointer invocation)",
+          "ebp = IRP status (must be >= 0 to take the success path)"
+        ],
+        "key_offsets": [
+          "0x1C0059824: 'js' to the error path when status < 0; the race is in the fall-through success path",
+          "0x1C0059843/0x1C0059847: overwrite context/function pointer with no drain",
+          "0x1C0059853: 'call cs:__guard_dispatch_icall_fptr' invokes the old pointer",
+          "PATCHED equivalent adds 'while (*(rbx+0xf8)) pause' before the call, gated by EvaluateCurrentState(&g_Feature_3289849145_60513071)"
+        ],
+        "trigger_setup": "1) Open \\Device\\Afd and create an AFD endpoint. 2) Issue TDI I/O-control operations reaching the endpoint dispatch helpers so the +0xf8 counter is non-zero. 3) From another thread, drive a TDI listen completion so AfdTLListenComplete runs with status >= 0.",
+        "expected_observation": "In the unpatched build the old function pointer is invoked without draining in-flight endpoint operations; the change adds that drain when the feature is enabled.",
+        "notes": "Endpoint fields: +0x10 = dispatch context, +0x18 = dispatch function pointer, +0x30 = spinlock (error path), +0x158/+0x160 = operation state word, +0xf8 = in-flight counter (added in patch). The counter and the wait are gated by g_Feature_3289849145_60513071."
+      }
+    },
+    {
+      "severity": "low",
+      "cwe": "CWE-416",
+      "function": "AfdDoDatagramConnect",
+      "address_unpatched": "0x1C0059588",
+      "address_patched": "0x1C005A358",
+      "delivery": "feature-gated behind g_Feature_566223161_61092118; original post-dereference read retained when disabled",
+      "entry_point": "AFD datagram connect dispatch via NtDeviceIoControlFile on \\Device\\Afd",
+      "call_chain": [
+        "AFD connect IOCTL dispatch -> AfdDoDatagramConnect cleanup/error path (LABEL_42)"
+      ],
+      "vulnerability_class": "TOCTOU / potential use-after-free on a state flag read after ObfDereferenceObject (defensive hardening)",
+      "description": "In the unpatched AfdDoDatagramConnect cleanup path (LABEL_42), ObfDereferenceObject(a1) is called and then *(v5+8) is read (bit 0x100) to decide whether to free MasterIrp with the 'AfdI' pool tag, where v5 = *(a1+0x18). If dropping the reference on a1 were to free the allocation backing v5, the read would touch freed memory. The patched build, when g_Feature_566223161_61092118 is enabled, caches bit 0x100 of *(v5+8) into a byte before the dereference and uses the cached value; when disabled it retains the original post-dereference read. Whether the dereference actually frees the memory backing v5 is not demonstrable from these binaries, so this is characterized as a defensive lifetime hardening rather than a proven reachable use-after-free.",
+      "trigger_conditions": "1) Create an AFD socket and drive a datagram connect that reaches the AfdDoDatagramConnect cleanup path (LABEL_42). 2) The path calls ObfDereferenceObject(a1) and, when the feature is disabled, reads *(v5+8) to decide whether to free MasterIrp.",
+      "primitive": "If the memory backing v5 were freed by the dereference, the flag read would return stale data affecting the MasterIrp free decision. No reachable memory-corruption primitive is established from these binaries.",
+      "evidence": "UNPATCHED AfdDoDatagramConnect LABEL_42:\n    ObfDereferenceObject(a1);\n    if ((*(_DWORD *)(v5 + 8) & 0x100) == 0)         // read after deref\n        ExFreePoolWithTag(MasterIrp, 0x49646641);\n\nPATCHED AfdDoDatagramConnect LABEL_42:\n    if (EvaluateCurrentState(&g_Feature_566223161_61092118))\n        v6 = BYTE1(*(_DWORD *)(v5 + 8)) & 1;        // cache bit 0x100 before deref\n    ObfDereferenceObject(a1);\n    if (EvaluateCurrentState(&g_Feature_566223161_61092118))\n        v28 = (v6 == 0);                            // use cached value\n    else\n        v28 = ((*(_DWORD *)(v5 + 8) & 0x100) == 0); // retained old read\n    if (v28)\n        ExFreePoolWithTag(MasterIrp, 0x49646641);",
+      "assembly": "UNPATCHED AfdDoDatagramConnect LABEL_42 @ 0x1C0064510:\n00000001C0064510  call    cs:__imp_ObfDereferenceObject\n00000001C0064516  test    dword ptr [rbx+8], 100h        ; read after deref\n00000001C006451D  jnz     short loc_1C0064532\n00000001C006451F  mov     edx, 49646641h                 ; 'AfdI'\n00000001C0064524  mov     rcx, r15                       ; MasterIrp\n00000001C0064527  call    cs:__imp_ExFreePoolWithTag\n\nPATCHED AfdDoDatagramConnect LABEL_42 @ 0x1C005A719:\n00000001C005A719  call    EvaluateCurrentState\n00000001C005A720  jz      short loc_1C005A72E\n00000001C005A722  mov     r15d, [rbx+8]                  ; cache before deref\n00000001C005A726  shr     r15d, 8\n00000001C005A72A  and     r15b, 1                        ; bit 0x100\n00000001C005A732  call    cs:__imp_ObfDereferenceObject\n00000001C005A73F  call    EvaluateCurrentState\n00000001C005A748  test    r15b, r15b                     ; use cached value\n00000001C005A74D  test    dword ptr [rbx+8], 100h        ; else retained old read\n00000001C005A756  mov     edx, 49646641h                 ; 'AfdI'\n00000001C005A75E  call    cs:__imp_ExFreePoolWithTag",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched.sys!AfdDoDatagramConnect",
+            "address": "0x1C0059588",
+            "why": "Entry. v5/rbx = *(a1+0x18). Track a1's reference count around ObfDereferenceObject in the LABEL_42 cleanup path and whether the memory backing rbx remains valid after the deref."
+          },
+          {
+            "symbol": "afd_unpatched.sys!AfdDoDatagramConnect(LABEL_42)",
+            "address": "0x1C0064510",
+            "why": "The ObfDereferenceObject call; the following instruction at 0x1C0064516 reads *(rbx+8)."
+          }
+        ],
+        "watch": [
+          "a1 = object passed to ObfDereferenceObject",
+          "rbx = *(a1+0x18); read at 0x1C0064516 after the dereference",
+          "rbx+8 = state flags; bit 0x100 controls the MasterIrp free decision",
+          "r15 = MasterIrp"
+        ],
+        "key_offsets": [
+          "0x1C0064510: ObfDereferenceObject",
+          "0x1C0064516: 'test dword ptr [rbx+8], 100h' - the post-dereference read",
+          "0x1C0064527: ExFreePoolWithTag(MasterIrp, 'AfdI')"
+        ],
+        "trigger_setup": "1) Create an AFD socket. 2) Drive a datagram connect reaching AfdDoDatagramConnect. 3) Force the LABEL_42 cleanup path.",
+        "expected_observation": "Unpatched reads the flag after the dereference; patched caches it before, when the feature is enabled.",
+        "notes": "rbx is derived from a1 at function start (rbx = *(a1+0x18)). Whether a1's dereference frees the allocation backing rbx is not demonstrable from these binaries."
+      }
+    },
+    {
+      "severity": "medium",
+      "cwe": "CWE-20",
+      "function": "AfdCreateConnection",
+      "address_unpatched": "0x1C00491B0",
+      "address_patched": "0x1C0049240",
+      "delivery": "delivered unconditionally (feature gate removed)",
+      "entry_point": "AFD connect IOCTL via NtDeviceIoControlFile on \\Device\\Afd",
+      "call_chain": [
+        "AFD connect IOCTL dispatch -> AfdCreateConnection (and AfdCreateConnection_Old @ 0x1C0015AF8)"
+      ],
+      "vulnerability_class": "conditionally-skipped device-consistency validation (improper input validation)",
+      "description": "In the unpatched AfdCreateConnection, when a file handle is supplied, the device-consistency validation (ObReferenceObjectByHandle on the handle, then IoGetDeviceAttachmentBaseRef comparison against the connection's transport device, returning STATUS_INVALID_PARAMETER on mismatch) is wrapped in EvaluateCurrentState(&g_Feature_1484999993_59735560). When the feature is disabled, the whole validation block is skipped and a handle from a different device stack can be associated with the AFD connection. The patched build removes the gate and always performs the validation when a handle is supplied. The gate symbol g_Feature_1484999993_59735560 appears in the unpatched decompilation of both AfdCreateConnection and AfdCreateConnection_Old and is absent from the patched build.",
+      "trigger_conditions": "1) Open \\Device\\Afd and create a socket. 2) Prepare a file handle whose device stack differs from the AFD transport device. 3) Issue the AFD connect IOCTL supplying that handle. 4) On unpatched systems where g_Feature_1484999993_59735560 is disabled, the device-consistency check is skipped and the handle is accepted; the patched build returns STATUS_INVALID_PARAMETER.",
+      "primitive": "Logic/validation gap allowing a mismatched-device handle to be associated with an AFD connection. Downstream type-confusion consequences are not demonstrated from these binaries.",
+      "evidence": "UNPATCHED AfdCreateConnection (handle supplied):\n    if (EvaluateCurrentState(&g_Feature_1484999993_59735560))  // gate\n    {\n        ObReferenceObjectByHandle(handle, ...);\n        base_a = IoGetDeviceAttachmentBaseRef(*(v13 + 3));\n        base_b = IoGetDeviceAttachmentBaseRef(IoGetRelatedDeviceObject(...));\n        if (base_a != base_b)\n            return STATUS_INVALID_PARAMETER;\n    }\n    // when feature disabled: validation skipped\n\nPATCHED AfdCreateConnection (handle supplied):\n    ObReferenceObjectByHandle(handle, ...);          // no gate\n    base_a = IoGetDeviceAttachmentBaseRef(*(v13 + 3));\n    base_b = IoGetDeviceAttachmentBaseRef(IoGetRelatedDeviceObject(...));\n    if (base_a != base_b)\n        return STATUS_INVALID_PARAMETER;",
+      "assembly": "UNPATCHED AfdCreateConnection gate @ 0x1C00494AD:\n00000001C00494A6  lea     rcx, g_Feature_1484999993_59735560_FeatureDescriptorDetails\n00000001C00494AD  call    EvaluateCurrentState\n00000001C00494B4  jz      loc_1C0049575                  ; feature off -> skip validation\n00000001C00494D3  call    cs:__imp_ObReferenceObjectByHandle\n00000001C0049503  call    cs:__imp_IoGetDeviceAttachmentBaseRef\n\nPATCHED AfdCreateConnection @ 0x1C0049240 performs the validation with no EvaluateCurrentState gate:\n00000001C0049510  call    cs:__imp_ObReferenceObjectByHandle\n00000001C0049567  call    cs:__imp_IoGetDeviceAttachmentBaseRef",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched.sys!AfdCreateConnection+0x2fd",
+            "address": "0x1C00494AD",
+            "why": "The EvaluateCurrentState gate. When it returns 0, the jz at 0x1C00494B4 skips ObReferenceObjectByHandle and the device-match comparison."
+          }
+        ],
+        "watch": [
+          "supplied file handle to associate with the connection",
+          "*(v13 + 3) = the connection's transport device object",
+          "return value of EvaluateCurrentState at 0x1C00494AD - if 0, validation is skipped"
+        ],
+        "key_offsets": [
+          "0x1C00494AD: 'call EvaluateCurrentState' followed by 'jz loc_1C0049575' - the skip in the unpatched build",
+          "In patched AfdCreateConnection this gate is removed"
+        ],
+        "trigger_setup": "1) Open \\Device\\Afd, create a socket. 2) Prepare a file handle from a different device. 3) Issue the AFD connect IOCTL passing the mismatched handle.",
+        "expected_observation": "On unpatched systems with the feature disabled, the handle is accepted without device validation; on patched systems the device mismatch yields STATUS_INVALID_PARAMETER.",
+        "notes": "The same gate removal is present in AfdCreateConnection_Old (0x1C0015AF8)."
+      }
+    }
+  ],
+  "summary": "The patch introduces a synchronization (drain-wait) mechanism around the endpoint dispatch-pointer swap in the TDI listen-completion callback AfdTLListenComplete (unpatched 0x1C00597D0, patched 0x1C005A960), addressing a race condition (CWE-362). The unpatched success path swaps the endpoint dispatch context ([rbx+0x10]) and function pointer ([rbx+0x18]) and invokes the old pointer via the CFG guard dispatch without draining concurrent TDI operations; the patch adds a per-endpoint in-flight counter at [rbx+0xf8], maintained by the dispatch helpers (AfdGetAddress, AfdQueryCompartmentId, AfdTLPauseUnPause, AfdAddConnectedReference) and spin-waited on before the old-pointer invocation, all gated by g_Feature_3289849145_60513071 with the original behavior retained when disabled. The patch also caches a state flag before ObfDereferenceObject in the AfdDoDatagramConnect cleanup path (gated by g_Feature_566223161_61092118; a defensive lifetime hardening whose reachability as a use-after-free is not demonstrable from these binaries), and removes the g_Feature_1484999993_59735560 gate around the device-consistency validation in AfdCreateConnection and AfdCreateConnection_Old, making that validation unconditional."
+}

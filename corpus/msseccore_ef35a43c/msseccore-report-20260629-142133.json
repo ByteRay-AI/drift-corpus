@@ -1,0 +1,211 @@
+{
+  "binaries": {
+    "title": "msseccore.sys - Insufficient required signing level in the kernel-integrity check callback (SecKernelIntegrityCheck)",
+    "id_unpatched": "msseccore_unpatched.sys",
+    "id_patched": "msseccore_patched.sys",
+    "overall_similarity": 0.8982,
+    "matched": 43,
+    "changed": 10,
+    "identical": 33,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "memmove @ 0x1C0001C80",
+      "similarity": 0.2828,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler-optimized memmove/memcpy routine - completely restructured SIMD copy implementation (SSE/AVX prefetch/movntdq paths reorganized) but semantically identical memory copy operation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecKernelIntegrityCheck @ 0x1C00081B8 (-> 0x1C0008178 in patched)",
+      "similarity": 0.931,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Required signing-level constant changed from 0xA000006 to 0xA000008 in the descriptor passed to qword_1C0007008 (an OS-provided kernel-integrity callback)",
+        "Unpatched value 0xA000006: low byte 0x06 = SE_SIGNING_LEVEL_STORE, combined with 0x0A000000 flags/mode bits",
+        "Patched value 0xA000008: low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT, combined with 0x0A000000 flags/mode bits",
+        "The value is written at offset +0x08 of a 0x40-byte descriptor built on the stack (decompiled as v8[1] = 167772166 -> 167772168)",
+        "The descriptor is passed to qword_1C0007008 via the CFG dispatch stub __guard_dispatch_icall_fptr; qword_1C0007008 is captured by SecKernelIntegrityCallback (the driver's ExRegisterCallback routine), not a directly-named kernel export",
+        "All other changes in this function are memset-inlining/zeroing reordering"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched driver requires SE_SIGNING_LEVEL_STORE (0x06) as the signing level in the descriptor passed to the kernel-integrity callback, while the patched build requires SE_SIGNING_LEVEL_MICROSOFT (0x08). Per the documented Windows SE_SIGNING_LEVEL numbering, 0x06 = STORE and 0x08 = MICROSOFT (SE_SIGNING_LEVEL_WINDOWS is 0x0C and SE_SIGNING_LEVEL_WINDOWS_TCB is 0x0E). This numbering is corroborated inside the driver: SecIsWindowsSigned (0x1C000855C) compares against 0x0C via SeCompareSigningLevels. By requiring only the lower Store level, the unpatched integrity check accepts an object signed at Store level where the patched build requires the higher Microsoft level. Reaching this path already requires the caller to have bound through the exported SecBindHost, which enforces a Windows-signing check on the caller, so this constant is an internal defense-in-depth trust gate rather than a first-line boundary.",
+      "assembly_diff": "Key change at unpatched 0x1C0008277 vs patched 0x1C0008239:\n--- unpatched: mov [rbp+57h+var_68], 0A000006h   ; low byte 0x06 = SE_SIGNING_LEVEL_STORE\n+++ patched:   mov [rbp+57h+var_68], 0A000008h   ; low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT\n\nUnpatched descriptor construction and callback dispatch:\n00000001C000826F  mov     [rbp+57h+var_70], 40h            ; Size = 0x40\n00000001C0008277  mov     [rbp+57h+var_68], 0A000006h     ; <-- required signing level, low byte 0x06 = STORE\n00000001C000827F  mov     [rbp+57h+var_60], 80000h        ; flags\n00000001C0008286  mov     [rbp+57h+var_40], r14d          ; binding type (a1)\n00000001C000828A  mov     [rbp+57h+var_3C], 10h\n00000001C0008291  mov     [rbp+57h+var_38], rdi           ; object = a2\n00000001C0008295  test    rdi, rdi\n00000001C0008298  jnz     short loc_1C000829E\n00000001C000829A  mov     [rbp+57h+var_38], rsi           ; fallback object = a3\n00000001C000829E  mov     rax, cs:qword_1C0007008         ; OS integrity callback fn pointer\n00000001C00082A5  lea     rdx, [rbp+57h+var_30]\n00000001C00082A9  lea     rcx, [rbp+57h+var_70]           ; &descriptor\n00000001C00082AD  call    cs:__guard_dispatch_icall_fptr  ; CFG dispatch of qword_1C0007008\n00000001C00082B3  cmp     eax, 0C0000016h                 ; STATUS_MORE_PROCESSING_REQUIRED ?\n00000001C00082B8  jnz     short loc_1C00082C1\n00000001C00082BA  inc     ebx\n00000001C00082BC  cmp     ebx, 5\n00000001C00082BF  jbe     short loc_1C000829E             ; retry up to 5 times"
+    },
+    {
+      "name": "SecCreateKernelClient @ 0x1C0008378",
+      "similarity": 0.9385,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable renaming (rax_1 → s) and removal of unnecessary Seed variable declaration",
+        "All logic identical: allocate struct, zero it, set magic 0x28df01, init rundown protection, query time, generate random, reference object"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecRegisterKernelExtension @ 0x1C00082F0 (-> 0x1C0008304 in patched)",
+      "similarity": 0.9632,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct initialization style change: unpatched uses memset memset then field assignment, patched uses direct field-by-field initialization",
+        "Variable rename rcx_2 → rcx_1",
+        "All logic semantically identical: ExRegisterExtension registration with same parameters"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecValidateDriverFileSignatureLevel @ 0x1C00014C0 (-> 0x1C000169C in patched)",
+      "similarity": 0.9727,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct initialization style change: unpatched uses memset calls (memset), patched uses inline xorps/movups for zeroing",
+        "OBJECT_ATTRIBUTES fields set in different order but with same values",
+        "EcpList access pattern changed from pointer dereference to direct struct access",
+        "All control flow and API calls semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecBindHost",
+      "similarity": 0.9816,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "arg2 stored in rbp register instead of being referenced directly from stack",
+        "Assignment simplification: removed intermediate rax_6 variable, directly clamps rbp = min(arg2, 1)",
+        "All validation checks, lock operations, and logic semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry @ 0x1C000A008 (-> 0x1C000A078 in patched)",
+      "similarity": 0.9826,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added explicit memset call to zero var_144 (0x110 bytes) before RtlGetVersion",
+        "ObjectAttributes initialization reordered (Attributes set earlier)",
+        "All function pointer references adjusted for code layout shift",
+        "Semantically identical initialization sequence"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecCreateDriverValidationKernelEcp @ 0x1C00085FC (-> 0x1C0008560 in patched)",
+      "similarity": 0.9838,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "GUID data pointer changed from data_1c00031c8 to data_1c00031d8 (data layout shift)",
+        "Memset call replaced with inline __builtin_memset",
+        "Variable renaming (rdi → arg1 pattern)",
+        "All FsRtl ECP allocation/insertion logic semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon @ 0x1C0001BCC",
+      "similarity": 0.9871,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added explicit uint32_t cast for intermediate rdx value (uint64_t → uint32_t)",
+        "Stack cookie check helper (__security_check_cookie) relocated from 0x1C0001B50 to 0x1C0001010 (address shift)",
+        "Logic semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecAllocateKernelApcObject @ 0x1C0001878 (-> 0x1C0001884 in patched)",
+      "similarity": 0.9889,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed redundant instruction: 'mov byte [rbx+0x70], 0x0' (zeroing field at offset 0x70)",
+        "This field is already zeroed by the prior memset (memset/memset with size 0xb0) that covers the entire structure",
+        "Stack cookie check function address changed (memset → memset)",
+        "All allocation, initialization, and reference counting logic semantically identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SecKernelIntegrityCheck @ 0x1C00081B8 (patched 0x1C0008178)",
+      "entry_point": "Exported SecBindHost (0x1C00010B0) hands the bound kernel client a callback table containing off_1C0004008 (= &SecDispatchKernelIntegrityCheck) at offset +0x8; invoking that entry reaches SecKernelIntegrityCheck.",
+      "call_chain": [
+        "SecBindHost (0x1C00010B0, exported) validates the caller then writes off_1C0004008[0] into the caller-supplied binding table at +0x8",
+        "off_1C0004008 (.data at 0x1C0004008) = address 0x1C0001650 = SecDispatchKernelIntegrityCheck",
+        "SecDispatchKernelIntegrityCheck (0x1C0001650): sub rsp,0x28; call SecKernelIntegrityCheck; add rsp,0x28; ret",
+        "SecKernelIntegrityCheck (0x1C00081B8): builds descriptor with required signing level, calls qword_1C0007008 via __guard_dispatch_icall_fptr",
+        "qword_1C0007008: OS-provided kernel-integrity callback captured by SecKernelIntegrityCallback (0x1C0001080) via ExRegisterCallback"
+      ],
+      "vulnerability_class": "Improper verification of cryptographic signature / insufficient required signing level (CWE-347)",
+      "description": "SecKernelIntegrityCheck constructs a 0x40-byte descriptor on the stack and passes it to an OS-provided kernel-integrity callback held in qword_1C0007008 (invoked via the CFG dispatch stub __guard_dispatch_icall_fptr). The required signing level is written at offset +0x08 of the descriptor. In the unpatched build the value is 0xA000006 (decompiled: v8[1] = 167772166); the low byte 0x06 = SE_SIGNING_LEVEL_STORE. The patched build uses 0xA000008 (v8[1] = 167772168); the low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT. The 0x0A000000 high bits are flags/mode carried in the same field. Per the documented Windows SE_SIGNING_LEVEL numbering, 0x06 = STORE and 0x08 = MICROSOFT, while SE_SIGNING_LEVEL_WINDOWS is 0x0C and SE_SIGNING_LEVEL_WINDOWS_TCB is 0x0E; the driver corroborates this numbering because SecIsWindowsSigned (0x1C000855C) compares against 0x0C via SeCompareSigningLevels. The unpatched required level therefore accepts an object signed at the Store level where the patched build requires the higher Microsoft level. This is a signing-level trust tightening, not a memory-corruption bug.",
+      "trigger_conditions": "SecKernelIntegrityCheck runs its callback path when: (1) SecIsKernelIntegrityEnabled() returns true, i.e. qword_1C0007008 has been populated by the OS integrity callback; (2) at least one object pointer (a2 or a3) is non-NULL; (3) a1 (binding type) < 6; (4) when a1 != 0, a2 must be non-NULL; (5) KeAreApcsDisabled() returns false. The function is reached through the exported SecBindHost, which first enforces a Windows-signing check on the caller (SecValidateDriverFileSignatureLevel -> SecIsWindowsSigned) and then hands out the callback table entry off_1C0004008 = SecDispatchKernelIntegrityCheck. The unpatched required level 0x06 (STORE) is lower than the patched 0x08 (MICROSOFT).",
+      "primitive": "Signing-level trust tightening, not a memory-corruption primitive. In the unpatched build an object meeting only SE_SIGNING_LEVEL_STORE (0x06) satisfies the integrity callback; the patched build requires SE_SIGNING_LEVEL_MICROSOFT (0x08). Because reaching this path requires the caller to have already bound through SecBindHost (which enforces a Windows-signing check on the caller), the constant is an internal defense-in-depth trust gate. No kernel code execution or arbitrary read/write follows from it.",
+      "evidence": "Unpatched SecKernelIntegrityCheck (0x1C00081B8) decompilation:\n    v8[0] = 64;                 // Size = 0x40\n    v8[1] = 167772166;          // 0x0A000006, low byte 0x06 = SE_SIGNING_LEVEL_STORE\n    LODWORD(v8[2]) = 0x80000;\n    v8[7] = a2 ? a2 : a3;\n    result = ((fn)qword_1C0007008)(v8, v9);\n\nPatched SecKernelIntegrityCheck (0x1C0008178) decompilation:\n    v8[0] = 64;\n    v8[1] = 167772168;          // 0x0A000008, low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT\n    v9 = 0x80000;\n    v16 = a2 ? a2 : a3;\n\nReachability pointer: .data at 0x1C0004008 holds 0x1C0001650 (SecDispatchKernelIntegrityCheck); SecBindHost writes off_1C0004008[0] into the caller binding table at +0x8.",
+      "assembly": "Unpatched SecKernelIntegrityCheck @ 0x1C00081B8 (descriptor construction and callback dispatch):\n00000001C000826F  mov     [rbp+57h+var_70], 40h            ; Size = 0x40\n00000001C0008277  mov     [rbp+57h+var_68], 0A000006h     ; <-- required signing level, low byte 0x06 = SE_SIGNING_LEVEL_STORE\n00000001C000827F  mov     [rbp+57h+var_60], 80000h        ; flags\n00000001C0008286  mov     [rbp+57h+var_40], r14d          ; binding type (a1)\n00000001C000828A  mov     [rbp+57h+var_3C], 10h\n00000001C0008291  mov     [rbp+57h+var_38], rdi           ; object = a2\n00000001C0008295  test    rdi, rdi\n00000001C0008298  jnz     short loc_1C000829E\n00000001C000829A  mov     [rbp+57h+var_38], rsi           ; fallback object = a3\n00000001C000829E  mov     rax, cs:qword_1C0007008         ; OS integrity callback fn pointer\n00000001C00082A5  lea     rdx, [rbp+57h+var_30]\n00000001C00082A9  lea     rcx, [rbp+57h+var_70]           ; &descriptor\n00000001C00082AD  call    cs:__guard_dispatch_icall_fptr  ; CFG dispatch of qword_1C0007008\n00000001C00082B3  cmp     eax, 0C0000016h                 ; STATUS_MORE_PROCESSING_REQUIRED ?\n00000001C00082B8  jnz     short loc_1C00082C1\n00000001C00082BA  inc     ebx\n00000001C00082BC  cmp     ebx, 5\n00000001C00082BF  jbe     short loc_1C000829E             ; retry up to 5 times\n\nPatched fix @ 0x1C0008239:\n00000001C0008239  mov     [rbp+57h+var_68], 0A000008h     ; <-- low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "msseccore_unpatched!SecKernelIntegrityCheck",
+            "address": "0x1C00081B8",
+            "why": "Function entry. rcx=a1 (binding type, <6), rdx=a2 (object), r8=a3 (secondary object). Step to the descriptor construction."
+          },
+          {
+            "symbol": "msseccore_unpatched+0x8277",
+            "address": "0x1C0008277",
+            "why": "Store of the required signing level. Unpatched writes 0x0A000006 (low byte 0x06 = SE_SIGNING_LEVEL_STORE) to [rbp-0x11]; patched (0x1C0008239) writes 0x0A000008 (0x08 = SE_SIGNING_LEVEL_MICROSOFT)."
+          },
+          {
+            "symbol": "msseccore_unpatched+0x82AD",
+            "address": "0x1C00082AD",
+            "why": "CFG-guarded dispatch of the OS integrity callback in qword_1C0007008. rcx = &descriptor ([rbp-0x19]); dump with dq rcx L8 to see the required level at +0x08. eax holds the callback status."
+          }
+        ],
+        "watch": [
+          "rcx/r14d (a1): binding type, must be < 6",
+          "rdx/rdi and r8/rsi (a2/a3): object pointers, at least one non-NULL",
+          "[rbp-0x11] at 0x1C0008277: required signing level (0x0A000006 unpatched vs 0x0A000008 patched)",
+          "[rbp-0x19]: start of the 0x40-byte descriptor",
+          "qword_1C0007008 (0x1C0007008): OS-provided kernel-integrity callback function pointer",
+          "eax after 0x1C00082AD: compared against 0xC0000016 (STATUS_MORE_PROCESSING_REQUIRED) to drive the retry loop"
+        ],
+        "key_offsets": [
+          "0x1C0008277: mov [rbp+57h+var_68], 0A000006h - unpatched required level (0x06 = STORE)",
+          "0x1C0008239 (patched): mov [rbp+57h+var_68], 0A000008h - fix (0x08 = MICROSOFT)",
+          "0x1C000820E: call SecIsKernelIntegrityEnabled - integrity-enabled gate (qword_1C0007008 != 0)",
+          "0x1C000825F: call cs:__imp_KeAreApcsDisabled - must return false",
+          "0x1C00082AD: call cs:__guard_dispatch_icall_fptr - CFG dispatch of qword_1C0007008"
+        ],
+        "trigger_setup": "Reachability: the exported SecBindHost (0x1C00010B0) validates the caller (SecValidateDriverFileSignatureLevel -> SecIsWindowsSigned, plus range and lock checks) and writes off_1C0004008 into the caller binding table at +0x8. off_1C0004008 (.data at 0x1C0004008) = 0x1C0001650 = SecDispatchKernelIntegrityCheck, which calls SecKernelIntegrityCheck. qword_1C0007008 is populated separately: during initialization the driver registers SecKernelIntegrityCallback via ExCreateCallback/ExRegisterCallback, and when the OS notifies that callback it stores the provided function pointer into qword_1C0007008. Once populated, SecIsKernelIntegrityEnabled returns true and the callback path runs.",
+        "expected_observation": "At 0x1C0008277 (unpatched) the value 0x0A000006 is written to [rbp-0x11]; in the patched build (0x1C0008239) it is 0x0A000008. The status returned by the callback at 0x1C00082AD is produced by the OS routine in qword_1C0007008; the driver only retries while that status equals 0xC0000016 (STATUS_MORE_PROCESSING_REQUIRED). The specific status for a sub-threshold object is not fixed by this driver and should be observed at runtime.",
+        "notes": "msseccore.sys (Microsoft security-core support driver) exports SecBindHost/SecUnbindHost. It uses ZwGetCachedSigningLevel/ZwSetCachedSigningLevel and SeCompareSigningLevels in SecIsWindowsSigned (0x1C000855C), where the \"Windows\" comparison uses level 0x0C. Documented SE_SIGNING_LEVEL values: 0x06 = STORE, 0x08 = MICROSOFT, 0x0C = WINDOWS, 0x0E = WINDOWS_TCB. The 0x0A000000 high bits of the required-level field are flags/mode. This is a signing-level trust tightening, not memory corruption."
+      }
+    }
+  ],
+  "summary": "The patch raises the required signing level in SecKernelIntegrityCheck (0x1C00081B8 -> 0x1C0008178) from 0xA000006 (low byte 0x06 = SE_SIGNING_LEVEL_STORE) to 0xA000008 (low byte 0x08 = SE_SIGNING_LEVEL_MICROSOFT) in the descriptor passed to an OS-provided kernel-integrity callback (qword_1C0007008). The unpatched integrity check accepts an object signed at the Store level where the patched build requires the higher Microsoft level. This path is reachable only through the exported SecBindHost, which already enforces a Windows-signing check on the caller, so the constant is an internal defense-in-depth trust gate. All other changed functions are compiler/relocation noise, plus one benign pool-flag change in SecAllocatePoolWithTag (0x200 -> 0x600, non-executable bit retained). No memory-safety issue and no other security-relevant change was found."
+}

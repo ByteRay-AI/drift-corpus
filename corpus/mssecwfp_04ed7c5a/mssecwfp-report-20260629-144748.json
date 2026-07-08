@@ -1,0 +1,134 @@
+{
+  "binaries": {
+    "title": "mssecwfp.sys - No security-relevant change (feature-staged WFP filter-condition matching rollout with the old comparison path retained)",
+    "id_unpatched": "mssecwfp_unpatched.sys",
+    "id_patched": "mssecwfp_patched.sys",
+    "overall_similarity": 0.8904,
+    "matched": 114,
+    "changed": 6,
+    "identical": 108,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SecWfpAreValuesEqual 0x140007D9C -> SecWfpAreSimpleTypesEqual 0x140007F78 + thin SecWfpAreValuesEqual 0x1400080F0",
+      "similarity": 0.545,
+      "change_type": "refactor",
+      "key_changes": [
+        "The unpatched value-equality routine SecWfpAreValuesEqual (0x140007D9C) holds a type switch over the FWP_DATA_TYPE tag (r9d = *(arg1)); the patched build extracts that switch verbatim into a new SecWfpAreSimpleTypesEqual (0x140007F78) and leaves a thin SecWfpAreValuesEqual (0x1400080F0) that handles the security-descriptor and prefix/suffix operator special cases",
+        "The type-tag consistency check gating the reads is present in BOTH builds: unpatched 'cmp r9d, [rdx+8]; jz' at 0x140007DEF, patched 'cmp r9d, [rdx+8]; jz' at 0x140007F90. The field at operand offset +8 is the FWP_DATA_TYPE tag, not an allocation size",
+        "The FWP_BYTE_ARRAY16 (type 0xb) handler reads the same 16 bytes in both builds with no size check: unpatched 0x140007F17-0x140007F2F reads [rdx]/[r8] then [rdx+8]/[r8+8]; patched SecWfpAreSimpleTypesEqual 0x1400080BB-0x1400080D3 is the identical read sequence (one register-encoding difference, [r11+8] vs [rcx+8], both equal arg1+8)",
+        "FWP_SID (type 0xd) still calls RtlEqualSid and FWP_UNICODE_STRING (type 0x11) still calls wcscmp in both builds, unchanged; FWP_BYTE_BLOB (type 0xc) carries its own length compare ('cmp eax, [rdx+10h]'/'[rdx+14h]' before memcmp) in both builds",
+        "A per-entry struct field used by the blob-length compare shifted by 4 bytes ([rdx+10h] -> [rdx+14h]) to accommodate the new rule-format fields; no bounds or size check was added or removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a refactor plus a 4-byte struct-layout shift, not a memory-safety fix. The comparison code alleged in the original hypothesis to over-read (the type-0xb FWP_BYTE_ARRAY16 handler) executes the identical read sequence in both builds, which by itself rules out a delivered fix here. The +8 field compared before the reads is the data-type tag (the same field checked at 0x140007DEF / 0x140007F90 in both builds), not a buffer size.",
+      "assembly_diff": "; UNPATCHED SecWfpAreValuesEqual type-0xb handler (0x140007F17):\n0x140007F17  mov  rdx, [r11+8]      ; arg1 data pointer\n0x140007F1B  mov  r8,  [r10+18h]    ; arg2 data pointer\n0x140007F1F  mov  rcx, [rdx]        ; read 8 bytes\n0x140007F22  sub  rcx, [r8]         ; read 8 bytes\n0x140007F25  jnz  0x140007F2F\n0x140007F27  mov  rcx, [rdx+8]      ; read next 8 bytes\n0x140007F2B  sub  rcx, [r8+8]       ; read next 8 bytes\n0x140007F2F  test rcx, rcx\n;\n; PATCHED SecWfpAreSimpleTypesEqual type-0xb handler (0x1400080BB) - same reads, no size check:\n0x1400080BB  mov  rdx, [rcx+8]      ; arg1 data pointer (rcx == arg1)\n0x1400080BF  mov  r8,  [r10+18h]    ; arg2 data pointer\n0x1400080C3  mov  rcx, [rdx]\n0x1400080C6  sub  rcx, [r8]\n0x1400080C9  jnz  0x1400080D3\n0x1400080CB  mov  rcx, [rdx+8]\n0x1400080CF  sub  rcx, [r8+8]\n0x1400080D3  test rcx, rcx\n;\n; The type-tag equality check (present in BOTH builds), not a size check:\n; unpatched 0x140007DEF  cmp r9d, [rdx+8] ; jz 0x140007DFF\n; patched   0x140007F90  cmp r9d, [rdx+8] ; jz 0x140007FA0"
+    },
+    {
+      "name": "SecWfpEvaluateConditionComparison 0x140008394 (new, patched only) + SecWfpAreValuesMatch relocated 0x140007F78 -> 0x140008188",
+      "similarity": 0.3939,
+      "change_type": "feature_added",
+      "key_changes": [
+        "SecWfpEvaluateConditionComparison (0x140008394) is a NEW function reached only for policy entries whose format flag (dword at entry offset 0x1C) is non-zero; it dispatches on a new operator field at *(arg2+0xC)",
+        "For its newly supported operators it checks the FWP_DATA_TYPE tag of both operands before delegating: prefix (op8) and suffix (op9) require type 0xc (FWP_BYTE_BLOB) at [rcx+8]/[rdx+8]; SID-in-SD (op0xA) requires 0xe (security descriptor) at [rcx+8] and 0xd (SID) at [rdx+8]; IPv4-mask (op6) requires 0x100 at [rcx] and type 3 at [rdx+8]. These are data-type-tag checks, not allocation-size checks",
+        "For its equality operators (op3/op4/op5) it delegates to SecWfpAreSimpleTypesEqual, i.e. the SAME type-0xb read with no size check as the default path",
+        "SecWfpAreValuesMatch (unpatched 0x140007F78) is simply relocated to patched 0x140008188 with no behavioral change (bool -> BOOLEAN cosmetic); it is NOT the new dispatcher"
+      ],
+      "security_relevant": false,
+      "security_notes": "The new dispatcher adds support for prefix/suffix and SID-in-security-descriptor match operators (which the old path rejected) plus richer audit telemetry. Its per-operator checks compare FWP_DATA_TYPE tags, not buffer sizes; equivalent type-tag checks already existed in the unpatched build for the operators it shares (SecWfpIsIpV4MaskMatch checks type 3, SecWfpIsValueInRange checks 0x102). It is gated behind the offset-0x1C rule-format flag with the old comparison path retained for the default case, so it is a staged-rollout feature, not a delivered bounds fix.",
+      "assembly_diff": "; PATCHED SecWfpEvaluateConditionComparison (0x140008394) type-tag checks (NOT size checks):\n; IPv4 mask (op6):\n0x14000842F  cmp dword [rcx], 100h\n0x140008437  cmp dword [rdx+8], 3       ; FWP data type 3\n; SID-in-SD (op0xA):\n0x140008474  cmp dword [rcx+8], 0Eh     ; security descriptor type\n0x14000847A  cmp dword [rdx+8], 0Dh     ; SID type\n; suffix (op9):\n0x1400084A0  cmp dword [rcx+8], 0Ch     ; BYTE_BLOB type\n0x1400084A6  cmp dword [rdx+8], 0Ch\n; prefix (op8):\n0x1400084D0  cmp dword [rcx+8], 0Ch\n0x1400084D6  cmp dword [rdx+8], 0Ch\n; equality operators delegate to SecWfpAreSimpleTypesEqual (same reads as default path)"
+    },
+    {
+      "name": "SecWfpIsIpV4MaskMatch 0x1400080B4 -> 0x14000871C; new telemetry helper SecWfpAuditMatchedCondition 0x1400081FC (patched only)",
+      "similarity": 0.126,
+      "change_type": "behavioral_layout",
+      "key_changes": [
+        "SecWfpIsIpV4MaskMatch relocated 0x1400080B4 -> 0x14000871C. The presence gate changed from a byte test at entry offset 0x0C (unpatched 'cmp [rdx+0Ch], al; jz return') to a dword test at 0x0C plus a byte test at the new 0x10 (patched 'cmp [rdx+0Ch], eax; jnz' + 'cmp [rdx+10h], al; jnz')",
+        "The 'type == 3' check gates the value-pointer dereferences in BOTH builds (unpatched 'cmp [rdx+8], 3' at 0x1400080BE; patched 'cmp [rdx+8], 3' at 0x140008732) before 'mov r8, [rcx+8]' / 'mov rcx, [rdx+18h]'. No missing type/size check was added",
+        "One behavioral nuance: when the presence flag is zero the unpatched routine returns STATUS_SUCCESS (eax=0) without writing the output bool, while the patched routine returns STATUS_NOT_SUPPORTED (0xC00000BB). This is a stricter (error vs success) result, not a bounds change",
+        "SecWfpAuditMatchedCondition (0x1400081FC) is a NEW telemetry helper that factors the inline SecAuditWfpGuardBlock call out of the match loop and formats SIDs/security descriptors as strings"
+      ],
+      "security_relevant": false,
+      "security_notes": "The IPv4-mask value-pointer dereferences are gated by the same 'type == 3' check in both builds; the change is a 4-byte struct-field shift for the presence flag plus a stricter result on the flag-zero branch. SecWfpAuditMatchedCondition is added telemetry. Neither adds or removes a bounds check on attacker-reachable data.",
+      "assembly_diff": "; UNPATCHED SecWfpIsIpV4MaskMatch (0x1400080B4):\n0x1400080B9  cmp [rdx+0Ch], al        ; presence flag (byte)\n0x1400080BC  jz  0x1400080EA          ; flag==0 -> return SUCCESS, no deref\n0x1400080BE  cmp dword [rdx+8], 3     ; type must be 3 before deref\n0x1400080C2  jz  0x1400080CB\n0x1400080C4  mov eax, 0C00000BBh      ; STATUS_NOT_SUPPORTED\n;\n; PATCHED SecWfpIsIpV4MaskMatch (0x14000871C):\n0x140008721  cmp [rdx+0Ch], eax       ; presence flag (dword, shifted layout)\n0x140008724  jnz 0x140008732\n0x140008726  cmp [rdx+10h], al        ; second presence byte at new 0x10\n0x140008729  jnz 0x140008732\n0x14000872B  mov eax, 0C00000BBh      ; flag==0 -> STATUS_NOT_SUPPORTED\n0x140008732  cmp dword [rdx+8], 3     ; type must be 3 before deref (same as unpatched)"
+    },
+    {
+      "name": "SecWfpShouldEnforcePolicyOnFilterCondition 0x1400081C8 -> 0x140008838",
+      "similarity": 0.8137,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Adds one new branch at the top of the per-entry loop: 'cmp dword ptr [rdi+1Ch], 0' at 0x1400088A6 / 'jnz 0x1400088EE' - a per-policy-entry rule-format flag",
+        "When the flag is set, evaluation is routed to the new SecWfpEvaluateConditionComparison (0x140008394); when it is zero, the loop dispatches exactly as the unpatched loop (operator 0x102 -> SecWfpIsValueInRange, 0x100 -> SecWfpIsIpV4MaskMatch, 0x101 -> skip, otherwise -> SecWfpAreValuesMatch)",
+        "The helper functions on the default path are relocated but behaviorally equivalent to the unpatched ones; the match logging is factored into the new SecWfpAuditMatchedCondition",
+        "Policy-entry stride remains 0x30 in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the WFP-Guard match loop. The change is a staged rollout: a new format-flag branch routes flagged policy entries through the new comparison dispatcher and new telemetry, while the unflagged (default) path retains the same dispatch as the unpatched build. No existing comparison was hardened.",
+      "assembly_diff": "; PATCHED SecWfpShouldEnforcePolicyOnFilterCondition (0x140008838) format gate:\n0x1400088A6  cmp dword [rdi+1Ch], 0    ; per-policy-entry format flag\n0x1400088AA  jnz 0x1400088EE           ; if set -> SecWfpEvaluateConditionComparison\n; default (flag==0) dispatch, same as unpatched:\n0x1400088B2  cmp eax, 102h ; -> SecWfpIsValueInRange\n0x1400088C5  cmp eax, 100h ; -> SecWfpIsIpV4MaskMatch\n0x1400088D8  cmp eax, 101h ; -> skip\n;               otherwise    ; -> SecWfpAreValuesMatch\n0x1400088F6  call SecWfpEvaluateConditionComparison ; flagged path"
+    },
+    {
+      "name": "SecInitializeGlobalData 0x14000778C -> 0x14000782C",
+      "similarity": 0.6502,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Resolves one additional system routine via MmGetSystemRoutineAddress: SeConvertSecurityDescriptorToStringSecurityDescriptor (used by the new SID/SD telemetry helpers)",
+        "Version-dependent helper references updated for the relocated Kcl* version-check functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Supports the new SID/security-descriptor telemetry formatting. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecAuditWfpGuardBlock 0x140007000",
+      "similarity": 0.9446,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ETW UserData descriptor count grows from 8 to 14 (SecAllocateEtwDescriptors(8) -> (0xE); EtwWrite count 8 -> 0xE) to carry additional audit fields",
+        "A new length parameter is clamped to a maximum of 0x400 before it is written into the driver's own event: 'mov eax, 400h' / 'cmp [rbp+arg_68], eax' / 'cmovb eax, [rbp+arg_68]' at 0x140007019-0x14000702C",
+        "Six new UserData fields (string/binary telemetry) added for the richer audit record"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry growth supporting the new comparison path's audit record. The 0x400 clamp bounds a self-emitted ETW payload length, not an attacker-reachable read on the WFP condition-evaluation data path.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "SecArePrefixBlobs (0x1400078DC, unpatched only) - superseded by SecIsSuffixMatch, whose body is identical"
+    ],
+    "added": [
+      "SecWfpEvaluateConditionComparison",
+      "SecWfpAreSimpleTypesEqual",
+      "SecWfpAuditMatchedCondition",
+      "SecWfpGetConditionSimpleValueInfo",
+      "SecWfpGetSecurityDescriptorAsUnicodeString",
+      "SecWfpGetSidAsUnicodeString",
+      "SecIsPrefixMatch",
+      "SecIsSuffixMatch"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SecWfpAreValuesEqual (0x140007D9C, unpatched) / SecWfpAreSimpleTypesEqual (0x140007F78, patched)",
+      "entry_point": "WFP filter-assignment authorization callout SecWfpShouldForbidFiltersAssignment (0x140008390 unpatched / 0x1400089B0 patched), reached when filters are added; the policy table is installed only through IOCTL 0x222008 (SecSetWfpGuardConfiguration), and device access is restricted to LocalSystem (SecDeviceOpen -> KclIsProcessLocalSystem)",
+      "call_chain": [
+        "IOCTL 0x222008 -> SecDeviceIoControl (0x140007680) -> SecSetWfpGuardConfiguration (0x140007AAC): parses and stores policy patterns (LocalSystem-only)",
+        "Filter add -> SecWfpShouldForbidFiltersAssignment -> SecWfpShouldForbidFilterAssignment -> SecWfpShouldEnforcePolicyOnFilterCondition (0x1400081C8) match loop",
+        "Match loop -> SecWfpAreValuesMatch -> SecWfpAreValuesEqual (value equality); FWP_BYTE_ARRAY16 read at 0x140007F17"
+      ],
+      "vulnerability_class": "No security-relevant change (feature staging with the old comparison path retained; no memory-safety fix delivered)",
+      "description": "The original hypothesis was that the unpatched value-equality routine reads a fixed number of bytes for FWP_BYTE_ARRAY16 (type 0xb) and other types without validating a buffer size, and that the patch added size validation. Re-verification against both binaries does not support this. The FWP_BYTE_ARRAY16 handler executes the identical read sequence in both builds (unpatched SecWfpAreValuesEqual 0x140007F17-0x140007F2F; patched SecWfpAreSimpleTypesEqual 0x1400080BB-0x1400080D3), so no size validation was added to it. The type-tag consistency check that gates these reads ('cmp r9d, [rdx+8]; jz') is present in both builds (0x140007DEF unpatched, 0x140007F90 patched); the compared field at operand offset +8 is the FWP_DATA_TYPE tag, not an allocation size. FWP_SID still calls RtlEqualSid and FWP_UNICODE_STRING still calls wcscmp in both builds, unchanged. The new SecWfpEvaluateConditionComparison dispatcher's per-operator checks (type 0xc for prefix/suffix, 0xe/0xd for SID-in-security-descriptor, 3 for IPv4 mask) compare data-type tags, not buffer sizes, and exist because the new operators did not previously exist; equivalent type-tag checks already existed in the unpatched build for the shared operators. The new validated path is reached only behind a per-policy-entry format flag (dword at entry offset 0x1C) with the old path retained for the default case. Both comparison operands originate from privileged sources (a LocalSystem-only IOCTL-installed policy table and a WFP filter being authorized), so even the retained comparison code is not a low-privilege attacker-controlled primitive.",
+      "trigger_conditions": "Not applicable. There is no delivered memory-safety fix in these binaries; the comparison code alleged to over-read is present unchanged in the patched build.",
+      "primitive": "None. No arbitrary-read, information-leak, KASLR-bypass, or pool-grooming primitive is demonstrable from these binaries.",
+      "evidence": "; FWP_BYTE_ARRAY16 (type 0xb) handler is the same read sequence in both builds, no size check:\n; UNPATCHED SecWfpAreValuesEqual (0x140007F17):\n0x140007F17  mov  rdx, [r11+8]\n0x140007F1B  mov  r8,  [r10+18h]\n0x140007F1F  mov  rcx, [rdx]\n0x140007F22  sub  rcx, [r8]\n0x140007F25  jnz  0x140007F2F\n0x140007F27  mov  rcx, [rdx+8]\n0x140007F2B  sub  rcx, [r8+8]\n0x140007F2F  test rcx, rcx\n; PATCHED SecWfpAreSimpleTypesEqual (0x1400080BB):\n0x1400080BB  mov  rdx, [rcx+8]\n0x1400080BF  mov  r8,  [r10+18h]\n0x1400080C3  mov  rcx, [rdx]\n0x1400080C6  sub  rcx, [r8]\n0x1400080C9  jnz  0x1400080D3\n0x1400080CB  mov  rcx, [rdx+8]\n0x1400080CF  sub  rcx, [r8+8]\n0x1400080D3  test rcx, rcx\n; The +8 field is the FWP_DATA_TYPE tag, checked in BOTH builds:\n; unpatched 0x140007DEF  cmp r9d, [rdx+8] ; jz\n; patched   0x140007F90  cmp r9d, [rdx+8] ; jz",
+      "assembly": "; See the changed_functions entries for the full address-anchored comparison. Key points, both builds:\n; - FWP_BYTE_ARRAY16 read identical (unpatched 0x140007F17, patched 0x1400080BB), no size check either side.\n; - Type-tag equality gate present in both (0x140007DEF / 0x140007F90).\n; - FWP_SID -> RtlEqualSid and FWP_UNICODE_STRING -> wcscmp present in both, unchanged.\n; - New SecWfpEvaluateConditionComparison (0x140008394) checks data-type tags (0xc/0xe/0xd/3), not sizes, and is gated by the offset-0x1C rule-format flag.",
+      "debugging_aids": {
+        "notes": "There is no fix to instrument. For orientation only: the new format gate is at 0x1400088A6 in SecWfpShouldEnforcePolicyOnFilterCondition (0x140008838), the new dispatcher entry is SecWfpEvaluateConditionComparison at 0x140008394, the policy table is installed by IOCTL 0x222008 via SecDeviceIoControl (0x140007680, comparison at 0x1400076B4) to SecSetWfpGuardConfiguration, and device access is gated to LocalSystem by KclIsProcessLocalSystem. The FWP_BYTE_ARRAY16 read alleged to over-read is at 0x140007F17 (unpatched) / 0x1400080BB (patched) and is identical in behavior."
+      }
+    }
+  ],
+  "summary": "Re-verification against both binaries shows this patch does NOT fix a memory-safety vulnerability in mssecwfp.sys. The change is a staged rollout of a new WFP filter-condition matching path in the WFP-Guard policy engine: a new comparison dispatcher SecWfpEvaluateConditionComparison adds prefix/suffix and SID-in-security-descriptor match operators plus richer audit telemetry, reached only when a per-policy-entry format flag (dword at entry offset 0x1C) is non-zero. When that flag is zero the driver runs the same comparison code as the unpatched build. The comparison code originally alleged to over-read (the FWP_BYTE_ARRAY16 type-0xb handler) executes the identical read sequence in both builds (unpatched SecWfpAreValuesEqual 0x140007F17, patched SecWfpAreSimpleTypesEqual 0x1400080BB) with no size check either side, so no size validation was added; FWP_SID (RtlEqualSid) and FWP_UNICODE_STRING (wcscmp) comparisons are likewise unchanged. The new dispatcher's per-operator checks compare FWP_DATA_TYPE tags (0xc, 0xe/0xd, 3), not buffer sizes, with equivalent type-tag checks already present in the unpatched build for the shared operators. The policy table is installed only via LocalSystem-only IOCTL 0x222008, and both comparison operands are privileged inputs. SecSetWfpGuardConfiguration performs the same input-buffer bounds validation and per-entry allocation-to-declared-size in both builds (0x30 entry stride, only a 4-byte shift of per-entry data sub-fields). SecAuditWfpGuardBlock grows its ETW UserData descriptor count from 8 to 14 and clamps a self-emitted telemetry length to 0x400. No omitted security-relevant fix was found. Final: No security-relevant change; the previously claimed heap out-of-bounds read (CWE-125) is a false positive because the read is present unchanged in both builds and the new checks are data-type-tag checks, not size checks."
+}

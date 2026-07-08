@@ -1,0 +1,257 @@
+{
+  "binaries": {
+    "title": "ksecdd.sys (Windows Kernel-Mode SSPI Security Device Driver) - NULL-pointer dereference and missing ProbeForRead hardening in SSPI dispatch and fast-I/O IOCTL handlers",
+    "id_unpatched": "ksecdd_unpatched.sys",
+    "id_patched": "ksecdd_patched.sys",
+    "overall_similarity": 0.7384,
+    "matched": 371,
+    "changed": 234,
+    "identical": 137,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EncryptMessage (SSPI SealMessage)",
+      "unpatched_address": "0x1c00262d0",
+      "patched_address": "0x180029a70",
+      "similarity": 0.2866,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL check on phContext (arg1) and on the message-buffer argument; unpatched dereferenced *phContext without checking phContext",
+        "Added lfence after the unsigned upper-bound check on the package index (speculative bounds-check-bypass barrier)",
+        "Reloaded the dispatch-table base pointer after the bounds check",
+        "Added NULL check on the resolved package entry pointer and on the function pointer at offset 0x30 before the CFG-guarded indirect call"
+      ],
+      "security_relevant": true,
+      "security_notes": "Unpatched EncryptMessage reads *phContext (package index) with no NULL check on phContext; if phContext is NULL the load faults in kernel mode (local BSOD). The dispatch then does an unsigned upper-bound check and loads the package entry and function pointer without NULL-checking either; the indirect call is via __guard_dispatch_icall_fptr (Control-Flow-Guard), not a retpoline. The patch adds NULL checks on phContext/message, an lfence, a table-base reload, and entry/function-pointer NULL checks. Impact is a local NULL-pointer dereference DoS; no OOB or code-execution primitive is demonstrable (the upper-bound check is present in both builds).",
+      "assembly_diff": "UNPATCHED EncryptMessage @ 0x1C00262D0 (vulnerable block):\n0x1C002631D  mov rdx, [rbx]                 ; rdx = *phContext (rbx=phContext); NO NULL check\n0x1C0026320  mov ecx, [rax+1D0h]            ; entry count\n0x1C0026326  cmp rdx, rcx\n0x1C0026329  jnb loc_1C0026377             ; unsigned upper bound only; no lfence\n0x1C002632B  mov rax, [r8+rdx*8]           ; entry = table[index]; NO NULL check\n0x1C002633B  mov rax, [rax+30h]            ; fn ptr (offset 0x30); NO NULL check\n0x1C002633F  call cs:__guard_dispatch_icall_fptr\n\nPATCHED EncryptMessage @ 0x180029A70 (fixed block):\n0x180029A80  test rcx, rcx                 ; NEW: NULL check phContext\n0x180029A83  jnz loc_180029A93\n0x180029A85  mov eax, 80090301h            ; SEC_E_INVALID_HANDLE\n0x180029A93  test rbx, rbx                 ; NEW: NULL check message arg\n0x180029A96  jz  loc_180029A85\n0x180029AE3  lfence                        ; NEW: speculation barrier\n0x180029AE6  mov rax, [rcx+1C8h]           ; NEW: reload table base after check\n0x180029AED  mov rcx, [rax+rbp*8]          ; entry = table[index]\n0x180029AF1  test rcx, rcx                 ; NEW: NULL check entry\n0x180029AF4  jz  loc_180029B45\n0x180029AF6  mov rax, [rcx+30h]            ; fn ptr (offset 0x30)\n0x180029AFA  test rax, rax                 ; NEW: NULL check fn ptr\n0x180029AFD  jz  loc_180029B30\n0x180029B0A  call _guard_dispatch_icall"
+    },
+    {
+      "name": "DecryptMessage (SSPI UnsealMessage)",
+      "unpatched_address": "0x1c0026210",
+      "patched_address": "0x180029d00",
+      "similarity": 0.2871,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL checks on phContext and the message argument",
+        "Added lfence + dispatch-table reload after the bounds check",
+        "Added NULL checks on the package entry pointer and the function pointer at offset 0x38"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same pattern as EncryptMessage; function-pointer offset 0x38. Unpatched at 0x1C002625E reads *phContext without a NULL check on phContext; patched adds NULL checks, lfence, table reload, and entry/fn-ptr NULL checks. Local NULL-deref DoS.",
+      "assembly_diff": "UNPATCHED DecryptMessage @ 0x1C0026210:\n0x1C002625E  mov rdx, [rbx]     ; *phContext; NO NULL check\n0x1C0026261  mov ecx, [rax+1D0h]\n0x1C0026267  cmp rdx, rcx\n0x1C002626A  jnb loc_1C00262B9  ; upper bound only\n0x1C002626C  mov rax, [r8+rdx*8]; entry; NO NULL check\n0x1C002627D  mov rax, [rax+38h] ; fn ptr (0x38); NO NULL check\n0x1C0026281  call cs:__guard_dispatch_icall_fptr\n\nPATCHED DecryptMessage @ 0x180029D00:\n0x180029D11  test rcx, rcx      ; NEW: NULL check phContext\n0x180029D14  jz loc_180029DBC\n0x180029D1A  test rdx, rdx      ; NEW: NULL check message arg\n0x180029D1D  jz loc_180029DBC\n0x180029D6E  lfence             ; NEW\n0x180029D71  mov rax, [rcx+1C8h]; NEW: reload table base\n0x180029D78  mov rcx, [rax+rbp*8]\n0x180029D7C  test rcx, rcx      ; NEW: NULL check entry\n0x180029D81  mov rax, [rcx+38h] ; fn ptr (0x38)\n0x180029D85  test rax, rax      ; NEW: NULL check fn ptr\n0x180029D96  call _guard_dispatch_icall"
+    },
+    {
+      "name": "QuerySecurityContextToken",
+      "unpatched_address": "0x1c0026010",
+      "patched_address": "0x180029390",
+      "similarity": 0.661,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL check on phContext",
+        "Moved the inline dispatch-table indexing into the validating helper KernelPackageCallValidatorWorkers::CallValidator<...>::InvokeById at 0x180029c10 (offset-0x40 slot), which performs the bounds check, lfence, table reload, entry-NULL and function-pointer-NULL checks"
+      ],
+      "security_relevant": true,
+      "security_notes": "Unpatched reads *phContext as the package index with no NULL check, upper-bound checks it, then loads the entry and the function pointer at offset 0x40 and calls via __guard_dispatch_icall_fptr without NULL checks. On success the returned token handle is duplicated via NtDuplicateObject. Patched adds the phContext NULL check and delegates the dispatch to the validating InvokeById helper.",
+      "assembly_diff": "UNPATCHED QuerySecurityContextToken @ 0x1C0026010:\n0x1C002605C  mov rcx, [rbx]     ; *phContext; NO NULL check\n0x1C002605F  mov eax, [rax+1D0h]\n0x1C0026065  cmp rcx, rax\n0x1C0026068  jnb loc_1C00260D8  ; upper bound only\n0x1C002606A  mov rax, [rdx+rcx*8]; entry; NO NULL check\n0x1C002607A  mov rax, [rax+40h] ; fn ptr (0x40); NO NULL check\n0x1C002607E  call cs:__guard_dispatch_icall_fptr\n\nPATCHED InvokeById @ 0x180029C10 (offset-0x40 slot):\n0x180029C6B  lfence\n0x180029C6E  mov rcx, [rax+1C8h] ; reload table base\n0x180029C75  mov rax, [rcx+rbx*8]; entry\n0x180029C79  test rax, rax       ; NULL check entry\n0x180029C7E  mov rax, [rax+40h]  ; fn ptr (0x40)\n0x180029C82  test rax, rax       ; NULL check fn ptr\n0x180029C90  call _guard_dispatch_icall"
+    },
+    {
+      "name": "ImpersonateSecurityContext",
+      "unpatched_address": "0x1c0026390",
+      "patched_address": "0x180029b60",
+      "similarity": 0.6595,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL check on phContext (returns 0xC000000D)",
+        "Replaced inline dispatch-table indexing with the validating InvokeById helper at 0x180029c10 (offset-0x40 slot)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same dispatch pattern; unpatched reads *phContext without a NULL check and calls the offset-0x40 function pointer without entry/fn-ptr NULL checks (at 0x1C00263D8 / 0x1C00263F5). On success the function calls PsImpersonateClient with the resulting token. Patched adds the phContext NULL check and delegates the dispatch to InvokeById.",
+      "assembly_diff": "UNPATCHED ImpersonateSecurityContext @ 0x1C0026390:\n0x1C00263D8  mov rdx, [rbx]     ; *phContext; NO NULL check\n0x1C00263E1  cmp rdx, rcx       ; upper bound only\n0x1C00263E6  mov rax, [r8+rdx*8]; entry; NO NULL check\n0x1C00263F5  mov rax, [rax+40h] ; fn ptr (0x40); NO NULL check\n0x1C00263F9  call cs:__guard_dispatch_icall_fptr\n\nPATCHED ImpersonateSecurityContext @ 0x180029B60:\n0x180029B6D  test rcx, rcx      ; NEW: NULL check phContext\n0x180029B70  jnz loc_180029BA8\n0x180029BA1  mov eax, 0C000000Dh\n0x180029BB7  call InvokeById (0x180029C10)"
+    },
+    {
+      "name": "DeleteUserModeContext (sub_1c001e190)",
+      "unpatched_address": "0x1c001e190",
+      "patched_address": "via CallValidator::InvokeById 0x180029960",
+      "similarity": 0.249,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Dispatch moved into the validating InvokeById helper at 0x180029960 (offset-0x08 slot), gaining lfence, table reload, and package-entry NULL check"
+      ],
+      "security_relevant": true,
+      "security_notes": "Correction to the systemic claim: the unpatched DeleteUserModeContext ALREADY NULL-checks its context-handle argument (test rbx,rbx / jz at 0x1C001E1DB) and the function pointer (test rax,rax / jz at 0x1C001E1F6). For this function the added protection is the lfence, the dispatch-table reload, and the entry-pointer NULL check (offset-0x08 slot), delivered by the shared InvokeById helper.",
+      "assembly_diff": "UNPATCHED DeleteUserModeContext @ 0x1C001E190 (already guarded):\n0x1C001E1DB  test rbx, rbx      ; existing NULL check on context handle\n0x1C001E1DE  jz  loc_1C001E251\n0x1C001E1E0  mov rcx, [rbx]     ; *arg (index)\n0x1C001E1E9  cmp rcx, rax       ; upper bound\n0x1C001E1EE  mov rax, [rdx+rcx*8]; entry (no entry-NULL check in unpatched)\n0x1C001E1F2  mov rax, [rax+8]   ; fn ptr (offset 0x08)\n0x1C001E1F6  test rax, rax      ; existing NULL check on fn ptr\n0x1C001E1F9  jz  loc_1C001E24A\n0x1C001E203  call cs:__guard_dispatch_icall_fptr"
+    },
+    {
+      "name": "ProcessSecurityContextUnMarshalResponse (sub_1c001fac0)",
+      "unpatched_address": "0x1c001fac0",
+      "patched_address": "0x1800251c0",
+      "similarity": 0.3891,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same dispatch hardening (lfence / entry-NULL / fn-ptr-NULL) at the offset-0x10 dispatch site"
+      ],
+      "security_relevant": true,
+      "security_notes": "Correction to the report's naming: this is ProcessSecurityContextUnMarshalResponse, an async-response unmarshaller, not a QueryContextAttributes/SetContextAttributes dispatcher. Its dispatch index (0x1C001FC7B, offset-0x10 function pointer) is taken from previously unmarshalled response data rather than a raw caller-supplied context handle; it received the same dispatch hardening.",
+      "assembly_diff": "UNPATCHED ProcessSecurityContextUnMarshalResponse @ 0x1C001FAC0 (dispatch site):\n0x1C001FC7B  mov rcx, [rdi]     ; index from unmarshalled data\n0x1C001FC84  cmp rcx, rax       ; upper bound only\n0x1C001FC8D  mov rax, [rdx+rcx*8]; entry; NO NULL check\n0x1C001FC9F  mov rax, [rax+10h] ; fn ptr (offset 0x10); NO NULL check\n0x1C001FCA3  call cs:__guard_dispatch_icall_fptr"
+    },
+    {
+      "name": "SspiAcceptSecurityContextAsync",
+      "unpatched_address": "0x1c0020250",
+      "patched_address": "0x1800240f0",
+      "similarity": 0.5633,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bound check: if (pOutput->cBuffers > 0x12) return 0x8009035D (SEC_E_INVALID_TOKEN)",
+        "Added NULL checks on phContext/phCredential/phNewContext and a MapKernelContextHandle call; function restructured (unpatched delegated directly to KsecProcessSecurityContext)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The added cBuffers <= 0x12 check is a defensive upper bound on the caller-supplied output SecBufferDesc; pOutput is not network-attacker data and no overflow is demonstrable in the unpatched build. The internal per-package caps in KsecProcessSecurityContext/SspipProcessSecurityContext were harmonized to 0x12 (previously 8 / 0xA), so this is a defensive normalization rather than a fix for a reachable overflow. Severity low. Correction: the error code is 0x8009035D (SEC_E_INVALID_TOKEN), not SEC_E_INVALID_HANDLE, and the check is at 0x1800241E4, not 0x1800242bc.",
+      "assembly_diff": "PATCHED @ 0x1800241E4:  cmp dword ptr [r15+4], 12h   ; pOutput->cBuffers (offset +4)\n0x1800241E9:  ja loc_1800242BC              ; -> return 0x8009035D\nUNPATCHED: no such check; delegates to KsecProcessSecurityContext"
+    },
+    {
+      "name": "ImportSecurityContextW",
+      "unpatched_address": "0x1c0023b50",
+      "patched_address": "0x180021ac0",
+      "similarity": 0.6183,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added NULL checks: if (pPackedContext == NULL || phContext == NULL) return STATUS_INVALID_PARAMETER (0xC000000D)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Unpatched dereferences the output handle phContext (phContext->dwUpper = ...; phContext->dwLower = ...) without a NULL check; patched adds NULL checks on pPackedContext and phContext. Both builds already NULL-check the package function pointer (if v10 != NULL), so no function-pointer check was added. Impact: local NULL-deref DoS if a caller passes NULL phContext.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsecIoctlHandleFunctionReturn",
+      "unpatched_address": "0x1c0006898",
+      "patched_address": "0x180006728",
+      "similarity": null,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched forwarded the raw user pointer to CallInProgressCompleted after only a force-fault touch of the range end; patched adds ProbeForRead + RtlCopyFromUser into a pool buffer and operates on the kernel copy (double-fetch / TOCTOU + missing-probe fix)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Strongest member of the fast-I/O IOCTL probing family (see security_findings). Unpatched: if (a1+size > MmUserProbeAddress || overflow) *(BYTE*)MmUserProbeAddress = 0; then CallInProgressCompleted(a1, a1, size) on the raw user pointer. Patched: ProbeForRead(Src, size, 1) at 0x1800067BE, ExAllocatePool2, RtlCopyFromUser(Pool, Src, size), CallInProgressCompleted(Pool, Pool, size).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsecIoctl* fast-I/O handler family (KsecIoctlClientCallback, KsecIoctlAllocVm, KsecIoctlFreeVm, KsecIoctlCopyVm, KsecIoctlAllocPool, KsecIoctlFreePool, KsecIoctlCopyPool, KsecIoctlDupLsaHandle, KsecIoctlInsertProtectedProcessAddress, KsecIoctlRemoveProtectedProcessAddress, KsecCopyVirtualMemory)",
+      "unpatched_address": "various (reached via KsecFastIoDeviceControl 0x1c0002910)",
+      "patched_address": "various",
+      "similarity": null,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added ProbeForRead on the caller-supplied input buffer before dereference; some replaced a weak start-of-range test (if *a1 >= MmUserProbeAddress) with a full ProbeForRead; KsecIoctlClientCallback also captures fields into kernel locals",
+        "The unpatched binary contains zero ProbeForRead calls; the patched binary contains 24"
+      ],
+      "security_relevant": true,
+      "security_notes": "See security_findings entry 5. This handler family, reached through the fast-I/O device-control path, is the genuine IOCTL-path hardening. The handle values are separately validated via ObReferenceObjectByHandle(PsProcessType) in both builds and addresses via KsecRemoveValidVm/KsecInsertValidVm; the added probes close the missing user-mode-range validation.",
+      "assembly_diff": "PATCHED KsecIoctlFreeVm @ 0x18000E168:\n0x18000E196  call cs:__imp_ProbeForRead   ; Length 0x10, Alignment 8 (NEW)\n0x18000E1A2  movups xmm0, [rbx]           ; deref of caller buffer AFTER probe\nUNPATCHED KsecIoctlFreeVm @ 0x1C000E91C: no ProbeForRead; reads *a1 then ObReferenceObjectByHandle at 0x1C000E963"
+    },
+    {
+      "name": "KsecDispatch (sub_1c001e8c0)",
+      "unpatched_address": "0x1c001e8c0",
+      "patched_address": "0x180026dc0",
+      "similarity": 0.1392,
+      "change_type": "refactor",
+      "key_changes": [
+        "IOCTL 0x398000 handler present and functionally identical in both builds (opens a handle to the caller's own current process, stores it in the kernel LSA state, returns only the DWORD KsecSystemProcessId to the user buffer)",
+        "IOCTL 0x390058 handler functionally identical in both builds (METHOD_BUFFERED; validates the target via KsecRemoveValidVm then ZwFreeVirtualMemory)",
+        "Diff is refactoring: InitSecurityInterfaceW -> CreateClient, extension-dispatch signature, IoctlIpcGetQueuedFunctionCalls"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The 0x398000 and 0x390058 IOCTL handlers are unchanged between builds. 0x478 in the 0x398000 branch is a set of PROCESS_* access rights on the caller's own process (not TOKEN_* rights) and the object type argument is NULL; the resulting handle is stored in the kernel LSA state, not returned to user mode. The 0x390058 branch is METHOD_BUFFERED and validated via KsecRemoveValidVm in both builds. The ProbeForRead/ObReferenceObjectByHandle additions are in the separate KsecIoctl* fast-I/O handlers, not in KsecDispatch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AcceptSecurityContext",
+      "similarity": 0.702,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Thin wrapper updated to call the restructured worker (sub_1800248d0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Wrapper delegation change; no behavioral security impact."
+    },
+    {
+      "name": "KsecProcessSecurityContext (sub_1c001e260)",
+      "similarity": 0.4184,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Token-duplication and process-token-query paths refactored; internal helper renumbering (sub_1c0003610 -> sub_1800011d0)",
+        "Per-package output cBuffers cap changed 8 -> 0x12 (loosened, not tightened)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactor of server-side token processing. The internal cBuffers cap was loosened to 0x12, consistent with the harmonized limit in SspiAcceptSecurityContextAsync; not a security tightening."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": ["KsecUpdateUserTokenSessionId (new fast-I/O handler present only in the patched build; part of the same ProbeForRead hardening wave)"]
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "EncryptMessage / DecryptMessage / QuerySecurityContextToken / ImpersonateSecurityContext / DeleteUserModeContext / ProcessSecurityContextUnMarshalResponse",
+      "entry_point": "Kernel SSP message/context routines (EncryptMessage=SealMessage, DecryptMessage=UnsealMessage, QuerySecurityContextToken, ImpersonateSecurityContext) invoked with a caller-supplied PCtxtHandle",
+      "call_chain": ["EncryptMessage (0x1c00262d0)", "KsecddLsaStateRef package-table lookup", "dispatch table index from *phContext", "__guard_dispatch_icall_fptr"],
+      "vulnerability_class": "CWE-476 (NULL Pointer Dereference); added lfence speculation barrier on the dispatch index",
+      "description": "In the unpatched build, EncryptMessage, DecryptMessage, QuerySecurityContextToken, and ImpersonateSecurityContext read the package index from *phContext without first checking phContext for NULL, then index a per-package dispatch table (unsigned upper-bound check only) and call through a function pointer via the Control-Flow-Guard dispatch thunk without NULL-checking the resolved entry or function pointer. If phContext is NULL, the load of *phContext faults in kernel mode (local BSOD). The patch adds NULL checks on phContext (and the message-buffer argument for Encrypt/Decrypt), an lfence after the bounds check, a reload of the dispatch-table base, and NULL checks on the package entry and function pointer. QuerySecurityContextToken/ImpersonateSecurityContext/DeleteUserModeContext route the dispatch through shared validating helpers (CallValidator::InvokeById at 0x180029c10 and 0x180029960). Note: DeleteUserModeContext already NULL-checked its handle and function pointer in the unpatched build.",
+      "trigger_conditions": "Invoke EncryptMessage/DecryptMessage/QuerySecurityContextToken/ImpersonateSecurityContext with a NULL context handle. Unpatched faults on the *phContext load; patched returns SEC_E_INVALID_HANDLE (0x80090301).",
+      "primitive": "Local kernel NULL-pointer dereference -> BSOD (denial of service). No out-of-bounds read/write or code-execution primitive is demonstrable: the upper-bound check on the index is present in both builds, and the added lfence is a speculative bounds-check-bypass barrier.",
+      "evidence": "See changed_functions entries for EncryptMessage/DecryptMessage/QuerySecurityContextToken/ImpersonateSecurityContext for the real disassembly. Indirect call is cs:__guard_dispatch_icall_fptr (CFG), not a retpoline.",
+      "assembly": "UNPATCHED EncryptMessage @ 0x1C00262D0:\n0x1C002631D  mov rdx, [rbx]      ; *phContext; NO NULL check\n0x1C0026329  jnb error          ; unsigned upper bound only\n0x1C002632B  mov rax, [r8+rdx*8] ; entry; NO NULL check\n0x1C002633B  mov rax, [rax+30h]  ; fn ptr; NO NULL check\n0x1C002633F  call cs:__guard_dispatch_icall_fptr\n\nPATCHED EncryptMessage @ 0x180029A70:\n0x180029A80  test rcx, rcx       ; NEW NULL check\n0x180029AE3  lfence              ; NEW\n0x180029AE6  mov rax, [rcx+1C8h] ; NEW reload\n0x180029AF1  test rcx, rcx       ; NEW entry NULL check\n0x180029AFA  test rax, rax       ; NEW fn-ptr NULL check"
+    },
+    {
+      "severity": "none",
+      "function": "KsecDispatch (sub_1c001e8c0 / 0x180026dc0) - IOCTL 0x398000 and 0x390058",
+      "entry_point": "DeviceIoControl to the ksecdd device - IOCTL codes 0x398000 and 0x390058",
+      "call_chain": ["KsecDispatch", "IOCTL 0x398000 branch (ObOpenObjectByPointer) / IOCTL 0x390058 branch (KsecRemoveValidVm + ZwFreeVirtualMemory)"],
+      "vulnerability_class": "None (no change between builds)",
+      "description": "No security-relevant change. Both IOCTL handlers are functionally identical in the unpatched and patched builds. IOCTL 0x398000 opens a handle to PsGetCurrentProcess() (the caller's own process) with ObOpenObjectByPointer(process, OBJ_KERNEL_HANDLE, NULL, 0x478, NULL, KernelMode, &state[1]); the handle is stored into the kernel LSA-state structure, not returned to user mode, and the user output buffer receives only the DWORD KsecSystemProcessId. 0x478 is a set of PROCESS_* rights (PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION) on the caller's own process, and the object-type argument is NULL. The handler is NOT removed in the patched build (present at 0x180026dc0, ObOpenObjectByPointer with 0x478). IOCTL 0x390058 is METHOD_BUFFERED, requires RequestorMode == UserMode, and validates the target address against ksecdd's own tracked-allocation list via KsecRemoveValidVm before ZwFreeVirtualMemory; no ProbeForRead or ObReferenceObjectByHandle was added to this branch. The only diff in this function is refactoring (InitSecurityInterfaceW -> CreateClient, extension dispatch).",
+      "trigger_conditions": "None (unchanged between builds).",
+      "primitive": "None.",
+      "evidence": "UNPATCHED KsecDispatch 0x398000 branch: ObOpenObjectByPointer(*v19, 0x200u, nullptr, 0x478u, nullptr, 0, v19 + 1); *(_DWORD*)&MappedSystemVa->Type = KsecSystemProcessId; v30 = 4. PATCHED KsecDispatch 0x398000 branch (0x180026dc0): Client = ObOpenObjectByPointer(*v25, 0x200u, nullptr, 0x478u, nullptr, 0, v25 + 1); *a3 = KsecSystemProcessId; v32 = 4. Both identical.",
+      "assembly": ""
+    },
+    {
+      "severity": "low",
+      "function": "SspiAcceptSecurityContextAsync",
+      "entry_point": "SspiAcceptSecurityContextAsync (0x1c0020250 / 0x1800240f0)",
+      "call_chain": ["SspiAcceptSecurityContextAsync", "KsecProcessSecurityContext (unpatched delegate)"],
+      "vulnerability_class": "CWE-1284 (Improper Validation of Specified Quantity) - defensive bound",
+      "description": "The patched SspiAcceptSecurityContextAsync adds if (pOutput->cBuffers > 0x12) return 0x8009035D (SEC_E_INVALID_TOKEN), plus NULL checks on phContext/phCredential/phNewContext and a MapKernelContextHandle call. pOutput is the caller-supplied output SecBufferDesc, not network-attacker-controlled data, and no overflow is demonstrable in the unpatched build. The internal per-package caps in KsecProcessSecurityContext/SspipProcessSecurityContext were harmonized to 0x12 (from 8 / 0xA), so this is a defensive normalization.",
+      "trigger_conditions": "Call SspiAcceptSecurityContextAsync with a caller-supplied pOutput whose cBuffers exceeds 0x12; patched returns SEC_E_INVALID_TOKEN.",
+      "primitive": "Defensive upper bound on a caller-provided buffer count; no demonstrable overflow primitive.",
+      "evidence": "PATCHED @ 0x1800241E4: cmp dword ptr [r15+4], 12h ; ja 0x1800242BC. SecBufferDesc.cBuffers at offset +4. UNPATCHED: no such check.",
+      "assembly": "0x1800241E4  cmp dword ptr [r15+4], 12h\n0x1800241E9  ja  loc_1800242BC"
+    },
+    {
+      "severity": "low",
+      "function": "ImportSecurityContextW",
+      "entry_point": "ImportSecurityContextW (0x1c0023b50 / 0x180021ac0)",
+      "call_chain": ["ImportSecurityContextW", "KSecLocatePackageEx", "package import function pointer (offset +0x60)"],
+      "vulnerability_class": "CWE-476 (NULL Pointer Dereference)",
+      "description": "The unpatched ImportSecurityContextW dereferences the output context handle phContext (phContext->dwUpper = ...; phContext->dwLower = ...) without a NULL check. The patch adds if (pPackedContext == NULL || phContext == NULL) return STATUS_INVALID_PARAMETER (0xC000000D). Both builds already NULL-check the package function pointer, so no function-pointer check was added.",
+      "trigger_conditions": "Call ImportSecurityContextW with a NULL phContext (or NULL pPackedContext).",
+      "primitive": "Local kernel NULL-pointer dereference -> BSOD.",
+      "evidence": "UNPATCHED: v10 = *(v13 + 96); if (v10 != nullptr) { v8 = v10(pPackedContext, Token, &v14); if (v8 >= 0) { phContext->dwUpper = v14; phContext->dwLower = v15; } }  (phContext dereferenced without NULL check). PATCHED: if (pPackedContext != nullptr && phContext != nullptr) { ... } else return 0xC000000D.",
+      "assembly": ""
+    },
+    {
+      "severity": "medium",
+      "function": "KsecIoctl* fast-I/O IOCTL handlers (KsecIoctlHandleFunctionReturn, KsecIoctlClientCallback, KsecIoctlAllocVm, KsecIoctlFreeVm, KsecIoctlCopyVm, KsecIoctlAllocPool, KsecIoctlFreePool, KsecIoctlCopyPool, KsecIoctlDupLsaHandle, KsecIoctlInsertProtectedProcessAddress, KsecIoctlRemoveProtectedProcessAddress, KsecCopyVirtualMemory)",
+      "entry_point": "ksecdd fast-I/O device control (KsecFastIoDeviceControl 0x1c0002910) dispatching CNG kernel IOCTL codes to the KsecIoctl* handlers",
+      "call_chain": ["KsecFastIoDeviceControl", "KsecIoctl* handler", "dereference of caller-supplied input buffer"],
+      "vulnerability_class": "CWE-822 (Untrusted Pointer Dereference) / missing ProbeForRead; CWE-367 (double-fetch/TOCTOU) for KsecIoctlHandleFunctionReturn and KsecIoctlClientCallback",
+      "description": "The fast-I/O device-control path passes the caller-supplied input-buffer pointer straight to the per-IOCTL handlers. In the unpatched build these handlers dereference that pointer with no ProbeForRead (the entire unpatched binary contains zero ProbeForRead calls; the patched binary contains 24). The patch adds ProbeForRead before the dereference across the whole KsecIoctl* handler family. Two handlers get a stronger fix: KsecIoctlHandleFunctionReturn (unpatched only force-fault-touched the range end and forwarded the raw user pointer to CallInProgressCompleted; patched adds ProbeForRead + RtlCopyFromUser into a pool buffer and operates on the kernel copy) and KsecIoctlClientCallback (multiple ProbeForRead + capture of fields into kernel locals). Some handlers previously used only a weak start-of-range test (if *a1 >= MmUserProbeAddress) replaced by a full ProbeForRead. This is the genuine IOCTL-path hardening; the report's earlier 0x398000/0x390058 framing (see finding 2) does not correspond to any change.",
+      "trigger_conditions": "Reach the ksecdd fast-I/O device-control interface with one of the CNG kernel IOCTL codes and an input-buffer pointer that is not a valid user-mode range (or that is mutated between fetches, for the double-fetch handlers). Reachability by an unprivileged caller depends on the device ACL and the protected-process gating in KsecFastIoDeviceControl.",
+      "primitive": "Kernel-mode dereference of an unvalidated caller-supplied pointer (invalid-address fault, or bounded read from a caller-named address). Handle values read from the buffer are separately validated via ObReferenceObjectByHandle(PsProcessType) and addresses via KsecRemoveValidVm/KsecInsertValidVm, which bounds the practical impact.",
+      "evidence": "PATCHED KsecIoctlFreeVm @ 0x18000E168: 0x18000E196 call cs:__imp_ProbeForRead (len 0x10, align 8) then 0x18000E1A2 movups xmm0,[rbx]. UNPATCHED KsecIoctlFreeVm @ 0x1C000E91C: no ProbeForRead; reads *a1 directly then ObReferenceObjectByHandle at 0x1C000E963.\n\nPATCHED KsecIoctlHandleFunctionReturn @ 0x180006728: ProbeForRead(Src, size, 1) at 0x1800067BE; ExAllocatePool2; RtlCopyFromUser(Pool, Src, size); CallInProgressCompleted(Pool, Pool, size). UNPATCHED @ 0x1C0006898: if (a1+size > MmUserProbeAddress || a1+size < a1) *(BYTE*)MmUserProbeAddress = 0; CallInProgressCompleted(a1, a1, size) on the raw user pointer.",
+      "assembly": "PATCHED KsecIoctlFreeVm @ 0x18000E168:\n0x18000E184  mov edx, 10h            ; Length\n0x18000E192  lea r8d, [rdx-8]        ; Alignment = 8\n0x18000E196  call cs:__imp_ProbeForRead\n0x18000E1A2  movups xmm0, [rbx]      ; deref after probe"
+    }
+  ],
+  "summary": "The ksecdd.sys patch delivers input-validation hardening, not the high-severity exploit chains a first pass might infer. Two genuine, address-verified change classes are present. (1) NULL-pointer / dispatch hardening in the SSPI message and context APIs (EncryptMessage=SealMessage, DecryptMessage=UnsealMessage, QuerySecurityContextToken, ImpersonateSecurityContext, and the internal helpers DeleteUserModeContext and ProcessSecurityContextUnMarshalResponse): after the existing unsigned upper-bound check on the package index, the patch adds an lfence, reloads the dispatch-table base, and NULL-checks the package entry and function pointer before the CFG-guarded indirect call; the four entry points also gain NULL checks on the caller context handle (and message buffer), closing a local NULL-pointer dereference (BSOD). (2) Missing ProbeForRead on user-supplied IOCTL input buffers across the KsecIoctl* fast-I/O handler family (0 ProbeForRead calls unpatched vs 24 patched), with KsecIoctlHandleFunctionReturn and KsecIoctlClientCallback additionally converted from raw-user-pointer use to ProbeForRead + RtlCopyFromUser kernel-copy (double-fetch/TOCTOU fix). Corrections to note: the SSPI dispatch functions are named EncryptMessage/DecryptMessage (SSPI Seal/Unseal aliases); the indirect calls use Control-Flow-Guard (__guard_dispatch_icall_fptr), not retpolines; the claimed IOCTL 0x398000 handle leak and IOCTL 0x390058 arbitrary-VM-free fixes do not exist - both handlers are functionally identical in the two builds (0x478 is PROCESS_* rights on the caller's own process, the handle is kept in kernel state, and the handler is not removed); the ProbeForRead/ObReferenceObjectByHandle hardening the report attributed to KsecDispatch actually lives in the separate KsecIoctl* fast-I/O handlers; the SspiAcceptSecurityContextAsync cBuffers <= 0x12 check is a defensive bound on a caller output descriptor (error 0x8009035D at 0x1800241E4), not a network overflow fix. Overall severity: low for the NULL-deref/dispatch hardening (local DoS), medium for the missing-ProbeForRead / double-fetch family. No demonstrable OOB write, information leak, privilege escalation, or code-execution primitive."
+}

@@ -1,0 +1,169 @@
+{
+  "binaries": {
+    "title": "fvevol.sys (Windows BitLocker Full Volume Encryption Driver) - Metadata file-creation path review: bounds validation present in both builds",
+    "id_unpatched": "fvevol_unpatched.sys",
+    "id_patched": "fvevol_patched.sys",
+    "overall_similarity": 0.7398,
+    "matched": 1379,
+    "changed": 1140,
+    "identical": 239,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FveWipeInfoFileCreate (sub_1C008221C)",
+      "similarity": 0.4008,
+      "change_type": "refactor",
+      "key_changes": [
+        "Unpatched address 0x1C008221C resolves to FveWipeInfoFileCreate; its matched twin is FveWipeInfoFileCreate @ 0x1400A82B0 in the patched build",
+        "Does not read a2+0x28/+0x30/+0x38; allocation size derives from a sector-alignment computation on *(a1+0x494)",
+        "Only inter-build difference: on a STATUS_OBJECT_NAME_NOT_FOUND (0xC0000034) result, the unpatched build falls back to an inline ZwCreateFile (via FveAllocateUnicodePath/FveFileGetPath) while the patched build issues a second FveFileOpenEx create call",
+        "Both builds call FveVolumeCleanupInfo on the locally initialized info buffer"
+      ],
+      "security_relevant": false,
+      "security_notes": "FveWipeInfoFileCreate performs no attacker-controlled offset/size arithmetic. Its size input is a sector-alignment value computed from volume geometry (*(a1+0x494)), not an unbounded on-disk length. The difference between builds is a refactor of the file-creation fallback path (inline ZwCreateFile replaced by an FveFileOpenEx create call), which is behavior-preserving with respect to bounds validation. No integer-underflow or out-of-bounds delta exists.",
+      "assembly_diff": "The offset/size bounds arithmetic reported for this address actually belongs to a different function, FveControlFileCreate (unpatched 0x1C00805FC, patched 0x1400C78B0). FveWipeInfoFileCreate at 0x1C008221C does not compare a2+0x28 vs a2+0x38 nor a2+0x30 vs their difference."
+    },
+    {
+      "name": "FveControlFileCreate (sub_1C00805FC unpatched / sub_1400C78B0 patched)",
+      "similarity": 0.4008,
+      "change_type": "refactor",
+      "key_changes": [
+        "The offset/size bounds guard is present in BOTH builds: if (*(a2+0x28) > *(a2+0x38)) { if (*(a2+0x30) > *(a2+0x28) - *(a2+0x38)) { ... } }",
+        "Verified in assembly: unpatched 0x1C00807C9-0x1C00807E7 and patched 0x1400C7947-0x1400C7965 contain the same cmp/jbe compare pair reading a2+0x28, a2+0x38, a2+0x30",
+        "Allocation size *(a2+0x38) + *(a2+0x30) - *(a2+0x28) is bounded by both comparisons in both builds",
+        "The a2+0x88 (a2+136) TP-help pointer is validated via FveTpIsRangeAllocated with a (result-2)<=1 range check before FveReleaseTpHelpInfo in BOTH builds",
+        "Only difference: patched build funnels the control-file creation through FveFileOpenEx where the unpatched build inlines ZwCreateFile (preceded by FveAllocateUnicodePath/FveFileGetPath); plus WPP trace-GUID name churn"
+      ],
+      "security_relevant": false,
+      "security_notes": "FveControlFileCreate reads offset/region/size fields from the metadata structure (a2+0x28, a2+0x30, a2+0x38) and guards them with 'offset > size' and 'region > offset - size' before the subtraction and before the file-creation call. This guard is present, instruction-for-instruction, in both the unpatched (0x1C00805FC) and patched (0x1400C78B0) builds, so the subtraction cannot underflow and the resulting size is bounded in both. The inter-build change is a refactor of how the file is opened (inline ZwCreateFile vs FveFileOpenEx), not the addition or removal of any bounds check.",
+      "assembly_diff": "Unpatched 0x1C00807C9: mov rcx,[r14+28h]; mov rdx,[r14+38h]; cmp rcx,rdx; jbe ...; mov rdi,[r14+30h]; sub rax,rdx; cmp rdi,rax; jbe ...  Patched 0x1400C7947: mov rdx,[rdi+28h]; mov rcx,[rdi+38h]; cmp rdx,rcx; jbe ...; mov r8,[rdi+30h]; sub rax,rcx; cmp r8,rax; jbe ...  Equivalent logic."
+    },
+    {
+      "name": "FveEowConvStep (sub_1C00433B0)",
+      "similarity": 0.639,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large EOW/metadata convert-step function with version-level restructuring",
+        "The region/offset underflow clamp (if (used > next - cur) { if (delta > 0xFFFFFFFF) KeBugCheckEx(0x120, 8, 0xC0000095) }) is identical in both builds",
+        "Differences are struct-offset and register churn, image-base relocation, and WPP trace-GUID renames"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The load-bearing bounds/underflow validation is unchanged between builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveConvStopCommon (sub_1C004577C)",
+      "similarity": 0.902,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Stack frame changed from 0x170 to 0x160 bytes",
+        "Structural changes in initialization and error handling paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveQueueInit (sub_1C001B0E8)",
+      "similarity": 0.9703,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag migrated to ExAllocatePool2 (POOL_FLAG_NON_PAGED)",
+        "List head initialization field offsets changed (arg1[0x6b/0x6c/0x6d/0x6e/0x6f] -> arg1[0x6d/0x6e/0x6f/0x70/0x71])",
+        "New field *(arg1 + 0x384) initialization added/removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveEowConvStepIssueWorker (sub_1C00432B0)",
+      "similarity": 0.6266,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Calls FveEowConvStep in both builds (unpatched sub_1C00433B0, patched sub_1400868E8)",
+        "Only differences: a WPP trace-GUID rename and a decompiler prototype-recovery artifact (the FveEowConvStep call rendered with three arguments unpatched vs one patched); IoGetBootLayers is not called by this function in either build"
+      ],
+      "security_relevant": false,
+      "security_notes": "No behavior change. This is cosmetic churn.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveValidateIoCryptoConfig (sub_1C008A610)",
+      "similarity": 0.9118,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Largest function (1187 instructions) - mostly cosmetic address/log changes",
+        "data_1c0033000 references renamed to data_14003b000",
+        "STATUS_SUCCESS comparisons replaced with 0"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveEowFinalSweepIsFreeSpaceRange (sub_1C004530C)",
+      "similarity": 0.4194,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Address-range overflow check and bitmap-index bounds check are unchanged in substance between builds",
+        "Restructuring driven by WIL feature-staging for Feature_BitLockerEphemeralVolumeSupport plus struct-offset churn"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The bounds checks are preserved; the restructuring is version churn plus WIL feature-staging.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "FveControlFileCreate (unpatched 0x1C00805FC / patched 0x1400C78B0); FveWipeInfoFileCreate (unpatched 0x1C008221C / patched 0x1400A82B0)",
+      "entry_point": "BitLocker metadata/control file operations reached via the FVE volume-activation path",
+      "call_chain": ["FVE volume activation", "FveControlFileCreate / FveWipeInfoFileCreate", "FveFileOpenEx / ZwCreateFile"],
+      "vulnerability_class": "CWE-191 integer-underflow guard - present in both builds (no net change)",
+      "description": "The metadata offset/size arithmetic lives in FveControlFileCreate, which reads offset (a2+0x28), region size (a2+0x30), and size (a2+0x38) from the metadata structure. Before the subtraction and before the file-creation call, both builds validate 'offset > size' and 'region > offset - size', so the subtraction cannot underflow and the resulting allocation size (size + region - offset) is bounded. This guard is present instruction-for-instruction in both the unpatched build (FveControlFileCreate @ 0x1C00805FC) and the patched build (FveControlFileCreate @ 0x1400C78B0). The a2+0x88 (a2+136) TP-help metadata pointer is likewise validated via FveTpIsRangeAllocated with a (result-2)<=1 range check before FveReleaseTpHelpInfo in both builds. Unpatched address 0x1C008221C is a different function, FveWipeInfoFileCreate, which does not read a2+0x28/+0x30/+0x38 at all; its size input is a sector-alignment value computed from *(a1+0x494). The only inter-build differences on this path are refactors (inline ZwCreateFile replaced by FveFileOpenEx in FveControlFileCreate; a file-creation fallback restructured in FveWipeInfoFileCreate). There is no addition or removal of a bounds check, and no exploitable delta.",
+      "trigger_conditions": "None. In both builds FveControlFileCreate rejects metadata where offset <= size or region <= (offset - size) before performing the subtraction or creating the file. A malformed metadata block cannot drive an offset underflow that is guarded in one build and unguarded in the other. FveWipeInfoFileCreate reads none of these fields.",
+      "primitive": "None. The allocation size region + size - offset is bounded by two comparisons that execute in both builds; it is neither a near-zero underflow nor a wraparound under attacker control.",
+      "evidence": "UNPATCHED FveControlFileCreate @ 0x1C00805FC:\n  v27 = *(a2+40); v28 = *(a2+56);\n  if (v27 > v28) {                 // offset > size\n      v29 = *(a2+48);\n      if (v29 > v27 - v28) {        // region > offset - size\n          v30.QuadPart = v28 + v29 - v27;   // bounded size\n          ZwCreateFile(..., &v37, ...);\n      }\n  }\n\nPATCHED FveControlFileCreate @ 0x1400C78B0:\n  v17 = *(a2+40); v18 = *(a2+56);\n  if (v17 > v18) {                 // same guard\n      v19 = *(a2+48);\n      if (v19 > v17 - v18) {        // same guard\n          FveFileOpenEx(a2, a3, 0, L\"TEMP\", 0, 0, 3u, 0x886Au, 0,\n                        v19 + v18 - v17, nullptr, v35);   // same bounded size\n      }\n  }\n\nBoth builds also guard the a2+0x88 pointer:\n  if (v16 != 0 && a7 == 2 && v16 != v34 && *(a2+128) == 0) {\n      p = *(a2+136);\n      if (p != 0 && FveTpIsRangeAllocated(p, v34, v21, &r) >= 0 && (r - 2) <= 1)\n          FveReleaseTpHelpInfo((PVOID*)(a2+136));\n  }",
+      "assembly": "Bounds guard verified in both builds. Unpatched FveControlFileCreate 0x1C00807C9: mov rcx,[r14+28h]; mov rdx,[r14+38h]; cmp rcx,rdx; jbe loc_1C0080681; mov rdi,[r14+30h]; sub rax,rdx; cmp rdi,rax; jbe loc_1C00809B2. Patched FveControlFileCreate 0x1400C7947: mov rdx,[rdi+28h]; mov rcx,[rdi+38h]; cmp rdx,rcx; jbe loc_1400C7A2B; mov r8,[rdi+30h]; sub rax,rcx; cmp r8,rax; jbe loc_1400C7A2B. The compare/branch sequence is equivalent; no comparison is present in one build and absent in the other.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fvevol!FveControlFileCreate",
+            "address": "0x1c00805fc (unpatched) / 0x1400c78b0 (patched)",
+            "why": "Entry of the control-file creation function. rdx=a2 (metadata structure). The offset/region/size fields at a2+0x28, a2+0x30, a2+0x38 are read and guarded here in both builds. Step through the cmp/jbe pair to confirm both builds branch identically for the same field values."
+          },
+          {
+            "symbol": "fvevol!FveWipeInfoFileCreate",
+            "address": "0x1c008221c (unpatched) / 0x1400a82b0 (patched)",
+            "why": "The function that unpatched address 0x1C008221C resolves to. It reads no a2+0x28/+0x30/+0x38 fields; its allocation size is a sector-alignment value from *(a1+0x494)."
+          }
+        ],
+        "watch": [
+          "a2+0x28 = offset field (guarded: offset > size in both builds)",
+          "a2+0x30 = region size (guarded: region > offset - size in both builds)",
+          "a2+0x38 = size field",
+          "a2+0x80 = flag; must be 0 to enter the create branch",
+          "a2+0x88 = TP-help pointer; validated via FveTpIsRangeAllocated in both builds"
+        ],
+        "key_offsets": [
+          "0x1c00807c9: unpatched FveControlFileCreate reads a2+0x28/a2+0x38, guard #1",
+          "0x1c00807da: unpatched reads a2+0x30, guard #2 against offset - size",
+          "0x1400c7947: patched FveControlFileCreate reads a2+0x28/a2+0x38, guard #1",
+          "0x1400c7958: patched reads a2+0x30, guard #2",
+          "0x1c008221c: FveWipeInfoFileCreate entry; alignment from *(a1+0x494)"
+        ],
+        "trigger_setup": "Not applicable. Both builds validate the offset/size/region fields before use, so no crafted metadata block produces a differential crash on this path.",
+        "expected_observation": "Feeding metadata where offset <= size or region <= (offset - size) makes both the unpatched and patched builds skip the file-creation branch identically. No crash, no behavioral divergence attributable to a bounds fix.",
+        "notes": "The fields at a2+0x28/+0x30/+0x38 correspond to volume-geometry metadata (offset, region size, size). The guard 'if (offset > size) { if (region > offset - size) ... }' is a longstanding property of FveControlFileCreate in both builds. Symbols are available as fvevol.sys via the Microsoft Symbol Server."
+      }
+    }
+  ],
+  "summary": "This diff compares two versions of fvevol.sys (the Windows BitLocker FVE disk filter driver) with 1140 of 1379 functions changed at 0.74 overall similarity, indicating a multi-version rebuild rather than a single targeted patch. On the metadata file-creation path there is no security-relevant change. The offset/size bounds guard ('offset > size' then 'region > offset - size') that bounds the control-file allocation lives in FveControlFileCreate and is present, instruction-for-instruction, in both the unpatched build (0x1C00805FC) and the patched build (0x1400C78B0); verified at unpatched 0x1C00807C9-0x1C00807E7 and patched 0x1400C7947-0x1400C7965. The a2+0x88 TP-help pointer is validated via FveTpIsRangeAllocated in both builds. Unpatched address 0x1C008221C is a different function, FveWipeInfoFileCreate, which does not read those offset fields; its only inter-build change is a refactor of a file-creation fallback (inline ZwCreateFile replaced by FveFileOpenEx). No integer underflow, out-of-bounds access, or missing-check delta exists on this path. The heavily restructured EOW convert/sweep functions (FveEowConvStep, FveEowFinalSweepIsFreeSpaceRange) were also diffed directly: their bounds and underflow validation is unchanged across builds, and the restructuring is version churn plus WIL feature-staging (Feature_BitLockerEphemeralVolumeSupport), not a security fix."
+}

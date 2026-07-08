@@ -1,0 +1,147 @@
+{
+  "binaries": {
+    "title": "ataport.sys (ATA Port Driver) - use-after-free fix in IdePortTickHandler (device remove lock now held during periodic tick) plus an unrelated ATA error-retry refactor",
+    "id_unpatched": "ataport_unpatched.sys",
+    "id_patched": "ataport_patched.sys",
+    "overall_similarity": 0.6819,
+    "matched": 550,
+    "changed": 328,
+    "identical": 222,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "IdePortTickHandler -> 0x1C0004990 (periodic timer DPC DeferredRoutine; unpatched 0x1C000DFB0)",
+      "similarity": 0.0,
+      "change_type": "security_fix",
+      "key_changes": [
+        "Matched by content and role across relocation, not by address. The unpatched IdePortTickHandler (0x1c000dfb0-0x1c000e115) enumerates PDO extensions with RefNextPdoExtensionWithTag/UnRefPdoExtensionWithTag and performs per-device timeout/reset work (DeviceUpdateRequestTimeoutCounter at 0x1c000e082, IdeTargetReset at 0x1c000e0a8, IdeChannelReset at 0x1c000e0f9) with ZERO IoAcquireRemoveLockEx/IoReleaseRemoveLockEx anywhere in the function body.",
+        "The patched IdePortTickHandler (0x1c0004990-0x1c0008cb8) walks the channel device hash table under the channel spinlock ([chan+0x98], same structure RemovePdoExtension uses) and, once a device is matched, acquires the device-extension remove lock before any per-device work: lea rcx,[rsi+0b0h] (RemoveLock) / call IoAcquireRemoveLockEx at 0x1c0004b51, test eax,eax / jns to proceed, else jmp to release the spinlock and skip the device.",
+        "Per-device work then runs (DeviceUpdateRequestTimeoutCounter at 0x1c0004bc1, IdeTargetReset at 0x1c0008c6e, IdeChannelReset at 0x1c0008caa) and every exit releases the lock: IoReleaseRemoveLockEx at 0x1c0004bfe and 0x1c0008c14.",
+        "Device teardown RemovePdoExtension (0x1c0006c0c) synchronizes with concurrent users only via IoReleaseRemoveLockAndWaitEx on the same [dev+0xb0] remove lock (0x1c0006c9a) before unlinking and freeing the extension; it does not wait on the RefNextPdoExtensionWithTag tag counter. So the unpatched tick handler, holding only the tag, could touch a device the teardown had already freed."
+      ],
+      "security_relevant": true,
+      "security_notes": "CWE-416 use-after-free fix. The unpatched periodic tick DPC operates on device extensions without holding their IO_REMOVE_LOCK (offset +0xb0, initialized via IoInitializeRemoveLockEx at 0x1c00216be, tag 'IdeP'=0x50656449). PnP device removal (RemovePdoExtension) frees the extension after IoReleaseRemoveLockAndWaitEx returns, which the tag counter does not gate, so a remove concurrent with a tick races into a use-after-free. The patch acquires the remove lock, checks the status, skips the device on failure, and releases it around the work. Direction is strictly tightening; not staging/telemetry/relocation/API-modernization; the DPC is a live periodic routine. See security_findings for full detail.",
+      "assembly_diff": "UNPATCHED IdePortTickHandler (0x1c000dfb0) per-device work, no remove lock:\n  0x1c000e07f : mov     rcx, rdi                 ; rdi = device extension\n  0x1c000e082 : call    DeviceUpdateRequestTimeoutCounter\n  0x1c000e0a8 : call    IdeTargetReset\n  0x1c000e0b7 : call    UnRefPdoExtensionWithTag ; tag counter only\n  0x1c000e0c6 : call    RefNextPdoExtensionWithTag\n  0x1c000e0f9 : call    IdeChannelReset\n\nPATCHED IdePortTickHandler (0x1c0004990) acquires remove lock before per-device work:\n  0x1c0004b2e : lea     rcx, [rsi+0b0h]; RemoveLock\n  0x1c0004b35 : mov     [rsp+..], 20h; RemlockSize\n  0x1c0004b3d : mov     r9d, 1; Line\n  0x1c0004b43 : lea     r8, File; File\n  0x1c0004b4a : lea     rdx, IdePortTickHandler; Tag\n  0x1c0004b51 : call    cs:__imp_IoAcquireRemoveLockEx\n  0x1c0004b5d : test    eax, eax\n  0x1c0004b5f : jns     loc_1c0004a2f            ; success: do per-device work\n  0x1c0004b65 : jmp     loc_1c0008be0            ; failure: release spinlock, skip device\n  ...\n  0x1c0004bc1 : call    DeviceUpdateRequestTimeoutCounter\n  0x1c0008c6e : call    IdeTargetReset\n  0x1c0008caa : call    IdeChannelReset\n  0x1c0004bfe : call    cs:__imp_IoReleaseRemoveLockEx\n  0x1c0008c14 : call    cs:__imp_IoReleaseRemoveLockEx\n\nTEARDOWN proof, RemovePdoExtension (0x1c0006c0c) waits on the same lock then frees:\n  0x1c0006c8a : lea     rcx, [rbx+0b0h]; RemoveLock\n  0x1c0006c9a : call    cs:__imp_IoReleaseRemoveLockAndWaitEx\n  0x1c0006ce1 : dec     dword ptr [rdi+54h]      ; unlink + dec device count"
+    },
+    {
+      "name": "IdeProcessCompletedRequests -> sub_1C00036A0 (ATA request completion routine)",
+      "similarity": 0.5168,
+      "change_type": "refactor",
+      "key_changes": [
+        "Patched routine inlines the transport-error interpreter that the unpatched build reached via a separate call to IdepInterpretTransportErrors (sub_1c0004a3c). IdeMapError is now called at 0x1c0003a1f inside the completion routine, and the error dispatch is a jump-table switch. This accounts for the size growth (0.5168 similarity).",
+        "The inline per-retry field-reset block is replaced by a call to the new shared helper PrepareCrbForRetry (sub_1c000c700) at 0x1c0007fbc, guarded by the same 404h/0x3e8 check and the same 'and al,5Fh; cmp al,44h; mov eax,0x100; or [req+0x20],ax' requeue-flag test that the unpatched build performs inline in sub_1c0004a3c.",
+        "The SLIST recycle path is unchanged: unpatched 0x1c000dadb-0x1c000daf6 (push [req+0x408] to controller_ext+0x1480, then zero [req+0x408]) is byte-equivalent to patched 0x1c0003818-0x1c0003833. Neither build clears 0x3ea/0x3eb/0x3f3/0x410/0x420/0x428/0x23/0x28 at this push."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The per-retry reset (zero 0x3eb/0x3f3/0x428/0x420/0x3ea/0x410, conditional bump of the retry counter at 0x23, clear 0x28, and set the 0x100 requeue flag at 0x20) exists in BOTH builds. In the unpatched build it is inline in IdepInterpretTransportErrors (sub_1c0004a3c, 0x1c0004b73-0x1c0004ba9), PrepareCrbForPioRetry (sub_1c0005a24, 0x1c0005b3d-0x1c0005b76), and ProcessParityError (sub_1c00056d0, 0x1c000576f-0x1c00057a8). The patch factors all three inline copies into PrepareCrbForRetry (sub_1c000c700) and inlines the error-interpretation switch into the completion routine. The reset is on the transport-error retry path, not on the free-list recycle path, and no field is stale-in-one-build / cleared-in-the-other. The SrbData-derived values (*(rdi+0x4f)<<8 | *(rdi+0x50), etc.) reach only the WPP trace call WPP_SF_DDDDDqDDDDiDdd at 0x1c000df06 and do not feed any transfer-size or bounds decision.",
+      "assembly_diff": "UNPATCHED inline reset in IdepInterpretTransportErrors (sub_1c0004a3c):\n  0x1c0004b48 : mov     eax, 404h\n  0x1c0004b4d : cmp     [rdi+3e8h], ax\n  0x1c0004b54 : jnz     0x1c0004b62\n  0x1c0004b56 : mov     byte [rdi+3eah], 6\n  0x1c0004b62 : and     cl, 5fh\n  0x1c0004b65 : cmp     cl, 44h\n  0x1c0004b6a : mov     eax, 100h\n  0x1c0004b6f : or      [rdi+20h], ax        ; requeue flag\n  0x1c0004b75 : mov     [rdi+3ebh], cx\n  0x1c0004b7c : mov     [rdi+3f3h], cl\n  0x1c0004b82 : mov     [rdi+428h], rcx\n  0x1c0004b89 : mov     [rdi+420h], rcx\n  0x1c0004b90 : mov     [rdi+3eah], cl\n  0x1c0004b96 : mov     [rdi+410h], rcx\n  0x1c0004b9d : mov     al, [rdi+23h]\n  0x1c0004ba0 : cmp     al, 1\n  0x1c0004ba2 : jnb     0x1c0004ba9\n  0x1c0004ba4 : inc     al\n  0x1c0004ba6 : mov     [rdi+23h], al        ; conditional retry-counter bump\n  0x1c0004ba9 : mov     [rdi+28h], ecx\n\nPATCHED same path in sub_1c00036a0, now calling the helper:\n  0x1c0007f87 : mov     eax, 404h\n  0x1c0007f8c : cmp     [rbx+3e8h], ax\n  0x1c0007f93 : jnz     0x1c0007fa2\n  0x1c0007f95 : mov     byte [r13+3eah], 6\n  0x1c0007fa2 : movzx   eax, byte [r13+3eah]\n  0x1c0007faa : and     al, 5fh\n  0x1c0007fac : cmp     al, 44h\n  0x1c0007fb0 : mov     eax, 100h\n  0x1c0007fb5 : or      [rbx+20h], ax        ; requeue flag\n  0x1c0007fb9 : mov     rdx, rbx\n  0x1c0007fbc : call    PrepareCrbForRetry (sub_1c000c700)\n\nRECYCLE SITE (identical in both builds, no reset added):\n  UNPATCHED 0x1c000dadb : lea rcx,[r12+1480h]; 0x1c000dae3 mov rdx,[r13+408h]; 0x1c000daea call ExpInterlockedPushEntrySList; 0x1c000daf6 and qword [r13+408h],0\n  PATCHED   0x1c0003818 : lea rcx,[r12+1480h]; 0x1c0003820 mov rdx,[rsi+408h]; 0x1c0003827 call ExpInterlockedPushEntrySList; 0x1c0003833 mov qword [rsi+408h],0"
+    },
+    {
+      "name": "sub_1C000C700 (NEW helper - PrepareCrbForRetry, per-retry field reset)",
+      "similarity": 0.0,
+      "change_type": "refactor",
+      "key_changes": [
+        "New function that contains logic which existed inline in the unpatched build. Zeroes request state fields at 0x3ea, 0x3eb (word store, also clears 0x3ec), 0x3f3, 0x410, 0x420, 0x428; conditionally increments the retry counter at 0x23 (only if < 1); clears 0x28.",
+        "Called from three sites in patched: sub_1c00036a0 (at 0x1c0007fbc), sub_1c000c53c (=unpatched PrepareCrbForPioRetry sub_1c0005a24, at 0x1c000c659), sub_1c000c9f4 (=unpatched ProcessParityError sub_1c00056d0, at 0x1c000ca7f). In the unpatched build the identical block was inline in all three corresponding functions (IdepInterpretTransportErrors sub_1c0004a3c at 0x1c0004b73, PrepareCrbForPioRetry at 0x1c0005b3d, ProcessParityError at 0x1c000576f)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PrepareCrbForPioRetry (sub_1C0005A24) -> sub_1C000C53C (request re-issue / retry path)",
+      "similarity": 0.9214,
+      "change_type": "refactor",
+      "key_changes": [
+        "Pure refactor: the inline field-zeroing block (0x1c0005b3d-0x1c0005b76) is replaced by a call to PrepareCrbForRetry (sub_1c000c700) at 0x1c000c659. Semantically identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ProcessParityError (sub_1C00056D0) -> sub_1C000C9F4 (parity/CRC error-handling path)",
+      "similarity": 0.9329,
+      "change_type": "refactor",
+      "key_changes": [
+        "Same refactor: inline field-zeroing (0x1c000576f-0x1c00057a8) replaced by call to PrepareCrbForRetry (sub_1c000c700) at 0x1c000ca7f. Semantically identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IdeInitCrbWithTaskFileAndDataPayload (sub_1C000C59C) -> sub_1C0001444 (ATA command opcode dispatch switch)",
+      "similarity": 0.9538,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Switch-case over ATA opcode (*(arg2+6)) mapping to SCSI opcodes (0x100-0x105) is reordered by the compiler (if/else cascade inverted) but the mapping table is identical. No semantic change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DeviceHandleDeviceTelemetryIoctl (sub_1C0024AD8) -> sub_1C00294D8 (magic-number IRP dispatch)",
+      "similarity": 0.9232,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler restructured the comparison of two 64-bit magic constants (0x4bc17142da82441d/0x7fb6a4c5070844b8 and 0x4d561aabd8e2592f) from two-test-and to subtract-and-test form. Logic is equivalent."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ChannelFilterResourceRequirements (sub_1C0025BB0) -> sub_1C002B1B0 (IRP-completion GUID/telemetry buffer parser)",
+      "similarity": 0.9683,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler-wide-vector-register usage change (zmm0 vs scalar) and label renumbering. The allocation size arithmetic (count*0x20 + base, with overflow check) is identical. Not a security change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-416",
+      "function": "IdePortTickHandler (periodic timer DPC; unpatched 0x1C000DFB0, patched 0x1C0004990)",
+      "entry_point": "Registered timer DPC DeferredRoutine (KeInitializeDpc). Fires periodically while the driver has active ATA channels.",
+      "call_chain": [
+        "Timer/DPC -> IdePortTickHandler -> DeviceUpdateRequestTimeoutCounter / IdeTargetReset / IdeChannelReset on a per-device extension.",
+        "Concurrent PnP remove IRP -> RemovePdoExtension (0x1c0006c0c) -> IoReleaseRemoveLockAndWaitEx on [dev+0xb0] (0x1c0006c9a) -> unlink and free the device extension."
+      ],
+      "vulnerability_class": "Use-after-free via device-removal race (CWE-416; underlying missing removal-synchronization lock is CWE-362).",
+      "description": "Each channel device extension holds an IO_REMOVE_LOCK at offset +0xb0, initialized via IoInitializeRemoveLockEx at 0x1c00216be (tag 'IdeP'=0x50656449, size 0x20) and keyed by [dev+0x54]. Device teardown RemovePdoExtension (0x1c0006c0c) locates the device in the channel hash table under the channel spinlock ([chan+0x98]) and then calls IoReleaseRemoveLockAndWaitEx on [dev+0xb0] (0x1c0006c9a) before unlinking the extension and decrementing the device count (0x1c0006ce1); the extension is then freed. IoReleaseRemoveLockAndWaitEx waits only for holders of that remove lock, not for the driver's RefNextPdoExtensionWithTag/UnRefPdoExtensionWithTag tag counter. In the UNPATCHED build, IdePortTickHandler (0x1c000dfb0-0x1c000e115) enumerates PDO extensions using only that tag counter and performs per-device work (DeviceUpdateRequestTimeoutCounter at 0x1c000e082, IdeTargetReset at 0x1c000e0a8, IdeChannelReset at 0x1c000e0f9) with NO IoAcquireRemoveLockEx anywhere in its body. A PnP remove concurrent with a tick can therefore free the device extension while the DPC is still dereferencing it -> use-after-free on a kernel pool object. The PATCHED build closes this: it walks the device hash table under the channel spinlock and acquires IoAcquireRemoveLockEx on [dev+0xb0] (0x1c0004b51) before per-device work, checks the NTSTATUS (test eax,eax; jns at 0x1c0004b5d/0x1c0004b5f), skips the device if acquisition fails (device already removing), and releases the lock on all exits (IoReleaseRemoveLockEx at 0x1c0004bfe and 0x1c0008c14).",
+      "trigger_conditions": "The periodic tick DPC must be executing per-device work on a device extension at the same time a PnP remove IRP for that device reaches RemovePdoExtension and completes IoReleaseRemoveLockAndWaitEx. Triggered locally by device removal: hot-unplug/eject of a removable ATA/ATAPI device, Disable in Device Manager, or stop/remove during driver teardown. Local PnP-driven race, not remotely reachable and not directly forced by attacker-supplied data.",
+      "primitive": "Kernel use-after-free: reads/writes by DeviceUpdateRequestTimeoutCounter, IdeTargetReset, and IdeChannelReset land on a freed device extension if the race is won, corrupting pool state and potentially escalating to kernel memory corruption depending on reallocation.",
+      "evidence": "Remove lock init (device extension = DeviceObject+0x40):\n  0x1c0021664 : mov     rdi, [rax+40h]\n  0x1c0021674 : lea     rcx, [rdi+0b0h]; Lock\n  0x1c002167f : mov     edx, 50656449h; AllocateTag ('IdeP')\n  0x1c00216b2 : mov     [rdi+54h], r14d\n  0x1c00216be : call    cs:__imp_IoInitializeRemoveLockEx\n\nTeardown waits on the lock then frees (RemovePdoExtension 0x1c0006c0c):\n  0x1c0006c8a : lea     rcx, [rbx+0b0h]; RemoveLock\n  0x1c0006c9a : call    cs:__imp_IoReleaseRemoveLockAndWaitEx\n  0x1c0006ce1 : dec     dword ptr [rdi+54h]\n\nUNPATCHED IdePortTickHandler: no remove lock, only tag counter:\n  0x1c000e082 : call    DeviceUpdateRequestTimeoutCounter\n  0x1c000e0a8 : call    IdeTargetReset\n  0x1c000e0b7 : call    UnRefPdoExtensionWithTag\n  0x1c000e0c6 : call    RefNextPdoExtensionWithTag\n  0x1c000e0f9 : call    IdeChannelReset\n\nPATCHED IdePortTickHandler acquires the lock before the work:\n  0x1c0004b2e : lea     rcx, [rsi+0b0h]; RemoveLock\n  0x1c0004b51 : call    cs:__imp_IoAcquireRemoveLockEx\n  0x1c0004b5d : test    eax, eax\n  0x1c0004b5f : jns     loc_1c0004a2f\n  0x1c0004b65 : jmp     loc_1c0008be0\n  0x1c0004bc1 : call    DeviceUpdateRequestTimeoutCounter\n  0x1c0008c6e : call    IdeTargetReset\n  0x1c0008caa : call    IdeChannelReset\n  0x1c0004bfe : call    cs:__imp_IoReleaseRemoveLockEx\n  0x1c0008c14 : call    cs:__imp_IoReleaseRemoveLockEx",
+      "assembly": "See evidence field. Anchors: remove-lock init 0x1c00216be; teardown wait 0x1c0006c9a (RemovePdoExtension 0x1c0006c0c); unpatched tick handler 0x1c000dfb0-0x1c000e115 (no remove lock); patched tick handler 0x1c0004990-0x1c0008cb8 with IoAcquireRemoveLockEx at 0x1c0004b51 and IoReleaseRemoveLockEx at 0x1c0004bfe / 0x1c0008c14."
+    },
+    {
+      "severity": "none",
+      "function": "IdeProcessCompletedRequests / PrepareCrbForRetry (ATA request completion and retry-preparation)",
+      "entry_point": "Not applicable. The differing code is a refactor with no delivered behavioral change.",
+      "call_chain": [
+        "Unpatched: IdeProcessCompletedRequests (sub_1c000d8d0) -> IdepInterpretTransportErrors (sub_1c0004a3c) -> inline per-retry reset (0x1c0004b73).",
+        "Patched: IdeProcessCompletedRequests (sub_1c00036a0) with the error switch inlined -> call PrepareCrbForRetry (sub_1c000c700) at 0x1c0007fbc. Same behavior."
+      ],
+      "vulnerability_class": "None. Extract-helper plus inline-callee refactor of ATA transport-error retry handling.",
+      "description": "The earlier hypothesis of an improper-initialization / stale-state reuse flaw (CWE-665/909) is not supported by the binaries. The per-retry state reset (zeroing 0x3ea/0x3eb/0x3f3/0x410/0x420/0x428/0x28, conditional increment of the retry counter at 0x23, and setting the 0x100 requeue flag at 0x20) is present in BOTH builds. In the unpatched build it is inline in three functions (IdepInterpretTransportErrors sub_1c0004a3c at 0x1c0004b73-0x1c0004ba9, PrepareCrbForPioRetry sub_1c0005a24 at 0x1c0005b3d-0x1c0005b76, ProcessParityError sub_1c00056d0 at 0x1c000576f-0x1c00057a8). The patch factors these into the shared helper PrepareCrbForRetry (sub_1c000c700) and inlines the error-interpretation switch into the completion routine, which accounts for the completion routine's size growth. The SLIST recycle at controller_ext+0x1480 (ExpInterlockedPushEntrySList, unpatched 0x1c000daea / patched 0x1c0003827) is identical in both builds and clears none of these fields in either; the reset belongs to the retry path, not the recycle path. The SrbData-derived values (*(rdi+0x4f)<<8 | *(rdi+0x50), etc.) reach only the WPP trace call WPP_SF_DDDDDqDDDDiDdd at 0x1c000df06 and do not influence transfer size or bounds, so there is no attacker-controlled length primitive.",
+      "trigger_conditions": "None. Both builds perform the same field reset on the transport-error retry path, so there is no observable behavioral difference to trigger.",
+      "primitive": "None. No stale-state, type-confusion, or improper-initialization primitive exists, because the reset is present in both builds and the delta is a refactor.",
+      "evidence": "Reset present in UNPATCHED IdepInterpretTransportErrors (sub_1c0004a3c):\n  0x1c0004b6f : or      [rdi+20h], ax        ; 0x100 requeue flag\n  0x1c0004b75 : mov     [rdi+3ebh], cx\n  0x1c0004b7c : mov     [rdi+3f3h], cl\n  0x1c0004b82 : mov     [rdi+428h], rcx\n  0x1c0004b89 : mov     [rdi+420h], rcx\n  0x1c0004b90 : mov     [rdi+3eah], cl\n  0x1c0004b96 : mov     [rdi+410h], rcx\n  0x1c0004b9d : mov     al, [rdi+23h] ; cmp al,1; jnb; inc al; mov [rdi+23h],al\n  0x1c0004ba9 : mov     [rdi+28h], ecx\n\nSame reset factored into PATCHED PrepareCrbForRetry (sub_1c000c700):\n  0x1c000c702 : mov     [rdx+3ebh], cx\n  0x1c000c709 : mov     [rdx+3f3h], cl\n  0x1c000c70f : mov     [rdx+428h], rcx\n  0x1c000c716 : mov     [rdx+420h], rcx\n  0x1c000c71d : mov     [rdx+3eah], cl\n  0x1c000c723 : mov     [rdx+410h], rcx\n  0x1c000c72a : mov     al, [rdx+23h] ; cmp al,1; jnb; inc al; mov [rdx+23h],al\n  0x1c000c736 : mov     [rdx+28h], ecx\n\nRecycle site identical in both builds (no reset added):\n  UNPATCHED 0x1c000daea : call ExpInterlockedPushEntrySList (rcx=controller_ext+0x1480, rdx=[req+0x408]); 0x1c000daf6 and qword [req+0x408],0\n  PATCHED   0x1c0003827 : call ExpInterlockedPushEntrySList (rcx=controller_ext+0x1480, rdx=[req+0x408]); 0x1c0003833 mov qword [req+0x408],0",
+      "assembly": "See evidence field. Key anchors: unpatched inline reset at 0x1c0004b73-0x1c0004ba9 (sub_1c0004a3c), 0x1c0005b3d-0x1c0005b76 (sub_1c0005a24), 0x1c000576f-0x1c00057a8 (sub_1c00056d0); patched helper at 0x1c000c700-0x1c000c739; patched call sites at 0x1c0007fbc, 0x1c000c659, 0x1c000ca7f; identical recycle at 0x1c000daea (unpatched) and 0x1c0003827 (patched)."
+    }
+  ],
+  "summary": "The ataport.sys patch contains one real security fix plus one non-security refactor. SECURITY FIX (CWE-416 use-after-free): the periodic timer DPC IdePortTickHandler (unpatched 0x1c000dfb0, patched 0x1c0004990) was rewritten to acquire the per-device IO_REMOVE_LOCK at device-extension +0xb0 (IoAcquireRemoveLockEx at 0x1c0004b51), check the status and skip the device on failure, then release it (IoReleaseRemoveLockEx at 0x1c0004bfe and 0x1c0008c14) around per-device timeout/reset work (DeviceUpdateRequestTimeoutCounter, IdeTargetReset, IdeChannelReset). The unpatched handler did the same work with no remove-lock call anywhere, relying only on the RefNextPdoExtensionWithTag/UnRefPdoExtensionWithTag tag counter. Device teardown RemovePdoExtension (0x1c0006c0c) synchronizes with concurrent users solely via IoReleaseRemoveLockAndWaitEx on that same +0xb0 remove lock (0x1c0006c9a), not via the tag counter, so a PnP remove concurrent with a tick could free the device extension while the DPC still used it. Severity medium (local PnP-driven race). NON-SECURITY REFACTOR: the ataport.sys delta in the ATA request-completion area is a refactoring, not a security fix. The per-retry state-reset block (zero 0x3ea/0x3eb/0x3f3/0x410/0x420/0x428/0x28, conditional bump of the retry counter at 0x23, set 0x100 requeue flag at 0x20) is present in BOTH builds: inline in the unpatched build in IdepInterpretTransportErrors (sub_1c0004a3c), PrepareCrbForPioRetry (sub_1c0005a24), and ProcessParityError (sub_1c00056d0), and factored into the shared helper PrepareCrbForRetry (sub_1c000c700) in the patched build. The patched completion routine IdeProcessCompletedRequests (sub_1c00036a0) also inlines the transport-error interpreter that the unpatched routine (sub_1c000d8d0) reached via a separate call, which explains its size growth. The SLIST recycle (ExpInterlockedPushEntrySList at controller_ext+0x1480) is identical in both builds and touches none of the reset fields; the reset is on the retry path, not the recycle path. The SrbData fields reach only a WPP trace call, not a transfer-size decision. There is no improper-initialization / stale-state reuse vulnerability (the earlier CWE-665/909 hypothesis is not supported), and no reachable primitive. Net assessment: no security-relevant change."
+}

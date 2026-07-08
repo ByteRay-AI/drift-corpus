@@ -1,0 +1,145 @@
+{
+  "binaries": {
+    "title": "ksrext.sys (Windows Secure Kernel Runtime Extension / Soft Restart) - No security-relevant change: loader-callback locking refactor and pool-API modernization",
+    "id_unpatched": "ksrext_unpatched.sys",
+    "id_patched": "ksrext_patched.sys",
+    "overall_similarity": 0.3722,
+    "matched": 119,
+    "changed": 69,
+    "identical": 50,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KsrRegisterLoaderCallbacks",
+      "similarity": 0.7408,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored the loader-callback interface from hold-pushlock-across-callback to a reference-count drain model: register/unregister spins on the exclusive KsrpLoaderInterfaceLock and, while KsrpLoaderInterfaceRefCount != 0, releases the lock and blocks in ExBlockOnAddressPushLock (0x14000B134) on KsrpLoaderInterfaceEvent/KsrpLoaderInterfaceRefCount before modifying the table",
+        "On the unregister (arg1=NULL) path, installs concrete default handlers (KsrDbPersistPagesWithMetadata, KsrDbPersistMemoryPartition, ... at 0x14000B2D4..0x14000B34C) instead of clearing the pointers; the unpatched path clears seven routine pointers with individual stores (0x1C0007ECD..0x1C0007F04)",
+        "Expanded callback table: accepted structure size check raised from 0x58 to 0x88; additional function pointers written at [rdi+58]..[rdi+78] and [rdi+80]",
+        "Added a KsrSecureKernelConnected / dword_1400072A4 & 0x10 guard before KsrDbpDetachDatabase/KsrDbpAttachDatabase"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security impact. In the unpatched build every consumer (KsrPersistMemoryWithMetadata, KsrQueryMetadata, KsrClaimPersistedMemory, KsrEnumeratePersistedMemory, KsrFreePersistedMemory, KsrFreePersistedMemoryBlock, KsrPersistMemoryPartition) reads its routine pointer under KsrpLoaderInterfaceLock SHARED, NULL-checks it, and invokes it via __guard_dispatch_icall_fptr WHILE STILL HOLDING the shared lock, releasing only after the call returns (e.g. call at 0x1C0007218 precedes ExReleasePushLockSharedEx at 0x1C0007229). The unregister path clears the pointers under the EXCLUSIVE form of the same lock (acquired 0x1C0007DB3). Because shared and exclusive acquisitions are mutually exclusive, the teardown cannot clear a pointer between a consumer's read and its call, so no TOCTOU race window exists; and a cleared pointer is NULL-checked, so it is not a NULL dereference. The patched build achieves the same safety property with a different strategy (drop the lock during the callback, keep a reference count, drain it before teardown). This is a concurrency refactor, not a fix for a demonstrable unpatched defect.",
+      "assembly_diff": "; UNPATCHED unregister path clears 7 pointers under EXCLUSIVE KsrpLoaderInterfaceLock:\n00000001C0007ECD  mov   cs:KsrpLoaderRegistered, bl              ; bl = 0\n00000001C0007EDA  mov   cs:KsrpPersistMemoryWithMetadataRoutinePointer, rbx  ; rbx = 0\n00000001C0007EE1  mov   cs:KsrpPersistMemoryPartitionRoutinePointer, rbx\n00000001C0007EE8  mov   cs:KsrpClaimPersistentMemoryRoutinePointer, rbx\n00000001C0007EEF  mov   cs:KsrpFreePersistentMemoryRoutinePointer, rbx\n00000001C0007EF6  mov   cs:KsrpFreePersistentMemoryBlockRoutinePointer, rbx\n00000001C0007EFD  mov   cs:KsrpEnumeratePersistentMemoryRoutinePointer, rbx\n00000001C0007F04  mov   cs:KsrpQueryMetadataRoutinePointer, rbx\n\n; UNPATCHED consumer reads+invokes under SHARED lock, releases after the call:\n00000001C00071D5  call  cs:__imp_ExAcquirePushLockSharedEx\n00000001C00071E1  mov   rax, cs:KsrpPersistMemoryWithMetadataRoutinePointer\n00000001C00071F0  test  rax, rax                                 ; NULL-checked\n00000001C0007218  call  cs:__guard_dispatch_icall_fptr           ; lock still held\n00000001C0007229  call  cs:__imp_ExReleasePushLockSharedEx       ; released after call\n\n; PATCHED register/unregister drains the reference count before modifying the table:\n000000014000B126  lea   rdx, KsrpLoaderInterfaceRefCount\n000000014000B12D  lea   rcx, KsrpLoaderInterfaceEvent\n000000014000B134  call  cs:__imp_ExBlockOnAddressPushLock\n; then installs concrete default handlers instead of clearing:\n000000014000B2D4  lea   rax, KsrDbPersistPagesWithMetadata\n000000014000B2E1  mov   cs:KsrpPersistMemoryWithMetadataRoutinePointer, rax"
+    },
+    {
+      "name": "KsrMmAllocatePagesForMdlEx",
+      "similarity": 0.6428,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Migrated the MDL pool allocation from ExAllocatePoolWithTag(0x200, ..., 'Boot') at 0x1C0008B8C to ExAllocatePool2(0x42, ..., 'Boot') at 0x14000C010; the size expression lea edx, ds:30h[r15*8] ((page_count << 3) + 0x30) is byte-identical in both builds",
+        "Added btr r13d, 0x1F (0x14000BF46) with test ebp,ebp / jns (0x14000BFA2) to route a bit-31 flag straight to the tracing fallback allocator",
+        "Added 2 MB large-page support: cmp rbx, 0x200000 (0x14000BF7E) selecting large-page mode, served by the new helper KsrpAllocateLargePagesFromMemoryRange (0x14000C0A8)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security impact. The MDL size arithmetic is identical across builds (r15 = TotalBytes >> 0xC, then lea edx, ds:30h[r15*8], unpatched 0x1C0008B84 / patched 0x14000C008), so the switch to ExAllocatePool2 does not change any overflow or truncation behaviour of the size computation. ExAllocatePool2 appears at 46 call sites across the patched build and 0 in the unpatched build, identifying a systematic API modernization rather than a targeted overflow fix. The physical page-fill loop only writes as many PFN entries as pages are actually available from the reserve, so the size expression is not converted into an out-of-bounds write. The bit-31 flag routing and large-page path are new functionality.",
+      "assembly_diff": "; UNPATCHED size + allocator:\n00000001C0008B7A  shr   r15, 0Ch\n00000001C0008B75  mov   ecx, 200h\n00000001C0008B84  lea   edx, ds:30h[r15*8]        ; (page_count << 3) + 0x30\n00000001C0008B8C  call  cs:__imp_ExAllocatePoolWithTag\n\n; PATCHED same size expression, different allocator API:\n000000014000BFF9  shr   r15, 0Ch\n000000014000BFFD  mov   ecx, 42h\n000000014000C008  lea   edx, ds:30h[r15*8]        ; identical arithmetic\n000000014000C010  call  cs:__imp_ExAllocatePool2"
+    },
+    {
+      "name": "KsrpMmReplenishPages (unpatched @ 0x1C0008574)",
+      "similarity": 0.8794,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adjusted the reserve-replenishment starting physical addresses",
+        "Migrated allocations from ExAllocatePoolWithTag to ExAllocatePool2",
+        "Independent min/max physical-address tracking"
+      ],
+      "security_relevant": false,
+      "security_notes": "Affects which physical pages populate the reserve; no attacker-reachable memory-safety impact. The report's earlier label of this function as 'Page Database Population' was incorrect; the function is KsrpMmReplenishPages.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrMmFreePagesFromMdl",
+      "similarity": 0.7806,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added a large-page (MDL flag 0xB) path using MmFreeMemoryRanges instead of per-page bitmap clearing",
+        "Locking moved from inline KeEnterCriticalRegion + ExAcquirePushLockExclusiveEx to helper functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrConnectSecureLoader",
+      "similarity": 0.7214,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unified the conditional MDL unlock path (single-page vs multi-page) into one cleanup helper",
+        "Migrated the callback-structure allocation to ExAllocatePool2",
+        "Adjusted callback-table field offsets"
+      ],
+      "security_relevant": false,
+      "security_notes": "The single-page MDL pointer computation is correct in both builds; the change is code cleanup.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrQueryMetadata",
+      "similarity": 0.1215,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Rewritten to use the reference-count / helper functions instead of inline pushlock operations",
+        "Added a flag-bit check before the metadata helper"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPersistMemoryPartition",
+      "similarity": 0.7771,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Locking moved to helper functions",
+        "Memory-range calculation preserved",
+        "ExAllocatePoolWithTag replaced with ExAllocatePool2"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrCleanupPageDatabase",
+      "similarity": 0.7051,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Pushlock operations moved to helper functions",
+        "Added a flag check before ExNotifyCallback"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrClaimPersistedMemory",
+      "similarity": 0.644,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Reference-count helpers replace inline pushlock use",
+        "Added parameter validation rejecting arg5 values with any bit other than bit 0 set (test ebp, 0xFFFFFFFE at 0x14000A18E)",
+        "Added a flag-bit check"
+      ],
+      "security_relevant": false,
+      "security_notes": "The added arg5 check is a defensive parameter/contract validation, not a memory-safety fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1c0001010 (bitmap operation)",
+      "similarity": 0.9877,
+      "change_type": "cosmetic",
+      "key_changes": ["Register allocation and code generation differences only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No demonstrable, reachable security vulnerability is fixed by this patch. The two originally suspected patterns are not supported by the binaries. (1) The 'callback deregistration race' in KsrRegisterLoaderCallbacks does not exist: in the unpatched build every consumer reads its routine pointer under KsrpLoaderInterfaceLock SHARED and invokes it via __guard_dispatch_icall_fptr while STILL HOLDING the shared lock (call at 0x1C0007218 precedes the release at 0x1C0007229; the same ordering holds for all seven consumers), while the unregister path clears the pointers under the EXCLUSIVE form of the same lock. Shared and exclusive are mutually exclusive, so there is no read/clear/call window, and consumers NULL-check the pointer so a cleared value is not a NULL dereference. The patch swaps this lock-across-callback model for a reference-count drain (KsrpAcquire/ReleaseLoaderInterfaceReference plus ExBlockOnAddressPushLock on KsrpLoaderInterfaceRefCount) and installs concrete default handlers on unregister; this is a concurrency refactor. (2) The 'MDL integer overflow' in KsrMmAllocatePagesForMdlEx is not fixed by the ExAllocatePool2 migration because the size expression lea edx, ds:30h[r15*8] is byte-identical in both builds; ExAllocatePool2 is used at 46 sites across the patched build (0 in the unpatched build), i.e. a driver-wide API modernization, accompanied by new bit-31 flag routing and 2 MB large-page support. Both findings are downgraded to no security-relevant change."
+}

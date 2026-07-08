@@ -1,0 +1,209 @@
+{
+  "binary": "mssecflt.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.8821.27906.1000",
+    "sha256": "d7e598a521d9db8a62a7be1546902be24e721530fd4242fe0087cf866960a584",
+    "file": "mssecflt_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "6d58e2fadf376a6a1a91da2f5a8ab70468260f5740b4082fccc7e0962aa8047a",
+    "file_info": {
+      "onvertSecurityDesc": "",
+      "heckFileObjectOpenedAsCopyDestina": "",
+      "\u6972\u7665\u4665\u6c69\u4965\u666e\u4f6f\u436e\u6572\u7461\u4365\u6d6f\u6c70\u7465\u6f69\u456ex\u001c\u001e": "\u6508\u4001\u0001",
+      "\u0003\ua888\u0001\ua764\u0003\ua76c\u0003\ua888\u0001\ua76c\u0003\ua774\u0003\ua888\u0001\ua774\u0003\ua77c\u0003\ua888\u0001\ua77c\u0003\ua784\u0003\ua888\u0001\ua784\u0003\ua7c3\u0003\u88d8\u0001\ua7c4\u0003\ua7cc\u0003\ua888\u0001\ua7cc\u0003\ua7d4\u0003\ua888\u0001\ua7d4\u0003\ua7dc\u0003\ua888\u0001\ua7dc\u0003\ua81b\u0003\u88d8\u0001\ua81c\u0003\ua85b\u0003\u88d8\u0001\ua85c\u0003\ua864\u0003\ua888\u0001\ua864\u0003\uaac4\u0003\u95bc\u0001\uaac4\u0003\ub219\u0003\u9e88\u0001\ub21c\u0003\ub3bc\u0003\u9eac\u0001\ub3bc\u0003\ub41a\u0003\u8880\u0001\ub41c\u0003\ub619\u0003\u88d8\u0001\ub61c\u0003\ub635\u0003\u8880\u0001\ub638\u0003\ub8a3\u0003\u9f14\u0001\ub8a4\u0003\ubb18\u0003\u9ed8\u0001\ubb18\u0003\ubc91\u0003\u9ef4\u0001\ubc94\u0003\ubc9b\u0003\ua888\u0001\ubc9c\u0003\ubd1f\u0003\u88d8\u0001\ubd20\u0003\ubdf9\u0003\u9f70\u0001\ubdfc\u0003\ube37\u0003\u9f80\u0001\ube38\u0003\ubefa\u0003\u96f4\u0001\ubefc\u0003\uc01e\u0003\u9f40\u0001\uc020\u0003\uc0b4\u0003\u937c\u0001\uc0b4\u0003\uc175\u0003\u9f5c\u0001\uc178\u0003\uc29a\u0003\ua0a8\u0001\uc29c\u0003\uc3b3\u0003\ua0c0\u0001\uc3b4\u0003\uc3e4\u0003\u8880\u0001\uc3e4\u0003\uc5f3\u0003\ua0f0\u0001\uc5f4\u0003\uc829\u0003\u88d8\u0001\uc82c\u0003\uc904\u0003\ua0e0\u0001\uc910\u0003\uc941\u0003\ua888\u0001\uc950\u0003\uc986\u0003\u8880\u0001\uc990\u0003\uc99d\u0003\ua888\u0001\uc9a0\u0003\ucb12\u0003\ua110\u0001\ucb14\u0003\ucb4c\u0003\u8880\u0001\ucb4c\u0003\ucba8\u0003\u9054\u0001\ucba8\u0003\ucc02\u0003\u9054\u0001\ucc04\u0003\ucc83\u0003\u8eec\u0001\ucc84\u0003\uccc4\u0003\u9a7c\u0001\uccc4\u0003\ucd9c\u0003\ua104\u0001\ucd9c\u0003\ucf18\u0003\u8eac\u0001\ucf18\u0003\ud19f\u0003\u9358\u0001\ud1a0\u0003\ud1bd\u0003\u8880\u0001\ud1c0\u0003\ud21b\u0003\ua888\u0001\ud21c\u0003\ud22f\u0003\ua888\u0001\ud230\u0003\ud548\u0003\ua15c\u0001\ud548\u0003\ud603\u0003\u8b88\u0001\ud604\u0003\ud725\u0003\u9220\u0001\ud728\u0003\ud7bb\u0003\u9054\u0001\ud7bc\u0003\u0003\ua1dc\u0001\u0003\u0003\u8880\u0001\u0003\u0003\ua12c\u0001\u0003\u0003\u8f10\u0001\u0003\u0003\ua144\u0001\u0003\ue307\u0003\ua178\u0001\ue308\u0003\ue3c2\u0003\u9e00\u0001\ue3c4\u0003\ue634\u0003\ua1bc\u0001\ue634\u0003\ue808\u0003\ua19c\u0001\ue808\u0003\ue83f\u0003\u8880\u0001\ue840\u0003\ue887": "",
+      "\u0d8b\u29ac\uffff\u8b48\u1849\uaee8\ufe73\u8bff\u48c3\u8c8b\ua824": "\ucc33\u59e8\ufe84\u48ff\uc481\u00b0",
+      "\u0001\u4c00\u4d8d\u481f\u558b\u4ce7\u458d\u4cef\u6c89\u2024\u29e8\ufcfb\u85ff\u0fc0\uea88": "\u4b8b\u4c30\u4d8d\u33f7\u41d2\u01b8\u0001\ue800\u8bf7\ufffd\uc085\u880f\u00cd",
+      "\u1f75\u8d41\u017e\u45c7\u402f\u0002\u8b00\u48d7\u4589\u4c27\u458d\u4817\u4d8d\uf30f\u7f0f\u3745\uff48\u4715\ufd2a\u0fff\u441f": "\u880f\u015f",
+      "\u48f0\uc085\u840f\u00f3": "\u8b48\u48cb\u15ff\u1ba2\ufffd\u1f0fD\u8b00\u0ff8\ue8ae\uc085\u880f\u00d7",
+      "\u2056\uc2f6\u7407\u480c\u15ff\u1b48\ufffd\u1f0fD\u4800\u058b\u1b74\ufffd\u8b48\u4808\uc28b\u3b48\u48d1\u430f\u8ac1\u8b00\ua482": "\u4100\u0689\u828b\u00a8",
+      "\u858d\u00c0": "\u8948\uf087",
+      "rocessStartKey": "",
+      "oadImageSize": "",
+      "mageL": "",
+      "iIsSigningChainValid": "",
+      "iIsMicroso": "",
+      "iIsMicrosoftApplicationRoot": "",
+      "iSigningLevel": "",
+      "mageSignatureLe": "",
+      "geDeviceType": "<",
+      "ics": "(",
+      "\u7400\u6100": "\u2f00",
+      "\u6100\u7400\u6100": "",
+      "argetThreadId": "",
+      "argetThreadStartAddress": "",
+      "\u5daf\u02b1\u7b03\u84d1\u010f\u0001\uff01\u84ff\u0003\u4400\u0982\u4500\u7600\u6500\u6e00\u7400\u4400\u6100\u7400\u6100": "\uff41\u47ff",
+      "Name": "\u0105\u001dCurrentDaclAccessMaskBlobSize\u0d02\t\u0408\uff41\u57ff",
+      "\u954b\u0004Name": "\u0105\u0015StatusOplockAcquiring\u0d02\u0004\u0408\uff41\u4dff",
+      "\u304f\u304d\ua04b\ua049\u8647\u6845\u7474\u3a70\u2f2f\u7263\u2e6c\u696d\u7263\u736f\u666f\u2e74\u6f63\u2f6d\u6b70\u2f69\u7263\u2f6c\u7270\u646f\u6375\u7374\u4d2f\u6369\u6f52\u436f\u7265\u7541\u5f74\u3032\u3031\u302d\u2d36\u3332\u632e\u6c72\u5a30\u0806\u062b\u0501\u0705\u0101\u4e04\u4c30\u4a30\u0806\u062b\u0501\u0705\u0230\u3e86\u7468\u7074\u2f3a\u772f\u7777\u6d2e\u6369\u6f72\u6f73\u7466\u632e\u6d6f\u702f\u696b\u632f\u7265\u7374\u4d2f\u6369\u6f52\u436f\u7265\u7541\u5f74\u3032\u3031\u302d\u2d36\u3332\u632e\u7472\u0d30\u0906\u862a\u8648\u0df7\u0101\u050b\u0300\u0282\u0001\ufc14\u717c\ua551\uc279\ub26e\u39ef\ubc3e\u523c\u6e0f\u3f2b\u1310\ufe73\u68a8\u48d0\u34a6\u8a4d\u0596\uee26\u4631\u6190\ud679\u38ff\u452e\uf46b\ue5c0\ub828\u1dda\u8a8f\u09db\u1ad7\u4cc7\u360a\u6a66\uec8c\ud71b\u9004\u18a8\ua417\ub99b\u40e2\u3632\uc476\u5ac1\ubfc6\u04e4\ueac0\ud316\uc3ac\uef68\uac62\u54dd\u506c\u5830\ueba6\ufe7c\ua794\u8e4e\uecf4\u867c\u5773\u52c2\u7321\u5a34\ua3f3\u568a\u04c8\u07da\ued09\u8bf8\ucee3\u7ef4\uae8e\uf6f0\u8a0b\ufb08\uc93f\u721d\u537f\uebb8\u63be\ue3e0\u313d\ub065\ue581\uacf2\u16cd\u9fa4\ua83d\u9bb1\u42c2\u90d0\u5f84\u1d54\u89ff\ubaea\u471d\u6f90\u73b0\u414e\u409f\u5f9f\ua1e5\ub22a\u9111\u8a73\u2821\ucef0\u73de\u5f39\uab3e\u605c\u1003\ud3a8\ue909\uf6f4\u8596\u7fb6\u8851\u4766\u8d19\ub0a2\u3d12\u2a81\u0568\ubb77\u4c91\u7b62\uc1b6\uc707\u7aba\u3487\u0e03\u624b\u997a\ucae9\ucefc\u374a\u2dc9\u57a4\u1c7c\u3dfe\ub8dc\u5a0f\ud6fa\ub3c4\u8502\u3a02\ub3ea\u6ed9\u69e4\u3721\u81de\uf6d1\u1975\u6705\u93d3\u5e57\u1b29\uc839\u2dee\ucde1\u45e4\u5b73\ud2d0\u7ace\u16ab\u8219\u5846\u5ed0\u819d\u67b3\u6caf\uf235\ue5bc\u243f\u35e2\u0aa2\u0675\u18f6\u9956\u78d4\ud12c\u1b05\ud0eb\u0188\uaa9d\uf110\u7eba\u632c\u06b7\u239b\uc421\u78f9\ue26c\u1758\u3606\u912b\u0312\ua4cc\uf2d9\uba2d\u94f9\u409d\u18ed\uf145\u8ace\u6b5c\uab3e\ud303\u1870\u0a2a\ue06a\u475f\ud5d1\u0a63\uf232\ud7af\u1f36\u702a\ue55a\u5942\u7108\u574b\u7eba\u8183\u21f0\uf43c\uc11c\ub9c5\u9390\u880e\u9345\ue986\u20b1\ube99\ucb98\u95c5\u5da4\ud662\u63a0\u2008\u75bd\u7710\u3d7d\u45f3\u9fb9\u9f97\u57cb\u6f80\ua933\ucf04\ua477\u1c62\u7e59\u8231\u7f1a\u8230\u7b1a\u0102\u3001\u9c81\u8130\u3184\u300b\u0609\u5503\u0604\u0213\u5355\u1331\u1130\u0306\u0455\u1308\u570a\u7361\u6968\u676e\u6f74\u316e\u3010\u060e\u5503\u0704\u0713\u6552": "",
+      "\u061c\u5503\u0a04\u1513\u694d\u7263\u736f\u666f\u2074\u6f43\u7072\u726f\u7461\u6f69\u316e\u302e\u062c\u5503\u0304\u2513\u694d\u7263\u736f\u666f\u2074\u6957\u646e\u776f\u2073\u7250\u646f\u6375\u6974\u6e6f\u5020\u4143\u3220\u3130\u0231\u3313": "\u9b05\ubc7a\ua151\u719e\u1824"
+    }
+  },
+  "prev": {
+    "version": "10.8805.27858.1000",
+    "sha256": "e7c59727b271c0bd6e501067c913541885fea0233957e4fca151efc640d050d5",
+    "kb_numbers": [
+      "KB5068791",
+      "KB5071544",
+      "KB5074975",
+      "KB5073723",
+      "KB5077795",
+      "KB5078131",
+      "KB5075904"
+    ],
+    "win_versions": [],
+    "file": "mssecflt_unpatched.sys",
+    "hash_match": false,
+    "expected_sha256": "a93264ce09cdf7343b7bc0a5c84038093b6c65dbf6a15192c5f4202fc5271b8b",
+    "file_info": {
+      "onvertSecurityDesc": "",
+      "heckFileObjectOpenedAsCopyDestina": "",
+      "\u6972\u7665\u4665\u6c69\u4965\u666e\u4f6f\u436e\u6572\u7461\u4365\u6d6f\u6c70\u7465\u6f69\u456ex\u001c\u001e": "\u6408\u4001\u0001",
+      "\u0003\u9354\u0001\ue590\u0003\ue5ff\u0003\u8a2c\u0001\ue600\u0003\ue648\u0003\u8780\u0001\ue648\u0003\ue83e\u0003\ua0e8\u0001\ue840\u0003\ue9d0\u0003\ua104\u0001\ue9d0\u0003\uea88\u0003\ua120\u0001\uea88\u0003\ueb6e\u0003\ua138\u0001\ueb70\u0003\uebd7\u0003\ua14c\u0001\uebd8\u0003\uec47\u0003\u909c\u0001\uec48\u0003\uec5c\u0003\u8780\u0001\uec5c\u0003\uec70\u0003\u8780\u0001\uec70\u0003\uec84\u0003\u8780\u0001\uec84\u0003\uec94\u0003\ua728\u0001\uec94\u0003\ueca4\u0003\ua728\u0001\ueca4\u0003\uecb4\u0003\ua728\u0001\uecb4\u0003\uecc4\u0003\ua728\u0001\uecc4\u0003\uecd4\u0003\ua728\u0001\uecd4\u0003\uece4\u0003\ua728\u0001\uece4\u0003\uecf4\u0003\ua728\u0001\uecf4\u0003\ued04\u0003\ua728\u0001\ued04\u0003\ued11\u0003\ua728\u0001\ued14\u0003\ued24\u0003\ua728\u0001\ued24\u0003\uedcb\u0003\ua15c\u0001\uedcc\u0003\ueddb\u0003\ua728\u0001\ueddc\u0003\ueeb9\u0003\ua16c\u0001\ueebc\u0003\uf3ef\u0003\ua208\u0001\uf3f0\u0003\uf6cb\u0003\ua1e4\u0001\uf6cc\u0003\uf76e\u0003\ua24c\u0001\uf770\u0003\uf9da\u0003\ua1c0\u0001\uf9dc\u0003\uface\u0003\ua2f0\u0001\ufad0\u0003\ufcee\u0003\ua258\u0001\ufcf0\u0003\ufdff\u0003\ua2a4\u0001\ufe00\u0003\ufee7\u0003\ua2bc\u0001\ufee8\u0003\uff3b\u0003\u8780\u0001\uff3c\u0003\uffa0\u0003\ua294\u0001\uffa0\u0003\u0141\u0004\u94e8\u0001\u0144\u0004\u0190\u0004\u8780\u0001\u0190\u0004\u02d8\u0004\u8788\u0001\u02d8\u0004\u034f\u0004\u8f54\u0001\u0350\u0004\u035c\u0004\ua728\u0001\u035c\u0004\u0453\u0004\ua2d8\u0001\u0454\u0004\u0549\u0004\ua38c\u0001\u054c\u0004\u0655\u0004\ua358\u0001\u0658\u0004\u0804\u0004\ua3a8\u0001\u0804\u0004\u08fb\u0004\ua3d8\u0001\u08fc\u0004\u0961\u0004\u93a4\u0001\u0964\u0004\u09c5\u0004\u8ec0\u0001\u09c8\u0004\u0a77\u0004\ua378\u0001\u0a78\u0004\u0a97\u0004\u8780\u0001\u0a98\u0004\u0b02\u0004\ua294\u0001\u0b04\u0004\u0bb6\u0004\ua3f4\u0001\u0bb8\u0004\u0ce9\u0004\ua30c\u0001\u0cec\u0004\u0cf6\u0004\ua728\u0001\u0cf8\u0004\u0d02\u0004\ua728\u0001\u0d04\u0004\u0d0c\u0004\ua728\u0001\u0d0c\u0004\u0d13\u0004\ua728\u0001\u0d14\u0004\u0d1b\u0004\ua728\u0001\u0d1c\u0004\u0d21\u0004\ua728\u0001\u0d24\u0004\u0d36\u0004\u8780\u0001\u0d38\u0004\u0da3\u0004\u8ec0\u0001\u0da4\u0004\u0ed9\u0004\ua42c\u0001\u0edc\u0004\u0f3d\u0004\u909c\u0001\u0f40\u0004\u0fdf\u0004\ua448\u0001\u0fe0\u0004\u1040\u0004\u909c\u0001\u1040\u0004\u10a1": ""
+    },
+    "selection_tier": 3,
+    "selection_tier_description": "any strictly older distinct version"
+  }
+}

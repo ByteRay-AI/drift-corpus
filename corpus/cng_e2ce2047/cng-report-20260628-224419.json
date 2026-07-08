@@ -1,0 +1,180 @@
+{
+  "binaries": {
+    "title": "cng.sys (Windows CNG Kernel Cryptography Driver) - No security-relevant change: statically-linked SymCrypt ML-DSA rejection-sampling bounded-iteration hardening",
+    "id_unpatched": "cng_unpatched.sys",
+    "id_patched": "cng_patched.sys",
+    "overall_similarity": 0.9625,
+    "matched": 1552,
+    "changed": 85,
+    "identical": 1467,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaKeyGenerateEx (unpatched 0x1800894B8 -> patched 0x18008C2F0)",
+      "similarity": 0.8329,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED (0x1800894B8): calls SymCryptMlDsaExpandA (0x180095DD8) at 0x1800895D0 and SymCryptMlDsaExpandS (0x180095F78) at 0x1800895F1 without testing a return value. Neither callee, nor their rejection-sampling helpers, has any failure path in this build - they loop over the SHAKE sponge until a full poly is collected and return without setting a status in eax.",
+        "PATCHED (0x18008C2F0): adds mov ebx,eax / test eax,eax / jnz cleanup after SymCryptMlDsaExpandA (patched 0x180099B14) at 0x18008C40D-0x18008C411 and after SymCryptMlDsaExpandS (patched 0x180099CBC) at 0x18008C438-0x18008C43C.",
+        "The guarded status only becomes non-zero because the patched rejection-sampling helpers (SymCryptMlDsaRejNttPoly, SymCryptMlDsaRejBoundedPoly) gained a bounded-iteration cap returning 0x8008; that cap is not reachable in the unpatched build.",
+        "SymCryptMlDsaVectorNTT (0x180097AEC), SymCryptMlDsakeyComputeT (0x180097D24) and SymCryptMlDsaPkEncode (0x180096584) run on fully-computed vectors in both builds; there is no partial-fill or corrupted-state condition."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the statically-linked SymCrypt ML-DSA (FIPS 204 / CRYSTALS-Dilithium) key-generation function. The patched build adds return-value tests after SymCryptMlDsaExpandA and SymCryptMlDsaExpandS, but the checked failure cannot occur in the unpatched build: SymCryptMlDsaExpandA (0x180095DD8), SymCryptMlDsaExpandS (0x180095F78), SymCryptMlDsaRejNttPoly (0x180096CEC) and SymCryptMlDsaRejBoundedPoly (0x180096B4C) all rejection-sample from an effectively infinite SHAKE sponge, loop until the required coefficients are collected, and return with no status word in eax. The patched helpers were changed to bound the loop (SymCryptMlDsaRejNttPoly patched 0x18009AA84 caps at 298 draws via cmp r14d,12Ah and returns 0x8008; SymCryptMlDsaRejBoundedPoly patched 0x18009A8C0 caps at 481) and to propagate that status up through ExpandA/ExpandS into the caller. The cap-exceeded condition requires an extreme rejection rate in a SHAKE-derived byte stream over static per-parameter-set tables (rejection probability per RejNttPoly draw is about 0.098%, so reaching 298 draws needs 42+ rejections where about 0.25 are expected) and is not attacker-steerable; even if reached it produces a fail-closed error return with no key. No corrupted-state use, no memory-safety fault, and no key-integrity break exists. This is library robustness / bounded-runtime hardening from a SymCrypt rebuild, not a vulnerability fix."
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (unpatched 0x180089D9C -> patched 0x18008CBF8)",
+      "similarity": 0.9221,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED (0x180089D9C): decodes the signature inline (SymCryptMlDsaVectorDecode 0x180089EE4, SymCryptMlDsaHintBitUnpack 0x180089F0B) and calls SymCryptMlDsaSampleInBall (0x180089F4F) without testing its return, proceeding to SymCryptMlDsaVectorNTT at 0x180089F57.",
+        "PATCHED (0x18008CBF8): consolidates the inline decode into SymCryptMlDsaSigDecode (0x18008CD1F) with a checked return (jnz cleanup at 0x18008CD28), keeps the SymCryptMlDsaVectorInfinityNorm bounds check (0x18008CD31), and adds mov ebx,eax / test eax,eax / jnz after SymCryptMlDsaSampleInBall (0x18008CD62) at 0x18008CD67-0x18008CD6B.",
+        "The coefficient bounds check SymCryptMlDsaVectorInfinityNorm (0x18009B850) is present in BOTH builds.",
+        "SymCryptMlDsaSampleInBall in the unpatched build (0x180096DC8) loops over the sponge and returns no status, so the added check guards a condition the unpatched code cannot produce."
+      ],
+      "security_relevant": false,
+      "security_notes": "The verification-side face of the same SymCrypt ML-DSA rebuild. The decode consolidation is a refactor (SymCryptMlDsaSigDecode wraps the same decode steps), and the SampleInBall return check corresponds to the new bounded-iteration cap (patched SymCryptMlDsaSampleInBall 0x18009AB78 caps at 121 draws via cmp edi,79h). The verification decision logic - hint-bit unpack and the SymCryptMlDsaVectorInfinityNorm bounds check - is present and equivalent in both builds, so signatures are accepted/rejected identically. No signature-verification weakening or newly-added acceptance/rejection behavior. Not attacker-reachable and not security-relevant."
+    },
+    {
+      "name": "MSCryptGetProperty (sub_180021240)",
+      "similarity": 0.8428,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured property query function for BCryptGetProperty",
+        "Added new BCRYPT_FIPS_SERVICE_INDICATOR property handling (new feature, not a security fix)",
+        "Changed data table references (data_1800a6008 -> data_1800aa008, data_1800a48e0 -> data_1800a9b00) due to binary recompilation",
+        "The function dispatch logic was restructured but the core security checks remain equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "SymCryptDlkeySetValue (sub_18008c900)",
+      "similarity": 0.873,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function (268 instructions) with extensive changes but primarily due to call target address shifts from binary recompilation",
+        "Core logic structure preserved; changes are mostly callee address updates"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "SymCryptRsakeySetValueInternal (sub_1800465f0)",
+      "similarity": 0.9562,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function (606 instructions) with minor changes - mostly callee address shifts",
+        "No security-relevant logic changes identified"
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SymCryptMlDsaKeyGenerateEx (unpatched 0x1800894B8 -> patched 0x18008C2F0)",
+      "entry_point": "ML-DSA key-generate path (BCryptGenerateKeyPair / BCryptFinalizeKeyPair / BCryptImportKeyPair)",
+      "call_chain": [
+        "ML-DSA key-generate path (user-mode BCrypt entry)",
+        "SymCryptMlDsaKeyGenerateEx (unpatched 0x1800894B8) - calls SymCryptMlDsaExpandA and SymCryptMlDsaExpandS without a return-value test",
+        "SymCryptMlDsaExpandA (0x180095DD8) / SymCryptMlDsaExpandS (0x180095F78) - no failure path in the unpatched build",
+        "SymCryptMlDsaRejNttPoly (0x180096CEC) / SymCryptMlDsaRejBoundedPoly (0x180096B4C) - unbounded rejection sampling from the SHAKE sponge, no status return"
+      ],
+      "vulnerability_class": "no security-relevant change (statically-linked SymCrypt rejection-sampling bounded-iteration hardening; the newly-checked failure is not reachable in the unpatched build)",
+      "description": "The unpatched SymCryptMlDsaKeyGenerateEx (0x1800894B8) calls SymCryptMlDsaExpandA (0x180095DD8) at 0x1800895D0 and SymCryptMlDsaExpandS (0x180095F78) at 0x1800895F1 without testing a return value, and the patched SymCryptMlDsaKeyGenerateEx (0x18008C2F0) adds test eax,eax / jnz guards at 0x18008C40F/0x18008C411 and 0x18008C43A/0x18008C43C. This is not a vulnerability fix. In the unpatched build the expansions and their rejection-sampling helpers (SymCryptMlDsaRejNttPoly 0x180096CEC, SymCryptMlDsaRejBoundedPoly 0x180096B4C) have no failure path: they loop over an effectively infinite SHAKE sponge until a full poly (256 coefficients) is accepted, then return without setting a status word in eax. There is no early return that would leave the intermediate vectors at rsi+0xc8/0xd0/0xd8 partially populated, so SymCryptMlDsaVectorNTT (0x180097AEC), SymCryptMlDsakeyComputeT (0x180097D24) and SymCryptMlDsaPkEncode (0x180096584) always run on fully-computed state. The patched build bounds those sampling loops (SymCryptMlDsaRejNttPoly patched 0x18009AA84: cmp r14d,12Ah / return 0x8008; SymCryptMlDsaRejBoundedPoly patched 0x18009A8C0: cap 481) and threads the new status up through SymCryptMlDsaExpandA (patched 0x180099B14) and SymCryptMlDsaExpandS (patched 0x180099CBC) into the caller. The condition the added guards test for cannot occur in the unpatched build.",
+      "trigger_conditions": "Not reachable as a security condition. The new failure status only appears if the SHAKE-sponge byte stream yields far more rejections than expected (for SymCryptMlDsaRejNttPoly a 3-byte draw is rejected when its 23-bit value is >= 0x7FE001, probability about 0.098% per draw; reaching the 298-draw cap needs 42+ rejections where about 0.25 are expected). The sampling input is derived from a SHAKE sponge over static per-parameter-set tables and is not attacker-steerable toward the reject region. Even if the cap were reached, the effect in the patched build is a clean error return (0x8008) with no key produced; the unpatched build simply continues sampling and completes.",
+      "primitive": "None. There is no corrupted-state use (the intermediate vectors are always fully populated before downstream reads in both builds), no memory-safety fault (no dangling pointer or partial fill), and no key-integrity break (for any input both builds accept, the generated key pair is identical). The change is fail-closed defensive robustness in the crypto library.",
+      "evidence": "Unpatched SymCryptMlDsaKeyGenerateEx (0x1800894B8) - no return-value test around the expansions:\n0x1800895C5: mov     r8, [rsi+0B8h]\n0x1800895CC: lea     rcx, [rsi+56h]\n0x1800895D0: call    SymCryptMlDsaExpandA       ; eax not tested (callee has no failure path)\n0x1800895D5: mov     rax, [rsi+0D0h]\n0x1800895F1: call    SymCryptMlDsaExpandS       ; eax not tested (callee has no failure path)\n0x1800895F6: mov     rcx, [rsi+0C8h]\n0x1800895FD: call    SymCryptMlDsaVectorNTT\n0x180089654: call    SymCryptMlDsakeyComputeT\n0x18008967F: call    SymCryptMlDsaPkEncode\n\nPatched SymCryptMlDsaKeyGenerateEx (0x18008C2F0) - guards added:\n0x18008C408: call    SymCryptMlDsaExpandA\n0x18008C40D: mov     ebx, eax                   ; *** ADDED ***\n0x18008C40F: test    eax, eax                   ; *** ADDED ***\n0x18008C411: jnz     loc_18008C4F0\n0x18008C433: call    SymCryptMlDsaExpandS\n0x18008C438: mov     ebx, eax                   ; *** ADDED ***\n0x18008C43A: test    eax, eax                   ; *** ADDED ***\n0x18008C43C: jnz     loc_18008C4F0\n\nSource of the new status - unpatched SymCryptMlDsaRejNttPoly (0x180096CEC) loops without a cap and never sets eax:\n0x180096D6E: (loop head)\n0x180096D7F: call    SymCryptKeccakExtract\n0x180096D8D: cmp     eax, 7FE001h               ; reject if >= q\n0x180096D92: jnb     short loc_180096D6E        ; no iteration cap\n0x180096D9E: jnz     short loc_180096D6E\n0x180096DC0: retn                               ; eax never set to a status\n\nPatched SymCryptMlDsaRejNttPoly (0x18009AA84) - bounded, returns 0x8008 on cap:\n0x18009AB01: cmp     r14d, 12Ah                 ; *** ADDED cap: 298 draws ***\n0x18009AB08: jnb     short loc_18009AB45\n0x18009AB25: inc     r14d                       ; *** ADDED counter ***\n0x18009AB45: mov     edi, 8008h                 ; *** ADDED error status ***\n0x18009AB4A: mov     eax, edi",
+      "assembly": "SymCryptMlDsaKeyGenerateEx (unpatched 0x1800894B8) - expansion call sites (return values not tested; the callees have no failure path in this build):\n0x1800895C5: mov     r8, [rsi+0B8h]\n0x1800895CC: lea     rcx, [rsi+56h]\n0x1800895D0: call    SymCryptMlDsaExpandA\n0x1800895D5: mov     rax, [rsi+0D0h]\n0x1800895DC: lea     rdx, [rsp+40h]\n0x1800895E1: mov     r9, [rsi+0C8h]\n0x1800895E8: mov     rcx, [rsi+8]\n0x1800895EC: mov     [rsp+20h], rax\n0x1800895F1: call    SymCryptMlDsaExpandS\n0x1800895F6: mov     rcx, [rsi+0C8h]\n0x1800895FD: call    SymCryptMlDsaVectorNTT\n0x180089654: call    SymCryptMlDsakeyComputeT\n0x18008967F: call    SymCryptMlDsaPkEncode\n0x180089684: mov     ebx, eax                   ; PkEncode return IS tested in both builds\n0x180089686: test    eax, eax\n0x180089688: jnz     short loc_1800896A4\n\nSymCryptMlDsaKeyGenerateEx (patched 0x18008C2F0) - added guards:\n0x18008C408: call    SymCryptMlDsaExpandA\n0x18008C40D: mov     ebx, eax\n0x18008C40F: test    eax, eax\n0x18008C411: jnz     loc_18008C4F0\n0x18008C433: call    SymCryptMlDsaExpandS\n0x18008C438: mov     ebx, eax\n0x18008C43A: test    eax, eax\n0x18008C43C: jnz     loc_18008C4F0",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaKeyGenerateEx",
+            "address": "0x1800894B8",
+            "why": "Entry of the ML-DSA key-generation function. rcx (arg1) = key object. Confirms the ML-DSA key-generate path."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaKeyGenerateEx (SymCryptMlDsaExpandA call)",
+            "address": "0x1800895D0",
+            "why": "Call to SymCryptMlDsaExpandA (0x180095DD8). In the unpatched build the callee has no failure path (it loops the SHAKE sponge until the matrix is fully sampled), so eax on return is not a meaningful status; execution correctly proceeds regardless."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaRejNttPoly",
+            "address": "0x180096CEC",
+            "why": "The rejection-sampling loop that is unbounded in the unpatched build (no iteration cap at the reject branch 0x180096D92) and returns no status word. The patched counterpart (0x18009AA84) adds the cap cmp r14d,12Ah and the 0x8008 error return."
+          }
+        ],
+        "watch": [
+          "SymCryptMlDsaRejNttPoly unpatched 0x180096CEC: no iteration counter; epilogue at 0x180096DA0-0x180096DC0 does not set eax",
+          "SymCryptMlDsaRejNttPoly patched 0x18009AA84: cmp r14d,12Ah (cap 298) / mov edi,8008h / mov eax,edi",
+          "SymCryptMlDsaExpandA/ExpandS unpatched (0x180095DD8/0x180095F78): fall through to epilogue without setting eax",
+          "SymCryptMlDsaExpandA/ExpandS patched (0x180099B14/0x180099CBC): capture and propagate the RejNttPoly/RejBoundedPoly status"
+        ],
+        "key_offsets": [
+          "Unpatched 0x1800895D0: call SymCryptMlDsaExpandA (0x180095DD8) - no return-value test follows",
+          "Unpatched 0x1800895F1: call SymCryptMlDsaExpandS (0x180095F78) - no return-value test follows",
+          "Patched 0x18008C40D-0x18008C411: mov ebx,eax / test eax,eax / jnz after SymCryptMlDsaExpandA",
+          "Patched 0x18008C438-0x18008C43C: mov ebx,eax / test eax,eax / jnz after SymCryptMlDsaExpandS",
+          "Unpatched SymCryptMlDsaRejNttPoly 0x180096D92: jnb loop-head with no iteration cap",
+          "Patched SymCryptMlDsaRejNttPoly 0x18009AB01/0x18009AB45: cmp r14d,12Ah cap and mov edi,8008h error return"
+        ],
+        "trigger_setup": "None available as a security trigger. The added guards test a status that the unpatched build cannot produce. The cap-exceeded path in the patched build requires an infeasible rejection rate in SHAKE-sponge output over static per-parameter-set tables and is fail-closed.",
+        "expected_observation": "Static comparison only: the unpatched SymCryptMlDsaKeyGenerateEx has no test eax,eax between the SymCryptMlDsaExpandA/ExpandS calls and the downstream use, and the unpatched SymCryptMlDsaRejNttPoly loop has no iteration cap and no status return. The patched build adds both the caller guards and the callee caps. No runtime fault results in either build under normal inputs.",
+        "notes": "SymCryptMlDsaExpandA (0x180095DD8) expands the public matrix A from the rho seed; SymCryptMlDsaExpandS (0x180095F78) expands the secret vectors s1/s2. Both sample via SymCryptMlDsaRejNttPoly/SymCryptMlDsaRejBoundedPoly from a SHAKE sponge and, in the unpatched build, cannot fail. The change is a statically-linked SymCrypt rebuild that bounds those loops and plumbs a new status upward; it carries no reachable security consequence."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "SymCryptMlDsaVerifyEx (unpatched 0x180089D9C -> patched 0x18008CBF8)",
+      "entry_point": "ML-DSA signature verification path (BCryptVerifySignature)",
+      "call_chain": [
+        "ML-DSA signature verification path (user-mode BCrypt entry)",
+        "SymCryptMlDsaVerifyEx (unpatched 0x180089D9C)"
+      ],
+      "vulnerability_class": "no security-relevant change (decode refactor plus the same SymCrypt rejection-sampling bounded-iteration hardening; verification decision logic unchanged)",
+      "description": "The unpatched SymCryptMlDsaVerifyEx (0x180089D9C) decodes the signature inline (SymCryptMlDsaVectorDecode 0x180089EE4, SymCryptMlDsaHintBitUnpack 0x180089F0B), performs the SymCryptMlDsaVectorInfinityNorm bounds check (0x180089F1D), then calls SymCryptMlDsaSampleInBall (0x180089F4F) and proceeds to SymCryptMlDsaVectorNTT (0x180089F57) without testing SampleInBall's return. The patched SymCryptMlDsaVerifyEx (0x18008CBF8) consolidates the inline decode into SymCryptMlDsaSigDecode (0x18008CD1F, checked with jnz cleanup at 0x18008CD28), keeps the SymCryptMlDsaVectorInfinityNorm check (0x18008CD31), and adds a return-value check after SymCryptMlDsaSampleInBall (0x18008CD62, jnz cleanup at 0x18008CD6B). This is the verification-side face of the same library change: SymCryptMlDsaSampleInBall gained a bounded-iteration cap (patched 0x18009AB78, cmp edi,79h) and now returns a status, whereas the unpatched SymCryptMlDsaSampleInBall (0x180096DC8) loops over the sponge and returns none. The decode consolidation is a refactor and the verification decision logic (hint-bit unpack and the infinity-norm bounds check) is present and equivalent in both builds.",
+      "trigger_conditions": "Not reachable as a security condition. The added SampleInBall return check guards the new cap, which is not attacker-steerable (SHAKE-sponge output). Signature acceptance/rejection is unchanged: an invalid signature is rejected by the same infinity-norm and decode checks in both builds.",
+      "primitive": "None. No verification bypass and no new acceptance/rejection behavior; the decode was refactored into SymCryptMlDsaSigDecode without changing which signatures pass.",
+      "evidence": "Unpatched SymCryptMlDsaVerifyEx (0x180089D9C) - SampleInBall return not tested:\n0x180089F4F: call    SymCryptMlDsaSampleInBall\n0x180089F54: mov     rcx, r14\n0x180089F57: call    SymCryptMlDsaVectorNTT     ; proceeds unconditionally\n\nPatched SymCryptMlDsaVerifyEx (0x18008CBF8) - consolidated decode + checked SampleInBall:\n0x18008CD1F: call    SymCryptMlDsaSigDecode     ; replaces inline decode\n0x18008CD28: jnz     cleanup\n0x18008CD31: call    SymCryptMlDsaVectorInfinityNorm  ; present in both builds\n0x18008CD62: call    SymCryptMlDsaSampleInBall\n0x18008CD67: mov     ebx, eax                   ; *** ADDED ***\n0x18008CD69: test    eax, eax                   ; *** ADDED ***\n0x18008CD6B: jnz     loc_18008CFD0",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaVerifyEx",
+            "address": "0x180089D9C",
+            "why": "Entry of the ML-DSA signature verification function. Inspect the incoming signature and key context."
+          },
+          {
+            "symbol": "cng_unpatched!SymCryptMlDsaVerifyEx (SampleInBall call)",
+            "address": "0x180089F4F",
+            "why": "Call to SymCryptMlDsaSampleInBall (0x180096DC8), which in the unpatched build loops over the sponge and returns no status. Execution proceeds to SymCryptMlDsaVectorNTT at 0x180089F57; there is no failure to check for."
+          }
+        ],
+        "watch": [
+          "SymCryptMlDsaSampleInBall unpatched 0x180096DC8: no iteration cap, no status return",
+          "SymCryptMlDsaSampleInBall patched 0x18009AB78: cmp edi,79h (cap 121) and status return",
+          "SymCryptMlDsaVectorInfinityNorm (0x18009B850) bounds check - present in both builds"
+        ],
+        "key_offsets": [
+          "Unpatched 0x180089EE4: call SymCryptMlDsaVectorDecode (inline decode)",
+          "Unpatched 0x180089F0B: call SymCryptMlDsaHintBitUnpack (inline decode)",
+          "Unpatched 0x180089F4F: call SymCryptMlDsaSampleInBall - return not tested (callee has no failure path)",
+          "Patched 0x18008CD1F: call SymCryptMlDsaSigDecode then jnz cleanup at 0x18008CD28 (consolidated decode)",
+          "Patched 0x18008CD62: call SymCryptMlDsaSampleInBall then jnz cleanup at 0x18008CD6B (guards the new cap)"
+        ],
+        "trigger_setup": "None available as a security trigger. The decode consolidation is a refactor and the SampleInBall check guards a non-attacker-reachable cap; signature accept/reject behavior is identical in both builds.",
+        "expected_observation": "Static comparison only: the unpatched verify path calls SymCryptMlDsaSampleInBall without a following test eax,eax and proceeds to SymCryptMlDsaVectorNTT; the patched path adds the test and jnz. The infinity-norm bounds check that governs signature acceptance is present in both builds.",
+        "notes": "Part of the same statically-linked SymCrypt ML-DSA rebuild as SymCryptMlDsaKeyGenerateEx. No verification weakening or strengthening of the accept/reject decision."
+      }
+    }
+  ],
+  "summary": "The diff is a rebuild of the statically-linked SymCrypt ML-DSA (FIPS 204 / CRYSTALS-Dilithium) code, not a vulnerability fix. The rejection-sampling primitives that draw coefficients from a SHAKE sponge - SymCryptMlDsaRejNttPoly (unpatched 0x180096CEC, patched 0x18009AA84), SymCryptMlDsaRejBoundedPoly (unpatched 0x180096B4C, patched 0x18009A8C0) and SymCryptMlDsaSampleInBall (unpatched 0x180096DC8, patched 0x18009AB78) - gained a bounded-iteration cap and now return status 0x8008 if the cap is exceeded (RejNttPoly cap 298 via cmp r14d,12Ah; RejBoundedPoly cap 481; SampleInBall cap 121). That status is propagated up through SymCryptMlDsaExpandA (0x180095DD8 -> 0x180099B14) and SymCryptMlDsaExpandS (0x180095F78 -> 0x180099CBC), and the callers SymCryptMlDsaKeyGenerateEx (0x1800894B8 -> 0x18008C2F0) and SymCryptMlDsaVerifyEx (0x180089D9C -> 0x18008CBF8) now test it (added test eax,eax / jnz at 0x18008C40F/0x18008C43A and at 0x18008CD6B). In the unpatched build these primitives have no failure path: they loop over the effectively infinite SHAKE output until the required coefficients are collected and return with no status word, so the condition the patched build newly checks for cannot arise. The sampling input is sponge output over static per-parameter-set tables and is not attacker-steerable; the cap is fail-closed. Consequently there is no corrupted-state use, no memory-safety fault, and no key-integrity or verification-bypass primitive. Severity: none (no security-relevant change). The remaining changed functions are ML-DSA functions touched by the same status plumbing plus call-target relocations and register-allocation shifts from recompilation, including a new BCRYPT_FIPS_SERVICE_INDICATOR property in MSCryptGetProperty (a feature, not a fix)."
+}

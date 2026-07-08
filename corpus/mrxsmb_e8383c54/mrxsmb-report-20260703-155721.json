@@ -1,0 +1,287 @@
+{
+    "binaries": {
+        "title": "mrxsmb.sys (SMB Redirector) - Race on a not-fully-initialized session entry (local NULL-deref DoS, CWE-476), plus non-security alternative-port transport validation",
+        "id_unpatched": "mrxsmb_unpatched.sys",
+        "id_patched": "mrxsmb_patched.sys",
+        "overall_similarity": 0.9536,
+        "matched": 1246,
+        "changed": 44,
+        "identical": 1202,
+        "unmatched_unpatched": 0,
+        "unmatched_patched": 2
+    },
+    "changed_functions": [
+        {
+            "name": "MRxSmbValidateAndGetTransportParameters (@ 0x140030D30); old retained as MRxSmbValidateAndGetTransportParameters_Old (@ 0x14003E2D0)",
+            "similarity": 0.8558,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Pre-patch parser retained verbatim as MRxSmbValidateAndGetTransportParameters_Old (@ 0x14003E2D0)",
+                "Feature path adds a boolean gate on the 4th parameter and a separate MRxSmbValidateIncomingPortsAgainstEffective (@ 0x14003E430)",
+                "MRxSmbValidateIncomingPortsAgainstEffective re-reads the TransportInfo EA and compares its 16-bit port fields against the connection's effective ports at +0x354/+0x356/+0x358, returning 0xC05D000D on mismatch",
+                "Both the parser choice and the extra check are selected by Feature_Servicing_AlternativePort_Dcr"
+            ],
+            "security_relevant": false,
+            "security_notes": "Not security-relevant. The parsed 'TransportInfo' EA and the write target (connection context +0x344) belong to the caller's own outbound SMB connection; choosing a transport port for one's own connection crosses no privilege or security boundary, and the write target is the connection's own context. The added port check is feature-consistency validation for the alternative-port feature, not a fix for an attacker-reachable primitive. The +0x348 byte gates a further field comparison in the normal parse; it is not a 'validation bypass'.",
+            "assembly_diff": "UNPATCHED MRxSmbValidateAndGetTransportParameters @ 0x140030D30:\n0x140030D3A: mov rdi,r9              ; write target = connection ctx +0x344\n0x140030D3D: mov rbx,r8              ; connection context\n0x140030D4D: call cs:__imp_RxFindEa  ; find \"TransportInfo\" EA\n0x140030D6C: cmp word [rax+6],10h    ; EA value size must be 0x10\n0x14005EF4A: mov r8d,[rbx+344h]      ; existing transport dword\n0x14005EF51: movups xmm1,[rcx+rax+9] ; load 16 bytes from EA\n0x14005EF60: cmp r8d,r9d             ; first-dword consistency check\n0x14005EFA9: movzx edx,byte [rbx+348h] ; gates a further field check\n0x14005F00D: movups [rdi],xmm1       ; write to caller's own connection ctx\n\nPATCHED new MRxSmbValidateIncomingPortsAgainstEffective @ 0x14003E430:\n0x14003E4D1: cmp ax,[rbx+354h]       ; EA port vs effective port +0x354\n0x14003E4E5: cmp r8w,[rbx+356h]      ; EA port vs effective port +0x356\n0x14003E504: cmp ax,[rbx+358h]       ; EA port vs effective port +0x358\n0x14003E57B: mov eax,0C05D000Dh      ; status on mismatch"
+        },
+        {
+            "name": "SmbCeFindSessionEntry (unpatched @ 0x140008700) / SmbCeFindSessionEntry (patched @ 0x1400334f0); old retained as SmbCeFindSessionEntry_Old (@ 0x1400476d4)",
+            "similarity": 0.5252,
+            "change_type": "security_relevant",
+            "key_changes": [
+                "Patched adds ExBlockOnAddressPushLock waits on two new per-entry initialization flags (+0x230 session-init, +0x231 transport-init) using the pushlock at +0x238",
+                "Unpatched increments refcounts on a matched entry and proceeds to CheckCredentials(+0x80) and SeAccessCheck without any initialization wait",
+                "Dispatch in SmbCeFindOrConstructSessionEntry selects SmbCeFindSessionEntry (new) vs SmbCeFindSessionEntry_Old (pre-patch behavior retained verbatim) via Feature_Servicing_AlternativePort_Dcr - staged rollout",
+                "Companion signaling in SmbCeDecrementActiveVNetRootContextsOnSession (patched @ 0x14001ba30) sets +0x231 and calls ExUnblockOnAddressPushLockEx",
+                "CheckCredentials (unpatched @ 0x1400089fc, patched @ 0x14001b648) is unchanged; the fix is purely synchronization timing"
+            ],
+            "security_relevant": true,
+            "security_notes": "Concurrency hardening. The unpatched SmbCeFindSessionEntry can match and use a session entry whose session/transport setup has not completed. The SeAccessCheck call site null-checks both +0x80 and the descriptor at +0x38, so it cannot evaluate a NULL/garbage descriptor - no authentication bypass. The only unguarded dereference of +0x80 on this path is inside CheckCredentials at 0x140008A56 (cmp [rax+0x38], rdx), which faults if +0x80 is NULL - a local bugcheck (DoS). Construction populates +0x80 and the match keys before linking the entry into the searchable +0x210 list under the same spinlock, so a concurrent finder cannot observe an unset +0x80; the demonstrable impact is a narrow, timing-dependent local DoS. Feature-gated with the old path retained.",
+            "assembly_diff": "UNPATCHED SmbCeFindSessionEntry @ 0x140008700 (vulnerable lookup path):\n0x140008750: lea rcx,[rdi+780h]              ; server-entry spinlock\n0x140008757: call cs:__imp_ExAcquireSpinLockExclusive\n0x140008773: lea rdx,[rbx+210h]              ; session-entry list head\n0x140008780: mov rbx,[rdx]                   ; first entry\n0x140008797: cmp dword [rbx+0Ch],5           ; state <= 5 gate\n0x1400087A1: mov r9d,[rbx+1A8h]              ; session refcount\n0x1400087AB: jz 0x140008972                  ; skip if zero\n0x1400087B4: cmp [rbx+60h],ecx               ; match SessionID [rsi+48h]\n0x1400087C0: cmp [rbx+64h],eax               ; match LogonID   [rsi+4Ch]\n0x1400087C9: inc dword [rbx+1ACh]            ; VnrCtxts++\n0x1400087E8: mov [rbx+1A8h],r9d              ; session refcount++\n0x140008805: lock xadd [rbx+8],r8d           ; refcount++ (atomic)\n0x140008841: call cs:__imp_ExReleaseSpinLockExclusive  ; released, no init wait\n0x14000884D: mov rcx,[rbx+80h]              ; security-context pointer\n0x14000885B: call CheckCredentials           ; @ 0x1400089FC\n0x14000888F: mov rax,[rbx+80h]\n0x1400088CF: test rax,rax                    ; SeAccessCheck path null-checks +0x80\n0x1400088D4: mov rcx,[rax+38h]\n0x1400088D8: test rcx,rcx                    ; and null-checks the descriptor\n0x14005A53B: call cs:__imp_SeAccessCheck     ; only reached with non-NULL SD\n\nNULL-deref sink in CheckCredentials @ 0x1400089FC:\n0x140008A12: mov rax,rcx                     ; rax = +0x80 pointer\n0x140008A32: jz 0x140008A3C                   ; only the [rax+8] read is guarded\n0x140008A56: cmp [rax+38h],rdx                ; faults if rax == 0\n\nPATCHED SmbCeFindSessionEntry @ 0x1400334F0 adds:\n0x1400335DF: movzx eax,byte [rbx+230h]        ; session-init flag\n0x1400336A2: call cs:__imp_ExBlockOnAddressPushLock  ; wait on +0x230 (pushlock rbx+0x238)\n0x140033709: movzx eax,byte [rbx+231h]        ; transport-init flag\n0x1400337D2: call cs:__imp_ExBlockOnAddressPushLock  ; wait on +0x231"
+        },
+        {
+            "name": "SmbCeDecrementActiveVNetRootContextsOnSession (unpatched @ 0x140008f60 / patched @ 0x14001ba30)",
+            "similarity": 0.4,
+            "change_type": "security_relevant",
+            "key_changes": [
+                "Patched version sets *(entry+0x231)=1 and calls ExUnblockOnAddressPushLockEx(entry+0x238, 0) to wake threads blocked in the new SmbCeFindSessionEntry",
+                "Unpatched version has no wake and no init-flag write"
+            ],
+            "security_relevant": true,
+            "security_notes": "Companion to the SmbCeFindSessionEntry synchronization change: the signaling side that wakes waiters once initialization completes. Part of the same Feature_Servicing_AlternativePort_Dcr rollout.",
+            "assembly_diff": "PATCHED @ 0x14001BA30:\n0x14001BAEC: mov byte [rdi+231h],1\n0x14001BAF5: call cs:__imp_ExUnblockOnAddressPushLockEx"
+        },
+        {
+            "name": "RxCeEstablishConnection (old retained as RxCeEstablishConnection_Old @ 0x140050770)",
+            "similarity": 0.1481,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Pre-patch body retained as RxCeEstablishConnection_Old; feature path split into helper routines",
+                "Signature adjusted for the alternative-port path"
+            ],
+            "security_relevant": false,
+            "security_notes": "Feature-gated refactor of connection establishment.",
+            "assembly_diff": ""
+        },
+        {
+            "name": "SmbCeInitializeConnectionInfo",
+            "similarity": 0.6305,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Added a pointer-overflow guard before connection parameter setup",
+                "Dialect/port-aware selection via the alternative-port helpers"
+            ],
+            "security_relevant": false,
+            "security_notes": "Hardening, not a standalone vulnerability fix.",
+            "assembly_diff": ""
+        },
+        {
+            "name": "MRxSmbProcessClientMoveNotification",
+            "similarity": 0.9256,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Dialect/port-aware port selection via the alternative-port helpers"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        },
+        {
+            "name": "sub_14008CE80",
+            "similarity": 0.6,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Alternative-port mapping configuration parsing refactored with feature-gated branching"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        },
+        {
+            "name": "sub_14008D060",
+            "similarity": 0.55,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Registry-based alternative-port mappings parsing restructured; logic equivalent"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        },
+        {
+            "name": "sub_14008A220",
+            "similarity": 0.7,
+            "change_type": "behavioral",
+            "key_changes": [
+                "RxCeEstablishConnection call signature adjusted for the alternative-port path",
+                "Connection context field access adjusted for expanded transport structures"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        },
+        {
+            "name": "SmbCeFindOrConstructSessionEntry (unpatched @ 0x1400081E0 / patched @ 0x14001A980) and MRxSmbCreateVNetRoot",
+            "similarity": 0.5918,
+            "change_type": "behavioral",
+            "key_changes": [
+                "SmbCeFindOrConstructSessionEntry dispatches to SmbCeFindSessionEntry (new) vs SmbCeFindSessionEntry_Old via Feature_Servicing_AlternativePort_Dcr and passes an extra output parameter for the new path",
+                "Transport-parameter dispatch selects MRxSmbValidateAndGetTransportParameters (new) plus MRxSmbValidateIncomingPortsAgainstEffective vs MRxSmbValidateAndGetTransportParameters_Old via the same feature gate"
+            ],
+            "security_relevant": false,
+            "security_notes": "Feature-gated dispatch points. Not a vulnerability by themselves; they select between the new and retained (_Old) implementations.",
+            "assembly_diff": ""
+        },
+        {
+            "name": "sub_140042254",
+            "similarity": 0.7,
+            "change_type": "behavioral",
+            "key_changes": [
+                "Alternative-port-aware value handling; rundown-protection offset adjustment; list insertion factored into a helper"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        },
+        {
+            "name": "sub_140009D00",
+            "similarity": 0.3,
+            "change_type": "behavioral",
+            "key_changes": [
+                "State-transition function simplified with feature-gated path"
+            ],
+            "security_relevant": false,
+            "security_notes": "",
+            "assembly_diff": ""
+        }
+    ],
+    "unmatched": {
+        "removed": [],
+        "added": [
+            "SmbCeFindSessionEntry_Old",
+            "MRxSmbValidateAndGetTransportParameters_Old",
+            "MRxSmbValidateIncomingPortsAgainstEffective",
+            "SmbCeComputeEffectivePorts",
+            "SmbCeComputeEffectivePortForTransport",
+            "SmbCeInsertPortScopeEntry",
+            "SmbCeLookupPortScopeEntry",
+            "SmbCeRemovePortScopeEntry",
+            "SmbCeGetPortFromPolicyServerTransportPortMappings",
+            "SmbCeGetPortFromRegistryServerTransportPortMappings",
+            "RxCeEstablishConnection_Old",
+            "VctEstablishConnection_Old"
+        ]
+    },
+    "security_findings": [
+        {
+            "severity": "low",
+            "cwe": "CWE-476 (NULL Pointer Dereference), arising from CWE-362 race on a partially-initialized object",
+            "function": "SmbCeFindSessionEntry (unpatched @ 0x140008700)",
+            "entry_point": "MRxSmbCreateVNetRoot (RDBSS minirdr tree-connect callback, reached by a local process opening a UNC path). Local only; not remotely reachable.",
+            "call_chain": [
+                "User-mode NtCreateFile/CreateFile on \\\\server\\share UNC path",
+                "MRxSmbCreateVNetRoot",
+                "SmbCeFindOrConstructVNetRootContext (@ 0x1400079F0)",
+                "SmbCeFindOrConstructSessionEntry (@ 0x1400081E0)",
+                "SmbCeFindSessionEntry (@ 0x140008700)",
+                "CheckCredentials (@ 0x1400089FC) - NULL-deref sink at 0x140008A56"
+            ],
+            "vulnerability_class": "Race condition on a not-fully-initialized object; demonstrable impact is a NULL pointer dereference bugcheck (local DoS)",
+            "description": "The unpatched SmbCeFindSessionEntry walks the server entry's session list (head at server_entry+0x210) under the exclusive spinlock at server_entry+0x780. It matches an entry by state (+0xc <= 5), a non-zero session refcount (+0x1a8), and SessionID/LogonID (+0x60/+0x64 or +0x68/+0x6c), increments reference counts, releases the spinlock, then calls CheckCredentials with the entry's security-context pointer (+0x80) and, on the setup path, SeAccessCheck. There is no 'initialization complete' gate. The patched build adds per-entry flags +0x230 (session-init) and +0x231 (transport-init) plus a pushlock at +0x238, and inserts ExBlockOnAddressPushLock wait loops so a thread matching a not-yet-initialized entry blocks until the constructing thread signals completion (SmbCeDecrementActiveVNetRootContextsOnSession @ 0x14001BA30 sets +0x231 and calls ExUnblockOnAddressPushLockEx). The pre-patch behavior is retained as SmbCeFindSessionEntry_Old, selected via the WIL feature gate Feature_Servicing_AlternativePort_Dcr (staged rollout).",
+            "trigger_conditions": "1) Local code execution in a standard logon session. 2) Multiple threads call CreateFile/NtCreateFile on the same UNC path (\\\\server\\share) concurrently, released via a barrier, so one thread is still completing session/transport setup of a newly constructed session entry while another matches it. 3) A slow-negotiating server widens the setup window. 4) If the matched entry's security-context pointer (+0x80) is NULL at the moment of the race, the cmp [rax+0x38] at 0x140008A56 inside CheckCredentials faults.",
+            "primitive": "Local denial of service only. The matched entry is zero-initialized pool memory whose contents are not attacker-controlled, so there is no read/write primitive, no information leak, and no way to forge a security descriptor. The SeAccessCheck call site null-checks both +0x80 (0x1400088CF) and the descriptor at +0x38 (0x1400088D8), so it cannot be reached with a NULL/garbage descriptor and there is no authentication bypass.",
+            "evidence": "UNPATCHED SmbCeFindSessionEntry @ 0x140008700 (matched path):\n  entry->vnr_active_refcount++;   // +0x1ac\n  entry->session_refcount++;      // +0x1a8\n  _InterlockedAdd(&entry->refcount, 1);  // +0x8\n  ExReleaseSpinLockExclusive(server_entry + 0x780, OldIrql);\n  // no wait on any init flag:\n  CheckCredentials(entry->security_context /* +0x80 */, arg2, flag);\n  // SeAccessCheck path (0x1400088CF..0x14005A53B) null-checks +0x80 and [+0x80]+0x38 first\n\nNULL-deref sink in CheckCredentials @ 0x1400089FC:\n  rax = security_context;         // +0x80\n  if (rax) ppAuthIdentity = *(rax+8);   // only this read is guarded\n  cmp [rax+0x38], rdx;            // 0x140008A56 - faults if rax == 0\n\nPATCHED SmbCeFindSessionEntry @ 0x1400334F0 adds:\n  if (!*(entry+0x230)) {\n      _InterlockedAdd(&entry->refcount, 1);\n      ExReleaseSpinLockExclusive(server_entry + 0x780, OldIrql);\n      if (prev) SmbCeDereferenceSessionEntryEx(prev, 0);\n      do { ExBlockOnAddressPushLock(entry+0x238, entry+0x230, &v, 1, ...); }\n      while (!*(entry+0x230));\n      ExAcquireSpinLockExclusive(server_entry + 0x780);\n  }\n  // same wait pattern on +0x231",
+            "assembly": "0x140008750: lea rcx,[rdi+780h]              ; server-entry spinlock\n0x140008757: call cs:__imp_ExAcquireSpinLockExclusive\n0x140008773: lea rdx,[rbx+210h]              ; session-entry list head\n0x140008780: mov rbx,[rdx]\n0x140008797: cmp dword [rbx+0Ch],5           ; state <= 5\n0x1400087A1: mov r9d,[rbx+1A8h]              ; session refcount\n0x1400087AB: jz 0x140008972\n0x1400087B4: cmp [rbx+60h],ecx               ; SessionID\n0x1400087C0: cmp [rbx+64h],eax               ; LogonID\n0x1400087C9: inc dword [rbx+1ACh]\n0x1400087E8: mov [rbx+1A8h],r9d\n0x140008805: lock xadd [rbx+8],r8d\n0x140008841: call cs:__imp_ExReleaseSpinLockExclusive\n0x14000884D: mov rcx,[rbx+80h]              ; security-context pointer\n0x14000885B: call CheckCredentials\n0x14000888F: mov rax,[rbx+80h]\n0x1400088CF: test rax,rax                    ; null-check +0x80\n0x1400088D2: jz 0x1400088E1\n0x1400088D4: mov rcx,[rax+38h]\n0x1400088D8: test rcx,rcx                    ; null-check descriptor\n0x1400088DB: jnz 0x14005A4FE\n0x14005A53B: call cs:__imp_SeAccessCheck\n; CheckCredentials @ 0x1400089FC:\n0x140008A12: mov rax,rcx\n0x140008A32: jz 0x140008A3C\n0x140008A56: cmp [rax+38h],rdx                ; NULL-deref sink",
+            "debugging_aids": {
+                "breakpoints": [
+                    {
+                        "symbol": "mrxsmb!SmbCeFindSessionEntry",
+                        "address": "0x140008700",
+                        "why": "Function entry: session-entry lookup. r14=arg1 (RX_CONTEXT), rsi=arg2 (NET_ROOT), r13=arg3 (output entry ptr). List iteration begins at 0x140008773."
+                    },
+                    {
+                        "symbol": "mrxsmb!SmbCeFindSessionEntry+0xc9",
+                        "address": "0x1400087c9",
+                        "why": "A matching session entry has been found; rbx is the entry. Inspect rbx+0x80 (security-context pointer) and rbx+0x1a8 (session refcount)."
+                    },
+                    {
+                        "symbol": "mrxsmb!SmbCeFindSessionEntry+0x14d",
+                        "address": "0x14000884d",
+                        "why": "mov rcx,[rbx+0x80] immediately after the spinlock release, feeding the security-context pointer into CheckCredentials."
+                    },
+                    {
+                        "symbol": "mrxsmb!CheckCredentials+0x5a",
+                        "address": "0x140008a56",
+                        "why": "cmp [rax+0x38],rdx - the NULL-dereference sink when rax (the +0x80 pointer) is zero. This is the bugcheck point."
+                    }
+                ],
+                "watch": [
+                    "rbx = matched session entry. Watch rbx+0x80 (security-context pointer, crash candidate at CheckCredentials+0x5a), rbx+0x1a8 (session refcount), rbx+0xc (state)",
+                    "rsi+0x48 / rsi+0x4c = target SessionID / LogonID used for matching",
+                    "eax at 0x14005A547 - SeAccessCheck return (only reached when +0x80 and the descriptor are non-NULL)"
+                ],
+                "key_offsets": [
+                    "0x140008757 - ExAcquireSpinLockExclusive(rdi+0x780): server-entry spinlock",
+                    "0x140008780 - mov rbx,[rdx]: first session entry from list at +0x210",
+                    "0x140008797 - cmp [rbx+0xc],5: state gate",
+                    "0x140008841 - ExReleaseSpinLockExclusive: end of locked region",
+                    "0x14000884d - mov rcx,[rbx+0x80]: security-context pointer into CheckCredentials",
+                    "0x140008A56 - cmp [rax+0x38],rdx inside CheckCredentials: NULL-deref sink",
+                    "PATCHED-only: 0x1400336a2 / 0x1400337d2 ExBlockOnAddressPushLock on +0x230 / +0x231"
+                ],
+                "trigger_setup": "1) Spawn multiple threads in one process gated on a CreateEvent barrier. 2) Have all threads call CreateFile(L\"\\\\\\\\SERVER\\\\SHARE\\\\test\") for the same share. 3) Signal the barrier; use a slow-negotiating server to widen the session/transport setup window. 4) Break at 0x1400087c9 and 0x14000884d to observe a second thread matching a session entry whose setup has not completed.",
+                "expected_observation": "If the race is won against a credential-less entry (security-context pointer +0x80 == NULL), a bugcheck (e.g. 0x50 PAGE_FAULT_IN_NONPAGED_AREA) occurs at 0x140008A56. The SeAccessCheck call at 0x14005A53B is not reached with an invalid descriptor because of the null checks at 0x1400088CF/0x1400088D8. No access is granted.",
+                "notes": "Session-entry offsets (unpatched layout): +0x8 refcount (atomic), +0xc state (must be <=5), +0x60/+0x64 and +0x68/+0x6c SessionID/LogonID match keys, +0x80 security-context pointer, +0x1a8 session refcount, +0x1ac active VnrCtxts. The +0x230/+0x231 init flags and +0x238 pushlock are new fields in the patched build's session entry. CheckCredentials is unchanged between builds. The whole change is gated by Feature_Servicing_AlternativePort_Dcr with SmbCeFindSessionEntry_Old retained as the pre-patch path."
+            }
+        },
+        {
+            "severity": "none",
+            "cwe": "N/A (no security-relevant change)",
+            "function": "MRxSmbValidateAndGetTransportParameters",
+            "entry_point": "MRxSmbCreateVNetRoot dispatch, when a caller supplies a 'TransportInfo' Extended Attribute on its own connect. Operates on the caller's own connection parameters.",
+            "call_chain": [
+                "MRxSmbCreateVNetRoot",
+                "MRxSmbValidateAndGetTransportParameters (@ 0x140030D30) / MRxSmbValidateAndGetTransportParameters_Old (@ 0x14003E2D0)",
+                "RxFindEa",
+                "movups [rdi],xmm1 (write to the caller's own connection context +0x344)"
+            ],
+            "vulnerability_class": "Feature behavior (alternative-port transport-parameter consistency validation) - not a security boundary",
+            "description": "The unpatched MRxSmbValidateAndGetTransportParameters looks up a 16-byte 'TransportInfo' EA via RxFindEa and writes it to the caller-supplied target (connection context +0x344), gated by size == 0x10, a first-dword consistency check against the existing +0x344 value, and a +0x348 byte that gates a further field check. The patched build retains this parser verbatim as MRxSmbValidateAndGetTransportParameters_Old (@ 0x14003E2D0) and, on the feature path (Feature_Servicing_AlternativePort_Dcr), adds MRxSmbValidateIncomingPortsAgainstEffective (@ 0x14003E430), which re-reads the same EA and compares its embedded 16-bit port fields against the connection's own effective ports at +0x354/+0x356/+0x358, returning 0xC05D000D on mismatch. The 'TransportInfo' EA and the +0x344 target belong to the caller's own outbound SMB connection; selecting a transport port for one's own connection crosses no privilege or security boundary. The added check is feature-consistency validation, not a fix for an attacker-reachable primitive. The +0x348 branch is a normal parse condition, not a 'validation bypass'.",
+            "trigger_conditions": "No attacker-reachable security condition. Supplying a TransportInfo EA affects only the caller's own outbound connection configuration.",
+            "primitive": "None. No cross-boundary read/write. The write target is the caller's own connection context; the parsed value is the caller's own transport preference.",
+            "evidence": "UNPATCHED MRxSmbValidateAndGetTransportParameters @ 0x140030D30 (retained verbatim as _Old @ 0x14003E2D0):\n  ea = RxFindEa(arg1, arg2, \"TransportInfo\", 0xd);\n  if (!ea) return 0;\n  if (ea->value_size != 0x10) return 0xC000000D;\n  xmm1 = load_16_bytes(ea->value);\n  if (ctx->existing_344 != 0 && ctx->existing_344 != first_dword(xmm1)) return 0xC00001B4;\n  if (ctx->byte_348 != 0 && second_field(xmm1) == 0) return 0xC00001B5;\n  *write_target = xmm1;   // ctx+0x344 (caller's own connection)\n  return 0;\n\nPATCHED feature path adds MRxSmbValidateIncomingPortsAgainstEffective @ 0x14003E430:\n  // compares EA ports vs ctx effective ports at +0x354/+0x356/+0x358, returns 0xC05D000D on mismatch",
+            "assembly": "0x140030D3A: mov rdi,r9              ; write target = connection ctx +0x344\n0x140030D4D: call cs:__imp_RxFindEa  ; \"TransportInfo\"\n0x140030D6C: cmp word [rax+6],10h    ; EA value size must be 0x10\n0x14005EF4A: mov r8d,[rbx+344h]      ; existing transport dword\n0x14005EF51: movups xmm1,[rcx+rax+9] ; load 16 bytes from EA\n0x14005EF60: cmp r8d,r9d             ; first-dword consistency check\n0x14005EFA9: movzx edx,byte [rbx+348h] ; gates a further field check\n0x14005F00D: movups [rdi],xmm1       ; write to caller's own connection ctx\n; PATCHED new port-consistency check @ 0x14003E430:\n0x14003E4D1: cmp ax,[rbx+354h]\n0x14003E4E5: cmp r8w,[rbx+356h]\n0x14003E504: cmp ax,[rbx+358h]\n0x14003E57B: mov eax,0C05D000Dh",
+            "debugging_aids": {
+                "breakpoints": [
+                    {
+                        "symbol": "mrxsmb!MRxSmbValidateAndGetTransportParameters",
+                        "address": "0x140030d30",
+                        "why": "Function entry. r8 = connection context, r9 = write target (connection ctx +0x344). RxFindEa for 'TransportInfo' at 0x140030d4d."
+                    },
+                    {
+                        "symbol": "mrxsmb!MRxSmbValidateAndGetTransportParameters (write)",
+                        "address": "0x14005f00d",
+                        "why": "movups [rdi],xmm1 - writes the caller-supplied TransportInfo into the caller's own connection context. No cross-boundary effect."
+                    }
+                ],
+                "watch": [
+                    "rdi at 0x14005f00d - write target (connection ctx +0x344, the caller's own connection)",
+                    "xmm1 at 0x14005f00d - 16 bytes from the caller-supplied EA",
+                    "In the patched feature path: rbx+0x354/+0x356/+0x358 - effective ports compared by MRxSmbValidateIncomingPortsAgainstEffective"
+                ],
+                "key_offsets": [
+                    "0x140030d4d - RxFindEa: searches for 'TransportInfo' EA",
+                    "0x140030d6c - cmp word [rax+6],0x10: EA value size gate",
+                    "0x14005efa9 - movzx edx,byte [rbx+0x348]: gates a further field comparison (normal parse, not a bypass)",
+                    "0x14005f00d - movups [rdi],xmm1: write into the caller's own connection context",
+                    "0x14003E430 - MRxSmbValidateIncomingPortsAgainstEffective: feature-path port-consistency check"
+                ],
+                "trigger_setup": "Open a UNC path with a 'TransportInfo' EA (name length 0xC, value length 0x10). The value is written into the caller's own connection context; in the feature path the ports must match the effective ports at +0x354/+0x356/+0x358.",
+                "expected_observation": "The 16-byte value is copied to connection ctx +0x344. In the patched feature path a port mismatch yields 0xC05D000D. There is no observable effect on any other principal's state.",
+                "notes": "This finding is retained for completeness but is not security-relevant: it operates entirely on the caller's own connection parameters and is part of the alternative-port feature (Feature_Servicing_AlternativePort_Dcr), with the pre-patch parser retained verbatim as MRxSmbValidateAndGetTransportParameters_Old."
+            }
+        }
+    ],
+    "summary": "The patch's security-relevant change is a synchronization fix in the SMB redirector's session-entry lookup (unpatched SmbCeFindSessionEntry @ 0x140008700; new SmbCeFindSessionEntry @ 0x1400334f0; pre-patch behavior retained as SmbCeFindSessionEntry_Old @ 0x1400476d4). The unpatched code can match and use a session entry whose session/transport setup has not completed. Direction is correct (patched is stricter, adding ExBlockOnAddressPushLock waits on new +0x230/+0x231 init flags, with SmbCeDecrementActiveVNetRootContextsOnSession @ 0x14001ba30 signaling completion). The demonstrable worst-case impact is a local kernel bugcheck (DoS): the only unguarded dereference of the security-context pointer (+0x80) on this path is inside CheckCredentials at 0x140008A56, which faults if that pointer is NULL. The SeAccessCheck call site null-checks its inputs (no authentication bypass); the entry is zero-initialized pool (no info-leak or memory-corruption primitive); and the path is local-only. Even the NULL-deref requires winning a narrow timing window against a credential-less entry. Rating: Low (CWE-476). The change is gated by Feature_Servicing_AlternativePort_Dcr with the old path retained (staged rollout). The second change, added transport-port consistency validation (MRxSmbValidateIncomingPortsAgainstEffective vs the retained MRxSmbValidateAndGetTransportParameters_Old), is not security-relevant: it operates on the caller's own connection parameters and crosses no boundary."
+}

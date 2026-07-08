@@ -1,0 +1,337 @@
+{
+  "binaries": {
+    "title": "ci.dll (Windows Code Integrity) - SI policy platform-secured trust-check tightened; one policy-ID Windows-signing mandate relaxed",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.95,
+    "matched": 380,
+    "changed": 88,
+    "identical": 292,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SIPolicyIsPolicyPlatformSecured (sub_18006FC88)",
+      "similarity": 0.5,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED early-return on the arg2==0 path when (result & 4) that returned 1 (platform secured) immediately",
+        "Patched version on the arg2==0 path now requires (result & 1) set AND a hardcoded 16-byte policy-identity at +0x6CC/+0x6D4 to match before returning 1",
+        "The arg2!=0 && (result & 0x18) early return is preserved in both versions; flag offset +0x710 is unchanged"
+      ],
+      "security_relevant": true,
+      "security_notes": "SIPolicyIsPolicyPlatformSecured determines whether a loaded System Integrity policy is 'platform secured' (return 1). It reads a policy-options flag dword at *(arg1+0x710). In the unpatched version, when called with arg2=0 (non-strict path), the function immediately returns 1 if bit 2 (value & 4) is set, skipping the stricter identity check. This is a trust-check bypass: a policy is treated as platform-secured on the strength of a single flag bit. The patched version removes this shortcut, so on the arg2=0 path it requires bit 0 set AND the fixed policy-identity value 0x4C0644C9A244370E / 0x7630566E01F651B5 at offset +0x6CC/+0x6D4 to match. There is no page-hash table or binary search in this function.",
+      "assembly_diff": "// UNPATCHED SIPolicyIsPolicyPlatformSecured @ 0x18006FC88:\nchar SIPolicyIsPolicyPlatformSecured(int64_t a1, char a2) {\n    int v2 = *(int32_t*)(a1 + 0x710);   // policy-options flags\n    if (a2 != 0) {\n        if ((v2 & 0x18) == 0) goto full_check;\n        return 1;                        // strict path (preserved)\n    }\n    if ((v2 & 4) != 0)\n        return 1;                        // <--- VULNERABLE: bit 2 alone => platform secured\nfull_check:\n    uint32_t v4 = *(uint32_t*)(a1 + 0x28);\n    if (a2 != 0) return 0;\n    if ((v2 & 1) == 0) return 0;\n    uint64_t v6 = -(int64_t)(v4 < 6) & 0xFFFFFFFFFFFFF944ull;\n    if (*(uint64_t*)(v6 + a1 + 0x6CC) != 0x4C0644C9A244370Eull ||\n        *(uint64_t*)(v6 + a1 + 0x6D4) != 0x7630566E01F651B5ull)\n        return 0;\n    return 1;\n}\n\n// PATCHED SIPolicyIsPolicyPlatformSecured @ 0x180074028:\nchar SIPolicyIsPolicyPlatformSecured(int64_t a1, char a2) {\n    int v2 = *(int32_t*)(a1 + 0x710);   // same +0x710 offset\n    if (a2 != 0 && (v2 & 0x18) != 0)\n        return 1;\n    // (a2==0 && v2&4) shortcut REMOVED\n    uint32_t v5 = *(uint32_t*)(a1 + 0x28);\n    if (a2 != 0) return 0;\n    if ((v2 & 1) == 0) return 0;\n    uint64_t v7 = -(int64_t)(v5 < 6) & 0xFFFFFFFFFFFFF944ull;\n    if (*(uint64_t*)(v7 + a1 + 0x6CC) != 0x4C0644C9A244370Eull ||\n        *(uint64_t*)(v7 + a1 + 0x6D4) != 0x7630566E01F651B5ull)\n        return 0;\n    return 1;\n}"
+    },
+    {
+      "name": "SIPolicyIsPolicyMustBeWindowsSigned (sub_18006FB74)",
+      "similarity": 0.4,
+      "change_type": "signing_requirement_relaxation",
+      "key_changes": [
+        "REMOVED one entry (0x4C3279F4784C4414 a1[0] / 0xD1DA542FBF0A5A6 a1[1], offset +0x8) from the hardcoded list of policy IDs that must be Windows-signed. Unpatched has 9 entries, patched has 8; all other entries are unchanged",
+        "Direction is a RELAXATION: in both builds the caller reaches the customized-signed acceptance path only when the policy is not Windows-signed AND this function returns 0, so a listed identity is barred from customized signing and must be Windows-signed. Removing the entry lets that identity be accepted via customized signing in the patched build (patched is less strict)"
+      ],
+      "security_relevant": true,
+      "security_notes": "SIPolicyIsPolicyMustBeWindowsSigned compares a 16-byte policy identity against a built-in list of hardcoded policy-identity constants and returns 1 on a match. Verified in the decompilation: unpatched lists 9 identity pairs, patched lists 8, and the removed pair is 0x4C3279F4784C4414 / 0xD1DA542FBF0A5A6. The sole caller uses a match to BLOCK the customized-signed (non-Windows) acceptance path, so removal relaxes the Windows-signing mandate for that identity rather than revoking trust. This is a policy-ID list adjustment, not an unpatched-vulnerable/patched-fixed security change; the unpatched build is the stricter one here.",
+      "assembly_diff": "// UNPATCHED SIPolicyIsPolicyMustBeWindowsSigned @ 0x18006FB74 (9 must-be-Windows-signed entries):\n//   if (a1[0] == 0x4C3279F4784C4414 && a1[1] == 0xD1DA542FBF0A5A6)  // a1[1] = offset +0x8\n//       return 1;\n// PATCHED SIPolicyIsPolicyMustBeWindowsSigned @ 0x180073F34 (8 entries):\n// This one entry is removed entirely; the other entries remain. A match forces Windows-signing,\n// so removal relaxes the requirement for that identity."
+    },
+    {
+      "name": "CiHvciIsVbsPolicyFailure (sub_18006C428)",
+      "similarity": 0.45,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched adds a feature-gated pre-check via Feature_CodeIntegrity_TrustedLaunchPolicy__private_IsEnabledDeviceUsageNoInline (sub_180018DF8)",
+        "When that feature is enabled, returns 0 (no VBS policy failure) unless bit 0x100000 is set and bit 0x200000 is clear in *(arg1+0x938); offset +0x938 is unchanged between builds"
+      ],
+      "security_relevant": true,
+      "security_notes": "CiHvciIsVbsPolicyFailure is a standalone HVCI/VBS policy-failure detector that walks loaded policies looking for a specific hardcoded policy identity (0x4B5E588BA072029F / 0x87F67DD6AA05F9B7). It does NOT call SIPolicyIsPolicyMustBeWindowsSigned; it is not the caller of the hardcoded-identity allowlist. The patch adds a feature-gated flag check on the flags at +0x938 that further constrains when a VBS policy failure is reported.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I_FindFileOrHeaderHashInLoadedCatalogs (sub_1800D6FEC)",
+      "similarity": 0.6,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "SHA-256 branch (a3==32780) changed bsearch to bsearch_s (secure variant requiring context parameter), using CipFileHashSearchCompareRoutineSHA256",
+        "SHA-1 branch (a3==32772) continues to use bsearch in both builds"
+      ],
+      "security_relevant": true,
+      "security_notes": "I_FindFileOrHeaderHashInLoadedCatalogs looks up a file/header hash in the sorted hash tables of loaded catalogs. The unpatched SHA-256 lookup uses bsearch; the patched version switches that call to bsearch_s, which adds parameter validation. This is a hardening fix for potential out-of-bounds access during binary search of catalog hash table data.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SbpParseSignatureDatabase (unpatched 0x18000BDDC) / SbpParseSignatureDatabaseFromBuffer (patched-only 0x18001E1DC)",
+      "similarity": 0.35,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "The EFI Secure Boot signature-database parser was refactored: unpatched SbpParseSignatureDatabase @0x18000BDDC did the merged-list allocation inline; the patch splits the parsing/allocation logic into a newly added helper SbpParseSignatureDatabaseFromBuffer @0x18001E1DC, called from the patched SbpParseSignatureDatabase @0x18000E0FC",
+        "Unpatched computes the allocation size with raw shift/add and no overflow check: lea rcx,[r14+rdi]; shl rcx,4; add rcx,r15; call SbeAlloc (@0x18000BE49-0x18000BE54), then copies attacker EFI-variable data with memmove (@0x18000BF62). RtlULongLongMult does not appear anywhere in the unpatched binary",
+        "Patched replaces each *16 with checked RtlULongLongMult (multiplier 0x10) tested via test eax,eax; js loc_18001E5BC, and each region addition with an explicit carry check (cmp r10,[rbp+pullResult]; jb loc_18001E574 -> STATUS_INTEGER_OVERFLOW 0xC0000095) before SbeAlloc (@0x18001E2EC) and memmove (@0x18001E324)"
+      ],
+      "security_relevant": true,
+      "security_notes": "SbpParseSignatureDatabase retrieves an EFI (UEFI) Secure Boot signature-database variable via SbEFIGetVariable (@0x18000BE21 in the unpatched build) and parses its EFI_SIGNATURE_LIST records to build a merged descriptor array. It is reached from SbParseKEK @0x18001E16C, which parses Secure Boot KEK/db variable data - untrusted firmware/Secure-Boot input. The unpatched build computes the merged-list allocation size with raw shl/add and no overflow validation, then memmoves attacker-controlled variable data into the result. The patch validates every multiplication with RtlULongLongMult and every addition with a carry check before allocating, returning STATUS_INTEGER_OVERFLOW on failure. Direction is correct (patched stricter). Rated Low: the guarded operands are 32-bit entry counts times 16 added to a 32-bit variable size, computed in 64-bit registers and bounded by the parsed variable size, so a full 64-bit overflow of the allocation size (and the undersized-alloc-plus-memmove heap overflow it would cause) is not demonstrable from these binaries alone. Best characterized as CWE-190 integer-overflow hardening (defense-in-depth) guarding a CWE-787/CWE-122 heap buffer overflow on an untrusted UEFI-variable parsing path.",
+      "assembly_diff": "// UNPATCHED ci!SbpParseSignatureDatabase @ 0x18000BDDC (no overflow check):\n000000018000BE21  call    SbEFIGetVariable\n// ... counting pass yields entry counts in r14 / rdi (r15d) ...\n000000018000BE49  lea     rcx, [r14+rdi]   // count_a + count_b\n000000018000BE4D  shl     rcx, 4           // * 16, raw, unchecked\n000000018000BE51  add     rcx, r15         // + Size, raw, unchecked\n000000018000BE54  call    SbeAlloc\n000000018000BF62  call    memmove          // copies attacker EFI-variable data\n\n// PATCHED ci!SbpParseSignatureDatabaseFromBuffer @ 0x18001E1DC (checked):\n000000018001E261  mov     edx, 10h         // ullMultiplier = 16\n000000018001E269  call    RtlULongLongMult\n000000018001E270  js      loc_18001E5BC    // overflow -> free + return\n000000018001E287  call    RtlULongLongMult\n000000018001E290  js      loc_18001E5BC\n000000018001E29A  add     r10, [rbp+pullResult]\n000000018001E29E  cmp     r10, [rbp+pullResult]\n000000018001E2A2  jb      loc_18001E574    // carry -> STATUS_INTEGER_OVERFLOW 0xC0000095\n000000018001E2B7  call    RtlULongLongMult\n000000018001E2C0  js      loc_18001E5BC\n000000018001E2CA  add     rdx, r10\n000000018001E2CD  cmp     rdx, r10\n000000018001E2D0  jb      loc_18001E574\n000000018001E2D9  lea     rcx, [rdx+r14]   // + Size\n000000018001E2DD  cmp     rcx, rdx\n000000018001E2E0  jb      loc_18001E574\n000000018001E2EC  call    SbeAlloc         // only after all checks pass\n000000018001E324  call    memmove"
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_180018FC8)",
+      "similarity": 0.65,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds | 0x40000 when computing the cached feature-state value (bit 18 of the WIL feature-state cache word)",
+        "This reflects a feature-flag rollout/encoding change in the WIL feature-state cache, not a code-integrity verification flag"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the WIL (Windows Implementation Library) feature-state cache reevaluation helper; the 0x40000 bit is part of the cached feature-enabled-state encoding. It is a feature-flag rollout change rather than a code-integrity security check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptFdefDecideModulusType (sub_18000E878)",
+      "similarity": 0.6,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds a (v & 0xC000) == 0 guard combined with a CPU-feature check before selecting the modulus type",
+        "Statically-linked SymCrypt library math routine, unrelated to Code Integrity trust logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptFdefDecideModulusType is a statically-linked SymCrypt library routine that chooses an internal modulus representation based on CPU features. The change is a CPU-feature-gating tweak in that library, not a Code Integrity security check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I_ParseCatalogAndMapHashes (sub_1800882F4)",
+      "similarity": 0.35,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inlined I_AllocateCatalogParseBuffers (sub_1800884A0), a pool allocator for a 0xed0-byte structure, directly into the function body",
+        "I_AllocateCatalogParseBuffers existed in the unpatched version with the same 0xed0 allocation size",
+        "Not a security fix - the allocation size is identical (0xed0 bytes) in both versions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initially appeared to be a stack-to-pool overflow fix, but I_AllocateCatalogParseBuffers in the unpatched binary already allocates the same 0xed0-byte pool. The change is purely structural refactoring (inlining).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiQueryInformation (sub_1800D50A0)",
+      "similarity": 0.7,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds condition checking (data_180045e70 & 0x400000) before setting a verification flag",
+        "Gates the flag on an additional global configuration bit"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SIPolicyParsePolicyData (sub_18006E09C)",
+      "similarity": 0.55,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shift: +0xa80 -> +0xaa0 reflecting expanded context structure layout",
+        "Added VBS capability check via sub_180018df8() before certain operations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipValidateFileHash (sub_1800DB310)",
+      "similarity": 0.5,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts across multiple field accesses",
+        "Added VBS gating and additional flag checks"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiUnpackPolicy (sub_1800AD8EC)",
+      "similarity": 0.6,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Both builds call memmove (sub_180029280 in unpatched, sub_180029880 in patched are both memmove); the symbol difference is only an address shift from the overall binary layout change, not a memcpy-to-memmove switch"
+      ],
+      "security_relevant": false,
+      "security_notes": "The referenced copy-routine symbol resolves to memmove in both builds; the address changed only because the binary shifted. No memcpy-to-memmove substitution occurred. Behavioral only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipMinCryptToAuthRoot2 (sub_180054BC4)",
+      "similarity": 0.5,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Extensive refactoring with VBS checks added throughout",
+        "Policy verification logic changes for HVCI compatibility"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": ["SbpParseSignatureDatabaseFromBuffer (0x18001E1DC) - patched-only helper extracted from SbpParseSignatureDatabase; adds RtlULongLongMult/carry-check integer-overflow validation to the EFI Secure Boot signature-database allocation-size computation (see Finding 4)"]
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "SIPolicyIsPolicyPlatformSecured (sub_18006FC88)",
+      "entry_point": "System Integrity policy evaluation (SIPolicy platform-secured determination)",
+      "call_chain": ["SI policy load / evaluation", "SIPolicyParsePolicyData and related policy setup", "SIPolicyIsPolicyPlatformSecured (sub_18006FC88) (platform-secured determination)"],
+      "vulnerability_class": "trust bypass / missing validation (CWE-358: Improperly Implemented Security Check)",
+      "description": "The unpatched SIPolicyIsPolicyPlatformSecured function decides whether a loaded System Integrity policy is 'platform secured' (return 1). When called with arg2=0 (the non-strict path), it reads a policy-options flag dword from *(arg1 + 0x710) and if bit 2 (value & 4) is set, it immediately returns 1 (platform secured) without performing the stricter identity check. This means a policy is treated as platform-secured on the strength of one flag bit. The patched version removes this early-return shortcut so that on the arg2=0 path the function requires bit 0 (value & 1) to be set AND a hardcoded 16-byte policy identity (0x4C0644C9A244370E / 0x7630566E01F651B5) at offset +0x6CC/+0x6D4 to match before returning 1. This function contains no page-hash table and no binary search. Verified against both binaries (decompilation and assembly). Rated Medium rather than High: the 'platform secured' result is a real trust gate (one caller honors a policy's PlatformSecureSetting query only for platform-secured policies; another proceeds with image validation once a loaded policy is platform-secured), but end-to-end exploitability requires an attacker-loadable policy carrying +0x710 bit 2 without the fixed identity, which is not demonstrable from these binaries alone.",
+      "trigger_conditions": "The weakness triggers when: (1) an SI policy is loaded/evaluated whose flag dword at +0x710 has bit 2 set but which lacks the hardcoded identity at +0x6CC/+0x6D4, and (2) a caller invokes SIPolicyIsPolicyPlatformSecured with arg2=0. Under these conditions the unpatched build reports the policy as platform-secured without the identity check.",
+      "primitive": "SI-policy trust-state bypass - a policy is classified as 'platform secured' (a trusted state downstream code relies on) using only flag bit 2, without the fixed policy-identity match. This is a logic/trust weakness, not a direct code-execution primitive.",
+      "evidence": "// UNPATCHED SIPolicyIsPolicyPlatformSecured @ 0x18006FC88:\nchar f(int64_t a1, char a2) {\n    int v2 = *(int32_t*)(a1 + 0x710);\n    if (a2 != 0) { if ((v2 & 0x18) == 0) goto full; return 1; }\n    if ((v2 & 4) != 0)\n        return 1;  // <--- BYPASS: bit 2 alone marks the policy secured\nfull:\n    uint32_t v4 = *(uint32_t*)(a1 + 0x28);\n    if (a2 != 0) return 0;\n    if ((v2 & 1) == 0) return 0;\n    uint64_t v6 = -(int64_t)(v4 < 6) & 0xFFFFFFFFFFFFF944ull;\n    if (*(uint64_t*)(v6+a1+0x6CC) != 0x4C0644C9A244370Eull ||\n        *(uint64_t*)(v6+a1+0x6D4) != 0x7630566E01F651B5ull) return 0;\n    return 1;\n}\n\n// PATCHED @ 0x180074028: the (a2==0 && v2&4) return-1 block is REMOVED;\n// the arg2==0 path always falls through to the bit-0 + identity check.",
+      "assembly": "// UNPATCHED ci!SIPolicyIsPolicyPlatformSecured @ 0x18006FC88:\n//   mov eax, [rcx+710h]     ; policy-options flags\n//   test dl, dl             ; a2 == 0 ?\n//   jz  loc_18006FCDD       ; a2==0 -> check bit 2\n//   test al, 18h            ; a2!=0 path\n//   jnz loc_18006FCE1       ; -> return 1\n//   ...\n// loc_18006FCDD:\n//   test al, 4              ; check bit 2\n//   jz  loc_18006FC99       ; if 0 -> full check\n// loc_18006FCE1:\n//   mov al, 1               ; return platform-secured\n//   retn                    ; <--- BYPASS\n// PATCHED @ 0x180074028: a2==0 jumps straight to loc_18007403D (full check);\n// the test al,4 / mov al,1; retn shortcut is gone. Flags still at [rcx+710h].",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SIPolicyIsPolicyPlatformSecured",
+            "address": "0x18006FC88",
+            "why": "Break at function entry to observe the SI policy pointer (arg1/rcx) and the arg2 flag (dl). When dl==0 and [rcx+0x710] bit 2 is set, the unpatched function returns 1 without the identity check."
+          },
+          {
+            "symbol": "ci!SIPolicyIsPolicyPlatformSecured+0x55",
+            "address": "0x18006FCDD",
+            "why": "loc_18006FCDD: the 'test al, 4' shortcut. If execution sets al=1 here and returns without reaching the identity compare at +0x6CC/+0x6D4, the shortcut is active."
+          }
+        ],
+        "watch": [
+          "rcx = pointer to SI policy structure",
+          "[rcx+0x710] = policy-options flags; bit 2 (value & 4) triggers the shortcut when dl==0",
+          "dl (arg2) = strict flag; shortcut only occurs when dl==0",
+          "[rcx+0x28] = count field feeding the +0x6CC/+0x6D4 offset selection",
+          "al return value: 1=platform secured, 0=not secured"
+        ],
+        "key_offsets": [
+          "0x18006FC88: function entry",
+          "[rcx+0x710]: policy-options flags containing the shortcut bit",
+          "The 'test al, 4; jz; mov al,1; retn' sequence at loc_18006FCDD is the removed shortcut",
+          "[rcx+0x6CC]/[rcx+0x6D4]: hardcoded policy-identity compared on the full path"
+        ],
+        "trigger_setup": "Arrange for an SI policy to be loaded/evaluated so that SIPolicyIsPolicyPlatformSecured is invoked with arg2=0. Trace into the function and inspect the flag dword at +0x710.",
+        "expected_observation": "In the unpatched binary: dl==0 (arg2), [rcx+0x710] has bit 2 set, and the function returns al=1 without reaching the identity compare. In the patched binary the same input falls through to require bit 0 and the fixed identity at +0x6CC/+0x6D4, returning 0 when those do not hold.",
+        "notes": "The flag offset is +0x710 in BOTH builds (there is no shift to +0x720). This function is part of the SI policy subsystem in ci.dll and decides the 'platform secured' trust state of a policy; it does not validate page hashes."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "SIPolicyIsPolicyMustBeWindowsSigned (sub_18006FB74)",
+      "entry_point": "System Integrity policy evaluation (hardcoded Windows-signing mandate list)",
+      "call_chain": ["SI policy evaluation", "SIPolicyIsPolicyMustBeWindowsSigned (sub_18006FB74) (hardcoded Windows-signing mandate list compare)"],
+      "vulnerability_class": "signing-requirement relaxation of a hardcoded policy-ID list (no unpatched-vulnerable / patched-fixed direction)",
+      "description": "SIPolicyIsPolicyMustBeWindowsSigned compares a 16-byte policy identity against a built-in list of hardcoded policy-identity constants and returns 1 on a match. Verified in decompilation: unpatched lists 9 identity pairs, patched lists 8, and the removed pair is 0x4C3279F4784C4414 (a1[0]) / 0xD1DA542FBF0A5A6 (a1[1], offset +0x8). The DIRECTION is a relaxation, not a revocation: in both builds the sole caller reaches the customized-signed acceptance path (SIPolicyCheckPolicyCustomizedSigned, allowing a non-Windows signer) only when the policy is not Windows-signed (status 0xC0430005) AND this function returns 0. A listed identity is therefore barred from customized signing and must be Windows-signed; removing the entry lets that identity be accepted via customized signing in the patched build, so the patched build is the less strict one. This is a policy-ID list adjustment, not an unpatched-vulnerable/patched-fixed security change. The separately-changed CiHvciIsVbsPolicyFailure (sub_18006C428) is an unrelated HVCI/VBS policy-failure detector and does not call this function.",
+      "trigger_conditions": "A policy whose 16-byte identity equals 0x4C3279F4784C4414 (a1[0]) / 0xD1DA542FBF0A5A6 (a1[1], offset +0x8) is forced by the unpatched ci.dll to be Windows-signed; the patched build no longer forces this and permits that identity through the customized-signed acceptance path.",
+      "primitive": "None (relaxation). Removing the entry lifts a Windows-signing requirement for one policy identity; it does not grant an attacker a new primitive in the patched build.",
+      "evidence": "// UNPATCHED SIPolicyIsPolicyMustBeWindowsSigned @ 0x18006FB74 (9 entries):\n//   ... other entries ...\n//   if (a1[0] == 0x4C3279F4784C4414 && a1[1] == 0xD1DA542FBF0A5A6) return 1;  // REMOVED in patch\n//   ... other entries ...\n// PATCHED @ 0x180073F34 (8 entries): that entry is gone; the rest are unchanged.\n\n// Caller (both builds) shows this is a relaxation:\n//   if (IsWindowsSigned == 0xC0430005 && SIPolicyIsPolicyMustBeWindowsSigned(a7) == 0)\n//       SIPolicyCheckPolicyCustomizedSigned(...);  // customized (non-Windows) signer accepted\n// A list match keeps this path unreachable, so removal permits customized signing for that identity.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SIPolicyIsPolicyMustBeWindowsSigned",
+            "address": "0x18006FB74",
+            "why": "Break at the policy-identity allowlist compare. Observe arg1/rcx pointing to the 16-byte identity. Watch for the comparison against constant 0x4C3279F4784C4414."
+          },
+          {
+            "symbol": "ci!CiHvciIsVbsPolicyFailure",
+            "address": "0x18006C428",
+            "why": "Unrelated HVCI/VBS policy-failure detector. In the patched build, observe the feature-gated flag check (Feature_CodeIntegrity_TrustedLaunchPolicy..., sub_180018DF8) on flags at +0x938 that can force a no-failure return."
+          }
+        ],
+        "watch": [
+          "rcx = pointer to the 16-byte policy identity being compared",
+          "[rcx] = a1[0], compare against 0x4C3279F4784C4414",
+          "[rcx+0x8] = a1[1], compare against 0xD1DA542FBF0A5A6",
+          "al return value: 1=identity is on the must-be-Windows-signed list (forced Windows-signing), 0=not on the list"
+        ],
+        "key_offsets": [
+          "0x18006FB74: function entry",
+          "The removed allowlist entry compares a1[0] (offset +0x0) and a1[1] (offset +0x8)",
+          "CiHvciIsVbsPolicyFailure (sub_18006C428): feature-gated flag check on *(arg1+0x938)"
+        ],
+        "trigger_setup": "Evaluate a policy whose identity matches the removed constant and observe whether the function returns 1.",
+        "expected_observation": "In unpatched ci.dll the identity matches 0x4C3279F4784C4414 / 0xD1DA542FBF0A5A6 and returns 1 (forcing Windows-signing). In patched ci.dll that entry is absent, the function returns 0 for that identity, and the caller may accept it via the customized-signed path.",
+        "notes": "This removes a Windows-signing mandate for one policy identity (a relaxation); the unpatched build is stricter. The CiHvciIsVbsPolicyFailure change is separate and constrains when a VBS policy failure is reported under HVCI (feature-gated flag check at +0x938, offset unchanged)."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "I_FindFileOrHeaderHashInLoadedCatalogs (sub_1800D6FEC)",
+      "entry_point": "Catalog hash table binary search during file/header hash lookup",
+      "call_chain": ["Catalog hash lookup", "I_FindFileOrHeaderHashInLoadedCatalogs (sub_1800D6FEC) (bsearch/bsearch_s over catalog hash table)"],
+      "vulnerability_class": "potential out-of-bounds read / improper bounds handling (CWE-125), addressed as defensive hardening",
+      "description": "I_FindFileOrHeaderHashInLoadedCatalogs looks up a file/header hash in the sorted hash tables of loaded catalogs. Verified in decompilation: the unpatched SHA-256 branch (a3==32780) uses bsearch() with element size 0x20 and comparator I_HashSearchCompareRoutineSHA256; the patched version switches that call to bsearch_s() with CipFileHashSearchCompareRoutineSHA256, element size 0x20, and a null context argument, adding runtime parameter validation. The SHA-1 branch (a3==32772, element size 0x14) continues to use bsearch in both builds. This is a defensive hardening change; no out-of-bounds condition is demonstrated in either build.",
+      "trigger_conditions": "Requires a malformed catalog hash table entry or an inconsistent count/size that causes bsearch to traverse beyond allocated bounds during the binary search.",
+      "primitive": "Potential out-of-bounds read of kernel pool memory during catalog hash table lookup",
+      "evidence": "// UNPATCHED (SHA-256 branch): bsearch(a2, table, count, 0x20, I_HashSearchCompareRoutineSHA256)\n// PATCHED  (SHA-256 branch): bsearch_s(a2, table, count, 0x20, CipFileHashSearchCompareRoutineSHA256, nullptr)\n// SHA-1 branch uses bsearch in both builds.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!I_FindFileOrHeaderHashInLoadedCatalogs",
+            "address": "0x1800D6FEC",
+            "why": "Catalog hash lookup function. Watch the SHA-256 branch call to bsearch (unpatched) vs bsearch_s (patched) and the table pointer/count parameters."
+          }
+        ],
+        "watch": [
+          "a2 = hash being searched",
+          "catalog hash table base pointer",
+          "element count",
+          "element size (0x20 for SHA-256, 0x14 for SHA-1)"
+        ],
+        "key_offsets": ["SHA-256 bsearch->bsearch_s call site within I_FindFileOrHeaderHashInLoadedCatalogs"],
+        "trigger_setup": "Validate a file whose hash is looked up in loaded catalogs to trigger the SHA-256 catalog hash table search.",
+        "expected_observation": "Unpatched calls bsearch on the SHA-256 branch; patched calls bsearch_s with context. No crash expected under normal conditions.",
+        "notes": "Hardening fix. Low exploitability but worth noting as defense-in-depth."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SbpParseSignatureDatabase (unpatched 0x18000BDDC) / SbpParseSignatureDatabaseFromBuffer (patched-only 0x18001E1DC)",
+      "entry_point": "EFI Secure Boot signature-database variable parsing (SbParseKEK -> SbpParseSignatureDatabase -> SbEFIGetVariable)",
+      "call_chain": ["Secure Boot variable evaluation", "SbParseKEK (0x18001E16C) (parses the KEK/db Secure Boot variable)", "SbpParseSignatureDatabase (retrieves the variable via SbEFIGetVariable)", "SbpParseSignatureDatabaseFromBuffer (0x18001E1DC) (patched-only; overflow-checked allocation-size computation before SbeAlloc/memmove)"],
+      "vulnerability_class": "integer overflow in size computation (CWE-190) guarding an undersized-allocation heap buffer overflow (CWE-787 / CWE-122), addressed as defensive hardening",
+      "description": "SbpParseSignatureDatabase retrieves an EFI (UEFI) Secure Boot signature-database variable via SbEFIGetVariable (@0x18000BE21 in the unpatched build) and parses its EFI_SIGNATURE_LIST records to build a merged descriptor array. It is reached from SbParseKEK (@0x18001E16C), which parses the Secure Boot KEK/db variable contents - firmware/Secure-Boot configuration data that is exactly the untrusted input this parser validates. In the unpatched build the merged-list allocation size is computed with raw shift/add and no overflow check: after the counting pass the entry counts (r14, rdi) and the raw variable size (r15) are combined as lea rcx,[r14+rdi]; shl rcx,4; add rcx,r15 and passed straight to SbeAlloc (@0x18000BE54), after which the attacker-controlled variable data is copied in with memmove (@0x18000BF62). RtlULongLongMult does not appear anywhere in the unpatched binary. The patch extracts this logic into the new helper SbpParseSignatureDatabaseFromBuffer and replaces every *16 with a checked RtlULongLongMult (multiplier 0x10) tested via test eax,eax; js loc_18001E5BC, and follows every region addition with an explicit carry check (cmp r10,[rbp+pullResult]; jb loc_18001E574, where loc_18001E574 sets STATUS_INTEGER_OVERFLOW 0xC0000095) before SbeAlloc (@0x18001E2EC) and memmove (@0x18001E324). Direction is correct (patched stricter). Verified against both binaries. Rated Low: the guarded operands are 32-bit entry counts multiplied by 16 and added to a 32-bit variable size, computed in 64-bit registers and bounded by the parsed variable size, so a full 64-bit overflow of the allocation size - and the undersized-allocation-plus-memmove heap overflow it would cause - is not demonstrable from these two binaries alone. Best characterized as CWE-190 integer-overflow hardening (defense-in-depth) that forecloses an undersized SbeAlloc followed by an oversized memmove of attacker-controlled EFI-variable data.",
+      "trigger_conditions": "An attacker who can influence the size/entry-count fields of a Secure Boot signature-database (KEK/db/dbx) UEFI variable that SbpParseSignatureDatabase parses. In the unpatched build the allocation size is computed without any RtlULongLongMult/carry check, so an oversized combination of counts and size would flow directly into SbeAlloc and a subsequent memmove of attacker data.",
+      "primitive": "Potential integer-overflow -> undersized heap allocation -> heap buffer overflow via memmove of attacker-controlled EFI Secure Boot variable data. Not demonstrable as a reachable 64-bit overflow from these binaries because the multiplicands are 32-bit counts times 16 added to a 32-bit variable size, so the change is best treated as defense-in-depth integer-overflow hardening.",
+      "evidence": "// UNPATCHED ci!SbpParseSignatureDatabase @ 0x18000BDDC (no overflow check):\n000000018000BE21  call    SbEFIGetVariable\n000000018000BE49  lea     rcx, [r14+rdi]   // count_a + count_b\n000000018000BE4D  shl     rcx, 4           // * 16, raw, unchecked\n000000018000BE51  add     rcx, r15         // + Size, raw, unchecked\n000000018000BE54  call    SbeAlloc\n000000018000BF62  call    memmove\n\n// PATCHED ci!SbpParseSignatureDatabaseFromBuffer @ 0x18001E1DC (checked):\n000000018001E269  call    RtlULongLongMult\n000000018001E270  js      loc_18001E5BC\n000000018001E29A  add     r10, [rbp+pullResult]\n000000018001E29E  cmp     r10, [rbp+pullResult]\n000000018001E2A2  jb      loc_18001E574    // STATUS_INTEGER_OVERFLOW 0xC0000095\n000000018001E2EC  call    SbeAlloc\n000000018001E324  call    memmove",
+      "assembly": "// UNPATCHED @0x18000BDDC: lea rcx,[r14+rdi]; shl rcx,4; add rcx,r15; call SbeAlloc; ... call memmove -- no overflow validation.\n// PATCHED @0x18001E1DC: RtlULongLongMult (multiplier 0x10) with 'test eax,eax; js loc_18001E5BC' after each multiply, and 'cmp <sum>,<prev>; jb loc_18001E574' carry check after each add, before SbeAlloc/memmove.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SbpParseSignatureDatabase",
+            "address": "0x18000BDDC",
+            "why": "Unpatched entry. After SbEFIGetVariable (0x18000BE21) fills [rbp+Src]/[rbp+Size], break at 0x18000BE49 to observe the raw lea/shl/add allocation-size computation fed into SbeAlloc at 0x18000BE54 with no overflow check."
+          },
+          {
+            "symbol": "ci!SbpParseSignatureDatabaseFromBuffer",
+            "address": "0x18001E1DC",
+            "why": "Patched helper. Break at the RtlULongLongMult calls (0x18001E269, 0x18001E287, 0x18001E2B7) and the carry checks (0x18001E29E, 0x18001E2CD, 0x18001E2DD) to observe the overflow validation before SbeAlloc (0x18001E2EC) and memmove (0x18001E324)."
+          }
+        ],
+        "watch": [
+          "[rbp+Src] / [rbp+Size] = attacker-controlled EFI Secure Boot variable buffer and size (from SbEFIGetVariable)",
+          "r14 / rdi = accumulated EFI_SIGNATURE_LIST entry counts (unpatched)",
+          "rcx at 0x18000BE51 = computed allocation size (count_sum*16 + Size), unchecked in unpatched",
+          "eax after each RtlULongLongMult (patched) = NTSTATUS; sign bit set (js) means overflow/error",
+          "[rbp+pullResult] (patched) = running size accumulator checked for carry before SbeAlloc"
+        ],
+        "key_offsets": [
+          "0x18000BE21: SbEFIGetVariable call (untrusted variable fetch)",
+          "0x18000BE49-0x18000BE54: unpatched raw lea/shl/add + SbeAlloc (no overflow check)",
+          "0x18000BF62: unpatched memmove of attacker data",
+          "0x18001E269/0x18001E287/0x18001E2B7: patched RtlULongLongMult checked multiplies",
+          "0x18001E574: patched STATUS_INTEGER_OVERFLOW (0xC0000095) error path",
+          "0x18001E2EC/0x18001E324: patched SbeAlloc/memmove after validation"
+        ],
+        "trigger_setup": "Arrange for a Secure Boot signature-database (KEK/db/dbx) UEFI variable whose EFI_SIGNATURE_LIST entry-count/size fields drive a large merged-list size, then observe SbpParseSignatureDatabase parse it via SbEFIGetVariable.",
+        "expected_observation": "Unpatched: the allocation size flows through lea/shl/add into SbeAlloc with no overflow check, then memmove copies the variable data. Patched: each multiply/add is validated; on overflow the helper returns STATUS_INTEGER_OVERFLOW (0xC0000095) and never allocates or copies.",
+        "notes": "RtlULongLongMult is absent from the entire unpatched binary and appears only in the patched build. Rated Low because a full 64-bit overflow of the allocation size is not demonstrable from these binaries (32-bit counts * 16 + 32-bit size, computed in 64-bit registers); the change is genuine CWE-190 integer-overflow hardening on an untrusted UEFI-variable parsing path."
+      }
+    }
+  ],
+  "summary": "The primary security-relevant change tightens a System Integrity policy trust check in ci.dll (Windows Code Integrity). The unpatched SIPolicyIsPolicyPlatformSecured (sub_18006FC88) contains an early-return that marks a policy as 'platform secured' (return 1) when bit 2 of the policy-options flags at offset +0x710 is set and the function is called in non-strict mode (arg2=0), skipping the stricter check. The patched version removes this shortcut, so on the arg2=0 path it requires bit 0 set and a hardcoded policy-identity (0x4C0644C9A244370E / 0x7630566E01F651B5) at +0x6CC/+0x6D4 to match; the +0x710 offset is unchanged between builds and there is no page-hash table or binary search in this function. This is rated Medium (real trust gate, but attacker-reachability of the +0x710 bit-2 state is not demonstrable from the binaries). Separately, the patch removes one entry (0x4C3279F4784C4414 / 0xD1DA542FBF0A5A6 at a1[0]/a1[1]) from the SIPolicyIsPolicyMustBeWindowsSigned (sub_18006FB74) list of policy IDs that must be Windows-signed; the caller shows this RELAXES the requirement for that identity (it may now be accepted via customized signing), so it is informational, not a fix. It also adds a feature-gated flag check at +0x938 to the unrelated CiHvciIsVbsPolicyFailure (sub_18006C428) VBS/HVCI policy-failure path, and hardens the SHA-256 catalog hash lookup in I_FindFileOrHeaderHashInLoadedCatalogs (sub_1800D6FEC) by switching from bsearch to the bounds-checked bsearch_s. Separately, the patch hardens the EFI Secure Boot signature-database parser: unpatched SbpParseSignatureDatabase (0x18000BDDC) computed the merged-list allocation size with raw shl/add and no overflow check before SbeAlloc and a memmove of attacker-controlled UEFI-variable data (retrieved via SbEFIGetVariable, reached from SbParseKEK); the patch extracts this into the new helper SbpParseSignatureDatabaseFromBuffer (0x18001E1DC) and validates every multiplication with RtlULongLongMult and every addition with a carry check (returning STATUS_INTEGER_OVERFLOW) before allocating and copying. This is CWE-190 integer-overflow hardening guarding a CWE-787/CWE-122 heap overflow; rated Low because a demonstrable 64-bit overflow is not provable from these binaries (32-bit counts * 16 + 32-bit size, computed in 64-bit registers)."
+}

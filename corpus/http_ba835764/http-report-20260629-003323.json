@@ -1,0 +1,91 @@
+{
+  "binaries": {
+    "title": "http.sys - No security-relevant change (tracing/feature rebuild; request/chunked/trailer parser logic identical)",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.8777,
+    "matched": 3843,
+    "changed": 2596,
+    "identical": 1247,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlParseHttp (HTTP request parser, includes chunked/trailer handling)",
+      "address_unpatched": "0x14003F570",
+      "address_patched": "0x14000CCE0",
+      "similarity": 0.44,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "UlParseHttp at 0x14003F570 (unpatched) and 0x14000CCE0 (patched) is the same function, relocated by the rebuild and correlated by symbol name and identical logic.",
+        "The only differences are non-security rebuild churn: a software-tracing (WPP) rebuild that swapped the trace GUID (WPP_5ac9026a465d3ee62fffa26905995282 -> WPP_65b36ddc0b9a331a14c686f0a9ec63d8) across the whole binary and added a leading numeric message-id argument to the WPP emit macros.",
+        "Configuration-flag globals were relocated in the data section (qword_14018BC90 -> xmmword_1401A4CE0, byte_14018BC8D -> xmmword_1401A4CD0); the bit tests and branches are unchanged.",
+        "Static lookup tables shifted by a fixed offset (for example the header-class table base +1621696 -> +1724160, a delta of 102464 bytes); indexing and comparisons are identical.",
+        "No overflow check, allocation, copy, or accumulation logic changed. No RtlULongAdd or other checked-arithmetic helper was added (RtlULongAdd appears 0 times in both builds)."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change was found in UlParseHttp between the two builds. A normalized comparison (factoring out register/variable renaming and relocated data-section addresses) shows the logic is equivalent. The chunked-length handling (call to ParseChunkLength at 0x14006D1FC) and the trailer-length accumulation are byte-for-byte equivalent. The trailer-length bound check in UlpCheckTrailerLength (0x1400C9CC0 unpatched / 0x1400CA434 patched) compares the accumulated trailer length against a per-request limit at request+4380 and is present and identical in both builds. The trailer-limit strings EndlessTrailer, TrailerDisallowed, and HeadersAfterTrailers each appear once in both the unpatched and patched .sys, so they are not evidence of a new patch behavior. The large overall changed-function count (2596) reflects a whole-binary WPP tracing rebuild, data-section relocations, and the addition of HTTP/3 (QUIC) feature functions in the patched build, not a targeted security fix.",
+      "assembly_diff": "Representative repeated pattern in UlParseHttp: unpatched 'if ((qword_14018BC90 & 0x2000) != 0) WPP_SF_qiqLqq(39, &WPP_5ac9026a..._Traceguids, a1, ...)' vs patched 'if ((BYTE1(xmmword_1401A4CE0) & 0x40) != 0) WPP_SF_qiqLqq(1038, 39, &WPP_65b36ddc..._Traceguids, a1, ...)'. The ParseChunkLength call and the length-accumulation additions are identical in both builds. The functions referenced by the earlier overflow theory were misidentified: 0x1400A5D50 is McTemplateK0qxsqqbr4_EtwWriteTransfer (an ETW trace-write template, not a pool allocator), 0x14006D1FC is ParseChunkLength, and 0x14006D3D0 is ParseEol."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "UlParseHttp (HTTP request parser) at 0x14003F570 (unpatched) / 0x14000CCE0 (patched)",
+      "entry_point": "Remote HTTP request parsing path (UlpParseNextRequest -> UlParseHttp). No exploitable condition identified in this binary pair.",
+      "call_chain": [
+        "Network TCP connection to an HTTP.sys listener",
+        "UlpParseNextRequest (0x140011470) - request dispatch",
+        "UlParseHttp (0x14003F570 unpatched / 0x14000CCE0 patched) - request/chunked/trailer parser",
+        "ParseChunkLength (0x14006D1FC) and UlpCheckTrailerLength (0x1400C9CC0) - chunked-length and trailer-length validation (present and identical in both builds)"
+      ],
+      "vulnerability_class": "Candidate class was Integer Overflow leading to kernel pool buffer overflow (CWE-190 / CWE-122); NOT confirmed in these binaries.",
+      "description": "No vulnerability was confirmed. The originally proposed mechanism (unchecked accumulation of trailer-header lengths leading to an undersized pool allocation and an oversized copy) is not present. UlParseHttp implements the same logic in both builds. The trailer-length bound check in UlpCheckTrailerLength compares the accumulated length against a per-request limit (request+4380) identically in both builds, so the guard that would have to be missing for the overflow to exist is already present in the unpatched build. RtlULongAdd is absent from both builds. The strings EndlessTrailer, TrailerDisallowed, and HeadersAfterTrailers exist in both binaries and are not new to the patched build. The difference in UlParseHttp is fully explained by a WPP software-tracing rebuild (trace GUID swap plus a new message-id argument), relocated configuration-flag globals and lookup tables, and decompiler register-allocation noise. The 2596 changed-function count is consistent with a whole-binary recompilation plus new HTTP/3 (QUIC) trailer feature code in the patched build, not a security hotfix.",
+      "trigger_conditions": "None. No exploitable trigger exists in this binary pair because the chunked-length and trailer-length validation already present in the unpatched build prevents the proposed overflow. A crafted chunked request with trailer headers is parsed under the same limits in both builds.",
+      "primitive": "None confirmed. There is no undersized-allocation-then-oversized-copy sequence in UlParseHttp; the addresses previously cited as a pool allocator and a memory-copy routine are actually an ETW trace-write template (0x1400A5D50), ParseChunkLength (0x14006D1FC), and ParseEol (0x14006D3D0).",
+      "evidence": "String evidence: EndlessTrailer, TrailerDisallowed, and HeadersAfterTrailers each appear once in BOTH http_unpatched.sys and http_patched.sys (not new to the patch). RtlULongAdd appears 0 times in both decompilations. WPP trace GUID WPP_5ac9026a465d3ee62fffa26905995282 appears 250 times in the unpatched decompilation and 0 times in the patched one; WPP_65b36ddc0b9a331a14c686f0a9ec63d8 appears 0 times unpatched and 233 times patched (binary-wide tracing rebuild). UlpCheckTrailerLength (0x1400C9CC0 / 0x1400CA434) enforces the same trailer-length limit against request+4380 in both builds. The patched build additionally contains new HTTP/3 (QUIC) trailer functions (UxDuoDispatchTrailersCatalogParcel, UxDuoInitiateTrailersSend, UxDuoCompareDisallowedTrailerEntries, UxQuicStreamAddHeadersOrTrailersToTracker, UxQuicStreamInitiateTrailersSend) absent from the unpatched build.",
+      "assembly": "UlParseHttp differs only by the repeated tracing/relocation pattern, e.g. unpatched 'if ((qword_14018BC90 & 0x2000) != 0) WPP_SF_qiqLqq(39, &WPP_5ac9026a..._Traceguids, ...)' vs patched 'if ((BYTE1(xmmword_1401A4CE0) & 0x40) != 0) WPP_SF_qiqLqq(1038, 39, &WPP_65b36ddc..._Traceguids, ...)'. The ParseChunkLength call and the length-accumulation additions are identical in both builds.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http_unpatched!UlParseHttp",
+            "address": "0x14003F570",
+            "why": "HTTP request parser. Provided for reference; comparing this function against http_patched!UlParseHttp at 0x14000CCE0 shows only tracing/relocation churn, no security-relevant difference."
+          },
+          {
+            "symbol": "http_unpatched!UlpParseNextRequest",
+            "address": "0x140011470",
+            "why": "Caller of UlParseHttp (request dispatch)."
+          },
+          {
+            "symbol": "http_unpatched!UlpCheckTrailerLength",
+            "address": "0x1400C9CC0",
+            "why": "Enforces the per-request trailer-length limit (compare against request+4380). Present and identical in both builds; this is the guard the proposed overflow would require to be missing."
+          }
+        ],
+        "watch": [
+          "UlParseHttp differences are limited to the WPP trace GUID/message-id argument and relocated flag globals (qword_14018BC90 -> xmmword_1401A4CE0, byte_14018BC8D -> xmmword_1401A4CD0).",
+          "0x1400A5D50 is McTemplateK0qxsqqbr4_EtwWriteTransfer (ETW trace write), not a pool allocator.",
+          "0x14006D1FC is ParseChunkLength and 0x14006D3D0 is ParseEol, not memory-copy routines.",
+          "RtlULongAdd is not used in either build."
+        ],
+        "key_offsets": [
+          "0x14003F570 - UlParseHttp entry (unpatched)",
+          "0x14000CCE0 - UlParseHttp entry (patched)",
+          "0x140011470 - UlpParseNextRequest (caller)",
+          "0x14006D1FC - ParseChunkLength (chunked-length parser, called identically in both builds)",
+          "0x1400C9CC0 / 0x1400CA434 - UlpCheckTrailerLength (trailer-length limit, identical in both builds)"
+        ],
+        "trigger_setup": "Not applicable. No exploitable condition exists in this binary pair; the chunked-length and trailer-length limits present in the unpatched build already prevent the proposed overflow.",
+        "expected_observation": "No crash is expected from the proposed chunked/trailer overflow against either build, because both enforce the same trailer-length and chunked-parsing limits.",
+        "notes": "This binary pair does not straddle a chunked/trailer integer-overflow fix. The differences are a whole-binary WPP software-tracing rebuild, relocated configuration-flag globals and lookup tables, decompiler register-allocation noise, and the addition of HTTP/3 (QUIC) feature functions in the patched build. The trailer-limit strings and the trailer-length bound check are present in both builds."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was found in the HTTP request/chunked/trailer parsing path between http_unpatched.sys and http_patched.sys. The originally flagged function, UlParseHttp (0x14003F570 unpatched / 0x14000CCE0 patched), is the same function relocated by the rebuild; its diff is fully explained by a software-tracing (WPP) rebuild that swapped the trace GUID and added a message-id argument binary-wide, relocated configuration-flag globals and lookup tables, and decompiler register-allocation noise. The chunked-length handling (ParseChunkLength) and the trailer-length bound check (UlpCheckTrailerLength, comparing accumulated length against request+4380) are present and identical in both builds. The strings EndlessTrailer, TrailerDisallowed, and HeadersAfterTrailers appear in both binaries and are not new to the patch, and RtlULongAdd is absent from both builds, so the proposed integer-overflow/pool-overflow mechanism is not supported. The 2596 changed-function count reflects the whole-binary tracing rebuild, data-section relocations, and new HTTP/3 (QUIC) trailer feature code in the patched build, not a targeted security fix."
+}

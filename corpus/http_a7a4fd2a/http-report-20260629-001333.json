@@ -1,0 +1,89 @@
+{
+  "binaries": {
+    "title": "http.sys - No security-relevant change (WIL feature-staging cache bookkeeping bit 0x40000 in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState)",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9925,
+    "matched": 4354,
+    "changed": 2,
+    "identical": 4352,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400BF5E8)",
+      "similarity": 0.9726,
+      "change_type": "informational",
+      "key_changes": [
+        "PATCHED version adds 'bts eax, 0x12' (set bit 0x40000) at 0x1400bf654, unconditionally ORing the recomputed WIL feature-state cache word with 0x40000 before the interlocked compare-exchange store. This bit is not set in the unpatched version.",
+        "Unpatched: the compare-exchange loop publishes the recomputed cache value without bit 0x40000 (cmpxchg at 0x1400bf68e writes ebx).",
+        "Patched: the loop forces bit 0x40000 on (cmpxchg at 0x1400bf69e writes esi, derived from the bts-ed value).",
+        "This is the ONLY behavioral change; remaining differences are register reallocation (extra push, rbx->rdi, r15->r12) from the added instruction."
+      ],
+      "security_relevant": false,
+      "security_notes": "sub_1400BF5E8 is wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState, a Windows Implementation Library (WIL) feature-staging helper that http.sys links in. It recomputes and republishes the cached 'feature enabled state' for a staged feature using an _InterlockedCompareExchange retry loop against a WIL per-feature cache word. It reads the current state via wil_details_GetCurrentFeatureEnabledState (sub_1400BF74C) and optionally subscribes to feature-configuration changes. The patched build forces bit 0x40000 (bit 18) into every published cache word; the unpatched build omits it. This is a WIL cache-state bookkeeping bit introduced by a newer WIL library revision. It is private to the WIL feature-staging subsystem; it is not a timer state, a connection-object field, or a lifetime/ownership sentinel, and no HTTP request, timer, or connection-teardown path consumes it. There is no timer state machine, no DPC, no connection lifecycle, and no use-after-free on this path. Not security-relevant."
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider (sub_1401C368C)",
+      "similarity": 0.9853,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage provider registration: calls RtlRegisterFeatureUsageProvider with updated provider GUID pointer (0x1401a17f8 -> 0x1401a1818) and config data pointer (0x1401a1de0 -> 0x1401a1dc8).",
+        "Added initialization of two new stack fields passed as additional parameters to the registration call.",
+        "WIL usage-reporting callback table entry moved from wil_details_RecordFeatureUsageReporting (sub_1400BFB00) to the same function at its shifted address (sub_1400BFB10); rebuild address shift only, target function identical in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "Standard WIL feature-usage provider registration churn from a rebuild with updated feature GUIDs. Not security-relevant.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400BF5E8)",
+      "entry_point": "Internal WIL feature-flag evaluation (invoked when http.sys queries a staged feature whose cached state needs recomputation). Not reachable with attacker-controlled HTTP data.",
+      "call_chain": [
+        "http.sys code evaluates a WIL staged feature flag",
+        "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400BF5E8) recomputes the WIL cache word",
+        "reads current state via wil_details_GetCurrentFeatureEnabledState (sub_1400BF74C)",
+        "publishes recomputed value via _InterlockedCompareExchange into the WIL per-feature cache location"
+      ],
+      "vulnerability_class": "None. Library feature-staging bookkeeping change (added cache-state bit).",
+      "description": "sub_1400BF5E8 is wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState, a WIL feature-staging helper. It recomputes the packed 32-bit WIL feature-enabled-state cache word and republishes it with an interlocked compare-exchange loop. The unpatched build publishes the recomputed value without bit 0x40000; the patched build forces bit 0x40000 on via 'bts eax, 0x12' before the store. The cache word lives entirely inside WIL's feature-state cache; the bits it manipulates (0x2, 0x4, 0x400, masks 0x9C1 / 0xFFFFF63E) are WIL feature-enabled-state packing fields, not timer flags. Bit 0x40000 is a WIL cache-state bookkeeping bit added by a newer WIL revision. No connection object, timer, or DPC is involved. The addresses that a use-after-free narrative would require resolve to unrelated helpers: sub_1400BE740 = UxStartEnvironmentModule (settings/environment startup, not a timer DPC); sub_1400BF2E4 = wil_details_FeatureReporting_RecordUsageInCache; sub_1400BF868 = wil_details_IsEnabledFallback; sub_1400BD624 = UxReadBooleanSetting; sub_1400BD680 = UxReadBoundedULongSetting; 0x1401620E0 = _guard_dispatch_icall (CFG dispatch). There is no use-after-free and no security-relevant change.",
+      "trigger_conditions": "Not remotely triggerable as a vulnerability. The function runs on internal WIL feature-flag evaluation and operates only on the WIL feature-state cache word. To simply observe the changed bit in a debugger: break at the interlocked store (0x1400bf68e unpatched / 0x1400bf69e patched) and read the published value - unpatched never has bit 0x40000, patched always does. The pointer register (r15 unpatched / r12 patched) is the WIL per-feature cache location, not a connection or timer object.",
+      "primitive": "None. Toggling a WIL feature-cache bookkeeping bit cannot free, dangle, or corrupt any kernel object. No exploit primitive exists.",
+      "evidence": "=== UNPATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (loop) ===\n    for ( i = v5; ; i = v10 )\n    {\n        LODWORD(v13) = v5;                              // no 0x40000\n        if ( v8 != 0 && (i & 2) == 0 )\n            v5 = CurrentFeatureEnabledState & 0x9C1 | i & 0xFFFFF63E | 2;\n        if ( (i & 4) == 0 )\n            v5 = v5 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n        v10 = _InterlockedCompareExchange(a1, v5, i);   // publish cache word\n        if ( i == v10 ) break;\n        v5 = v10;\n    }\n\n=== PATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (loop) ===\n    for ( i = v5; ; i = v9 )\n    {\n        LODWORD(v14) = v9 | 0x40000;                    // ADDED: bit 0x40000\n        v11 = v9 | 0x40000;\n        if ( v8 != 0 && (i & 2) == 0 )\n            v11 = CurrentFeatureEnabledState & 0x9C1 | v9 & 0xFFFBF63E | 0x40000 | 2;\n        if ( (v5 & 4) == 0 )\n            v11 = v11 & 0xFFFFFBFF | CurrentFeatureEnabledState & 0x400 | 4;\n        v9 = _InterlockedCompareExchange(a1, v11, v5);  // publish cache word WITH 0x40000\n        if ( v5 == v9 ) break;\n        v5 = v9;\n    }",
+      "assembly": "=== UNPATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x1400BF5E8 (loop region) ===\n0x1400bf646: mov     ecx, ebx\n0x1400bf648: mov     dword [rsp+0x58], ebx\n0x1400bf64c: test    esi, esi\n0x1400bf64e: je      0x1400bf671\n0x1400bf650: mov     dword [rsp+0x58], ebx\n0x1400bf654: test    cl, 0x2\n0x1400bf657: jne     0x1400bf671\n0x1400bf659: mov     ebx, ecx\n0x1400bf65b: mov     eax, edi\n0x1400bf65d: and     ebx, 0xfffff63e\n0x1400bf663: and     eax, 0x9c1\n0x1400bf668: or      ebx, eax\n0x1400bf66a: or      ebx, 0x2\n0x1400bf66d: mov     dword [rsp+0x58], ebx\n0x1400bf671: test    cl, 0x4\n0x1400bf674: jne     0x1400bf68c\n0x1400bf676: btr     ebx, 0xa\n0x1400bf67a: mov     eax, edi\n0x1400bf67c: and     eax, 0x400\n0x1400bf681: or      eax, ebx\n0x1400bf683: or      eax, 0x4\n0x1400bf686: mov     ebx, eax\n0x1400bf688: mov     dword [rsp+0x58], eax\n0x1400bf68c: mov     eax, ecx\n0x1400bf68e: lock cmpxchg dword [r15], ebx   ; publishes cache word WITHOUT bit 0x40000\n0x1400bf693: je      0x1400bf69b\n\n=== PATCHED wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState @ 0x1400BF5E8 (loop region) ===\n0x1400bf650: mov     eax, edi\n0x1400bf652: mov     ecx, edi\n0x1400bf654: bts     eax, 0x12          ; ADDED: set bit 0x40000\n0x1400bf658: mov     dword [rsp+0x58], eax\n0x1400bf65c: mov     esi, eax\n0x1400bf65e: test    ebp, ebp\n0x1400bf660: je      0x1400bf67d\n0x1400bf662: test    cl, 0x2\n0x1400bf665: jne     0x1400bf67d\n0x1400bf667: and     esi, 0xfffff63e\n0x1400bf66d: mov     eax, ebx\n0x1400bf66f: and     eax, 0x9c1\n0x1400bf674: or      esi, eax\n0x1400bf676: or      esi, 0x2\n0x1400bf679: mov     dword [rsp+0x58], esi\n0x1400bf67d: test    dil, 0x4\n0x1400bf681: jne     0x1400bf69c\n0x1400bf683: mov     eax, esi\n0x1400bf685: mov     ecx, ebx\n0x1400bf687: and     ecx, 0x400\n0x1400bf68d: btr     eax, 0xa\n0x1400bf691: mov     esi, ecx\n0x1400bf693: or      esi, eax\n0x1400bf695: or      esi, 0x4\n0x1400bf698: mov     dword [rsp+0x58], esi\n0x1400bf69c: mov     eax, edi\n0x1400bf69e: lock cmpxchg dword [r12], esi   ; publishes cache word WITH bit 0x40000\n0x1400bf6a4: je      0x1400bf6ac",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400BF5E8) + interlocked store",
+            "address": "0x1400bf68e (unpatched) / 0x1400bf69e (patched)",
+            "why": "The interlocked compare-exchange that publishes the WIL feature-state cache word. Unpatched writes ebx (no bit 0x40000); patched writes esi (bit 0x40000 forced on). The pointer register (r15 unpatched / r12 patched) is the WIL per-feature cache location, not a connection or timer object."
+          }
+        ],
+        "watch": [
+          "[r15]/[r12] (dword) = WIL feature-state cache word at the interlocked store; bit 18 (0x40000) is clear in unpatched, set in patched",
+          "call at 0x1400bf627 = wil_details_GetCurrentFeatureEnabledState (sub_1400BF74C)",
+          "data_1401a4c98 (qword) = g_wil_details_ensureSubscribedToFeatureConfigurationChanges; when non-NULL, invoked via _guard_dispatch_icall (0x1401620E0)",
+          "data_1401a4c58 (qword) = g_wil_details_subscribeFeatureStateCacheToConfigurationChanges callback"
+        ],
+        "key_offsets": [
+          "0x1400bf68e (unpatched) / 0x1400bf69e (patched): interlocked compare-exchange publishing the WIL feature-state cache word",
+          "0x1400bf654 (patched): 'bts eax, 0x12' sets bit 0x40000; in unpatched the equivalent position has no such instruction",
+          "0x1400bf627: call wil_details_GetCurrentFeatureEnabledState (sub_1400BF74C)",
+          "0x1401620E0: _guard_dispatch_icall (CFG-guarded indirect call to the WIL subscription callbacks)"
+        ],
+        "trigger_setup": "Not a vulnerability trigger. To observe the changed bit: break at the interlocked store (0x1400bf68e unpatched / 0x1400bf69e patched) and read the published dword; unpatched never has bit 0x40000, patched always does.",
+        "expected_observation": "At the interlocked store: the published WIL feature-state cache word lacks bit 0x40000 in the unpatched build and has it in the patched build. No object is freed, and no crash results from this difference.",
+        "notes": "The cache word is a packed WIL feature-enabled-state bitfield (masks 0x9C1, 0xFFFFF63E, plus bits 0x2, 0x4, 0x400). Bit 0x40000 is a WIL cache-state bookkeeping bit added by a newer WIL library revision. sub_1400BF5E8 = wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState, sub_1400BF74C = wil_details_GetCurrentFeatureEnabledState, sub_1400BF2E4 = wil_details_FeatureReporting_RecordUsageInCache, sub_1400BF868 = wil_details_IsEnabledFallback, sub_1400BE740 = UxStartEnvironmentModule, sub_1400BD624 = UxReadBooleanSetting, sub_1400BD680 = UxReadBoundedULongSetting, 0x1401620E0 = _guard_dispatch_icall. None of these is a timer DPC or connection-lifecycle routine."
+      }
+    }
+  ],
+  "summary": "The two changed functions are both WIL (Windows Implementation Library) feature-staging helpers that http.sys links in, not HTTP connection or timer code. wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400BF5E8) recomputes and republishes the WIL cached feature-enabled state via an interlocked compare-exchange loop; the patched build forces bit 0x40000 into every published cache word ('bts eax, 0x12' at 0x1400bf654), while the unpatched build omits it. This bit is private to WIL's feature-state cache bookkeeping and is not consumed as a timer/connection lifetime sentinel. The second function, wil_details_RegisterFeatureUsageProvider (sub_1401C368C), has updated feature-usage provider GUID/config pointers. Both are WIL feature-staging library churn from a version bump. There is no timer state machine, no DPC, no connection lifecycle, and no use-after-free. No security-relevant change."
+}

@@ -1,0 +1,400 @@
+{
+  "binaries": {
+    "title": "mssecflt.sys (Microsoft Security Filter minifilter driver) - use-after-free during process-context enumeration under shared lock",
+    "id_unpatched": "mssecflt_unpatched.sys",
+    "id_patched": "mssecflt_patched.sys",
+    "overall_similarity": 0.9862,
+    "matched": 877,
+    "changed": 25,
+    "identical": 852,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SecEnumerateProcessContexts",
+      "address_unpatched": "0x14002CF04",
+      "address_patched": "0x14002CFC0",
+      "similarity": 0.1295,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: iterates the 128-bucket process-context hash table (SecProcessTable, buckets at [SecProcessTable+0x140]) while holding only a SHARED push lock (FltAcquirePushLockSharedEx on SecProcessTable+8) and invokes a CFG-dispatched per-entry callback (call cs:__guard_dispatch_icall_fptr on the pointer in rax) with the entry (node-0x10) as arg1, without taking a reference on the entry across the callback",
+        "PATCHED: adds a path selected when SecData+0x510 bit 0 is CLEAR (the default). On this path it walks the table under the shared lock, calls SecReferenceProcessContext on every entry to pin it, stores the pinned entries into a pool buffer sized from the entry count at [SecProcessTable+0x148] (ExAllocatePoolWithTag, tag 'Scce' = 65636353h), releases the shared lock, and only then invokes the callback on each pinned entry, calling SecReleaseProcessContext after each, then SecFreePool",
+        "PATCHED: the old in-lock callback traversal is retained and runs only when SecData+0x510 bit 0 is SET (test byte ptr cs:xmmword_14001B740+8, 1 ; jz snapshot path)",
+        "PATCHED: speculation-barrier (lfence) instructions appear on the new feature-gated path before the count-sized allocation and buffer use"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched enumerator invokes per-process policy callbacks (e.g., SecApplyReadWriteTelemetryPolicyForProcess, SecApplyFileOpenMonitoringForProcess, SecApplyTiLocalExecProtectVmForProcess) on each hash-table entry while holding only a shared push lock, and holds a raw pointer to the entry (node-0x10) and its next pointer across the call without pinning the entry. If the callback drops the entry's last reference or otherwise triggers its teardown (or a concurrent SecCleanupProcessContexts path releases it), the entry can be freed or recycled to the process-context lookaside list while the enumerator continues to use it, yielding a use-after-free. The patch fixes this by pinning every entry with SecReferenceProcessContext, snapshotting the pinned pointers, releasing the shared lock, and only then invoking callbacks (releasing the reference afterward). The gate direction is such that the safe snapshot path is the default (bit clear) and the old in-lock path is a registry-controlled fallback (bit set)."
+    },
+    {
+      "name": "SecPerformProcessAssertionsForAllProcesses",
+      "address_unpatched": "0x14002DD1C",
+      "address_patched": "0x14002DF1C",
+      "similarity": 0.8106,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED: iterates the same process-context table under the shared SecProcessTable push lock and, for each entry, calls PsLookupProcessByProcessId on the entry's process id ([entry+0x20]), then SecDetPerformProcessAssertionsWithContext, then ObfDereferenceObject, without pinning the entry across the work",
+        "PATCHED: adds the same SecData+0x510 bit-0 check; when the bit is CLEAR (default) it delegates to SecEnumerateProcessContexts (the reference-and-snapshot path) instead of traversing under the lock; the old in-lock traversal is retained only when the bit is SET",
+        "Same use-after-free/race class as SecEnumerateProcessContexts, driven from timer maintenance rather than a direct request"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same class as SecEnumerateProcessContexts. Called from the timer-driven maintenance routine SecDetTimerPerformDeferredAssertionsImpl (0x140042400). Process creation/termination populates and mutates the table concurrently, so the race is driven by process-lifetime activity. The patch routes the default path through the safe reference-and-snapshot enumerator."
+    },
+    {
+      "name": "SecCleanupProcessContexts",
+      "address_unpatched": "0x14002C3A4",
+      "similarity": 0.9898,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: decrements the entry count at [SecProcessTable+0x148] when removing entries, keeping the count accurate",
+        "This count sizes the snapshot allocation in the patched SecEnumerateProcessContexts"
+      ],
+      "security_relevant": false,
+      "security_notes": "Supporting change for the snapshot mechanism: maintains the entry count used for allocation sizing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecCreateProcessContext",
+      "address_unpatched": "0x14002C550",
+      "similarity": 0.9923,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: increments the entry count at [SecProcessTable+0x148] when inserting entries",
+        "Insertion feature-flag test updated (bit 2 -> bit 4)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Supporting change for the snapshot mechanism: maintains the entry count used for allocation sizing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140029EF0",
+      "similarity": 0.8862,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: extends the feature-flag block copied into SecData+0x508 from a single 8-byte value to two 8-byte values (16 bytes), zero-initialized then optionally loaded from the BootFeatureFlags registry binary value",
+        "The second qword holds the SecData+0x510 bit-0 path selector now read by the patched enumerators"
+      ],
+      "security_relevant": false,
+      "security_notes": "Supporting change: makes the second feature-flag qword available so the enumeration path selector can be read. The block defaults to zero (safe snapshot path) when the registry value is absent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003BC14",
+      "similarity": 0.6076,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a SeGetCachedSigningLevel fast path gated by a feature bit in xmmword_14001B740",
+        "Adds a speculation barrier before the second SeGetCachedSigningLevel call"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged signing-level query change; old path retained. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003BA6C",
+      "similarity": 0.7844,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a SecData+0x510 bit-2 gated alternate path that checks signing level via sub_14003befc (SeGetCachedSigningLevel) before proceeding"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged signing-level check; old path retained. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14002F788",
+      "similarity": 0.9677,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a SecData+0x510 bit-4 gated early-exit path"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag gating; not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140032D20",
+      "similarity": 0.8544,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: dispatch-table handlers now capture return values (previously void calls)",
+        "Callee addresses shifted due to recompilation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Return-value capture in dispatch handlers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14004054C",
+      "similarity": 0.9084,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: widens a feature-flag early-exit test from (!(x & 1)) to (x & 1 || x & 2)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag gating for a process-information query.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003F6CC",
+      "similarity": 0.9438,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a bit-1 feature check alongside the existing bit-0 check"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag gating.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003F9DC",
+      "similarity": 0.9498,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a bit-1 feature check alongside the existing bit-0 check",
+        "Captures the argument into a register at entry and uses it throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag gating and argument capture.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003EBD8",
+      "similarity": 0.8815,
+      "change_type": "behavioral",
+      "key_changes": [
+        "PATCHED: adds a feature-gated early-return condition (sub_14003f154 check)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag gating.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140024910",
+      "similarity": 0.9756,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Reorders IoStatus.Status/Information assignments and callback argument passing; register allocation differences"
+      ],
+      "security_relevant": false,
+      "security_notes": "Instruction reordering; no behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1400393F8",
+      "similarity": 0.9727,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Version string changes from 0x3f to 0x41",
+        "Global data addresses shift due to recompilation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Version bump and address relocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14003C294",
+      "similarity": 0.654,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Reorders feature-flag bit assignments in the flags initialization word; adds one flag bit"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag reordering; no security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecMessage",
+      "address_unpatched": "0x140021CA0",
+      "similarity": 0.9915,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor recompilation differences in the communication-port message handler"
+      ],
+      "security_relevant": false,
+      "security_notes": "Mostly cosmetic changes in the message handler.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecSetDriverConfiguration",
+      "address_unpatched": "0x14003A814",
+      "similarity": 0.9884,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Global and callee addresses shift due to layout differences",
+        "Calls to SecEnumerateProcessContexts now target the patched function; core policy logic unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Address relocation and updated call target.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14000AC40",
+      "similarity": 0.9687,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor recompilation differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_14002CEA4",
+      "similarity": 0.9821,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor recompilation differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140039F98",
+      "similarity": 0.9727,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Feature-word store to xmmword_14001B740 widened to a 128-bit write; global addresses shift"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization change; address relocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecDetTimerPerformDeferredAssertionsImpl",
+      "address_unpatched": "0x140042400",
+      "similarity": 0.9882,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Call target updated to the patched SecPerformProcessAssertionsForAllProcesses (0x14002df1c)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Timer-driven maintenance function with updated callee address.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "j_sub_14002f788",
+      "similarity": 0.9681,
+      "change_type": "cosmetic",
+      "key_changes": ["Jump thunk with updated addresses"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140029CE0",
+      "similarity": 0.6406,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor recompilation differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "SecEnumerateProcessContexts",
+      "address_unpatched": "0x14002CF04",
+      "address_patched": "0x14002CFC0",
+      "entry_point": "Process-context enumeration invoked from policy/configuration apply (SecSetDriverConfiguration), process create/exit notifications, and timer maintenance. The configuration path is reachable through the \\MicrosoftSecFilterControlPort minifilter communication port via SecMessage, but sending policy-configuration messages to that port normally requires the privileged management service.",
+      "call_chain": [
+        "SecMessage (message handler for \\MicrosoftSecFilterControlPort)",
+        "SecSetDriverConfiguration (applies policy; calls SecEnumerateProcessContexts with a per-process callback)",
+        "SecEnumerateProcessContexts (unpatched: invokes the callback on each entry while holding only a shared push lock, without pinning the entry)"
+      ],
+      "vulnerability_class": "Use-After-Free / Race Condition (CWE-416, CWE-362, CWE-667)",
+      "description": "SecEnumerateProcessContexts iterates the 128-bucket process-context hash table (SecProcessTable, buckets at [SecProcessTable+0x140]) while holding only a SHARED push lock (FltAcquirePushLockSharedEx on SecProcessTable+8). For each list node it takes the entry object at node-0x10, advances the next pointer, and invokes a CFG-dispatched callback (call cs:__guard_dispatch_icall_fptr on the pointer in rax) with the entry as arg1 and a caller context as arg2. No reference is held on the entry across the callback. The callbacks passed by SecSetDriverConfiguration are per-process policy handlers (SecApplyReadWriteTelemetryPolicyForProcess, SecApplyFileOpenMonitoringForProcess, SecApplyTiLocalExecProtectVmForProcess). If a callback drops the entry's last reference or triggers its teardown, or a concurrent SecCleanupProcessContexts path releases it, the entry is freed or recycled to the process-context lookaside list while the enumerator still holds a raw pointer to it and its next pointer, producing a use-after-free. The patch adds a default path (selected when SecData+0x510 bit 0 is clear) that pins each entry with SecReferenceProcessContext, snapshots the pinned pointers into a pool buffer (tag 'Scce') sized from the entry count at [SecProcessTable+0x148], releases the shared lock, and only then invokes callbacks, releasing each reference afterward and freeing the buffer. The old in-lock traversal is retained and runs only when the bit is set.",
+      "trigger_conditions": "1. The process-context table has entries (populated via SecCreateProcessContext as processes are tracked). 2. An enumeration is in progress (policy/configuration apply, process create/exit notification, or timer maintenance) that invokes callbacks on each entry. 3. Concurrently, the currently-enumerated entry has its last reference dropped, by the callback itself or by a concurrent teardown (SecCleanupProcessContexts), freeing or recycling it while the enumerator still holds a raw pointer. 4. The freed/recycled entry or its stale next pointer is then used.",
+      "primitive": "Kernel-pool use-after-free of a reference-counted process-context object during shared-lock enumeration. The object is recycled through the process-context lookaside list at SecProcessTable+0xC0. Loss of kernel memory safety during enumeration; the observable effect is a kernel bugcheck (denial of service). Reclaiming the freed allocation with controlled contents and any resulting control-flow or write primitive are not demonstrated by the diff and are not claimed.",
+      "evidence": "// UNPATCHED SecEnumerateProcessContexts @ 0x14002CF04 — callback under shared lock, entry not pinned\nvoid SecEnumerateProcessContexts(callback_t callback, void* context) {\n    if (!(SecData->flags_4f8 & 4)) return;\n    FltAcquirePushLockSharedEx(SecProcessTable + 8, 0);   // SHARED lock\n    for (bucket = 0; bucket < 0x80; bucket++) {\n        node = SecProcessTable->buckets[bucket];          // [SecProcessTable+0x140]\n        while (node != sentinel) {\n            entry = node - 0x10;\n            node  = *node;                                 // advance before callback\n            callback(entry, context);                      // callback WHILE lock held, entry not pinned\n        }\n    }\n    FltReleasePushLockEx(SecProcessTable + 8, 0);\n}\n\n// PATCHED SecEnumerateProcessContexts @ 0x14002CFC0 — reference + snapshot, release, then callback\nvoid SecEnumerateProcessContexts(callback_t callback, void* context) {\n    if (!(SecData->flags_4f8 & 4)) return;\n    FltAcquirePushLockSharedEx(SecProcessTable + 8, 0);\n    if (SecData[0x510] & 1) { /* old in-lock path, only when bit SET */ ... return; }\n    int count = SecProcessTable->entry_count;             // [SecProcessTable+0x148]\n    void** snap = ExAllocatePoolWithTag(PagedPool, count*8, 'Scce');\n    for (each entry) { SecReferenceProcessContext(entry); snap[n++] = entry; }\n    FltReleasePushLockEx(SecProcessTable + 8, 0);          // release BEFORE callbacks\n    for (i = 0; i < n; i++) { callback(snap[i], context); SecReleaseProcessContext(snap[i]); }\n    SecFreePool(snap, 'Scce');\n}",
+      "assembly": "; UNPATCHED SecEnumerateProcessContexts @ 0x14002CF04 (real disassembly)\n0x14002CF29: mov     r8d, [rax+4F8h]\n0x14002CF30: test    r8b, 4                     ; initialization flag\n0x14002CF34: jz      0x14002CFAF\n0x14002CF3F: add     rcx, 8\n0x14002CF43: call    FltAcquirePushLockSharedEx ; SHARED lock — window opens\n0x14002CF53: mov     ebp, 80h                   ; 128 buckets\n0x14002CF58: mov     r8, [rax+140h]             ; bucket array base\n0x14002CF5F: mov     rsi, [rbx+r8]              ; node = bucket head\n0x14002CF65: lea     rcx, [rsi-10h]             ; entry = node-0x10 (arg1)\n0x14002CF69: mov     rdx, r14                   ; context (arg2)\n0x14002CF6C: mov     rsi, [rsi]                 ; advance node = node->next\n0x14002CF6F: mov     rax, r15                   ; callback pointer\n0x14002CF72: call    cs:__guard_dispatch_icall_fptr ; callback(entry, context) UNDER SHARED LOCK\n0x14002CF7F: mov     r8, [rax+140h]\n0x14002CF8A: cmp     rsi, rax\n0x14002CF8D: jnz     0x14002CF65\n0x14002CF9B: jnz     0x14002CF5F                ; next bucket\n0x14002CFAA: call    FltReleasePushLockEx       ; window closes\n;\n; PATCHED SecEnumerateProcessContexts @ 0x14002CFC0 — snapshot path (default)\n0x14002D013: test    byte ptr cs:xmmword_14001B740+8, 1 ; SecData+0x510 bit 0\n0x14002D01A: jz      0x14002D086               ; bit CLEAR -> snapshot path (default)\n0x14002D08D: movsxd  rax, dword ptr [rcx+148h] ; entry count\n0x14002D0C9: call    cs:__imp_ExAllocatePoolWithTag ; tag 'Scce'\n0x14002D121: call    SecReferenceProcessContext ; pin each entry under lock\n0x14002D12C: mov     [rsi+rax*8], rbx          ; store pinned entry\n0x14002D166: call    FltReleasePushLockEx      ; release BEFORE callbacks\n0x14002D189: call    cs:__guard_dispatch_icall_fptr ; callback on pinned entry\n0x14002D192: call    SecReleaseProcessContext  ; release reference\n0x14002D1A9: call    SecFreePool               ; free snapshot buffer",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mssecflt_unpatched!SecEnumerateProcessContexts+0x3f",
+            "address": "0x14002cf43",
+            "why": "FltAcquirePushLockSharedEx — start of the shared-lock enumeration window."
+          },
+          {
+            "symbol": "mssecflt_unpatched!SecEnumerateProcessContexts+0x68",
+            "address": "0x14002cf6c",
+            "why": "mov rsi,[rsi] — the next-pointer read; if rsi refers to freed/recycled pool the traversal is following a stale node."
+          },
+          {
+            "symbol": "mssecflt_unpatched!SecEnumerateProcessContexts+0x6e",
+            "address": "0x14002cf72",
+            "why": "CFG-dispatched callback on the entry at rcx = node-0x10; the entry is not reference-pinned here."
+          },
+          {
+            "symbol": "mssecflt_unpatched!SecCleanupProcessContexts",
+            "address": "0x14002c3a4",
+            "why": "Unlinks and releases process-context entries; if it drops the last reference on the enumerated entry concurrently, the enumerator's pointer becomes stale."
+          }
+        ],
+        "watch": [
+          "r15 (callback pointer) and r14 (callback context) captured at entry",
+          "r8 at 0x14002cf58 = bucket array base ([SecProcessTable+0x140])",
+          "rsi at 0x14002cf65 = current list node; rcx at 0x14002cf72 = entry object (node-0x10)",
+          "[SecData+0x4f8] bit 2 = initialization flag gating the traversal",
+          "patched only: [SecProcessTable+0x148] = entry count for snapshot sizing; [SecData+0x510] bit 0 = path selector (clear = snapshot, set = old path)"
+        ],
+        "key_offsets": [
+          "0x14002cf43 — FltAcquirePushLockSharedEx: start of the shared-lock window",
+          "0x14002cf5f — outer loop head: mov rsi,[rbx+r8] loads bucket head",
+          "0x14002cf65 — inner loop: lea rcx,[rsi-10h] prepares entry for callback",
+          "0x14002cf6c — list advance: mov rsi,[rsi]",
+          "0x14002cf72 — callback dispatch under shared lock",
+          "0x14002cfaa — FltReleasePushLockEx: end of the window",
+          "0x14002cf04 — function entry (unpatched)"
+        ],
+        "trigger_setup": "Populate the process-context table by tracking processes (SecCreateProcessContext). Drive an enumeration via policy/configuration apply, process create/exit, or timer maintenance so callbacks run on each entry. Arrange for the enumerated entry's last reference to be dropped concurrently (callback-induced teardown or SecCleanupProcessContexts) so it is freed/recycled while the enumerator still holds a raw pointer.",
+        "expected_observation": "A dereference of freed or recycled pool during enumeration, typically surfacing as a kernel bugcheck (denial of service). A controllable memory-corruption primitive is not demonstrated.",
+        "notes": "The process-context table has 128 buckets (0x80) at [SecProcessTable+0x140]; entry objects sit at node-0x10. Entries are reference-counted (SecReferenceProcessContext / SecReleaseProcessContext) and recycled through the lookaside list at SecProcessTable+0xC0. The patched snapshot buffer uses tag 'Scce' (65636353h) and is sized from the count at [SecProcessTable+0x148]. The path selector at [SecData+0x510] bit 0 is a cached copy of the feature block loaded into xmmword_14001B740 from SecData+0x508; that block is zero-initialized and optionally overwritten from the BootFeatureFlags registry binary value, so the safe snapshot path is the default."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SecPerformProcessAssertionsForAllProcesses",
+      "address_unpatched": "0x14002DD1C",
+      "address_patched": "0x14002DF1C",
+      "entry_point": "Timer-driven periodic maintenance (SecDetTimerPerformDeferredAssertionsImpl, 0x140042400). Autonomous; not a direct user-mode request.",
+      "call_chain": [
+        "Kernel timer DPC -> SecDetTimerPerformDeferredAssertionsImpl (periodic maintenance)",
+        "SecPerformProcessAssertionsForAllProcesses (unpatched: iterates the table under a shared lock, calls PsLookupProcessByProcessId + SecDetPerformProcessAssertionsWithContext on each entry without pinning it)"
+      ],
+      "vulnerability_class": "Use-After-Free / Race Condition (CWE-416, CWE-362)",
+      "description": "Same class as SecEnumerateProcessContexts. This function iterates the process-context table under a shared push lock and, for each entry, calls PsLookupProcessByProcessId on the entry's process id ([entry+0x20]), then SecDetPerformProcessAssertionsWithContext, then ObfDereferenceObject, holding a raw pointer to the entry (node-0x10) across the work without pinning it. If a concurrent path frees or recycles the entry during the work, the enumerator uses stale memory. The patch adds the SecData+0x510 bit-0 check; when the bit is clear (default) it delegates to the safe reference-and-snapshot SecEnumerateProcessContexts, retaining the old in-lock traversal only when the bit is set.",
+      "trigger_conditions": "Timer-driven, so periodic firing races against process creation/exit that add and remove entries via SecCreateProcessContext / SecCleanupProcessContexts. Rapid process churn increases the chance of the entry being freed while the timer traversal is using it.",
+      "primitive": "Kernel-pool use-after-free of a process-context object during timer-driven enumeration; observable as a kernel bugcheck. No controllable primitive is demonstrated.",
+      "evidence": "// UNPATCHED SecPerformProcessAssertionsForAllProcesses @ 0x14002DD1C\nint64_t SecPerformProcessAssertionsForAllProcesses() {\n    FltAcquirePushLockSharedEx(SecProcessTable + 8, 0);   // SHARED lock\n    for (bucket = 0; bucket < 0x80; bucket++) {\n        node = SecProcessTable->buckets[bucket];\n        while (node != sentinel) {\n            entry = node - 0x10;\n            node  = *node;                                 // advance\n            if (PsLookupProcessByProcessId(entry->ProcessId /*[+0x20]*/, &proc) >= 0) {\n                SecDetPerformProcessAssertionsWithContext(proc, entry, 0); // entry not pinned\n                ObfDereferenceObject(proc);\n            }\n        }\n    }\n    return FltReleasePushLockEx(SecProcessTable + 8, 0);\n}\n\n// PATCHED SecPerformProcessAssertionsForAllProcesses @ 0x14002DF1C\n//   if (SecData[0x510] & 1)  -> old in-lock traversal (only when bit SET)\n//   else (default)           -> call SecEnumerateProcessContexts (safe snapshot path)",
+      "assembly": "; PATCHED SecPerformProcessAssertionsForAllProcesses @ 0x14002DF1C — gate + delegate\n0x14002DF44: test    byte ptr cs:xmmword_14001B740+8, 1 ; SecData+0x510 bit 0\n0x14002DF53: jnz     0x14002DF61                ; bit SET -> old in-lock traversal\n0x14002DF57: call    SecEnumerateProcessContexts ; bit CLEAR (default) -> safe snapshot path\n; old in-lock path (bit SET):\n0x14002DF6E: call    FltAcquirePushLockSharedEx\n0x14002DF96: lea     r14, [rsi-10h]            ; entry = node-0x10\n0x14002DF9A: mov     rsi, [rsi]                ; advance\n0x14002DFA6: call    cs:__imp_PsLookupProcessByProcessId\n0x14002DFC1: call    SecDetPerformProcessAssertionsWithContext ; entry not pinned\n0x14002DFCB: call    cs:__imp_ObfDereferenceObject\n0x14002E001: call    FltReleasePushLockEx",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mssecflt_unpatched!SecPerformProcessAssertionsForAllProcesses",
+            "address": "0x14002dd1c",
+            "why": "Function entry for the timer-driven shared-lock traversal; observe the shared-lock acquisition and per-entry work."
+          }
+        ],
+        "watch": [
+          "rsi = current list node during traversal",
+          "r14 = entry object (node-0x10) passed to PsLookupProcessByProcessId; watch for freed/recycled pool",
+          "[SecProcessTable+0x140] = bucket array base",
+          "[SecData+0x510] bit 0 = path selector (clear delegates to the safe enumerator)"
+        ],
+        "key_offsets": [
+          "0x14002dd1c — function entry (unpatched)",
+          "0x14002dd59 — FltAcquirePushLockSharedEx",
+          "0x14002dd81 — entry = node-0x10; 0x14002dd85 advance",
+          "0x14002dd91 — PsLookupProcessByProcessId; 0x14002ddac SecDetPerformProcessAssertionsWithContext"
+        ],
+        "trigger_setup": "Timer-driven: create and terminate processes rapidly so entries are added/removed while the periodic timer fires; no direct user-mode call is needed.",
+        "expected_observation": "A dereference of freed or recycled pool when the traversal uses an entry that a concurrent process-notification path freed; typically a kernel bugcheck.",
+        "notes": "The patch applies the same fix by delegating the default path to the reference-and-snapshot SecEnumerateProcessContexts (SecData+0x510 bit 0 gate)."
+      }
+    }
+  ],
+  "summary": "The patch adds a reference-and-snapshot enumeration path to SecEnumerateProcessContexts (unpatched 0x14002CF04, patched 0x14002CFC0) in the Microsoft Security Filter minifilter driver. The unpatched enumerator iterates the 128-bucket process-context hash table while holding only a shared push lock and invokes a per-entry callback with the entry (node-0x10) as argument, without holding a reference on the entry across the call. If a callback drops the entry's last reference or a concurrent teardown (SecCleanupProcessContexts) frees it, the entry is freed or recycled while the enumerator still uses it and its next pointer, a use-after-free. The patched default path pins each entry with SecReferenceProcessContext, snapshots the pinned pointers into a pool buffer (tag 'Scce') sized from the entry count at [SecProcessTable+0x148], releases the shared lock, and only then invokes callbacks (releasing each reference afterward). The path is selected when SecData+0x510 bit 0 is clear, which is the default (the feature block is zero-initialized and optionally loaded from a registry binary value); the old in-lock path is retained as a registry-controlled fallback (bit set). SecPerformProcessAssertionsForAllProcesses (0x14002DD1C -> 0x14002DF1C) shares the pattern and, on the default path, delegates to the safe enumerator. Impact is a kernel-mode use-after-free/race surfacing as a denial of service; a controllable memory-corruption primitive is not demonstrated, and the policy-configuration entry point via \\MicrosoftSecFilterControlPort normally requires the privileged management service."
+}

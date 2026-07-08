@@ -1,0 +1,309 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9621,
+    "matched": 1248,
+    "changed": 31,
+    "identical": 1217,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C005CAD4",
+      "similarity": 0.9246,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the runtime selection via Feature_1230705977__private_IsEnabledDeviceUsage (sub_1c0009bbc) that chose between the new AfdCreateConnection (sub_1C005ABE4) and the legacy fallback AfdCreateConnection_Old (sub_1C0009CD8); the patched build always calls the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Staged WIL feature finalization. In the unpatched build the caller branches on the WIL feature gate Feature_1230705977__private_IsEnabledDeviceUsage; when enabled it uses the new AfdCreateConnection, otherwise the legacy AfdCreateConnection_Old. Both functions allocate a thread-private connection object and neither acquires the endpoint spinlock. The patched build removes the gate and the legacy fallback. No lock removed, no TOCTOU, no UAF.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdAddFreeConnection (sub_1C0041694)",
+      "similarity": 0.7613,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_1230705977 gate and the AfdCreateConnection_Old fallback branch; patched always calls the new AfdCreateConnection (sub_1C005AB94)",
+        "Refactor of the enabled-path list-head selection logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Connection-establishment caller. Change is the finalization of Feature_1230705977 (removal of the feature gate and the legacy AfdCreateConnection_Old fallback). The list-head selection change is a refactor of the already-present enabled path, not a bounds or lifetime fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005A89C",
+      "similarity": 0.9168,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_1230705977 gate and the AfdCreateConnection_Old fallback branch; patched always calls the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Connection-establishment caller (TransmitPackets path). Staged WIL feature finalization only; both connection-creation functions are lock-free and operate on a thread-private allocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003A428",
+      "similarity": 0.8878,
+      "change_type": "behavioral",
+      "key_changes": [
+        "AfdPreventUnbind/AfdReallowUnbind locking is present in BOTH builds (unpatched at 0x1C003A4DA/0x1C003A58F); the only patched addition is a Feature_3081238842__private_IsEnabledDeviceUsage gate used to route the IOCTL-code comparison"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdQueryCompartmentId. No lock was added; the earlier claim of added synchronization is false. The lock/unlock pair exists identically in both builds; only a WIL routing gate was added. The lock helpers sub_1c00038d4/sub_1c0003884 (patched) and sub_1c0003a14/sub_1c00039c4 (unpatched) are AfdPreventUnbind/AfdReallowUnbind, the same functions relocated.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0061EF0",
+      "similarity": 0.8924,
+      "change_type": "behavioral",
+      "key_changes": [
+        "AfdPreventUnbind/AfdReallowUnbind locking is gated by Feature_2413497656__private_IsEnabledDeviceUsage in BOTH builds identically; the only patched delta is additional Feature_3081238842 routing gates"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSocketTransferEnd. Lock behavior is unchanged between builds; no synchronization was added. Only WIL IOCTL-routing gates differ.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C004449C",
+      "similarity": 0.8802,
+      "change_type": "behavioral",
+      "key_changes": [
+        "For IOCTL 0xAFD1 the patched build wraps AfdPassQueryDeviceRelation in AfdPreventUnbind/AfdReallowUnbind, but this is gated by Feature_2083252539__private_IsEnabledDeviceUsage; the feature-disabled path calls the handler without a lock, identical to the unpatched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdPnpPower. The added lock is behind a WIL staged feature whose disabled path reproduces the unpatched (lock-free) behavior. Staged rollout, not a delivered lock fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0060E90",
+      "similarity": 0.9193,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The endpoint spinlock (KeAcquire/ReleaseInStackQueuedSpinLock on endpoint+0x30) exists in BOTH builds; the patched build only inserts an AfdDrainListeningIrps (sub_1c000a168) call gated by Feature_3938434363__private_IsEnabledDeviceUsage"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdStartListen. No lock was added. The feature-disabled path skips the drain and matches the unpatched behavior. Staged WIL feature rollout.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0061210",
+      "similarity": 0.9085,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The endpoint spinlock exists in BOTH builds; the patched build only adds an AfdDrainListeningIrps call gated by Feature_2815687992__private_IsEnabledDeviceUsage in the completion/error path"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdTLListenComplete. No synchronization was added; the feature-disabled path equals the unpatched behavior. Staged WIL feature rollout.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0080060",
+      "similarity": 0.8848,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_623580472__private_IsEnabledDeviceUsage gate; the previously feature-enabled path is retained (sets [rdi+0x91]=1 unconditionally)",
+        "IRP cancel spinlocks are present in both builds; no lock was added"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSanCancelAccept. Staged WIL feature finalization (Feature_623580472). The compat-state handling becomes unconditional because the disabled branch was removed, not because a check was removed. No new synchronization.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0083198",
+      "similarity": 0.9716,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_623580472__private_IsEnabledDeviceUsage gate from the completion condition; patched retains the feature-enabled path (checks [rsi+0x91] unconditionally)"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSanRedirectRequest. Staged WIL feature finalization only. No race fix; the IRP cancel spinlocks are unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0081E90",
+      "similarity": 0.9826,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_623580472__private_IsEnabledDeviceUsage dependency from the cancel/complete decision; patched retains the feature-enabled path"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdSanFastCompleteRequest. Staged WIL feature finalization only. IRP queuing spinlocks are present in both builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007F0CC",
+      "similarity": 0.9318,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Inlined a helper (endpoint state field writes) and re-matched call targets to relocated identical functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Accept IRP completion handler. Inlining and function relocation; no security-relevant behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C003B1E0",
+      "similarity": 0.9419,
+      "change_type": "behavioral",
+      "key_changes": [
+        "AfdPreventUnbind -> ObOpenObjectByPointer (DesiredAccess 0x2000000, HandleAttributes 0x40) -> AfdReallowUnbind is present identically in BOTH builds; the only patched addition is a Feature_3081238842 routing gate"
+      ],
+      "security_relevant": false,
+      "security_notes": "AfdQueryHandles. No lock added and no access-rights tightening around the Ob* call; both builds are identical there. Only a WIL routing gate differs.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000895C",
+      "similarity": 0.7719,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_2480880955__private_IsEnabledDeviceUsage gate; patched always uses RtlFindUnicodeSubstring (the previously feature-enabled path)"
+      ],
+      "security_relevant": false,
+      "security_notes": "String-matching helper. Staged WIL feature finalization. Behavioral only, not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0081660",
+      "similarity": 0.9898,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Inlined a helper and re-matched call targets to relocated identical functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0082E80",
+      "similarity": 0.8895,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Function re-matching artifact across builds due to relocation/inlining"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0040C70",
+      "similarity": 0.2208,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure due to compiler optimization differences; IOCTL dispatch logic is functionally equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007F750",
+      "similarity": 0.2387,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure due to compiler optimization differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdCreateConnection_Old (sub_1C0009CD8)",
+      "similarity": 0.3169,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Legacy connection-creation fallback present only in the unpatched build; reached only when Feature_1230705977__private_IsEnabledDeviceUsage returns disabled",
+        "Removed in the patched build as part of finalizing Feature_1230705977",
+        "Allocates a thread-private connection object via AfdAllocateConnection (0x1C0009D6B) and publishes it only at the end (mov [r12], rbx at 0x1C000A0AC); no endpoint spinlock is acquired, and none is required"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the legacy fallback, not a vulnerable function. It performs the same connection-creation work as the new AfdCreateConnection: allocate a fresh, thread-private connection object, initialize its fields, call IoCreateFile and ObReferenceObjectByHandle, manage the object refcount at [conn+0x30] with AfdCloseConnection on failure, and publish the object to the caller only at the end. Because the object is unreachable by other threads until publication, the absence of a lock is correct, not a TOCTOU/UAF. The only functional difference versus the new function is that IoCreateFile is called with a fixed DesiredAccess 0xC0100000 / Options 0x100, whereas the new function conditionally uses 0x2000000 / 0x101 based on endpoint flags [endpoint+0x10]&0x10000 or [endpoint+8]&0x8000000.",
+      "assembly_diff": "0x1C0009D6B  call    AfdAllocateConnection   ; fresh thread-private object -> rbx\n0x1C0009D70  mov     rbx, rax\n0x1C0009D9C  call    cs:__imp_ObfReferenceObject\n0x1C0009DAA  mov     [rbx+20h], rsi          ; init private object (no lock needed)\n0x1C0009E55  mov     [rsp+130h+Options], 100h ; Options = 0x100 (fixed)\n0x1C0009E66  mov     edx, 0C0100000h          ; DesiredAccess (fixed)\n0x1C0009ED9  call    cs:__imp_IoCreateFile\n0x1C0009F19  call    cs:__imp_ObReferenceObjectByHandle\n0x1C0009F5C  mov     [rbx+18h], rax\n0x1C0009F9F  lock xadd [rbx+30h], ecx        ; object refcount on error\n0x1C0009FAC  call    AfdCloseConnection\n0x1C000A0AC  mov     [r12], rbx               ; object first published here"
+    },
+    {
+      "name": "sub_1C00489B0",
+      "similarity": 0.3497,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure due to compiler optimization differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C004F310",
+      "similarity": 0.3229,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Three call sites branched on Feature_1230705977 between the new AfdCreateConnection and the legacy AfdCreateConnection_Old; the patched build removes the gate and calls only the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Staged WIL feature finalization at three connection-creation call sites. Both target functions are lock-free and operate on thread-private allocations. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0059A50",
+      "similarity": 0.4467,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Two call sites branched on Feature_1230705977 between the new AfdCreateConnection and the legacy AfdCreateConnection_Old; the patched build removes the gate and calls only the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Staged WIL feature finalization at two connection-creation call sites. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0080590",
+      "similarity": 0.9407,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_1230705977 gate and the AfdCreateConnection_Old fallback; patched calls only the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Accept/completion handler. Staged WIL feature finalization only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBind (sub_1C0035DE0)",
+      "similarity": 0.957,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed the Feature_1230705977 gate and the AfdCreateConnection_Old fallback; patched calls only the new AfdCreateConnection (sub_1C005AB94)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Dispatch handler that selected the connection-creation function. Staged WIL feature finalization only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C006EA18",
+      "similarity": 0.096,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure; thunk/wrapper re-matching artifact"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C005BAB0",
+      "similarity": 0.3567,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure due to compiler differences"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0073058",
+      "similarity": 0.0064,
+      "change_type": "cosmetic",
+      "key_changes": ["Complete restructure; function re-matching artifact"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The diff is the finalization of several staged WIL (Windows Implementation Library) features in afd.sys, plus compiler churn. In the unpatched build, every connection-creation call site selects at runtime between a new AfdCreateConnection (sub_1C005ABE4) and a legacy fallback AfdCreateConnection_Old (sub_1C0009CD8) using the feature gate Feature_1230705977__private_IsEnabledDeviceUsage (sub_1c0009bbc, testing feature-state bit 0x10). The patched build removes the gate and the AfdCreateConnection_Old fallback and always calls the new AfdCreateConnection (sub_1C005AB94), which is functionally identical to the new function already present in the unpatched build. Neither connection-creation function acquires the endpoint spinlock, and none is required: both allocate a thread-private connection object via AfdAllocateConnection, initialize it locally, and publish it to the caller only at the end. There is no removed lock, no time-of-check/time-of-use race, and no use-after-free. The only genuine behavioral difference between the old and new functions is that the new one conditionally requests DesiredAccess 0x2000000 (MAXIMUM_ALLOWED) with Options 0x101 for the internal IoCreateFile when endpoint flags [endpoint+0x10]&0x10000 or [endpoint+8]&0x8000000 are set, instead of the fixed 0xC0100000 / 0x100; this has no demonstrable, reachable security impact. The other changed functions are likewise removals of WIL feature gates (Feature_623580472 in the AfdSan cancel/complete routines, Feature_2480880955 in a string helper, and Feature_3081238842 / Feature_3938434363 / Feature_2815687992 / Feature_2083252539 routing/drain gates) whose disabled paths reproduce the unpatched behavior, or compiler-optimization churn. Locking that earlier drafts attributed to the patch (AfdPreventUnbind/AfdReallowUnbind around Ob* calls and endpoint state) is already present identically in both builds."
+}

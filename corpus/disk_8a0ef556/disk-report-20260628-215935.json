@@ -1,0 +1,341 @@
+{
+  "binaries": {
+    "title": "disk.sys - Out-of-bounds read (CWE-125) and out-of-bounds write (CWE-787) in SCSI mode page cache information parser",
+    "id_unpatched": "disk_unpatched.sys",
+    "id_patched": "disk_patched.sys",
+    "overall_similarity": 0.9074,
+    "matched": 140,
+    "changed": 65,
+    "identical": 69,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DiskGetCacheInformation (sub_1c000cbf0)",
+      "similarity": 0.9151,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added bounds check after ClassFindModePage returns mode page pointer: new instructions 'add rax, 0xc; add rcx, rdi; cmp rax, rcx; jbe' verify that mode_page_ptr + 12 <= buffer_start + data_length before accessing mode page fields at offsets 0x0 through 0xb",
+        "Unpatched code directly accesses r9 (returned mode page pointer) at offsets +0x0, +0x2, +0x3, +0x4, +0x5, +0x6, +0x7, +0x8, +0x9, +0xa, +0xb without any bounds verification against the allocated 0xc0-byte buffer or the actual transferred data length",
+        "Patched version adds a new basic block (40 basic blocks vs 34 in unpatched) that performs the size validation and bails out to an error path (sets rsi = 0xC0000001) if the mode page data is too short"
+      ],
+      "security_relevant": true,
+      "security_notes": "OUT-OF-BOUNDS READ (CWE-125): The function allocates a 0xc0-byte NonPagedPoolNxCacheAligned buffer, fills it via ClassModeSense, then calls ClassFindModePage to locate mode page 8 (caching mode page). ClassFindModePage returns a pointer into the buffer based on the mode page header's length field, which could point near the end of valid data. The unpatched code then unconditionally reads 12 bytes from that pointer (accessing offsets 0x0, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb). If a malicious or malfunctioning storage device returns a truncated mode sense response where the mode page 8 descriptor is located near the end of transferred data and is shorter than 12 bytes, these reads go past the valid data boundary into uninitialized pool memory. The patched version adds a bounds check (mode_page_ptr + 12 <= buffer_start + search_len, where search_len = min(data_length, buffer[0]+1)) and bails with STATUS_UNSUCCESSFUL (0xC0000001) if it fails. The 0xC0-byte buffer is memset-zeroed before ClassModeSense, so reads that remain inside the allocation return zeroes; only the part of the fixed 12-byte window that extends past the end of the 0xC0-byte allocation reads adjacent pool contents (at most ~11 bytes). Impact: bounded kernel pool information disclosure via the IOCTL output buffer, or a fault/DoS if the over-read reaches an unmapped address. Requires a storage device whose SCSI responses the attacker controls.",
+      "assembly_diff": "UNPATCHED (0x1c000cbf0) - NO bounds check after ClassFindModePage:\n0x1c000cc8e: mov     r9, rax              ; r9 = mode_page_ptr (from ClassFindModePage)\n0x1c000cc91: test    rax, rax\n0x1c000cc94: je      0x1c000e29a          ; only NULL check, no size check!\n0x1c000cc9a: xor     eax, eax             ; immediately starts reading mode page data\n0x1c000ccad: mov     al, byte [r9]        ; reads offset +0x0\n0x1c000ccb5: mov     r11b, byte [r9+0x2]  ; reads offset +0x2\n0x1c000ccd4: mov     cl, byte [r9+0x3]    ; reads offset +0x3\n0x1c000cd1f: movzx   r15d, byte [r9+0x4]  ; reads offset +0x4\n0x1c000cd2b: movzx   eax, byte [r9+0x5]   ; reads offset +0x5\n0x1c000cd41: movzx   r12d, byte [r9+0x6]  ; reads offset +0x6\n0x1c000cd3c: movzx   eax, byte [r9+0x7]   ; reads offset +0x7\n0x1c000cd56: movzx   r13d, byte [r9+0x8]  ; reads offset +0x8\n0x1c000cd5b: movzx   eax, byte [r9+0x9]   ; reads offset +0x9\n0x1c000e2fe: movzx   eax, byte [r9+0xa]   ; reads offset +0xa\n0x1c000e305: movzx   eax, byte [r9+0xb]   ; reads offset +0xb - up to 12 bytes!\n\nPATCHED (0x1c000dba4) - ADDED bounds check:\n; After ClassFindModePage returns pointer in rax -> r8:\nmov     r8, rax              ; r8 = mode_page_ptr\ntest    rax, rax\njne     0x1c000dd1f          ; proceed if non-NULL\n...\nmov     ecx, ebp             ; ecx = search_len = min(data_length, buffer[0]+1), the capped length passed to ClassFindModePage\nadd     rax, 0xc             ; rax = mode_page_ptr + 12\nadd     rcx, rdi             ; rcx = search_len + buffer_start\ncmp     rax, rcx             ; BOUNDS CHECK: does the 12-byte field window fit inside the searched region?\njbe     0x1c000dd6c          ; if yes, proceed to parse\n; else fall through to error path -> rsi = 0xC0000001 (STATUS_UNSUCCESSFUL)"
+    },
+    {
+      "name": "DiskSetCacheInformation (unpatched 0x1C0010C48, patched 0x1C001315C)",
+      "similarity": null,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added the identical bounds check that the read counterpart DiskGetCacheInformation received, but on the WRITE path: new instructions 'mov ecx, r14d (search_len); add rax, 0xC; add rcx, rbp (buffer base); cmp rax, rcx; jbe' at 0x1C00132B1-0x1C00132BE verify mode_page_ptr + 12 <= buffer_start + search_len before storing any field",
+        "Unpatched code (0x1C0010C48) performs only a NULL check (test rax,rax; jnz loc_1C0010D93 at 0x1C0010D84/0x1C0010D87) and then unconditionally WRITES offsets +0x0 (and byte ptr [rsi],7Fh), +0x2, +0x3, +0x4..+0x9, and conditionally +0xA/+0xB into the returned mode page descriptor",
+        "Patched version bails to an error path setting r14d = 0xC0000001 (STATUS_UNSUCCESSFUL) at 0x1C00132F5 before any store when the 12-byte window overruns the searched region"
+      ],
+      "security_relevant": true,
+      "security_notes": "OUT-OF-BOUNDS WRITE (CWE-787): DiskSetCacheInformation is the write counterpart of DiskGetCacheInformation and shares the identical prologue - it allocates the same 0xC0-byte NonPagedPoolNxCacheAligned buffer (tag 'ScDC'), memset-zeroes it, calls ClassModeSense (page code 8) to fill it, and calls ClassFindModePage with search_len = min(data_length, buffer[0]+1) to locate the caching mode page descriptor. Where the read function reads a fixed 12-byte field window, this function WRITES that window (offsets +0x0..+0xB), merging caller-supplied DISK_CACHE_INFORMATION input (arg2 / rbx: [rbx+1], [rbx+2], [rbx+4], [rbx+8], [rbx+0Ch]..[rbx+15h]) into the descriptor bytes and pushing the result to the device via DiskModeSelect. The unpatched code performs only a NULL check on the ClassFindModePage return before the stores. If a malicious or malfunctioning storage device returns a MODE SENSE response where the mode page 8 descriptor sits near the tail of the transferred data with fewer than 12 bytes remaining, these stores write past the end of the 0xC0-byte allocation into adjacent non-paged pool. The write offset is device-controlled and the written data is partly caller-controlled. Impact: non-paged pool corruption (bugcheck / DoS) and a potential stepping stone toward elevation of privilege - materially more severe than the read counterpart. The patch inserts the same guard (add ptr,0xC; add base,search_len; cmp; jbe) before any store and bails with STATUS_UNSUCCESSFUL. Reachable via IOCTL_DISK_SET_CACHE_INFORMATION (0x7C088) through the DiskIoctlSetCacheInformation handler at 0x1C000F910, and also from device-start paths DiskStartFdo (0x1C000CA00) and DisableWriteCache (0x1C000ECA0).",
+      "assembly_diff": "UNPATCHED DiskSetCacheInformation @ 0x1C0010C48 - NO bounds check after ClassFindModePage:\n00000001C0010D75: call    cs:__imp_ClassFindModePage   ; CLASSPNP\n00000001C0010D81: mov     rsi, rax                     ; rsi = mode_page_ptr\n00000001C0010D84: test    rax, rax\n00000001C0010D87: jnz     short loc_1C0010D93          ; *** ONLY NULL CHECK ***\n00000001C0010D89: mov     ebp, 0C00000BBh              ; NULL -> STATUS_DEVICE_DATA_ERROR\n; *** MISSING: mov ecx,search_len; add rax,0Ch; add rcx,P; cmp rax,rcx; jbe safe ***\n00000001C0010D93: and     byte ptr [rax], 7Fh          ; *** OOB WRITE +0x0 ***\n00000001C0010DA4: mov     [rsi+2], cl                  ; *** OOB WRITE +0x2 ***\n00000001C0010DE6: mov     [rsi+3], al                  ; *** OOB WRITE +0x3 ***\n00000001C0010E0A: mov     [rsi+4], al                  ; *** OOB WRITE +0x4 ***\n00000001C0010E10: mov     [rsi+5], al                  ; *** OOB WRITE +0x5 ***\n00000001C0010E16: mov     [rsi+6], al                  ; *** OOB WRITE +0x6 ***\n00000001C0010E1C: mov     [rsi+7], al                  ; *** OOB WRITE +0x7 ***\n00000001C0010E22: mov     [rsi+8], al                  ; *** OOB WRITE +0x8 ***\n00000001C0010E28: mov     [rsi+9], al                  ; *** OOB WRITE +0x9 ***\n00000001C0010E2B: test    byte ptr [rsi+2], 2\n00000001C0010E34: mov     [rsi+0Ah], al                ; *** OOB WRITE +0xA (conditional) ***\n00000001C0010E3A: mov     [rsi+0Bh], al                ; *** OOB WRITE +0xB (conditional) ***\n\nPATCHED DiskSetCacheInformation @ 0x1C001315C - ADDED bounds check:\n00000001C001329E: mov     rdi, rax                     ; rdi = mode_page_ptr\n00000001C00132A1: test    rax, rax\n00000001C00132A4: jnz     short loc_1C00132B1\n00000001C00132A6: mov     r14d, 0C00000BBh             ; NULL -> bail\n00000001C00132B1: mov     ecx, r14d                    ; ecx = search_len = min(data_length, buffer[0]+1)\n00000001C00132B4: add     rax, 0Ch                     ; rax = mode_page_ptr + 12\n00000001C00132B8: add     rcx, rbp                     ; rcx = buffer_start + search_len\n00000001C00132BB: cmp     rax, rcx                     ; *** BOUNDS CHECK ***\n00000001C00132BE: jbe     short loc_1C0013300          ; ok -> proceed to the writes\n00000001C00132F5: mov     r14d, 0C0000001h             ; STATUS_UNSUCCESSFUL\n00000001C00132FB: jmp     loc_1C0013485                ; bail before any write"
+    },
+    {
+      "name": "DiskDeviceControl (unpatched 0x1C0001770, patched 0x1C00010C0)",
+      "similarity": 0.88,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added early rejection returning STATUS_NOT_SUPPORTED (0xC00000BB) for IOCTL codes 0x74080, 0x7c088, 0x7c084, 0x4d02c, 0x4d030 when the device sub-object referenced by [dev+0x208] has state field [+0x1c] == 0x11 (patched cmp dword ptr [rax+1Ch], 11h at 0x1C000113F -> reject block at 0x1C0002E4C); no such gate exists in the unpatched build",
+        "Prevents processing of these storage IOCTLs while the device is in that state"
+      ],
+      "security_relevant": true,
+      "security_notes": "HARDENING FIX: The patched build adds a gate that rejects several storage IOCTLs (0x74080, 0x7c088, 0x7c084, 0x4d02c, 0x4d030) with STATUS_NOT_SUPPORTED (0xC00000BB) when the sub-object at [dev+0x208] has its state field at +0x1c equal to 0x11. This is the same function relocated between builds (unpatched 0x1C0001770, patched 0x1C00010C0); the unpatched version has no equivalent gate. Defense-in-depth against IOCTL processing while the device is in that state; not exploitable from the diff alone.",
+      "assembly_diff": "PATCHED @ 0x1C00010C0 (gate absent in unpatched):\n0x1C0001133: mov     rax, [rdi+208h]\n0x1C000113A: test    rax, rax\n0x1C000113D: jz      0x1C0001149          ; no sub-object -> normal path\n0x1C000113F: cmp     dword ptr [rax+1Ch], 11h\n0x1C0001143: jz      0x1C0002E4C          ; state == 0x11 -> reject block\n...\n0x1C0002E4C: cmp     ebx, 74080h          ; ebx = IOCTL code\n0x1C0002E52: jz      0x1C0002E78\n0x1C0002E54: cmp     ebx, 7C088h\n0x1C0002E5A: jz      0x1C0002E78\n0x1C0002E5C: cmp     ebx, 7C084h\n0x1C0002E62: jz      0x1C0002E78\n0x1C0002E64: cmp     ebx, 4D02Ch\n0x1C0002E6A: jz      0x1C0002E78\n0x1C0002E6C: cmp     ebx, 4D030h\n0x1C0002E72: jnz     0x1C0001149          ; other IOCTL -> normal path\n0x1C0002E78: mov     ebp, 0C00000BBh      ; STATUS_NOT_SUPPORTED"
+    },
+    {
+      "name": "DiskInitFdo (sub_1c000be40)",
+      "similarity": 0.82,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed failure prediction initialization from synchronous to asynchronous: uses IoAllocateWorkItem + IoQueueWorkItem with work item callback instead of inline initialization",
+        "Improves PnP reliability by not blocking AddDevice on failure prediction setup"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "RtlStringCchPrintfW (sub_1c0002464)",
+      "similarity": 0.28,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler refactoring of CRT wrapper function"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memmove (sub_1c0002840)",
+      "similarity": 0.31,
+      "change_type": "cosmetic",
+      "key_changes": ["CRT optimization with different SIMD strategy"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset (sub_1c0002b80)",
+      "similarity": 0.45,
+      "change_type": "cosmetic",
+      "key_changes": ["CRT optimization with different SIMD strategy"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskFdoProcessError (sub_1c0001e50)",
+      "similarity": 0.89,
+      "change_type": "cosmetic",
+      "key_changes": ["Refactored bounds checks in SCSI sense data interpreter"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry (sub_1c0014078)",
+      "similarity": 0.87,
+      "change_type": "cosmetic",
+      "key_changes": ["Function pointer table updated due to recompilation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskIoctlGetCacheInformation (sub_1c000bd50)",
+      "similarity": 0.86,
+      "change_type": "cosmetic",
+      "key_changes": ["CR8 -> KeGetCurrentIrql cosmetic change; calls vulnerable DiskGetCacheInformation (sub_1c000cbf0)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskStartFdo (sub_1c000ca00)",
+      "similarity": 0.85,
+      "change_type": "cosmetic",
+      "key_changes": ["Cosmetic refactoring; calls vulnerable DiskGetCacheInformation (sub_1c000cbf0)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DisableWriteCache (sub_1c000eca0)",
+      "similarity": 0.83,
+      "change_type": "cosmetic",
+      "key_changes": ["Cosmetic refactoring; calls vulnerable DiskGetCacheInformation (sub_1c000cbf0)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskIoctlGetLengthInfo (sub_1c000b220)",
+      "similarity": 0.86,
+      "change_type": "cosmetic",
+      "key_changes": ["CR8 -> KeGetCurrentIrql cosmetic change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskIoctlSmartReceiveDriveData (sub_1c000faf4)",
+      "similarity": 0.87,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskPerformSmartCommand (sub_1c000b4a4)",
+      "similarity": 0.86,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskEnableDisableFailurePredictPolling (sub_1c000d5e4)",
+      "similarity": 0.85,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskCreateSymbolicLinks (sub_1c000c51c)",
+      "similarity": 0.84,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskCreateGuidSymbolicLink (sub_1c000ce08)",
+      "similarity": 0.84,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DiskIoctlSmartSendDriveCommand (sub_1c000ff0c)",
+      "similarity": 0.85,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "McGenControlCallbackV2 (sub_1c00045f0)",
+      "similarity": 0.86,
+      "change_type": "register_allocation",
+      "key_changes": ["Register reallocation"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GetSrbScsiData (sub_1c0002050)",
+      "similarity": 0.87,
+      "change_type": "cosmetic",
+      "key_changes": ["Bounds checking refactored, no new vulnerability"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "DiskGetCacheInformation (unpatched 0x1C000CBF0, patched 0x1C000DBA4)",
+      "entry_point": "IOCTL_DISK_GET_CACHE_INFORMATION (0x740D4) via DeviceIoControl on disk device handle",
+      "call_chain": [
+        "DeviceIoControl(IOCTL_DISK_GET_CACHE_INFORMATION=0x740D4)",
+        "DiskDeviceControl (sub_1c0001770) (disk!ClassDeviceControl dispatch at 0x1c0001770)",
+        "DiskIoctlGetCacheInformation (sub_1c000bd50) (IOCTL_DISK_GET_CACHE_INFORMATION handler at 0x1c000bd50)",
+        "DiskGetCacheInformation (sub_1c000cbf0) (mode page cache parser at 0x1c000cbf0) - VULNERABLE"
+      ],
+      "vulnerability_class": "Out-of-bounds read (CWE-125) in SCSI mode page parsing",
+      "description": "The function DiskGetCacheInformation (sub_1c000cbf0) parses SCSI mode page 8 (Caching Mode Page) data from a storage device. It allocates a 0xC0-byte buffer from NonPagedPoolNxCacheAligned (tag 'ScDC'), calls ClassModeSense to fill it with the device's mode sense data, then calls ClassFindModePage to locate mode page 8 within the buffer. ClassFindModePage returns a pointer into the buffer based on the mode page headers, which are parsed from the device-supplied data. The unpatched code then unconditionally reads 12 bytes from this returned pointer (accessing offsets +0x0, +0x2, +0x3, +0x4, +0x5, +0x6, +0x7, +0x8, +0x9, +0xA, +0xB) to populate a DISK_CACHE_INFORMATION structure — WITHOUT verifying that the mode page data extends far enough. The only check performed is whether the returned pointer is non-NULL (je 0x1c000e29a at 0x1c000cc94). If a malicious or malfunctioning storage device (e.g., a virtualized/iSCSI/USB device or a crafted disk image) returns a MODE SENSE response where mode page 8 is located near the end of the transferred data and is shorter than 12 bytes, the reads at offsets +0x0 through +0xB can access memory beyond the searched data region. Because the 0xC0-byte buffer is memset-zeroed before ClassModeSense, reads that remain inside the allocation return zeroes; only the portion of the window that crosses the end of the 0xC0-byte allocation reads adjacent pool contents (at most ~11 bytes). The patched version adds 'mode_page_ptr + 0xC <= buffer_start + search_len' (search_len = min(data_length, buffer[0]+1)) before proceeding to parse, bailing with STATUS_UNSUCCESSFUL (0xC0000001). The over-read bytes are copied into the IOCTL output buffer and returned to the caller, giving a bounded kernel pool disclosure. If the over-read reaches an unmapped address it faults (Denial of Service).",
+      "trigger_conditions": "1. Attacker has access to a storage device that the target system enumerates (physical USB device, virtual disk, iSCSI LUN, or VHD/ISO mount). 2. The malicious device responds to SCSI MODE SENSE(10) command (page control=0x8, page code=0x8 for caching) with a response where: (a) the total transferred data length is >= 4 bytes (passes the minimum check at 0x1c000cc69), (b) ClassFindModePage locates a mode page 8 header within the buffer, but (c) the mode page 8 data region is located such that mode_page_ptr + 12 exceeds the actual transferred data length. This happens when the mode page header indicates page code 8 but the device returns a truncated response where the page is at the end of the buffer with less than 12 bytes of data following it. 3. Any user-mode process with access to the disk device (e.g., via CreateFile on \\\\.\\PhysicalDriveN or a volume handle) issues DeviceIoControl with IOCTL_DISK_GET_CACHE_INFORMATION (0x740D4). Alternatively, the code is reached during AddDevice initialization via the work item path (sub_1c000eca0), which triggers automatically when the PnP manager enumerates the device.",
+      "primitive": "Bounded kernel pool memory information disclosure: the fixed 12-byte field window (+0x0..+0xB) is read from the descriptor pointer, but the 0xC0-byte buffer is memset-zeroed first, so only the portion of the window extending past the end of the 0xC0-byte allocation (at most ~11 bytes) reads adjacent non-paged pool. Those bytes surface in the DISK_CACHE_INFORMATION output returned to user mode. Alternatively a fault/DoS if the over-read reaches an unmapped address. Requires a storage device whose SCSI mode-sense responses the attacker controls; no full exploit chain is claimed.",
+      "evidence": "Unpatched decompilation of DiskGetCacheInformation @ 0x1C000CBF0 (disk_unpatched.c) showing NO bounds check after ClassFindModePage (a1 = device extension, a2 = output DISK_CACHE_INFORMATION, v6 = buffer P):\n\n  PoolWithTag = ExAllocatePoolWithTag(516, 0xC0u, 0x43446353u);  // NonPagedPoolNxCacheAligned, tag 'ScDC'\n  memset(PoolWithTag, 0, 0xC0u);                                  // buffer zero-initialized\n  v7 = ClassModeSense(*(a1 + 8), v6, 0xC0u, 8u);                  // MODE SENSE page 8, v7 = data_length\n  if ( v7 >= 4 || (v7 = ClassModeSense(...)) >= 4 ) {\n    v8 = (unsigned __int8)*v6 + 1;                                 // header byte + 1\n    if ( v7 <= v8 ) v8 = v7;                                       // v8 = search_len = min(data_length, buffer[0]+1)\n    ModePage = ClassFindModePage(v6, v8, 8u, 1u);\n    v10 = ModePage;\n    if ( ModePage != nullptr ) {                                   // *** ONLY a NULL check ***\n      // *** NO SIZE CHECK - reads fixed field window +0x0..+0xB ***\n      *(_BYTE *)a2 = *ModePage >> 7;                               // +0x0\n      ... = ModePage[2]; ... = ModePage[3];                        // +0x2, +0x3\n      v18 = v10[5] + (v10[4] << 8);                                // +0x4, +0x5\n      v20 = v10[7] + (v10[6] << 8);                                // +0x6, +0x7\n      v21 = v10[9] + (v10[8] << 8);                                // +0x8, +0x9\n      if ( (v10[2] & 2) != 0 )                                     // +0x2\n        ... = v10[11] + (v10[10] << 8);                            // +0xA, +0xB\n    }\n  }\n\n// Patched (disk_patched.c / 0x1C000DBA4) adds before the field reads:\n//   if ( &ModePage[12] > &v6[search_len] ) { status = 0xC0000001; goto error; }",
+      "assembly": "UNPATCHED DiskGetCacheInformation (sub_1c000cbf0) @ 0x1c000cbf0 (208 instructions):\n\n0x1c000cbf0: mov     qword [rsp+0x8], rbx\n0x1c000cbf5: mov     qword [rsp+0x10], rbp\n0x1c000cbfa: mov     qword [rsp+0x18], rsi\n0x1c000cbff: push    rdi\n0x1c000cc00: push    r12\n0x1c000cc02: push    r13\n0x1c000cc04: push    r14\n0x1c000cc06: push    r15\n0x1c000cc08: sub     rsp, 0x70\n0x1c000cc0c: mov     rbx, rdx                    ; rbx = output struct (arg2)\n0x1c000cc0f: mov     r14, rcx                    ; r14 = device extension (arg1)\n0x1c000cc12: mov     ebp, 0xc0                   ; buffer size\n0x1c000cc17: mov     r8d, 0x43446353             ; pool tag 'ScDC'\n0x1c000cc1d: mov     edx, ebp\n0x1c000cc1f: mov     ecx, 0x204                  ; NonPagedPoolNxCacheAligned\n0x1c000cc24: call    qword [rel 0x1c000a220]     ; ExAllocatePoolWithTag\n0x1c000cc2b: nop     dword [rax+rax]\n0x1c000cc30: xor     esi, esi\n0x1c000cc32: mov     rdi, rax                    ; rdi = allocated buffer P\n0x1c000cc35: test    rax, rax\n0x1c000cc38: je      0x1c000e236                 ; if alloc failed, error\n0x1c000cc3e: mov     r8d, ebp                    ; r8d = 0xc0\n0x1c000cc41: xor     edx, edx                    ; fill = 0\n0x1c000cc43: mov     rcx, rax                    ; rcx = P\n0x1c000cc46: call    0x1c0002b80                 ; memset(P, 0, 0xc0)\n0x1c000cc4b: mov     rcx, qword [r14+0x8]        ; device object\n0x1c000cc4f: mov     r9b, 0x8                    ; page code = 8 (caching)\n0x1c000cc52: mov     r8d, ebp                    ; length = 0xc0\n0x1c000cc55: mov     rdx, rdi                    ; buffer = P\n0x1c000cc58: call    qword [rel 0x1c000a0e8]     ; ClassModeSense(dev, P, 0xc0, 8)\n0x1c000cc5f: nop     dword [rax+rax]\n0x1c000cc64: mov     ecx, eax                    ; ecx = transferred data length\n0x1c000cc66: cmp     eax, 0x4                    ; need at least 4 bytes\n0x1c000cc69: jb      0x1c000cdb6                 ; if < 4, retry once\n; ... retry path omitted, lands at 0x1c000cc6f on success ...\n0x1c000cc6f: movzx   edx, byte [rdi]             ; edx = first byte of mode parameter header\n0x1c000cc72: mov     r9b, 0x1                    ; subpage = 1\n0x1c000cc75: inc     edx                         ; edx = header_length + 1\n0x1c000cc77: mov     r8b, 0x8                    ; page code = 8\n0x1c000cc7a: cmp     ecx, edx\n0x1c000cc7c: cmovbe  edx, ecx                    ; min(data_length, header_len+1)\n0x1c000cc7f: mov     rcx, rdi                    ; rcx = P\n0x1c000cc82: call    qword [rel 0x1c000a0c8]     ; ClassFindModePage(P, len, 8, 1)\n0x1c000cc89: nop     dword [rax+rax]\n0x1c000cc8e: mov     r9, rax                     ; r9 = mode_page_ptr (RETURNED POINTER)\n0x1c000cc91: test    rax, rax\n0x1c000cc94: je      0x1c000e29a                 ; *** ONLY NULL CHECK - NO SIZE CHECK ***\n; === CRITICAL: no verification that r9 + 12 <= P + data_length ===\n; === Patched version adds here: add rax,0xc; add rcx,rdi; cmp rax,rcx; jbe safe ===\n0x1c000cc9a: xor     eax, eax                    ; clear for zeroing output struct\n0x1c000cc9c: mov     r8d, 0xf\n0x1c000cca2: mov     qword [rbx], rax            ; zero output[0..7]\n0x1c000cca5: mov     qword [rbx+0x8], rax        ; zero output[8..15]\n0x1c000cca9: mov     qword [rbx+0x10], rax       ; zero output[16..23]\n0x1c000ccad: mov     al, byte [r9]               ; *** READ OFFSET +0x0 ***\n0x1c000ccb0: shr     al, 0x7\n0x1c000ccb3: mov     byte [rbx], al              ; output.WriteCacheEnabled\n0x1c000ccb5: mov     r11b, byte [r9+0x2]         ; *** READ OFFSET +0x2 ***\n0x1c000ccb9: not     r11b\n0x1c000ccbc: and     r11b, 0x1\n0x1c000ccc0: mov     byte [rbx+0x1], r11b        ; output.WriteRetentionPolicy\n0x1c000ccc4: mov     bpl, byte [r9+0x2]          ; *** READ OFFSET +0x2 ***\n0x1c000ccc8: shr     bpl, 0x2\n0x1c000cccc: and     bpl, 0x1\n0x1c000ccd0: mov     byte [rbx+0x2], bpl         ; output.FlushCacheEnabled\n0x1c000ccd4: mov     cl, byte [r9+0x3]          ; *** READ OFFSET +0x3 ***\n0x1c000ccd8: mov     al, cl\n0x1c000ccda: shr     al, 0x4                     ; write cache type nibble\n0x1c000ccdd: cmp     al, r8b\n0x1c000cce0: je      0x1c000e2d9\n0x1c000cce6: cmp     al, 0x2\n0x1c000cce8: je      0x1c000e2e4\n0x1c000ccee: movzx   r10d, cl\n0x1c000ccf2: shr     r10d, 0x4\n0x1c000ccf6: mov     dword [rbx+0x4], r10d       ; output.WriteCacheType\n0x1c000ccfa: mov     cl, byte [r9+0x3]          ; *** READ OFFSET +0x3 again ***\n0x1c000ccfe: mov     al, cl\n0x1c000cd00: and     al, r8b\n0x1c000cd03: cmp     al, r8b\n0x1c000cd06: je      0x1c000e2ec\n0x1c000cd0c: cmp     al, 0x2\n0x1c000cd0e: je      0x1c000cd16\n0x1c000cd10: movzx   eax, cl\n0x1c000cd13: and     r8d, eax\n0x1c000cd16: mov     dword [rbx+0x8], r8d        ; output.WriteCachePolicy\n0x1c000cd1a: mov     edx, 0x100                  ; byte-swap multiplier (big-endian)\n0x1c000cd1f: movzx   r15d, byte [r9+0x4]         ; *** READ OFFSET +0x4 ***\n0x1c000cd24: movzx   eax, dx\n0x1c000cd27: imul    r15d, eax\n0x1c000cd2b: movzx   eax, byte [r9+0x5]          ; *** READ OFFSET +0x5 ***\n0x1c000cd30: movzx   ecx, dx\n0x1c000cd33: add     r15w, ax                    ; big-endian 16-bit value\n0x1c000cd37: mov     word [rbx+0xc], r15w        ; output.CacheSize\n0x1c000cd3c: movzx   eax, byte [r9+0x7]          ; *** READ OFFSET +0x7 ***\n0x1c000cd41: movzx   r12d, byte [r9+0x6]         ; *** READ OFFSET +0x6 ***\n0x1c000cd46: imul    r12d, ecx\n0x1c000cd4a: movzx   ecx, dx\n0x1c000cd4d: add     r12w, ax\n0x1c000cd51: mov     word [rbx+0x10], r12w       ; output.PrefetchSize\n0x1c000cd56: movzx   r13d, byte [r9+0x8]         ; *** READ OFFSET +0x8 ***\n0x1c000cd5b: movzx   eax, byte [r9+0x9]          ; *** READ OFFSET +0x9 ***\n0x1c000cd60: imul    r13d, ecx\n0x1c000cd64: add     r13w, ax\n0x1c000cd68: mov     word [rbx+0x12], r13w       ; output.MaximumCacheSize\n0x1c000cd6d: test    byte [r9+0x2], 0x2          ; *** READ OFFSET +0x2 (test bit) ***\n0x1c000cd72: jne     0x1c000e2f7\n; ... then also reads offsets +0xa and +0xb at 0x1c000e2fe/0x1c000e305 ...\n0x1c000e2fe: movzx   eax, byte [r9+0xa]          ; *** READ OFFSET +0xA ***\n0x1c000e305: movzx   eax, byte [r9+0xb]          ; *** READ OFFSET +0xB ***\n0x1c000e30a: imul    edx, ecx\n0x1c000e30d: add     dx, ax\n0x1c000e310: mov     word [rbx+0x14], dx         ; output.DiskCacheSize\n0x1c000e314: jmp     0x1c000cd78\n; ... ETW trace + cleanup ...\n0x1c000cd85: xor     edx, edx\n0x1c000cd87: mov     rcx, rdi                    ; P\n0x1c000cd8a: call    qword [rel 0x1c000a208]     ; ExFreePoolWithTag(P, 0)\n0x1c000cd91: nop     dword [rax+rax]\n0x1c000cd96: mov     eax, esi                    ; return status\n0x1c000cd98: lea     r11, [rsp+0x70]\n0x1c000cd9d: mov     rbx, qword [r11+0x30]\n0x1c000cda1: mov     rbp, qword [r11+0x38]\n0x1c000cda5: mov     rsi, qword [r11+0x40]\n0x1c000cda9: mov     rsp, r11\n0x1c000cdac: pop     r15\n0x1c000cdae: pop     r14\n0x1c000cdb0: pop     r13\n0x1c000cdb2: pop     r12\n0x1c000cdb4: pop     rdi\n0x1c000cdb5: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "disk!DiskGetCacheInformation (sub_1c000cbf0)",
+            "address": "0x1c000cbf0",
+            "why": "Function entry. Set breakpoint here to catch all mode page cache parsing. r14 (rcx on entry) holds the device extension pointer. rbx (rdx on entry) holds the output DISK_CACHE_INFORMATION structure pointer that will receive parsed (and potentially OOB) data."
+          },
+          {
+            "symbol": "disk!DiskGetCacheInformation (sub_1c000cbf0)+0x9e",
+            "address": "0x1c000cc8e",
+            "why": "After ClassFindModePage returns. r9 (rax at this point) holds the mode page 8 pointer into the 0xc0-byte pool buffer (rdi). This is the exact point where the MISSING bounds check should be. In the unpatched binary, execution falls through directly to 0x1c000cc9a and starts reading. In the patched binary, a bounds check is inserted here. Compare r9+0xc against rdi+ecx (buffer + data_length) to see if OOB will occur."
+          },
+          {
+            "symbol": "disk!DiskGetCacheInformation (sub_1c000cbf0)+0xbd",
+            "address": "0x1c000ccad",
+            "why": "First OOB read instruction: 'mov al, byte [r9]'. If r9 points near the end of valid data in the 0xc0-byte buffer, this and subsequent accesses at r9+0x2 through r9+0xb will read out of bounds. Inspect r9 relative to rdi (buffer start) and the transferred data length in ecx."
+          },
+          {
+            "symbol": "disk!DiskGetCacheInformation (sub_1c000cbf0)+0x82",
+            "address": "0x1c000cc82",
+            "why": "ClassFindModePage call site. Before this call, rcx=rdi (buffer P), edx=data length (capped), r8b=0x8 (page code 8), r9b=0x1 (subpage). After return, rax/r9 = mode page pointer. Step over this and inspect the return value to see where mode page 8 was found relative to buffer end."
+          }
+        ],
+        "watch": [
+          "r9 register at 0x1c000cc8e: holds mode_page_ptr returned by ClassFindModePage - this is the pointer that may be near the end of the buffer",
+          "rdi register: holds buffer P (allocated via ExAllocatePoolWithTag, 0xc0 bytes) - the start of the data region",
+          "ecx/ebp at 0x1c000cc64: holds the data length returned by ClassModeSense - compare r9+0xc against rdi+ecx to determine if OOB occurs",
+          "r9+0x0 through r9+0xb: these are the offsets being read that may go OOB (12 bytes total)",
+          "rbx register: holds the output DISK_CACHE_INFORMATION structure pointer - OOB data gets written here and returned to the caller via the IOCTL output buffer",
+          "Pool allocation at 0x1c000cc24: ExAllocatePoolWithTag(0x204, 0xc0, 'ScDC') - the 0xc0-byte buffer being over-read"
+        ],
+        "key_offsets": [
+          "0x1c000cc82: call ClassFindModePage - returns mode page 8 pointer in rax",
+          "0x1c000cc8e: mov r9, rax - mode page pointer saved to r9",
+          "0x1c000cc91-0x1c000cc94: test rax,rax; je - ONLY null check, no size check (this is the vulnerability)",
+          "0x1c000cc9a: xor eax,eax - parsing begins immediately after NULL check, no bounds verification",
+          "0x1c000ccad: mov al, byte [r9] - first OOB-prone read (offset +0x0)",
+          "0x1c000ccb5: mov r11b, byte [r9+0x2] - read at offset +0x2",
+          "0x1c000cd1f: movzx r15d, byte [r9+0x4] - read at offset +0x4",
+          "0x1c000e305: movzx eax, byte [r9+0xb] - last OOB-prone read (offset +0xb), 12th byte",
+          "PATCHED equivalent at ~0x1c000dd00-0x1c000dd20: 'add rax, 0xc; add rcx, rdi; cmp rax, rcx; jbe' - the ADDED bounds check"
+        ],
+        "trigger_setup": "Method 1 (Direct IOCTL): Open a handle to a disk device with CreateFileW(L\"\\\\.\\PhysicalDrive0\", ...) or L\"\\\\.\\C:\", then call DeviceIoControl with dwIoControlCode=0x740D4 (IOCTL_DISK_GET_CACHE_INFORMATION), lpOutBuffer pointing to a DISK_CACHE_INFORMATION struct (24 bytes), nOutBufferSize=24. The disk class driver will issue a SCSI MODE SENSE to the device and parse the response through DiskGetCacheInformation (sub_1c000cbf0). To trigger the bug, the target storage device must return a truncated mode page 8 response.\n\nMethod 2 (Virtual/USB device): Use a programmable USB device or virtual SCSI controller that responds to MODE SENSE(10) for page code 8 with a response where the mode page 8 header is present but the total data transferred is less than mode_page_offset + 12 bytes. For example, return a 16-byte mode sense response where mode page 8 starts at offset 14, leaving only 2 bytes of page data (needs 12). The PnP manager will automatically enumerate the device, triggering AddDevice -> work item -> DisableWriteCache (sub_1c000eca0) -> DiskGetCacheInformation (sub_1c000cbf0).\n\nMethod 3 (VHD/ISO mount): Mount a crafted VHD or virtual disk image whose SCSI emulation returns truncated mode sense data. Issue IOCTL_DISK_GET_CACHE_INFORMATION on the resulting volume.",
+        "expected_observation": "At the breakpoint 0x1c000cc8e, inspect: !pool r9 (to see pool boundary), evaluate r9+0xc vs rdi+ecx. If r9+0xc > rdi+ecx (and especially if r9+0xc > rdi+0xc0), the subsequent reads at 0x1c000ccad through 0x1c000e305 will access pool memory beyond the valid data region. Under Special Pool (verifier), this will cause an immediate BSOD with BUGCODE_INVALID_DRIVER_ACCESS or PAGE_FAULT_IN_NONPAGED_AREA. Without verifier, the OOB bytes are silently read and returned in the DISK_CACHE_INFORMATION output buffer - use !dt _DISK_CACHE_INFORMATION @rbx to see the parsed output containing leaked pool data. Kernel address leak can be confirmed by comparing output field values against expected device cache parameters.",
+        "notes": "Key structure offsets: DISK_CACHE_INFORMATION = { BOOLEAN WriteCacheEnabled (+0x0), BOOLEAN WriteRetentionPolicy (+0x1), BOOLEAN FlushCacheEnabled (+0x2), ULONG WriteCacheType (+0x4), ULONG WriteCachePolicy (+0x8), USHORT CacheSize (+0xc), USHORT PrefetchSize (+0x10), USHORT MaximumCacheSize (+0x12), BOOLEAN Pad (+0xe), USHORT DiskCacheSize (+0x14) }. The 0xc0-byte buffer is allocated with tag 'ScDC' (0x43446353) from NonPagedPoolNxCacheAligned (pool type 0x204). The ASLR slide affects all addresses; use 'lm disk' to get the loaded base and add offsets accordingly. The vulnerability is also reachable via two other callers: DiskStartFdo (sub_1c000ca00) (cache setter, reached during SetCacheInformation IOCTL) and DisableWriteCache (sub_1c000eca0) (work item, reached during AddDevice). To distinguish the vulnerable path from safe paths: safe = data_length >= mode_page_offset + 12; vulnerable = data_length < mode_page_offset + 12."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "DiskSetCacheInformation (unpatched 0x1C0010C48, patched 0x1C001315C)",
+      "entry_point": "IOCTL_DISK_SET_CACHE_INFORMATION (0x7C088) via DeviceIoControl on disk device handle",
+      "call_chain": [
+        "DeviceIoControl(IOCTL_DISK_SET_CACHE_INFORMATION=0x7C088)",
+        "DiskDeviceControl (0x1C0001770) dispatch",
+        "DiskIoctlSetCacheInformation (0x1C000F910) - IOCTL_DISK_SET_CACHE_INFORMATION handler",
+        "DiskSetCacheInformation (0x1C0010C48) - mode page cache writer - VULNERABLE"
+      ],
+      "vulnerability_class": "Out-of-bounds write (CWE-787) in SCSI mode page parsing",
+      "description": "DiskSetCacheInformation is the write counterpart of the covered DiskGetCacheInformation and shares the identical parsing prologue: it allocates a 0xC0-byte NonPagedPoolNxCacheAligned buffer (tag 'ScDC'), memset-zeroes it, calls ClassModeSense (page code 8, caching) to fill it, then calls ClassFindModePage with search_len = min(data_length, buffer[0]+1) to locate the caching mode page descriptor inside the buffer. Where the read function reads a fixed 12-byte field window, this function WRITES that window (offsets +0x0 through +0xB) by merging caller-supplied DISK_CACHE_INFORMATION input (arg2 / rbx) into the located descriptor bytes and then handing the buffer to DiskModeSelect. The unpatched code (0x1C0010C48) performs ONLY a NULL check on the ClassFindModePage return (test rax,rax; jnz loc_1C0010D93 at 0x1C0010D84/0x1C0010D87) and then unconditionally stores to [rsi+0] (and byte ptr [rax],7Fh at 0x1C0010D93), [rsi+2] (0x1C0010DA4), [rsi+3] (0x1C0010DE6), [rsi+4]..[rsi+9] (0x1C0010E0A-0x1C0010E28), and conditionally [rsi+0Ah]/[rsi+0Bh] (0x1C0010E34/0x1C0010E3A) - WITHOUT verifying that the descriptor plus 12 bytes remains inside the searched region. If a malicious or malfunctioning storage device returns a MODE SENSE response where the mode page 8 descriptor sits near the tail of the transferred data with fewer than 12 bytes remaining, these stores write past the end of the 0xC0-byte allocation into adjacent non-paged pool. The write offset is device-controlled (the device positions the descriptor near the tail) and the written data is partly caller-controlled (values derived from the DISK_CACHE_INFORMATION structure the IOCTL caller supplies). The patched build (0x1C001315C) inserts the identical bounds guard used in the read fix immediately after the NULL check (0x1C00132B1: mov ecx,r14d [search_len]; add rax,0Ch; add rcx,rbp [buffer base]; cmp rax,rcx; jbe loc_1C0013300), bailing with STATUS_UNSUCCESSFUL (0xC0000001, r14d at 0x1C00132F5) before any store. Impact: bounded non-paged pool out-of-bounds write causing pool corruption and a bugcheck (DoS), with potential to serve as a stepping stone toward elevation of privilege - materially more severe than the read counterpart.",
+      "trigger_conditions": "1. Attacker controls a storage device the target enumerates (physical USB device, iSCSI LUN, virtual/emulated disk, VHD/ISO mount) whose SCSI MODE SENSE(10) responses for page code 8 (caching) they can shape. 2. The device returns a response where the total transferred length is >= 4 bytes, ClassFindModePage locates a mode page 8 header, but the descriptor is positioned so that mode_page_ptr + 12 exceeds buffer_start + search_len (descriptor near the tail with fewer than 12 bytes remaining). 3. A caller with access to the disk device issues DeviceIoControl with IOCTL_DISK_SET_CACHE_INFORMATION (0x7C088) supplying a DISK_CACHE_INFORMATION input buffer whose fields become the written bytes. The set path typically requires a caller holding write access to the disk (commonly administrator for a physical drive). The writer is also reached from device-start paths DiskStartFdo (0x1C000CA00) and DisableWriteCache (0x1C000ECA0) triggered by PnP enumeration of the device.",
+      "primitive": "Bounded non-paged pool out-of-bounds write: a fixed 12-byte field window (+0x0..+0xB) is stored to the ClassFindModePage-returned descriptor without verifying it fits inside the searched region. Because the descriptor position is device-controlled, the store target can be placed so the tail of the window crosses the end of the 0xC0-byte 'ScDC' allocation into adjacent non-paged pool. The written bytes are partly caller-controlled (DISK_CACHE_INFORMATION input merged via mask/XOR with the existing byte). Demonstrable impact is pool corruption (bugcheck / DoS); elevation of privilege is a plausible escalation but no full exploit chain is claimed.",
+      "evidence": "Unpatched DiskSetCacheInformation @ 0x1C0010C48 (disk_unpatched.asm) - rsi = mode_page_ptr from ClassFindModePage, rbx = arg2 (input DISK_CACHE_INFORMATION), r14 = 0xC0-byte 'ScDC' buffer:\n\n00000001C0010C7D  call    cs:__imp_ExAllocatePoolWithTag  ; NonPagedPoolNxCacheAligned 0xC0, tag 'ScDC' (0x43446353)\n00000001C0010C89  mov     r14, rax                        ; buffer P\n00000001C0010CE9  call    cs:__imp_ClassModeSense         ; page code 8\n00000001C0010D75  call    cs:__imp_ClassFindModePage      ; page code 8, subpage 1\n00000001C0010D81  mov     rsi, rax                        ; rsi = mode_page_ptr\n00000001C0010D84  test    rax, rax\n00000001C0010D87  jnz     short loc_1C0010D93             ; *** ONLY NULL CHECK, no size check ***\n00000001C0010D93  and     byte ptr [rax], 7Fh             ; OOB WRITE +0x0\n00000001C0010DA4  mov     [rsi+2], cl                     ; OOB WRITE +0x2\n00000001C0010DE6  mov     [rsi+3], al                     ; OOB WRITE +0x3\n00000001C0010E0A  mov     [rsi+4], al                     ; OOB WRITE +0x4\n00000001C0010E28  mov     [rsi+9], al                     ; OOB WRITE +0x9\n00000001C0010E3A  mov     [rsi+0Bh], al                   ; OOB WRITE +0xB (conditional)\n\nPatched DiskSetCacheInformation @ 0x1C001315C (disk_patched.asm) adds the identical guard the read fix received:\n\n00000001C001329E  mov     rdi, rax                        ; rdi = mode_page_ptr\n00000001C00132A1  test    rax, rax\n00000001C00132A4  jnz     short loc_1C00132B1\n00000001C00132B1  mov     ecx, r14d                       ; search_len = min(data_length, buffer[0]+1)\n00000001C00132B4  add     rax, 0Ch                        ; mode_page_ptr + 12\n00000001C00132B8  add     rcx, rbp                        ; buffer_start + search_len\n00000001C00132BB  cmp     rax, rcx\n00000001C00132BE  jbe     short loc_1C0013300             ; ok -> writes; else\n00000001C00132F5  mov     r14d, 0C0000001h                ; STATUS_UNSUCCESSFUL\n00000001C00132FB  jmp     loc_1C0013485                   ; bail before any write",
+      "assembly": "See evidence field and the assembly_diff for DiskSetCacheInformation in changed_functions. Unpatched writer @ 0x1C0010C48: after ClassFindModePage (0x1C0010D75) the returned pointer in rsi is only NULL-checked (0x1C0010D84 test rax,rax; 0x1C0010D87 jnz loc_1C0010D93) and then written at offsets +0x0 (0x1C0010D93 and byte ptr [rax],7Fh), +0x2 (0x1C0010DA4), +0x3 (0x1C0010DE6), +0x4 (0x1C0010E0A), +0x5 (0x1C0010E10), +0x6 (0x1C0010E16), +0x7 (0x1C0010E1C), +0x8 (0x1C0010E22), +0x9 (0x1C0010E28), and conditionally +0xA (0x1C0010E34) / +0xB (0x1C0010E3A). Patched writer @ 0x1C001315C inserts the bounds check at 0x1C00132B1-0x1C00132BE (mov ecx,r14d; add rax,0Ch; add rcx,rbp; cmp rax,rcx; jbe loc_1C0013300) and bails at 0x1C00132F5 with 0xC0000001 before any store; the same writes then occur against rdi at loc_1C0013300.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "disk!DiskSetCacheInformation",
+            "address": "0x1C0010C48",
+            "why": "Function entry (unpatched). rcx (arg1) = device extension, rdx (arg2) = input DISK_CACHE_INFORMATION supplied by the IOCTL caller whose fields become the bytes written into the mode page descriptor."
+          },
+          {
+            "symbol": "disk!DiskSetCacheInformation+0x139",
+            "address": "0x1C0010D81",
+            "why": "After ClassFindModePage returns. rsi = mode_page_ptr into the 0xC0-byte 'ScDC' buffer (r14). This is the exact point where the MISSING bounds check should be. Compare rsi+0xC against r14+search_len; if greater, the following stores go out of bounds."
+          },
+          {
+            "symbol": "disk!DiskSetCacheInformation+0x14b",
+            "address": "0x1C0010D93",
+            "why": "First OOB write instruction: 'and byte ptr [rax], 7Fh' (rax == rsi == mode_page_ptr). If rsi is near the end of valid data, this and the subsequent stores at rsi+0x2..rsi+0xB write past the allocation into adjacent non-paged pool."
+          }
+        ],
+        "watch": [
+          "rsi at 0x1C0010D81: mode_page_ptr returned by ClassFindModePage - the store target that may be near the buffer tail",
+          "r14: the 0xC0-byte 'ScDC' buffer base (ExAllocatePoolWithTag, pool type 0x204)",
+          "rbx (arg2): input DISK_CACHE_INFORMATION - source of the bytes written at rsi+0x0..rsi+0xB (e.g. [rbx+1], [rbx+2], [rbx+4], [rbx+8], [rbx+0Ch]..[rbx+15h])",
+          "rsi+0x0 through rsi+0xB: the 12-byte window being written that may cross the end of the allocation"
+        ],
+        "key_offsets": [
+          "0x1C0010D75: call ClassFindModePage - returns descriptor pointer in rax",
+          "0x1C0010D81: mov rsi, rax - descriptor pointer saved",
+          "0x1C0010D84-0x1C0010D87: test rax,rax; jnz - ONLY null check, no size check (the vulnerability)",
+          "0x1C0010D93: and byte ptr [rax],7Fh - first OOB-prone write (+0x0)",
+          "0x1C0010E3A: mov [rsi+0Bh], al - last OOB-prone write (+0xB), 12th byte",
+          "PATCHED @ 0x1C00132B1-0x1C00132BE: mov ecx,r14d; add rax,0Ch; add rcx,rbp; cmp rax,rcx; jbe - the ADDED bounds check; bail at 0x1C00132F5 (r14d = 0xC0000001)"
+        ],
+        "trigger_setup": "Open a handle to a disk device (CreateFileW(L\"\\\\.\\PhysicalDrive0\", GENERIC_READ|GENERIC_WRITE, ...)), then call DeviceIoControl with dwIoControlCode=0x7C088 (IOCTL_DISK_SET_CACHE_INFORMATION) and lpInBuffer pointing to a DISK_CACHE_INFORMATION structure. The target storage device (programmable USB, virtual SCSI controller, or crafted VHD/iSCSI LUN) must answer MODE SENSE(10) for page code 8 with a response where the mode page 8 descriptor is present but positioned so that fewer than 12 bytes follow it (mode_page_offset + 12 > transferred length). The set-cache handler DiskIoctlSetCacheInformation (0x1C000F910) calls DiskSetCacheInformation (0x1C0010C48), which then writes the 12-byte window into the descriptor.",
+        "expected_observation": "At 0x1C0010D81 inspect rsi vs r14 and search_len; if rsi+0xC > r14+search_len (and especially rsi+0xC > r14+0xC0), the stores at 0x1C0010D93 through 0x1C0010E3A write beyond the 'ScDC' allocation. Under Special Pool (Driver Verifier) on disk.sys this causes an immediate BSOD (DRIVER_CORRUPTED_EXPOOL / PAGE_FAULT_IN_NONPAGED_AREA / BAD_POOL_HEADER) with the faulting store IP inside DiskSetCacheInformation. Without verifier the write corrupts adjacent non-paged pool, typically leading to a later bugcheck.",
+        "notes": "DiskSetCacheInformation shares the DISK_CACHE_INFORMATION layout and the 'ScDC'/0xC0/NonPagedPoolNxCacheAligned allocation with DiskGetCacheInformation; the only difference is direction (stores instead of loads), which makes this CWE-787 rather than CWE-125. ASLR slides the module base; rebase offsets with 'lm disk'. Also reachable from DiskStartFdo (0x1C000CA00) and DisableWriteCache (0x1C000ECA0) during device start."
+      }
+    }
+  ],
+  "summary": "The patch fixes two out-of-bounds defects in disk.sys's SCSI mode page 8 (caching) routines by applying the same missing bounds check to both. (1) A medium-severity out-of-bounds read (CWE-125) in the parser DiskGetCacheInformation (unpatched 0x1C000CBF0, patched 0x1C000DBA4). The unpatched code calls ClassFindModePage to locate the caching mode page within a 0xC0-byte kernel buffer, then reads a fixed 12-byte field window from the returned pointer after only a NULL check, without verifying that pointer+12 falls within the searched region. A storage device whose SCSI responses the attacker controls (USB, iSCSI, virtual/emulated disk) can position the mode page 8 descriptor near the tail of a full-length MODE SENSE response so the window crosses the end of the 0xC0-byte allocation; the buffer is memset-zeroed first, so the over-read discloses at most ~11 bytes of adjacent non-paged pool into the DISK_CACHE_INFORMATION output returned via IOCTL_DISK_GET_CACHE_INFORMATION (0x740D4), or faults (DoS) if it reaches an unmapped address. The patch adds a bounds check (mode_page_ptr + 12 <= buffer_start + search_len, where search_len = min(data_length, buffer[0]+1)) that bails with STATUS_UNSUCCESSFUL before accessing the fields. (2) A high-severity out-of-bounds write (CWE-787) in the companion writer DiskSetCacheInformation (unpatched 0x1C0010C48, patched 0x1C001315C), which shares the identical prologue but WRITES the same 12-byte field window (+0x0..+0xB) from caller-supplied DISK_CACHE_INFORMATION data into the located descriptor. The unpatched writer performs only a NULL check before the stores; the patch inserts the identical bounds guard (add rax,0xC; add rcx,base; cmp; jbe) before any write. It is reachable via IOCTL_DISK_SET_CACHE_INFORMATION (0x7C088) through the DiskIoctlSetCacheInformation handler (0x1C000F910), and a device-controlled truncated mode page 8 descriptor causes a bounded write into adjacent non-paged pool (pool corruption / DoS, potential elevation of privilege). A secondary hardening change in the DiskDeviceControl dispatch (unpatched 0x1C0001770, patched 0x1C00010C0) adds early rejection of certain storage IOCTLs when the device sub-object state field ([dev+0x208]+0x1C) equals 0x11. No full exploit chain is claimed."
+}

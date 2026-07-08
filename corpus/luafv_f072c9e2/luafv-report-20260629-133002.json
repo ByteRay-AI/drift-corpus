@@ -1,0 +1,120 @@
+{
+  "binaries": {
+    "title": "luafv.sys - Missing synchronization (race) on UAC file-virtualization directory-query stream handle context lazy init, fixed behind a WIL feature-staging gate",
+    "id_unpatched": "luafv_unpatched.sys",
+    "id_patched": "luafv_patched.sys",
+    "overall_similarity": 0.9648,
+    "matched": 214,
+    "changed": 1,
+    "identical": 213,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "LuafvQueryStoreDirectory",
+      "address_unpatched": "0x1C0014DB4",
+      "address_patched": "0x1C0015F34",
+      "similarity": 0.7348,
+      "change_type": "security_relevant_feature_gated",
+      "key_changes": [
+        "ADDED (feature-gated): Recursive exclusive push lock (FltAcquirePushLockExclusiveEx) acquired at function entry on the stream-handle-context push lock at arg3+0x20, tracking owner thread (KeGetCurrentThread via gs:0x188) at +0x08 and recursion count at +0x10.",
+        "ADDED (feature-gated): Matching FltReleasePushLockEx at function exit, with recursion-count decrement and owner-thread clearing when recursion returns to base.",
+        "GATE: Both the acquire and the release are guarded by Feature_3757245754__private_IsEnabledDeviceUsage() (a WIL feature-staging predicate). When it returns 0, the lock is skipped (jz at 0x1C0015F66 / 0x1C00160DC) and the original unsynchronized body runs unchanged. This is a staged / feature-gated rollout with the pre-existing path retained, not an unconditional fix.",
+        "UNPATCHED behavior: the lazy allocation of a 0x40-byte PagedPool buffer at arg3+0x60 via LuafvAllocatePool (tag 0x16), memset zeroing, two LuafvOpenDirectory calls, MmMapLockedPagesSpecifyCache on the query MDL, and LuafvMergeStoreDirectory all execute with NO lock.",
+        "Body logic is otherwise unchanged; the only functional difference is the feature-gated synchronization wrapper."
+      ],
+      "security_relevant": true,
+      "security_notes": "PRE-PATCH PATTERN: LuafvQueryStoreDirectory is reached only from the pre-operation callback LuafvPreDirectoryControl (0x1C000FD10) for IRP_MJ_DIRECTORY_CONTROL with minor function IRP_MN_QUERY_DIRECTORY (minor==1, guarded by 'cmp byte [Iopb+5],1' at 0x1C000FDB6, then a file-information-class dispatch at 0x1C000FDE0 / jump table at 0x1C0017297; call site at 0x1C000FE03). It lazily allocates and populates a 0x40-byte buffer in the shared stream-handle context (arg3+0x60) and maps the query MDL, all without holding any lock. If two directory-query operations run concurrently on the same stream-handle context (overlapped/async IRP_MJ_DIRECTORY_CONTROL on the same handle), both can observe arg3+0x60==NULL, both allocate, and one store overwrites the other; the loser's 0x40 PagedPool allocation (tag 0x16) is leaked and both threads run the open/merge pipeline over the same shared buffer, corrupting the directory-merge state. No free of arg3+0x60 occurs in this function, so no use-after-free is demonstrated. The patched build wraps the body in FltAcquirePushLockExclusiveEx/FltReleasePushLockEx, but only when the WIL feature Feature_3757245754__private_IsEnabledDeviceUsage is enabled. CWE-362 (Missing Synchronization / Race Condition). Severity Low: narrow directory-query-only reachability, first-init window, feature-gated delivery, and no demonstrated memory-safety violation beyond a pool leak / concurrent double-init.",
+      "assembly_diff": "UNPATCHED LuafvQueryStoreDirectory @ 0x1C0014DB4 (no lock):\n0x1C0014DC8  mov     rsi, [rdx+10h]          ; Iopb\n0x1C0014DCC  mov     rdi, r8                 ; StreamHandleContext\n0x1C0014DCF  mov     r8, [r8+60h]            ; read ctx->buf, NO LOCK\n0x1C0014DD9  mov     r12d, [rsi+18h]         ; len\n0x1C0014DDD  test    r8, r8\n0x1C0014DE0  jnz     0x1C0014E12             ; skip alloc if set\n0x1C0014DE2  mov     ebx, 40h                ; size 0x40\n0x1C0014DE7  mov     r8b, 16h                ; tag 0x16\n0x1C0014DEC  lea     ecx, [rbx-3Fh]          ; PoolType 1 (PagedPool)\n0x1C0014DEF  call    LuafvAllocatePool       ; NO LOCK\n0x1C0014DF4  mov     [rdi+60h], rax          ; store ctx->buf, NO LOCK\n0x1C0014DF8  test    rax, rax\n0x1C0014DFB  jz      0x1C0018DCE             ; -> 0xC000009A\n0x1C0014E09  call    memset\n0x1C0014E0E  mov     r8, [rdi+60h]\n0x1C0014E1B  call    LuafvOpenDirectory      ; NO LOCK\n0x1C0014E2A  mov     r8, [rdi+60h]\n0x1C0014E32  add     r8, 20h\n0x1C0014E3C  call    LuafvOpenDirectory      ; NO LOCK\n0x1C0014E53  mov     rcx, [rsi+40h]          ; query MDL\n0x1C0018DFA  call    MmMapLockedPagesSpecifyCache ; NO LOCK\n0x1C0014EB5  call    LuafvMergeStoreDirectory ; NO LOCK\n0x1C0014ED9  retn\n\nPATCHED LuafvQueryStoreDirectory @ 0x1C0015F34 (feature-gated lock):\n0x1C0015F59  call    Feature_3757245754__private_IsEnabledDeviceUsage\n0x1C0015F64  test    eax, eax\n0x1C0015F66  jz      0x1C0015FA3             ; feature OFF -> skip lock, run old path\n0x1C0015F68  mov     rbx, [rdi+20h]          ; push lock ctx+0x20\n0x1C0015F6C  mov     rax, gs:188h            ; KeGetCurrentThread\n0x1C0015F75  cmp     [rbx+8], rax            ; already owner?\n0x1C0015F7B  add     [rbx+10h], r14d         ; recursive ++count\n0x1C0015F86  call    FltAcquirePushLockExclusiveEx\n0x1C0015F9B  mov     [rbx+8], rax            ; owner = current thread\n0x1C0015F9F  mov     [rbx+10h], r14d         ; recursion = 1\n0x1C0015FA3  ... [body identical, serialized only when feature on] ...\n0x1C00160D5  call    Feature_3757245754__private_IsEnabledDeviceUsage\n0x1C00160DC  jz      0x1C001610A            ; feature OFF -> skip release\n0x1C00160F1  sub     dword ptr [rcx+10h], 1\n0x1C00160FE  call    FltReleasePushLockEx"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_3757245754__private_IsEnabledDeviceUsage",
+      "Feature_3757245754__private_IsEnabledFallback",
+      "wil_details_* / wil_*StagingConfig* / wil_details_FeatureReporting_* (WIL feature-staging plumbing supporting the gate; no independent luafv security logic)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "LuafvQueryStoreDirectory",
+      "address_unpatched": "0x1C0014DB4",
+      "address_patched": "0x1C0015F34",
+      "entry_point": "Pre-operation callback LuafvPreDirectoryControl (0x1C000FD10), registered for IRP_MJ_DIRECTORY_CONTROL. Reached only for minor function IRP_MN_QUERY_DIRECTORY (minor==1) via the store-merge path; call site at 0x1C000FE03.",
+      "call_chain": [
+        "User-mode directory enumeration (FindFirstFileW/FindNextFileW / NtQueryDirectoryFile) on a luafv-virtualized directory by a non-elevated process",
+        "FltMgr dispatches IRP_MJ_DIRECTORY_CONTROL to LuafvPreDirectoryControl (0x1C000FD10)",
+        "LuafvPreDirectoryControl requires minor == IRP_MN_QUERY_DIRECTORY (cmp byte [Iopb+5],1 at 0x1C000FDB6), dispatches on file-information class (cmp edx,3 at 0x1C000FDE0 / jump table at 0x1C0017297), and calls LuafvQueryStoreDirectory at 0x1C000FE03",
+        "LuafvQueryStoreDirectory runs the unsynchronized lazy-init/open/merge pipeline on the shared context buffer at arg3+0x60"
+      ],
+      "vulnerability_class": "Missing Synchronization / Race Condition (CWE-362)",
+      "cwe": "CWE-362",
+      "description": "LuafvQueryStoreDirectory lazily initializes a 0x40-byte buffer stored in the shared stream-handle context at arg3+0x60: (1) read arg3+0x60, (2) if NULL allocate via LuafvAllocatePool(PagedPool, 0x40, tag 0x16), (3) store at arg3+0x60, (4) memset zero, (5) two LuafvOpenDirectory calls (into buf and buf+0x20), (6) MmMapLockedPagesSpecifyCache on the query MDL from Iopb+0x40, (7) LuafvMergeStoreDirectory merging store and virtual directory listings. In the unpatched build none of these steps hold a lock. Two concurrent directory-query operations on the same stream-handle context can both observe arg3+0x60==NULL, both allocate, and one store overwrites the other, leaking the loser's allocation and causing both threads to run the open/merge pipeline over the same shared buffer, corrupting the directory-merge state. The buffer at arg3+0x60 is not freed within this function, so no use-after-free is demonstrated by the diff. The patched build adds FltAcquirePushLockExclusiveEx/FltReleasePushLockEx around the body, but only when the WIL feature Feature_3757245754__private_IsEnabledDeviceUsage is enabled; when disabled the original unsynchronized path runs.",
+      "impact": "Demonstrable impact is limited to a pool-memory leak (orphaned 0x40 PagedPool allocation, tag 0x16) and concurrent double-initialization / corruption of the shared per-context directory-merge buffer under a narrow directory-query race. No information leak, use-after-free, controlled kernel read/write, or privilege-escalation primitive is established by the two builds.",
+      "trigger_conditions": "1) Run as a standard (non-elevated) user with UAC file virtualization active. 2) Enumerate a directory backed by the luafv virtual store. 3) From multiple threads (or via overlapped/async I/O) issue concurrent IRP_MJ_DIRECTORY_CONTROL / IRP_MN_QUERY_DIRECTORY requests (NtQueryDirectoryFile / FindNextFileW) on the same handle so two callbacks enter LuafvQueryStoreDirectory on the same context. The race window is between the NULL-check of arg3+0x60 (0x1C0014DCF/0x1C0014DDD) and the store of the new pointer (0x1C0014DF4), widest on the first query when arg3+0x60 is still NULL.",
+      "evidence_addresses": [
+        "0x1C0014DCF: mov r8, [r8+60h] -- unsynchronized read of shared buffer pointer (no lock in unpatched)",
+        "0x1C0014DDD/0x1C0014DE0: test r8,r8 ; jnz -- NULL-check both threads can pass",
+        "0x1C0014DEF: call LuafvAllocatePool -- PagedPool, 0x40 bytes, tag 0x16",
+        "0x1C0014DF4: mov [rdi+60h], rax -- unsynchronized store (race-decider)",
+        "0x1C0014E2A: mov r8, [rdi+60h] -- second LuafvOpenDirectory re-reads shared pointer",
+        "0x1C0018DFA: call MmMapLockedPagesSpecifyCache -- maps query MDL (Iopb+0x40)",
+        "0x1C0014EB5: call LuafvMergeStoreDirectory -- merge over shared buffer",
+        "0x1C000FE03: call LuafvQueryStoreDirectory (in LuafvPreDirectoryControl)",
+        "0x1C0015F59 / 0x1C0015F86 / 0x1C00160FE (patched): feature gate, FltAcquirePushLockExclusiveEx, FltReleasePushLockEx"
+      ],
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "luafv_unpatched!LuafvQueryStoreDirectory",
+            "address": "0x1C0014DB4",
+            "why": "Entry. rcx=PFLT_INSTANCE, rdx=PFLT_CALLBACK_DATA, r8=StreamHandleContext. [r8+0x60] is the lazily-allocated buffer being raced."
+          },
+          {
+            "symbol": "luafv_unpatched!LuafvQueryStoreDirectory+0x1b",
+            "address": "0x1C0014DCF",
+            "why": "Unsynchronized read of ctx+0x60. If NULL, the alloc path is taken. Two threads observing NULL here is the race condition."
+          },
+          {
+            "symbol": "luafv_unpatched!LuafvQueryStoreDirectory+0x3b",
+            "address": "0x1C0014DEF",
+            "why": "LuafvAllocatePool(PagedPool, 0x40, 0x16). The store at 0x1C0014DF4 (mov [rdi+60h], rax) is the unsynchronized race-decider."
+          },
+          {
+            "symbol": "luafv_unpatched!LuafvQueryStoreDirectory+0x76",
+            "address": "0x1C0014E2A",
+            "why": "Second LuafvOpenDirectory re-reads [rdi+0x60]; in a race this may differ from the pointer just allocated."
+          },
+          {
+            "symbol": "luafv_unpatched!LuafvPreDirectoryControl",
+            "address": "0x1C000FD10",
+            "why": "The pre-op callback. Requires IRP_MN_QUERY_DIRECTORY; calls LuafvQueryStoreDirectory at 0x1C000FE03."
+          }
+        ],
+        "watch": [
+          "[rdi+0x60] (arg3+0x60): the shared lazy-init buffer pointer -- watch for two threads seeing NULL, or one pointer overwriting another's",
+          "rax return of LuafvAllocatePool @ 0x1C0014DEF: the new 0x40 PagedPool buffer (tag 0x16); the loser's is leaked",
+          "[rsi+0x40]: query MDL from Iopb used by MmMapLockedPagesSpecifyCache",
+          "gs:0x188 (KeGetCurrentThread): used only by the patched feature-on path for recursive lock ownership",
+          "r12d = [rsi+0x18]: length parameter passed to LuafvOpenDirectory and LuafvMergeStoreDirectory"
+        ],
+        "key_offsets": [
+          "0x1C0014DCF: read of shared buffer pointer (no lock in unpatched)",
+          "0x1C0014DDD/0x1C0014DE0: NULL-check race-window start",
+          "0x1C0014DEF: LuafvAllocatePool(PagedPool, 0x40, 0x16)",
+          "0x1C0014DF4: unsynchronized store of new pointer (race-decider)",
+          "0x1C0018DFA: MmMapLockedPagesSpecifyCache on query MDL",
+          "0x1C0014EB5: LuafvMergeStoreDirectory on shared buffer",
+          "0x1C000FE03: call site in LuafvPreDirectoryControl"
+        ],
+        "trigger_setup": "1) Standard (non-elevated) user with UAC virtualization active. 2) Enumerate a luafv-virtualized directory. 3) Issue concurrent overlapped/async IRP_MJ_DIRECTORY_CONTROL / IRP_MN_QUERY_DIRECTORY (NtQueryDirectoryFile / FindNextFileW) on the same handle so two callbacks enter LuafvQueryStoreDirectory on the same context; the race is widest on the first query when arg3+0x60 is NULL.",
+        "expected_observation": "Demonstrable: a leaked 0x40 PagedPool allocation (tag 0x16) when both threads allocate, and concurrent open/merge over the same shared buffer corrupting the directory-merge state. On patched builds with the feature enabled, the push lock at 0x1C0015F86 serializes the path; with the feature disabled the patched build behaves like the unpatched one. No use-after-free, arbitrary read/write, or EoP primitive is demonstrable from the diff.",
+        "notes": "The lock is at stream_context+0x20 (recursive exclusive push lock: owner thread at +0x08, recursion count at +0x10). It is NOT acquired unconditionally: it is gated by Feature_3757245754__private_IsEnabledDeviceUsage() (a WIL feature-staging predicate); if it returns 0 (jz at 0x1C0015F66) the lock is skipped and the original path runs. 0xC000009A (STATUS_INSUFFICIENT_RESOURCES) is the allocation-failure return."
+      }
+    }
+  ],
+  "summary": "The only behavioral change between the two luafv.sys builds is in LuafvQueryStoreDirectory (0x1C0014DB4 -> 0x1C0015F34). The patched build wraps the function body in a recursive exclusive push lock (FltAcquirePushLockExclusiveEx/FltReleasePushLockEx) on the stream-handle-context push lock at arg3+0x20, addressing a missing-synchronization pattern in the lazy initialization of a 0x40-byte per-context buffer at arg3+0x60. The lock is gated behind a WIL feature-staging flag (Feature_3757245754__private_IsEnabledDeviceUsage); when the flag is off the lock is skipped and the pre-existing unsynchronized path runs, so this is a staged / feature-gated rollout with the old path retained. The function is reached only from the pre-operation callback LuafvPreDirectoryControl for IRP_MJ_DIRECTORY_CONTROL with minor function IRP_MN_QUERY_DIRECTORY (not from CREATE/READ/WRITE/QUERY_EA/SET_EA). Under concurrent directory-query I/O on the same context, two threads can both allocate the buffer and one overwrites the other, leaking the loser's 0x40 PagedPool allocation (tag 0x16) and causing concurrent double-initialization / corruption of the shared buffer. No free of the buffer occurs in the function, so no use-after-free is demonstrated; there is no evidence for an information leak, controlled read/write, or privilege escalation. Severity Low, CWE-362. All other function-level differences are global-data address relocations caused by linking in the WIL feature-staging framework."
+}

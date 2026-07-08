@@ -1,0 +1,154 @@
+{
+  "binaries": {
+    "title": "mrxsmb10.sys (SMB 1.0 Redirector) - No security-relevant change (WIL feature-staging rollout of server-transport reference validation)",
+    "id_unpatched": "mrxsmb10_unpatched.sys",
+    "id_patched": "mrxsmb10_patched.sys",
+    "overall_similarity": 0.9816,
+    "matched": 592,
+    "changed": 4,
+    "identical": 588,
+    "unmatched_unpatched": 21,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MRxSmbHandOverSrvCall (unpatched 0x1C000FFD0, patched 0x1C000EFE0)",
+      "similarity": 0.8488,
+      "change_type": "feature_staging_rollout",
+      "key_changes": [
+        "Removed the WIL feature gate Feature_84197691__private_IsEnabledDeviceUsage (checked at 0x1C001002F and 0x1C00102EC in the unpatched build)",
+        "SmbCepReferenceServerTransport (unpatched 0x1C0013598, patched 0x1C0012558) is now called unconditionally instead of only when the feature flag was enabled",
+        "SmbCepDereferenceServerTransport (unpatched 0x1C0013454, patched 0x1C0012414) is now called unconditionally on cleanup instead of only when the feature flag was enabled and the transport was non-NULL",
+        "In both the feature-enabled and feature-disabled unpatched paths, and in the patched build, the SAME server-transport pointer P is stored at SrvCall+0x140 and passed to SmbCeUpdateTransportDispatchVectors; there is no pointer-indirection difference"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security impact. The unpatched code branches on the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage (this is a feature-staging gate, NOT an SMB2 availability check). On the feature-enabled path SmbCepReferenceServerTransport reads the transport pointer P from the argument slot, validates it (P != NULL and state field [P+0x0C] == 0, else returns 0xC000020C), takes a transient reference (lock xadd [P+8],1), and returns P. On the feature-disabled path the same pointer value P is loaded directly from the same argument slot (mov r15,[rbp+0x1E0]) without validation and without a transient reference. In both cases the identical pointer P is stored into SrvCall+0x140 and passed to SmbCeUpdateTransportDispatchVectors, so there is no type confusion and no one-level indirection error. The transient reference is released by SmbCepDereferenceServerTransport within the same function, so it is net-zero and introduces no persistent reference-count imbalance. The patch removes the feature gate so validation and the transient reference are always performed. This is defense-in-depth hardening (rejecting a torn-down transport and guarding the handover window against a concurrent free), but no reachable trigger for such a condition is demonstrated and the stored/used pointer is unchanged.",
+      "assembly_diff": "UNPATCHED MRxSmbHandOverSrvCall @ 0x1C000FFD0:\n0x1C001002F: call    Feature_84197691__private_IsEnabledDeviceUsage ; WIL feature gate\n0x1C0010034: test    eax, eax\n0x1C0010036: jz      0x1C0010067            ; feature disabled -> direct-load path\n0x1C0010044: call    SmbCepReferenceServerTransport ; enabled: validate + transient ref, out = P\n0x1C0010049: mov     rsi, [rsp+2B0h+var_260]; rsi = P\n0x1C0010067: mov     r15, [rbp+1B0h+arg_20] ; disabled: r15 = P (same slot value)\n0x1C00102EC: call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1C00102F5: mov     [rbx+140h], rsi        ; enabled path stores P\n0x1C00102FE: mov     [rbx+140h], r15        ; disabled path stores P (identical value)\n0x1C0010305: mov     rcx, [rbx+140h]        ; rcx = P\n0x1C0010311: lea     rdx, MRxSmbVctConnectionEventHandler\n0x1C0010318: call    cs:__imp_SmbCeUpdateTransportDispatchVectors ; called with P\n0x1C0010184: call    SmbCepDereferenceServerTransport ; only on feature-enabled cleanup\n\nPATCHED MRxSmbHandOverSrvCall @ 0x1C000EFE0 (feature gate removed):\n0x1C000F04C: call    SmbCepReferenceServerTransport ; unconditional, out = P\n0x1C000F051: mov     r12, [rsp+2B0h+var_260]; r12 = P\n0x1C000F2DC: mov     [rbx+140h], r12        ; store P (unconditional)\n0x1C000F2E3: call    cs:__imp_SmbCeUpdateTransportDispatchVectors ; called with P\n0x1C000F16B: call    SmbCepDereferenceServerTransport ; always"
+    },
+    {
+      "name": "SmbExtSecuritySessionSetupExchangeFinalize (unpatched 0x1C0002F00, patched 0x1C0002780)",
+      "similarity": 0.8465,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage-gated ETW telemetry block (_tlgWriteTransfer_EtwWriteTransfer), reducing the function from 199 to 127 instructions",
+        "WPP trace GUID relocation and register allocation changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbCeCompleteSessionEntryInitialization (unpatched 0x1C0041098, patched 0x1C003FEF8)",
+      "similarity": 0.9807,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the Feature_Servicing_EnableSMBHardeningTelemetry telemetry gate before the ETW logging block",
+        "Register reallocation and WPP trace GUID / address relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry (unpatched 0x1C00247D0, patched 0x1C0023700)",
+      "similarity": 0.9861,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the Feature_Servicing_EnableSMBHardeningTelemetry telemetry gate before ETW logging",
+        "WPP trace GUID and address relocations; wil_InitializeFeatureStaging / wil_UninitializeFeatureStaging remain in both builds",
+        "No semantic security change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [
+      "Feature_84197691__private_IsEnabledDeviceUsage",
+      "Feature_84197691__private_IsEnabledFallback",
+      "Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage",
+      "Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledFallback",
+      "wil_details_FeatureReporting_IncrementOpportunityInCache",
+      "wil_details_FeatureReporting_IncrementUsageInCache",
+      "wil_details_FeatureReporting_RecordUsageInCache",
+      "wil_details_FeatureReporting_ReportUsageToService",
+      "wil_details_FeatureReporting_ReportUsageToServiceDirect",
+      "wil_details_FeatureStateCache_GetCachedFeatureEnabledState",
+      "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath",
+      "wil_details_GetCurrentFeatureEnabledState",
+      "wil_details_IsEnabledFallback",
+      "wil_details_MapReportingKind",
+      "wil_details_StagingConfigFeature_HasUniqueState",
+      "wil_details_StagingConfig_Free",
+      "wil_details_StagingConfig_Load",
+      "wil_details_StagingConfig_QueryFeatureState",
+      "wil_QueryFeatureState",
+      "wil_RtlStagingConfig_QueryFeatureState"
+    ],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "MRxSmbHandOverSrvCall (unpatched 0x1C000FFD0, patched 0x1C000EFE0)",
+      "entry_point": "SMB server-call handover dispatch, invoked by the RDBSS framework during SMB server connection establishment (user-mode SMB tree connect via NtCreateFile / WNetAddConnection2 to \\\\server\\share)",
+      "call_chain": ["RDBSS SrvCall dispatch (user-mode SMB tree connect)", "MRxSmbHandOverSrvCall", "Feature_84197691__private_IsEnabledDeviceUsage selects code path (runtime WIL feature flag, not attacker input)", "SmbCeUpdateTransportDispatchVectors called with the server-transport pointer"],
+      "vulnerability_class": "No security-relevant change (WIL feature-staging rollout; defense-in-depth hardening of server-transport reference validation)",
+      "description": "The unpatched MRxSmbHandOverSrvCall branches on the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage. When enabled, SmbCepReferenceServerTransport reads the server-transport pointer P from the argument slot, validates it (P != NULL and state field [P+0x0C] == 0, else 0xC000020C), takes a transient reference (lock xadd [P+8],1), and returns P. When disabled, the same pointer P is loaded directly from the same slot (mov r15,[rbp+0x1E0]) without validation and without a transient reference. In both paths, and in the patched build, the identical pointer P is stored at SrvCall+0x140 and passed to SmbCeUpdateTransportDispatchVectors. There is no type confusion and no arg5-vs-*arg5 indirection difference: SmbCepReferenceServerTransport returns the value of the argument slot, which is exactly what the direct-load path uses. The transient reference is released by SmbCepDereferenceServerTransport within the same function (net-zero), so no persistent reference-count imbalance exists in either build. The patch removes the feature gate so the validation and transient reference are always performed. This is a hardening/servicing change with no demonstrable reachable primitive.",
+      "trigger_conditions": "MRxSmbHandOverSrvCall runs during SMB server-call handover when a client establishes a connection to \\\\server\\share. Which unpatched path executes is determined solely by the runtime state of the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage, not by attacker-controlled input. Because both paths store and use the same transport pointer P, reaching either path does not produce a distinct corruptible memory operation.",
+      "primitive": "None. The pointer stored at SrvCall+0x140 and passed to SmbCeUpdateTransportDispatchVectors is the same valid server-transport object pointer in both builds and both feature paths. No memory corruption, no type confusion, and no reference-count imbalance / use-after-free is introduced or removed by this diff.",
+      "evidence": "UNPATCHED (decompilation, MRxSmbHandOverSrvCall @ 0x1C000FFD0):\n\n    if (Feature_84197691__private_IsEnabledDeviceUsage())\n    {\n        // validated path: transport = value of arg5 slot = P; refcount++ at [P+8]; reject if NULL or [P+0x0C]!=0\n        SmbCepReferenceServerTransport(&arg5_slot, &transport);  // transport == P\n        arg5_slot = 0;\n        rsi = transport;                                         // rsi == P\n    }\n    else\n    {\n        r15 = arg5_slot;                                         // r15 == P (same value)\n    }\n    // ... common SrvCall setup ...\n    if (Feature_84197691__private_IsEnabledDeviceUsage())\n        *(SrvCall + 0x140) = rsi;                                // == P\n    else\n        *(SrvCall + 0x140) = r15;                                // == P (identical)\n    P = *(SrvCall + 0x140);\n    if (P)\n        SmbCeUpdateTransportDispatchVectors(P, &MRxSmbVctConnectionEventHandler);\n    // cleanup: SmbCepDereferenceServerTransport only on feature-enabled path (releases the transient ref)\n\nPATCHED (MRxSmbHandOverSrvCall @ 0x1C000EFE0, feature gate removed):\n    SmbCepReferenceServerTransport(&arg5_slot, &transport);      // transport == P, unconditional\n    if (transport == NULL) return 0xC000020C;\n    *(SrvCall + 0x140) = transport;                              // == P\n    SmbCeUpdateTransportDispatchVectors(transport, &MRxSmbVctConnectionEventHandler);\n    SmbCepDereferenceServerTransport(&transport);               // always",
+      "assembly": "UNPATCHED MRxSmbHandOverSrvCall @ 0x1C000FFD0:\n\n0x1C001002F: call    Feature_84197691__private_IsEnabledDeviceUsage ; WIL feature gate (NOT an SMB2 check)\n0x1C0010034: test    eax, eax\n0x1C0010036: jz      0x1C0010067            ; feature disabled -> direct-load path\n0x1C0010038: lea     rdx, [rsp+2B0h+var_260]\n0x1C001003D: lea     rcx, [rbp+1B0h+arg_20] ; &arg5_slot\n0x1C0010044: call    SmbCepReferenceServerTransport ; validate + transient ref; out = P\n0x1C0010049: mov     rsi, [rsp+2B0h+var_260]; rsi = P\n0x1C001004E: mov     r15d, edi              ; r15 = 0\n0x1C0010067: mov     r15, [rbp+1B0h+arg_20] ; disabled path: r15 = P (value of same slot)\n0x1C00102EC: call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1C00102F1: test    eax, eax\n0x1C00102F3: jz      0x1C00102FE\n0x1C00102F5: mov     [rbx+140h], rsi        ; enabled path stores P\n0x1C00102FE: mov     [rbx+140h], r15        ; disabled path stores P (identical value)\n0x1C0010305: mov     rcx, [rbx+140h]        ; rcx = P\n0x1C001030C: test    rcx, rcx\n0x1C001030F: jz      0x1C0010324\n0x1C0010311: lea     rdx, MRxSmbVctConnectionEventHandler\n0x1C0010318: call    cs:__imp_SmbCeUpdateTransportDispatchVectors ; called with P\n\n; cleanup (transient ref released only on feature-enabled path):\n0x1C0010171: call    Feature_84197691__private_IsEnabledDeviceUsage\n0x1C0010176: test    eax, eax\n0x1C0010178: jz      0x1C0010189\n0x1C001017A: test    rsi, rsi\n0x1C001017D: jz      0x1C0010189\n0x1C001017F: lea     rcx, [rsp+2B0h+var_260]\n0x1C0010184: call    SmbCepDereferenceServerTransport\n\nSmbCepReferenceServerTransport @ 0x1C0013598 (what it actually does):\n0x1C00135D0: mov     rax, [rsi]             ; rax = *(&arg5_slot) = P\n0x1C00135D3: test    rax, rax\n0x1C00135D6: jz      0x1C001363E            ; NULL -> 0xC000020C\n0x1C00135D8: cmp     [rax+0Ch], ebx         ; reject if state field [P+0x0C] != 0\n0x1C00135DB: jnz     0x1C001363E\n0x1C00135E3: lock xadd [rax+8], r9d         ; transient reference: refcount++ at [P+8]\n0x1C0013636: mov     rax, [rsi]             ; rax = P\n0x1C0013639: mov     [rdi], rax             ; output = P (same pointer the direct-load path uses)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mrxsmb10!MRxSmbHandOverSrvCall",
+            "address": "0x1C000FFD0",
+            "why": "Entry point. rcx=arg1 (server-entry context), rdx=arg2, r8=arg3, r9=arg4 (SrvCall output), [rsp+0x28]=arg5 (server-transport pointer slot)."
+          },
+          {
+            "symbol": "mrxsmb10!MRxSmbHandOverSrvCall+0x5F",
+            "address": "0x1C001002F",
+            "why": "call Feature_84197691__private_IsEnabledDeviceUsage. eax==0 selects the direct-load path; eax!=0 selects the SmbCepReferenceServerTransport path. This is a WIL feature flag, not an SMB2 availability check."
+          },
+          {
+            "symbol": "mrxsmb10!MRxSmbHandOverSrvCall+0x97",
+            "address": "0x1C0010067",
+            "why": "mov r15,[rbp+0x1E0]: loads the server-transport pointer P from the arg5 slot on the feature-disabled path. r15 here equals rsi on the enabled path (0x1C0010049) - the same pointer P."
+          },
+          {
+            "symbol": "mrxsmb10!MRxSmbHandOverSrvCall+0x32E",
+            "address": "0x1C00102FE",
+            "why": "mov [rbx+0x140],r15: stores P into SrvCall+0x140 on the feature-disabled path. Compare with the enabled-path store of rsi at 0x1C00102F5 - both write the same value P."
+          },
+          {
+            "symbol": "mrxsmb10!MRxSmbHandOverSrvCall+0x348",
+            "address": "0x1C0010318",
+            "why": "call SmbCeUpdateTransportDispatchVectors. rcx = [rbx+0x140] = P, identical on both paths. No type-confused pointer is passed."
+          }
+        ],
+        "watch": [
+          "eax after 0x1C0010034: 0 selects the direct-load path, non-zero selects the SmbCepReferenceServerTransport path",
+          "r15 at 0x1C0010067 vs rsi at 0x1C0010049: both hold the same server-transport pointer P",
+          "[rbx+0x140] after the store: equals P on both paths",
+          "rcx at 0x1C0010318: equals P on both paths",
+          "[P+8]: transient reference count, incremented on the feature-enabled path and decremented again by SmbCepDereferenceServerTransport within the same function"
+        ],
+        "key_offsets": [
+          "0x1C001002F: call Feature_84197691__private_IsEnabledDeviceUsage - WIL feature gate selecting the two paths",
+          "0x1C0010067: mov r15,[rbp+0x1E0] - direct load of P on the feature-disabled path",
+          "0x1C0010044 / 0x1C00102EC: SmbCepReferenceServerTransport call and second feature check",
+          "0x1C00102F5 / 0x1C00102FE: store of P into SrvCall+0x140 (rsi vs r15, same value)",
+          "0x1C0010318: SmbCeUpdateTransportDispatchVectors called with P",
+          "0x1C0010184: SmbCepDereferenceServerTransport (releases the transient reference on the enabled path)"
+        ],
+        "trigger_setup": "Not a vulnerability trigger. MRxSmbHandOverSrvCall runs during SMB server-call handover on a client connecting to \\\\server\\share. The chosen path in the unpatched build depends only on the runtime state of the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage.",
+        "expected_observation": "On both the feature-enabled and feature-disabled paths, r15/rsi, [rbx+0x140], and rcx at the SmbCeUpdateTransportDispatchVectors call all hold the same valid server-transport pointer P. No corruption, page fault, or type-confused pointer occurs. The only behavioral difference is the presence (enabled) or absence (disabled) of the non-null / not-torn-down validation and the transient reference on [P+8].",
+        "notes": "SmbCepReferenceServerTransport (unpatched 0x1C0013598, patched 0x1C0012558) reads *arg1 (the value of the arg5 slot), validates it, increments the transient reference at offset +8, and returns that same value. It does not add a level of indirection. SmbCepDereferenceServerTransport (unpatched 0x1C0013454, patched 0x1C0012414) releases that transient reference. The patch removes the Feature_84197691 gate so both are always executed. Image base: use 'lm m mrxsmb10' and add the offsets (default base 0x1C0000000)."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. In MRxSmbHandOverSrvCall the unpatched build branches on the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage (a feature-staging gate, not an SMB2 availability check). The feature-enabled path validates the server-transport pointer and takes a transient reference via SmbCepReferenceServerTransport; the feature-disabled path loads the same pointer directly. Both paths store the identical transport pointer at SrvCall+0x140 and pass it to SmbCeUpdateTransportDispatchVectors, so there is no type confusion and no pointer-indirection difference. The transient reference is released within the same function, so no persistent reference-count imbalance exists. The patch removes the feature gate so validation and the transient reference are always performed, and drops 21 WIL feature-staging / usage-reporting helper functions; three other functions lose only a Feature_Servicing_EnableSMBHardeningTelemetry-gated ETW telemetry block. This is a feature-staging rollout and defense-in-depth hardening with no demonstrable reachable primitive."
+}

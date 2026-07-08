@@ -1,0 +1,144 @@
+{
+  "binaries": {
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.6716,
+    "matched": 1177,
+    "changed": 921,
+    "identical": 256,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdExtractAfdSendMsgInfo (unpatched 0x1C003A738, patched 0x14004EC68)",
+      "similarity": 0.7754,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Hand-rolled MmUserProbeAddress probe idiom replaced with equivalent ProbeForRead() API calls",
+        "Header probe: unpatched single-byte clamp-and-touch (align 4) at 0x1C003A8EA vs patched ProbeForRead(Address, 1, 4) at 0x14004EE38 / 0x14004ED4F. Same length (1) and alignment (4).",
+        "Pre-copy probe: unpatched end-address range check (end = base+length; fault if end > *MmUserProbeAddress or end < base) at 0x1C003AAE2 vs patched ProbeForRead(base, length, 1) at 0x14004F0E6. Same range, same RequestorMode guard ([endpoint+0x40]).",
+        "Spinlock acquisition around the endpoint-flag/size read placed behind WIL feature-staging gate Feature_2263667000 in the patched build (staged rollout)",
+        "Length and embedded-pointer fields are each read once in both builds; no double-fetch is present or removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "AFD send-message handler (WSASendMsg path). The unpatched build validates the user structure and its embedded buffers with a hand-rolled MmUserProbeAddress probe (single-byte touch for the header, end-address range check before each RtlCopyMemory). The patched build performs the identical validation via ProbeForRead with the same length, alignment, and RequestorMode guard. ProbeForRead does not validate intermediate pages, so no additional page validation is added; per-page validity is enforced at access time (MmProbeAndLockPages / SEH) in both builds. No TOCTOU double-fetch, no missing bounds check, no behavioral change to user-buffer validation. This is API modernization plus feature-staging churn.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdAllocateMdlChain (unpatched 0x1C00073B0, patched 0x140004CF0)",
+      "similarity": 0.78,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Unpatched end-address range check ('rcx = base + count*16; if (rcx > *MmUserProbeAddress || rcx < base) fault', 0x1C0007428-0x1C0007442) replaced with ProbeForRead(base, count*16, 4) at 0x140004D55",
+        "Both builds enforce 4-byte alignment (unpatched 'test dil, 3' at 0x1C000741E; patched Alignment=4)",
+        "Null-pointer guard and 'count-1 <= 0xFFFFFFE' guard present and identical in both builds",
+        "Neither the manual check nor ProbeForRead validates intermediate pages; per-page validity is enforced by MmProbeAndLockPages in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "MDL lock helper for user-supplied buffer-descriptor arrays. The unpatched end-address range check and the patched ProbeForRead validate the identical [base, base+count*16) range with identical 4-byte alignment. Equivalent validation; no behavioral change. API modernization only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdAllocateMdlChain32 (unpatched 0x1C0017638, patched 0x140004E60)",
+      "similarity": 0.78,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "WOW64 variant: unpatched end-address range check ('rcx = base + count*8; if (rcx > *MmUserProbeAddress || rcx < base) fault', 0x1C00176A6-0x1C00176C0) replaced with ProbeForRead(base, count*8, 4) at 0x140004EBD",
+        "Both builds enforce 4-byte alignment ('test bl, 3' at 0x1C001769D in the unpatched build; Alignment=4 in the patched build)",
+        "8-byte descriptor entries for 32-bit processes; same equivalence as the 64-bit variant"
+      ],
+      "security_relevant": false,
+      "security_notes": "WOW64 variant of the MDL lock helper. Same equivalence as AfdAllocateMdlChain: manual end-address range check replaced by an equivalent ProbeForRead over the same range with the same alignment. No behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdComputeCMSGLength (unpatched 0x1C0034BAC, patched 0x140030540)",
+      "similarity": 0.75,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Overflow-checked Rtl* helpers inlined in the patched build; the same overflow checks are retained",
+        "Example: unpatched RtlULongAdd((entry_size-0xc), 0x10) at 0x1C0034C2B with 'test eax,eax; js' overflow branch is inlined in the patched build as 'lea ecx,[rax+10h]; cmp ecx,eax; jb' at 0x1400305D0",
+        "Unpatched build checks every arithmetic step (RtlULongAlignUp, RtlULongSub, RtlULongAdd) each followed by 'test eax,eax; js error'; no intermediate value wraps unchecked",
+        "Patched build performs the identical set of overflow rejections, only with a different code shape"
+      ],
+      "security_relevant": false,
+      "security_notes": "TLV size accumulator called from the send-message handler. Both builds overflow-check every arithmetic step. The patched build inlines several of the overflow-checked Rtl* helpers but keeps the same checks. There is no gap in the unpatched build for an intermediate size value to wrap before it is validated. No behavioral change; no integer-overflow fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdRoutingInterfaceChange (unpatched 0x1C0037F60, patched 0x14004BC90)",
+      "similarity": 0.709,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "SIO_ROUTING_INTERFACE_CHANGE handler",
+        "Unpatched end-address range check ('rcx = base + length; if (rcx > *MmUserProbeAddress || rcx < base) fault') at 0x1C00380D2, guarded by RequestorMode ([endpoint+0x40]) and length != 0",
+        "Patched build replaces it with ProbeForRead(base, length, 1) at 0x14004BDB9 under the same RequestorMode guard",
+        "Same range, same guard; equivalent validation"
+      ],
+      "security_relevant": false,
+      "security_notes": "Routing interface change notification handler. The manual end-address range check and the patched ProbeForRead validate the same range under the same RequestorMode guard. Equivalent validation; API modernization only. No behavioral change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdRioCreateCompletionQueue (unpatched 0x1C00475F0)",
+      "similarity": 0.7834,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithQuotaTag(0x210, ...) replaced with ExAllocatePool2(0x61, ...) — modern pool allocation API",
+        "KeReleaseInStackQueuedSpinLock replaced with NdisReleaseRWLock — locking modernization",
+        "AfdAcquireWriteLock (custom lock acquire) replaced with NdisAcquireRWLockWrite",
+        "ObReferenceObjectByHandle refactored to use indirect ExEventObjectType/IoCompletionObjectType pointers"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdFinishConnect (unpatched 0x1C00049D4)",
+      "similarity": 0.7035,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Internal AFD_ENDPOINT structure field offsets shifted across the version boundary",
+        "Added refcount overflow trap: 'if (refcount + 1 <= 1) trap(0xd);'",
+        "Event signaling via AfdIndicatePollEvent, relocated in the patched image"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdFastConnectionSend (unpatched 0x1C000BEF8)",
+      "similarity": 0.7834,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Internal structure field offsets changed across the version boundary",
+        "Refcount handling refactored with explicit trap(0xd) on underflow",
+        "IRP completion path refactored"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBCommonChainedReceiveEventHandler (unpatched 0x1C0007780)",
+      "similarity": 0.7506,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function with extensive structural changes",
+        "Feature flag data reference shifted across the version boundary",
+        "Reference counting logic refactored with trap(0xd) on invalid states",
+        "ETW tracing calls updated"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The changed AFD IOCTL-path functions replace a hand-rolled MmUserProbeAddress probe idiom with equivalent ProbeForRead() API calls. In AfdExtractAfdSendMsgInfo (unpatched 0x1C003A738 / patched 0x14004EC68), AfdAllocateMdlChain (0x1C00073B0 / 0x140004CF0), AfdAllocateMdlChain32 (0x1C0017638 / 0x140004E60), and AfdRoutingInterfaceChange (0x1C0037F60 / 0x14004BC90), the manual probe (single-byte header touch, or end-address range check before each RtlCopyMemory) and the patched ProbeForRead validate the identical address range with the identical alignment and under the identical RequestorMode guard. ProbeForRead does not validate intermediate pages either, so no page validation is added and no double-fetch is removed (fields are read once in both builds). AfdComputeCMSGLength (0x1C0034BAC / 0x140030540) inlines several overflow-checked Rtl* helpers but keeps every overflow check; the unpatched build already rejects every overflowing intermediate value. A spinlock acquisition in the send-message handler is placed behind the WIL feature-staging gate Feature_2263667000 (staged rollout). The original HIGH TOCTOU/double-fetch, MDL buffer-validation, and integer-overflow claims are not supported by either binary: the unpatched build performs the same bounds, alignment, and overflow validation as the patched build. The change is API modernization and servicing churn, not a security fix."
+}

@@ -1,0 +1,182 @@
+{
+  "binaries": {
+    "title": "cng.sys - No security-relevant change (SymCrypt point-format element-count generalization)",
+    "id_unpatched": "cng_unpatched.sys",
+    "id_patched": "cng_patched.sys",
+    "overall_similarity": 0.9685,
+    "matched": 1609,
+    "changed": 72,
+    "identical": 1537,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptEckeySetValue (sub_180041b98) / SymCryptEckeySetValue (sub_180041b50)",
+      "similarity": 0.9835,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Replaced a hardcoded public-key element-count doubling ('mov eax,[rsi+14h]; add eax,eax' at 0x180041c6d-0x180041c70) with a lookup into the pre-existing SymCryptEcpointFormatNumberofElements table ('movsxd rax,[rsp+arg]; mov eax, ds:rva SymCryptEcpointFormatNumberofElements[rcx+rax*4]; imul eax,[rsi+14h]' at 0x180041c29-0x180041c38, with rcx=image base loaded at 0x180041be4)",
+        "The point-format index used for the lookup is the arg5 stack argument the callers already pass in both builds; it is a static per-curve property (curve type at descriptor+4), not attacker-controlled blob data",
+        "For every elliptic-curve import reachable in the unpatched build the index is 2 and SymCryptEcpointFormatNumberofElements[2] == 2, identical to the hardcoded doubling",
+        "The size check is an equality gate returning STATUS_INVALID_PARAMETER (0x800E) on mismatch; the buffer allocation size is taken from an internal key-object field ([rsi+3Ch]), not from the validated cbPublicKey"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptEckeySetValue is statically-linked SymCrypt library code. The change replaces a hardcoded element-count multiplier of 2 with a lookup into the SymCryptEcpointFormatNumberofElements table, using the point-format index the callers already pass. The table is pre-existing and already used by other SymCrypt routines in both builds. The index is a static per-curve value ((curve_type != 3) ? 2 : 1), the validated length (r9 = cbPublicKey) is caller-derived as 2*field_element_size rather than raw attacker input, and the internal buffer allocation uses [rsi+3Ch]. For all reachable short-Weierstrass imports the looked-up count is 2, identical to the previous behavior, so no reachable divergence or out-of-bounds condition is demonstrable. The generalization supports the additional point formats introduced by this build's post-quantum / composite-algorithm SymCrypt uplift (composite-encoding key routines and further ML-DSA / PQ-DSA functions are present only in the patched binary).",
+      "assembly_diff": "UNPATCHED (SymCryptEckeySetValue @ 0x180041b98) - public-key size check:\n0000000180041C68  test    r9, r9                 ; r9 = cbPublicKey (caller-derived = 2 * field_element_size)\n0000000180041C6B  jz      short loc_180041C77\n0000000180041C6D  mov     eax, [rsi+14h]         ; field_element_size\n0000000180041C70  add     eax, eax               ; hardcoded element count 2\n0000000180041C72  cmp     r9, rax\n0000000180041C75  jnz     short loc_180041C44    ; STATUS_INVALID_PARAMETER (0x800E)\n0000000180041C77  mov     edi, [rsi+3Ch]         ; internal key-object alloc size (NOT cbPublicKey)\n0000000180041C80  call    SymCryptCallbackAlloc\n\nPATCHED (SymCryptEckeySetValue @ 0x180041b50) - same check via table lookup:\n0000000180041BE4  lea     rcx, cs:180000000h     ; image base, loaded earlier\n0000000180041C24  test    r9, r9\n0000000180041C27  jz      short loc_180041C41\n0000000180041C29  movsxd  rax, [rsp+0C8h+arg_28] ; arg5 = point-format index (static per-curve)\n0000000180041C31  mov     eax, ds:rva SymCryptEcpointFormatNumberofElements[rcx+rax*4]\n0000000180041C38  imul    eax, [rsi+14h]         ; field_element_size * element_count\n0000000180041C3C  cmp     r9, rax\n0000000180041C3F  jnz     short loc_180041C00    ; STATUS_INVALID_PARAMETER (0x800E)\n0000000180041C41  mov     edi, [rsi+3Ch]\n0000000180041C4A  call    SymCryptCallbackAlloc"
+    },
+    {
+      "name": "ImportEccKeyBlobWithoutParameters (sub_18004166c) / ImportEccKeyBlobWithoutParameters (sub_18004161c)",
+      "similarity": 0.9928,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Primary caller of SymCryptEckeySetValue. Builds a two-coordinate public-key buffer of 2*field_element_size (var_18) and passes it as cbPublicKey (r9)",
+        "Computes the point-format index in both builds as: 'cmp dword [r8+4], 3; setnz al; inc eax' (yields 2 for short-Weierstrass, 1 for Montgomery/type 3), passed as arg5",
+        "Patched build additionally stores a constant 2 in an added stack argument slot at 0x180041943 ('mov dword ptr [rsp+70h+var_48], 2'), consistent with a SymCrypt library signature revision",
+        "Call target is SymCryptEckeySetValue in both (0x180041b98 unpatched at call site 0x18004199c, 0x180041b50 patched at call site 0x180041954)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The caller derives cbPublicKey as 2*field_element_size and passes a static per-curve point-format index. For the short-Weierstrass curves reachable here the index is 2, so the patched callee's table lookup returns the same value as the unpatched hardcoded doubling. No behavioral difference for reachable inputs.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ImportEccKeyBlobWithParameters (sub_180079c38) / ImportEccKeyBlobWithParameters (sub_18007a558)",
+      "similarity": 0.9927,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Second caller of SymCryptEckeySetValue. Same point-format index computation; passes the same added constant argument in the patched build",
+        "Pre-existing integer-overflow checks on blob-size arithmetic are present in both builds and unchanged (they are not the change)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Alternative key import path. The overflow checks for blob-size arithmetic exist in both builds and are unchanged; the callee's table generalization applies to this path but is behaviorally identical for reachable short-Weierstrass imports.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SetEccPrivateKeyVal (sub_18007bab0) / SetEccPrivateKeyVal (sub_18007c3a8)",
+      "similarity": 0.9917,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Third caller of SymCryptEckeySetValue. Same point-format index computation and the same added constant argument in the patched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "Additional key set path. Behaviorally identical to the other callers for reachable inputs.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BCryptOpenAlgorithmProvider",
+      "similarity": 0.9039,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Large function (689 instructions, 149 basic blocks) with moderate changes",
+        "Related to ML-DSA and Composite-ML-DSA algorithm registration support added in this build",
+        "Algorithm name string comparisons for new post-quantum algorithm families"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaExportKeyPair (sub_18007c9f0) / GetSignatureInterface (sub_1800797c0)",
+      "similarity": 0.1897,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Low-similarity match (likely distinct functions); post-quantum ML-DSA signature/algorithm interface support",
+        "Patched version adds wcscmp checks for ECDSA_P256, ECDSA_P384, ECDSA_P521, ML-DSA, Composite-ML-DSA",
+        "Returns different algorithm descriptor pointers based on algorithm name"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for post-quantum algorithm support, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MSCryptMlDsaGetProperty (sub_18007cd90) / MSCryptPqDsaFinalizeKeyPair (sub_18007d4f0)",
+      "similarity": 0.3112,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Rewritten algorithm property getter for AlgorithmName, ParameterSetName, SignatureLength, PublicKeyLength, KeyLength",
+        "References ML-DSA and Composite-ML-DSA blob tags (0x4d534b59='YKSM', 0x4d53414c='LASM')",
+        "New provider initialization paths for 0x3000c and 0x3000d algorithm types"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for post-quantum algorithm property queries.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptDlkeySetValue (sub_180092860) / SymCryptDlkeySetValue (sub_18009588c)",
+      "similarity": 0.9713,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming: rdi->r14 for arg6, rbp->rdi for provider context (compiler re-allocation)",
+        "Call target address changes due to binary recompilation (SymCryptFdefRawSetValue sub_180026a30->sub_180027a70, etc.)",
+        "Minor control flow restructuring in flag bit testing (bits 0xc/0xd) but logic equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "Register reallocation and recompilation artifacts. No behavioral change in security-relevant logic.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VsmOpenAlgorithmProvider (sub_1800482ec) / VsmOpenAlgorithmProvider (sub_18004856c)",
+      "similarity": 0.9892,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Provider initialization structure size increased from 0x3b8 to 0x3c8 (16 bytes larger)",
+        "Algorithm count table expanded from 0x33 to 0x35 entries (2 new algorithm types added)",
+        "Loop copy count changed from 2 to 3 iterations, accommodating additional provider fields"
+      ],
+      "security_relevant": false,
+      "security_notes": "Provider structure expansion for new ML-DSA/Composite-ML-DSA algorithm support.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptEcurveInitialize (sub_180024dfc) / SymCryptEcurveInitialize (sub_180022d74)",
+      "similarity": 0.954,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming and call target relocations from binary recompilation",
+        "No security-relevant logic changes observed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptRsakeySetValueInternal (sub_18008e82c) / SymCryptRsakeySetValueInternal (sub_18008ff18)",
+      "similarity": 0.9748,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and call address changes from recompilation",
+        "No security-relevant logic changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SymCryptEckeySetValue (sub_180041b98) / SymCryptEckeySetValue (sub_180041b50)",
+      "entry_point": "BCryptImportKeyPair (exported CNG API) -> provider dispatch -> MSCryptEccImportKeyPair (sub_18007b6e8) -> ImportEccKeyBlobWithoutParameters (sub_18004166c)",
+      "call_chain": [
+        "BCryptImportKeyPair (exported CNG API)",
+        "provider key import dispatch",
+        "MSCryptEccImportKeyPair (sub_18007b6e8) (ECC key import wrapper)",
+        "ImportEccKeyBlobWithoutParameters (sub_18004166c) (key blob parser)",
+        "SymCryptEckeySetValue (sub_180041b98) (public-key size validation, benign)"
+      ],
+      "vulnerability_class": "No security-relevant change (library generalization)",
+      "cwe": "none",
+      "description": "In the statically-linked SymCrypt routine SymCryptEckeySetValue, the unpatched build validates the imported public-key length (r9 = cbPublicKey) against field_element_size * 2 using a hardcoded doubling at 0x180041c6d-0x180041c70 ('mov eax,[rsi+14h]; add eax,eax; cmp r9,rax'). The patched build instead reads the point-format index the callers already pass (arg5), indexes the pre-existing SymCryptEcpointFormatNumberofElements table with it, and multiplies field_element_size by the resulting element count at 0x180041c29-0x180041c38. This is not a reachable security issue: (1) the point-format index is a static per-curve property computed by the callers as (curve_type != 3) ? 2 : 1 (curve type at descriptor+4; value 3 is the Montgomery / X-only type), not attacker-controlled blob data; (2) the validated length r9 is caller-derived as 2*field_element_size (var_18 in the callers), not raw attacker input; (3) the buffer that receives key material is allocated from an internal key-object field [rsi+3Ch], independent of the validated length, and the size check only returns STATUS_INVALID_PARAMETER (0x800E) on mismatch; (4) for every elliptic-curve import reachable in the unpatched build the curve is short-Weierstrass, so the index is 2 and SymCryptEcpointFormatNumberofElements[2] == 2, identical to the hardcoded doubling. The table is pre-existing and already used by other SymCrypt routines in both builds. The generalization supports the additional point formats used by this build's post-quantum / composite-algorithm SymCrypt uplift (composite-encoding key routines and additional ML-DSA / PQ-DSA functions are present only in the patched binary).",
+      "trigger_conditions": "No security-relevant trigger. Reaching SymCryptEckeySetValue via BCryptImportKeyPair and the ECC import path exercises the size check, but for reachable short-Weierstrass curves the patched table lookup returns the same value (2) as the unpatched hardcoded doubling. The check is an equality gate between two caller-derived quantities and does not gate an attacker-controlled copy length.",
+      "primitive": "None. No out-of-bounds read or write and no privilege-escalation primitive is demonstrable from this change in the unpatched build.",
+      "evidence": "UNPATCHED SymCryptEckeySetValue (sub_180041b98) - hardcoded doubling:\n```c\n// r9 = cbPublicKey, caller-derived as 2 * field_element_size\n// *(rsi + 0x14) = field_element_size\nif (cbPublicKey == *(rsi + 0x14) * 2)   // hardcoded element count 2\n    goto proceed;\nreturn 0x800e;  // STATUS_INVALID_PARAMETER\n```\n\nPATCHED SymCryptEckeySetValue (sub_180041b50) - table-driven element count:\n```c\n// arg5 = point-format index (static per-curve; 2 for reachable short-Weierstrass imports)\nif (cbPublicKey == SymCryptEcpointFormatNumberofElements[arg5] * *(rsi + 0x14))\n    goto proceed;\nreturn 0x800e;  // STATUS_INVALID_PARAMETER\n```\n\nThe index is computed identically in the callers in BOTH builds:\n```c\nindex = (*(curve_descriptor + 4) != 3) ? 2 : 1;  // 'cmp dword [r8+4], 3; setnz al; inc eax'\n```\nThe callers build a two-coordinate public-key buffer of 2*field_element_size and pass its length as cbPublicKey.",
+      "assembly": "UNPATCHED SymCryptEckeySetValue @ 0x180041b98:\n0x180041C68: test    r9, r9                 ; r9 = cbPublicKey (caller-derived = 2 * field_element_size)\n0x180041C6B: jz      0x180041C77\n0x180041C6D: mov     eax, [rsi+14h]         ; field_element_size\n0x180041C70: add     eax, eax               ; hardcoded element count 2\n0x180041C72: cmp     r9, rax\n0x180041C75: jnz     0x180041C44            ; STATUS_INVALID_PARAMETER (0x800E)\n0x180041C77: mov     edi, [rsi+3Ch]         ; internal key-object alloc size (NOT cbPublicKey)\n0x180041C80: call    SymCryptCallbackAlloc\n\nPATCHED SymCryptEckeySetValue @ 0x180041b50:\n0x180041BE4: lea     rcx, cs:180000000h     ; image base\n0x180041C24: test    r9, r9\n0x180041C27: jz      0x180041C41\n0x180041C29: movsxd  rax, [rsp+0C8h+arg_28] ; arg5 = point-format index (static per-curve)\n0x180041C31: mov     eax, ds:rva SymCryptEcpointFormatNumberofElements[rcx+rax*4]\n0x180041C38: imul    eax, [rsi+14h]         ; field_element_size * element_count\n0x180041C3C: cmp     r9, rax\n0x180041C3F: jnz     0x180041C00            ; STATUS_INVALID_PARAMETER (0x800E)\n0x180041C41: mov     edi, [rsi+3Ch]\n0x180041C4A: call    SymCryptCallbackAlloc",
+      "notes": "SymCryptEcpointFormatNumberofElements exists in both binaries and is already used by other SymCrypt routines in both builds (for example around 0x18002590f/0x180025a0e unpatched and 0x180025b9c/0x18002694f patched); the patch adds a single new use inside SymCryptEckeySetValue at 0x180041c31 (patched only). The three callers (ImportEccKeyBlobWithoutParameters sub_18004166c, ImportEccKeyBlobWithParameters sub_180079c38, SetEccPrivateKeyVal sub_18007bab0) compute the same static per-curve index in both builds; the patched callers additionally pass a constant 2 in an added stack argument slot, consistent with a SymCrypt library signature revision. Composite-encoding key routines (SymCryptEckeySetValueCompositeEncodingPk / ...Sk) and additional ML-DSA / PQ-DSA functions are absent from the unpatched binary and present in the patched binary."
+    }
+  ],
+  "summary": "The most notable code change in this diff is inside the statically-linked SymCrypt routine SymCryptEckeySetValue (sub_180041b98 unpatched / sub_180041b50 patched), reached from the elliptic-curve key import path. The unpatched build validates the imported public-key length against field_element_size * 2 using a hardcoded doubling; the patched build reads the point-format index the callers already pass and looks the element count up in the pre-existing SymCryptEcpointFormatNumberofElements table instead. This is not a reachable security fix: the point-format index is a static per-curve property (Montgomery vs. short-Weierstrass), the validated length is caller-derived as 2*field_element_size rather than raw attacker input, and the buffer allocation uses an internal key-object field. For every elliptic-curve import reachable in the unpatched build the looked-up element count is 2, identical to the hardcoded doubling, so no reachable divergence or out-of-bounds condition is demonstrable. The change generalizes the routine for the additional point formats introduced by this build's post-quantum / composite-algorithm SymCrypt uplift (composite-encoding key routines and further ML-DSA / PQ-DSA functions appear only in the patched binary). Verdict: No security-relevant change."
+}

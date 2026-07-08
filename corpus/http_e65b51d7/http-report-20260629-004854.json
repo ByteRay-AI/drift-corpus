@@ -1,0 +1,198 @@
+{
+  "binaries": {
+    "title": "http.sys - feature-staged double-fetch mitigation in UlGenerateTrailers (UxKir-gated, vulnerable path retained); not a delivered fix",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9919,
+    "matched": 3584,
+    "changed": 10,
+    "identical": 3574,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlGenerateTrailers",
+      "address": "0x1C000CF94",
+      "similarity": 0.7166,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched: for each 24-byte (0x18) trailer entry, each string pointer (at +0x8 and +0x10) is read from the array once for the probe helper UlProbeAnsiString (0x1c0039148), then RE-READ from the same user-mode memory for the copy helper memmove (0x1c0021200). The length fields are read once and cached; only the pointers are double-fetched.",
+        "Patched: reads each pointer once into rcx, stores it to a stack slot (Src), then branches on the feature flag UxKirHttpReadingTrailersFromUm. Flag on (nonzero): validates and copies from the captured stack value (no re-read). Flag off (zero): falls back to the original path and re-reads the pointer from the array for memmove.",
+        "The vulnerable double-fetch path is RETAINED in the patched binary (flag-off branch at loc_1C000D125 / loc_1C000D1D1). The change is feature-staged, not an unconditional removal.",
+        "The probe helper (UlProbeAnsiString -> UlProbeForRead -> MmUserProbeAddress) and copy helper (memmove) are unchanged; only the calling pattern and the added gate differ."
+      ],
+      "security_relevant": true,
+      "security_notes": "Genuine double-fetch (CWE-367) in the trailer serialization path of the unpatched build: a user-mode trailer string pointer is probed for readability, then re-read from the same user memory for the memmove. The trailer array and strings are read in place (validated via UlProbeForRead / UlProbeAnsiString, not deep-copied), so a second thread in the same process can swap a pointer between probe and re-read. If swapped to a kernel address, memmove copies from it into the response output buffer, giving a local, race-dependent kernel information disclosure. This is NOT remotely triggerable (the pointers are the local server process's own memory). The patched build adds a capture-once mitigation but gates it behind the WIL feature-staging flag UxKirHttpReadingTrailersFromUm (set from Feature_2347446586__private_IsEnabledDeviceUsage in UxStartEnvironmentModule) and keeps the original double-fetch in the flag-off branch. The runtime default of the flag is set by feature configuration outside the binary and cannot be determined from the disassembly. Therefore this is a staged/rollback-gated hardening, not an unconditionally delivered security fix.",
+      "assembly_diff": "UNPATCHED double-fetch (cold/outlined section of UlGenerateTrailers):\n0x1c002894e: movzx  eax, word ptr [r15+r12*8]   ; read size1 once (cached)\n0x1c0028970: mov    rcx, [r15+r12*8+8]          ; FIRST read of ptr1\n0x1c0028975: call   UlProbeAnsiString           ; validate ptr1 (-> UlProbeForRead)\n0x1c00289a7: mov    rdx, [r15+r12*8+8]          ; SECOND read of ptr1 (double-fetch)\n0x1c00289b4: call   memmove                     ; copy from re-read ptr1\n0x1c00289e4: movzx  ebx, word ptr [r15+r12*8+2] ; read size2 once\n0x1c00289fc: mov    rcx, [r15+r12*8+10h]        ; FIRST read of ptr2\n0x1c0028a01: call   UlProbeAnsiString           ; validate ptr2\n0x1c0028a21: mov    rdx, [r15+r12*8+10h]        ; SECOND read of ptr2 (double-fetch)\n0x1c0028a31: call   memmove                     ; copy from re-read ptr2\n\nPATCHED (feature-gated) capture path:\n0x1c000d0cf: mov    rcx, [r13+rax*8+8]          ; read ptr1 ONCE\n0x1c000d0d4: mov    [rsp+Src], rcx              ; capture to stack\n0x1c000d0e5: cmp    cs:UxKirHttpReadingTrailersFromUm, 0\n0x1c000d0ec: jz     loc_1c000d125               ; flag off -> re-read path retained\n0x1c000d0ee: call   UlProbeAnsiString           ; (flag on) validate captured ptr1\n0x1c000d111: mov    rdx, [rsp+Src]              ; copy source = captured value\n0x1c000d119: call   memmove\n; flag-off branch keeps the double-fetch:\n0x1c000d125: call   UlProbeAnsiString\n0x1c000d14d: mov    rdx, [r13+r12*8+8]          ; RE-READ ptr1 from array\n0x1c000d155: call   memmove"
+    },
+    {
+      "name": "UxQuicConnectionCopyBindings",
+      "address": "0x1C0047B38",
+      "similarity": 0.8581,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds a UxKirWritingAndReadingUm gate around a memmove at 0x1c0047beb. Flag off executes 'mov ecx, ecx' (truncating the destination pointer to 32 bits); flag on skips it.",
+        "The gate selects user-mode pointer-width handling for the bindings copy. Operates under an exclusive push lock (ExReleasePushLockExclusiveEx)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Companion feature-staging change gated by UxKirWritingAndReadingUm (set from Feature_1389320505__private_IsEnabledDeviceUsage). Controls destination pointer width for the QUIC/HTTP3 bindings copy; not a delivered security fix. Note the function header is at 0x1C0047B38.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpRebuildResponseHeaders",
+      "address": "0x1C013E860",
+      "similarity": 0.8734,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Feature-flag branch simplification in the response-rebuild path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpCompleteSendToExtensionWorker",
+      "address": "0x1C0060F10",
+      "similarity": 0.9709,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructures case handling in the send-response completion path (references sendresponse.h). Removes feature-flag-gated special handling, making behavior consistent across cases."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-flag cleanup in the response path, not a direct security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlHkeBuilderCopyFixedHeaders",
+      "address": "0x1C015791C",
+      "similarity": 0.965,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Header-copy helper. Call targets updated to relocated equivalents of the same memmove/helpers; branch condition simplified.",
+        "The referenced copy/helper functions are the same operations at different addresses in the patched binary."
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral/feature churn in the header serialization helper; the function performs the same operations.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule",
+      "address": "0x1C01757B0",
+      "similarity": 0.9429,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Sets WIL feature-staging flags. UxKirHttpReadingTrailersFromUm <- Feature_2347446586__private_IsEnabledDeviceUsage; UxKirWritingAndReadingUm <- Feature_1389320505__private_IsEnabledDeviceUsage; also UxKirChunkExtHeaderFix and UxKirSetCbtHardeningAsMedium.",
+        "Emits WPP trace events for the flag states."
+      ],
+      "security_relevant": false,
+      "security_notes": "Driver initialization / feature-staging configuration. Sets the flag that gates the pointer-capture path in UlGenerateTrailers. Configuration plumbing, not a vulnerability. (No registry value 'AllowNonprivilegedCaptureCred' and no data_1c0099aa* flags are involved; the flags come from WIL feature staging.)",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementOpportunityInCache",
+      "address": "0x1C001EAD0",
+      "similarity": 0.9302,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage reporting cache helper. Loop/register churn."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementUsageInCache",
+      "address": "0x1C001EBB8",
+      "similarity": 0.9303,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage reporting cache helper. Loop/register churn."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_RecordUsageInCache",
+      "address": "0x1C001ECA4",
+      "similarity": 0.9771,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage reporting cache helper. Loop/register churn; callee names updated to patched equivalents."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "UlGenerateTrailers",
+      "address": "0x1C000CF94",
+      "entry_point": "HTTP Server API response send path (HttpSendHttpResponse / HttpSendResponseEntityBody)",
+      "call_chain": [
+        "Response send path -> UlpPrepareHttpResponse (0x1C00DD810) and UlFastSendHttpResponse (0x1C00E21F0)",
+        "UlpPrepareHttpResponse calls UlGenerateTrailers (call site 0x1C00DD9D0)",
+        "UlGenerateTrailers probes each trailer string pointer, then (flag-off path) re-reads it for memmove"
+      ],
+      "vulnerability_class": "Double-fetch / TOCTOU (CWE-367) on user-mode trailer string pointers; consequence is an out-of-bounds/kernel read (CWE-125) if the race is won",
+      "description": "UlGenerateTrailers serializes an array of HTTP trailer entries (each 0x18 bytes: int16_t name_len at +0x0, int16_t value_len at +0x2, qword name_ptr at +0x8, qword value_ptr at +0x10) from an application-supplied buffer into the response output. The array base comes from *(arg2+0x10) and the count from *(arg2+0x8); the array is validated with UlProbeForRead and each string with UlProbeAnsiString (which probes against MmUserProbeAddress), i.e. the strings are read in place from user memory rather than deep-copied. In the unpatched build each string pointer is read for the probe and then RE-READ from the same user memory for the memmove copy (the length is read once and cached). A second thread in the same process can overwrite a pointer field between the probe and the re-read; swapping it to a kernel address makes memmove copy from that address into the response output buffer, which the process can then read. This is a local, race-dependent kernel information disclosure; it is not remotely triggerable because the pointers are supplied by the local server process. The patched build adds a capture-once path but gates it behind UxKirHttpReadingTrailersFromUm and retains the original double-fetch in the flag-off branch, so it is a staged/rollback-gated hardening rather than an unconditionally delivered fix.",
+      "trigger_conditions": "1. Local process uses the HTTP Server API (HttpInitialize, HttpCreateHttpHandle/HttpCreateRequestQueue, HttpAddUrl) and obtains a request to respond to. 2. Builds an HTTP_RESPONSE with >=1 trailer whose entry pointer fields initially point to valid user memory. 3. A second thread overwrites a pointer field with a kernel address between the UlProbeAnsiString probe and the memmove re-read. 4. Entry count must be >0 and <0x2710 (check at 0x1C00288DC). 5. The race must be won for at least one entry. Only reachable via the retained flag-off path (UxKirHttpReadingTrailersFromUm == 0).",
+      "primitive": "Local kernel memory read into the response buffer (information disclosure) if the race is won on the flag-off path. Target address is chosen via the swapped pointer; read length is bounded by the entry int16_t length (up to 65535 bytes per entry). Same-process race against the kernel; race window is a few instructions between probe and re-read, so success is probabilistic. Not a self-contained privilege escalation and not remote.",
+      "evidence": "UNPATCHED (cold/outlined section of UlGenerateTrailers), real instructions:\n0x1c0028970: mov  rcx, [r15+r12*8+8]     ; FIRST read of ptr1\n0x1c0028975: call UlProbeAnsiString      ; validate ptr1\n0x1c00289a7: mov  rdx, [r15+r12*8+8]     ; SECOND read of ptr1 (double-fetch)\n0x1c00289b4: call memmove                ; copy from re-read ptr1\n0x1c00289fc: mov  rcx, [r15+r12*8+10h]   ; FIRST read of ptr2\n0x1c0028a01: call UlProbeAnsiString      ; validate ptr2\n0x1c0028a21: mov  rdx, [r15+r12*8+10h]   ; SECOND read of ptr2 (double-fetch)\n0x1c0028a31: call memmove                ; copy from re-read ptr2\n\nPATCHED feature-gated path (real instructions):\n0x1c000d0cf: mov  rcx, [r13+rax*8+8]     ; read ptr1 ONCE\n0x1c000d0d4: mov  [rsp+Src], rcx         ; capture to stack\n0x1c000d0e5: cmp  cs:UxKirHttpReadingTrailersFromUm, 0\n0x1c000d0ec: jz   loc_1c000d125          ; flag off -> re-read path retained\n0x1c000d111: mov  rdx, [rsp+Src]         ; (flag on) copy from captured value\n0x1c000d119: call memmove\n0x1c000d14d: mov  rdx, [r13+r12*8+8]     ; (flag off) RE-READ ptr1 from array\n0x1c000d155: call memmove",
+      "assembly": "; UlGenerateTrailers @ 0x1C000CF94 - key unpatched double-fetch sites (real instructions):\n0x1c002894e: movzx  eax, word ptr [r15+r12*8]   ; read size1 once (cached)\n0x1c0028970: mov    rcx, [r15+r12*8+8]          ; FIRST read of ptr1\n0x1c0028975: call   UlProbeAnsiString           ; validate ptr1 (-> UlProbeForRead -> MmUserProbeAddress)\n0x1c00289a7: mov    rdx, [r15+r12*8+8]          ; SECOND read of ptr1 (double-fetch)\n0x1c00289b4: call   memmove                     ; copy from re-read ptr1\n0x1c00289e4: movzx  ebx, word ptr [r15+r12*8+2] ; read size2 once\n0x1c00289fc: mov    rcx, [r15+r12*8+10h]        ; FIRST read of ptr2\n0x1c0028a01: call   UlProbeAnsiString           ; validate ptr2\n0x1c0028a21: mov    rdx, [r15+r12*8+10h]        ; SECOND read of ptr2 (double-fetch)\n0x1c0028a31: call   memmove                     ; copy from re-read ptr2",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http_unpatched!UlGenerateTrailers",
+            "address": "0x1C0028975",
+            "why": "call UlProbeAnsiString validating ptr1. rcx = source pointer from the user-mode trailer array. Record this value; the race window begins when this returns."
+          },
+          {
+            "symbol": "http_unpatched!UlGenerateTrailers",
+            "address": "0x1C00289A7",
+            "why": "mov rdx, [r15+r12*8+8] - the second read of ptr1 before the copy. If rdx differs from the value validated at 0x1C0028975, the pointer changed between probe and copy (race won)."
+          },
+          {
+            "symbol": "http_unpatched!memmove",
+            "address": "0x1C0021200",
+            "why": "Copy helper. When called from UlGenerateTrailers, rdx = source (the re-read pointer), rcx = destination in the response buffer, r8 = length."
+          },
+          {
+            "symbol": "http_unpatched!UlGenerateTrailers",
+            "address": "0x1C0028A21",
+            "why": "mov rdx, [r15+r12*8+10h] - the second read of the value pointer ptr2, the equivalent double-fetch site for the value string."
+          }
+        ],
+        "watch": [
+          "r15 = base of the user-mode trailer array",
+          "r12*8 = byte offset of the current entry (index * 0x18)",
+          "[r15+r12*8+0x8] = name pointer field (double-fetched)",
+          "[r15+r12*8+0x10] = value pointer field (double-fetched)",
+          "esi = remaining output buffer space",
+          "At memmove entry: rdx should match the pointer validated by the prior UlProbeAnsiString call; if they differ the race was won"
+        ],
+        "key_offsets": [
+          "0x1c0028970: mov rcx, [r15+r12*8+8] - first read of name pointer (pre-probe)",
+          "0x1c0028975: call UlProbeAnsiString - probe of name pointer",
+          "0x1c00289a7: mov rdx, [r15+r12*8+8] - second read of name pointer (double-fetch)",
+          "0x1c00289b4: call memmove - copy using re-read name pointer",
+          "0x1c00289fc: mov rcx, [r15+r12*8+10h] - first read of value pointer",
+          "0x1c0028a01: call UlProbeAnsiString - probe of value pointer",
+          "0x1c0028a21: mov rdx, [r15+r12*8+10h] - second read of value pointer (double-fetch)",
+          "0x1c0028a31: call memmove - copy using re-read value pointer"
+        ],
+        "trigger_setup": "Local process only. Initialize the HTTP Server API (HttpInitialize, HttpCreateHttpHandle/HttpCreateRequestQueue, HttpAddUrl), obtain a request, build an HTTP_RESPONSE with a trailer whose entry pointer fields (name at +0x8, value at +0x10) initially point to valid user memory, spawn a second thread that overwrites a pointer field with a kernel address, then call HttpSendHttpResponse. Reachable only via the retained flag-off path (UxKirHttpReadingTrailersFromUm == 0).",
+        "expected_observation": "When the race is won on the flag-off path, at the memmove site rdx (source) holds a kernel address rather than the user-mode pointer validated by UlProbeAnsiString, and the copy places kernel bytes into the response buffer readable by the local process. An invalid kernel source address faults during memmove.",
+        "notes": "The race window is a few instructions between the probe at 0x1c0028975 and the re-read at 0x1c00289a7 (similarly for the value pointer). Practical exploitation is probabilistic and same-process/local. In the patched binary this path is only reached when UxKirHttpReadingTrailersFromUm is zero; when the flag is set the pointer is captured once and the race is closed. The flag default is set by feature staging outside the binary."
+      }
+    }
+  ],
+  "summary": "The unpatched build contains a genuine double-fetch (CWE-367) in UlGenerateTrailers (0x1C000CF94): each HTTP trailer string pointer is probed via UlProbeAnsiString (-> UlProbeForRead -> MmUserProbeAddress) and then re-read from the same user-mode memory for the memmove copy (the length is single-fetched). Because the trailer array and strings are read in place, a second thread in the same process can swap a pointer between probe and re-read to make memmove copy from a kernel address into the response buffer, a local, race-dependent kernel information disclosure (not remote). The patched build does NOT remove this unconditionally: it adds a capture-once path gated behind the WIL feature-staging flag UxKirHttpReadingTrailersFromUm (set from Feature_2347446586__private_IsEnabledDeviceUsage in UxStartEnvironmentModule) and retains the original double-fetch in the flag-off branch. This is a staged/rollback-gated hardening, not an unconditionally delivered security fix, and the flag's runtime default is set outside the binary. Remaining diff entries are companion feature-staging plumbing (UxQuicConnectionCopyBindings gated by UxKirWritingAndReadingUm; UxStartEnvironmentModule flag setup) and WIL feature-reporting/telemetry churn (wil_details_FeatureReporting_*). Report corrections: real function names replace the address labels; the copy helper is memmove (0x1C0021200) not memcpy and the probe helper is UlProbeAnsiString (0x1C0039148); the invented data_1c0099aa* flags and the 'AllowNonprivilegedCaptureCred' registry claim are removed; the fabricated remote/network leak, KASLR-defeat and LPE-chaining narrative is removed; 0x1C0028A91 is part of UlGenerateTrailers, not a separate function; severity lowered from high to low to reflect the local, race-dependent, feature-gated nature."
+}

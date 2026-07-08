@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}{{ article.title }} &middot; {{ SITENAME }}{% endblock %}
+
+{% block body %}
+<article class="post">
+    <div class="container">
+        <p class="back"><a href="{{ SITEURL }}/">&larr; ALL POSTS</a></p>
+
+        <header class="post-header">
+            <div class="row">
+                {% if article.category %}<span class="state">{{ article.category }}</span>{% endif %}
+                <time class="mono muted" datetime="{{ article.date.isoformat() }}" style="font-size:0.85rem;">{{ article.date|strftime('%Y-%m-%d') }}</time>
+                {% if article.author %}<span class="mono muted" style="font-size:0.85rem;">by {{ article.author }}</span>{% endif %}
+            </div>
+            <h1>{{ article.title }}</h1>
+            {% if article.summary %}<p class="lede">{{ article.summary|striptags }}</p>{% endif %}
+        </header>
+
+        <div class="post-content">
+            {{ article.content }}
+        </div>
+
+        {% if article.tags %}
+        <footer class="post-footer">
+            <div class="chips">
+                {% for tag in article.tags %}<a class="chip" href="{{ SITEURL }}/{{ tag.url }}">#{{ tag }}</a>{% endfor %}
+            </div>
+        </footer>
+        {% endif %}
+    </div>
+</article>
+{% endblock %}

@@ -1,0 +1,138 @@
+{
+  "binaries": {
+    "title": "ksecdd.sys - Feature-staging-gated MmHighestUserAddress range check added to protected-process free path (defense-in-depth; no demonstrated reachable vulnerability)",
+    "id_unpatched": "ksecdd_unpatched.sys",
+    "id_patched": "ksecdd_patched.sys",
+    "overall_similarity": 0.9901,
+    "matched": 356,
+    "changed": 5,
+    "identical": 351,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EvaluateCurrentState (0x1C00065D0 unpatched -> 0x1C0006630 patched)",
+      "similarity": 0.6435,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Windows Feature-staging evaluator refactored from a hardcoded-descriptor form (unpatched evaluates g_Feature_263211323_55489181 and ignores its argument) to a parameterized form that dereferences the passed reg_FeatureDescriptor*. Return contract unchanged: returns (feature_state != 1). In the patched build address 0x1C00065D0 is reused for rbc_InitializeFeatureStaging."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SecFreeForKsecCaller (0x1C0001240)",
+      "similarity": 0.8613,
+      "change_type": "behavioral_feature_gated",
+      "key_changes": [
+        "NEW: after PsIsProtectedProcess() returns true, evaluates Windows Feature g_Feature_4032523578_59197666 via EvaluateCurrentState/EvaluateFeature.",
+        "NEW: if the feature is enabled AND BaseAddress > *MmHighestUserAddress, redirects to KsecRemoveValidAddressCommon (the removal helper the non-protected branch already uses) instead of KsecRemoveValidVm.",
+        "Legacy behavior retained: when the feature evaluates disabled, control falls through to the original KsecRemoveValidVm call unchanged (staged rollout).",
+        "The free-site comparison 'BaseAddress >= *MmUserProbeAddress' that selects ExFreePoolWithTag vs ZwFreeVirtualMemory is present and identical in both builds; it is not a security boundary and is unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging-gated defense-in-depth redirect. In the protected (PPL) branch the driver calls KsecRemoveValidVm(process, BaseAddress), which returns the HANDLE stored in the tracking record; the caller frees only when that handle is non-null. No attacker-seedable tracking-table entry carries a kernel-space address together with a non-null handle (see security_findings), so the described arbitrary-kernel-pool-free primitive is not demonstrable in the unpatched build. The change is not an unconditionally enforced vulnerability fix.",
+      "assembly_diff": "UNPATCHED SecFreeForKsecCaller protected branch (0x1C0001240):\n  0x1C000128E: mov     rcx, rbx\n  0x1C0001291: call    cs:__imp_PsIsProtectedProcess\n  0x1C000129D: test    eax, eax\n  0x1C000129F: jz      short loc_1C00012C8            ; not protected -> non-protected branch\n  0x1C00012A1: mov     rdx, [rsp+28h+BaseAddress]\n  0x1C00012A6: mov     rcx, rbx\n  0x1C00012A9: call    KsecRemoveValidVm             ; returns stored handle\n  0x1C00012AE: test    rax, rax\n  0x1C00012B1: jz      loc_1C0001341                 ; handle == null -> free SKIPPED\n  0x1C00012B7: mov     rcx, rax\n  0x1C00012BA: call    cs:__imp_ZwClose\n  0x1C00012C6: jmp     short loc_1C00012D8\n  0x1C00012C8: mov     rcx, [rsp+28h+BaseAddress]    ; non-protected branch\n  0x1C00012CD: xor     edx, edx\n  0x1C00012CF: call    KsecRemoveValidAddressCommon\n  0x1C00012D8: mov     rax, cs:MmUserProbeAddress    ; shared free site (routine selector)\n  0x1C00012E4: cmp     rcx, [rax]\n  0x1C00012E7: jnb     short loc_1C000130E\n  0x1C0001300: call    cs:__imp_ZwFreeVirtualMemory  ; user-address routine\n  0x1C000130E: xor     edx, edx\n  0x1C0001310: call    cs:__imp_ExFreePoolWithTag    ; kernel-address routine\n\nPATCHED SecFreeForKsecCaller (inserted feature-gated redirect):\n  0x1C000129F: jz      short loc_1C00012E7            ; not protected\n  0x1C00012A1: lea     rcx, g_Feature_4032523578_59197666_FeatureDescriptorDetails\n  0x1C00012A8: call    ?EvaluateCurrentState@@YAHPEBUreg_FeatureDescriptor@@@Z\n  0x1C00012AD: mov     rcx, [rsp+28h+BaseAddress]\n  0x1C00012B2: test    eax, eax\n  0x1C00012B4: jz      short loc_1C00012C2           ; feature disabled -> legacy path\n  0x1C00012B6: mov     rax, cs:__imp_MmHighestUserAddress\n  0x1C00012BD: cmp     rcx, [rax]\n  0x1C00012C0: ja      short loc_1C00012EC           ; kernel addr -> KsecRemoveValidAddressCommon\n  0x1C00012C2: mov     rdx, rcx                       ; user addr -> legacy KsecRemoveValidVm\n  0x1C00012C8: call    KsecRemoveValidVm\n  0x1C00012EC: xor     edx, edx\n  0x1C00012EE: call    KsecRemoveValidAddressCommon"
+    },
+    {
+      "name": "SecFreeCommon (0x1C0004F30 unpatched -> 0x1C0004F70 patched)",
+      "similarity": 0.8674,
+      "change_type": "behavioral_feature_gated",
+      "key_changes": [
+        "Same feature-staging-gated MmHighestUserAddress redirect as SecFreeForKsecCaller, in the protected (PPL) branch.",
+        "Reached via IOCTL 0x39002C (3735596) -> KsecIoctlFreePool (0x1C000DC7C) -> SecFreeCommon. The protected branch is taken only when the input 'package' dword (offset 8 of the 16-byte buffer) equals 0xFFFFFFFD (-3) and PsIsProtectedProcess is true.",
+        "Legacy KsecRemoveValidVm path retained on the feature-disabled fall-through."
+      ],
+      "security_relevant": false,
+      "security_notes": "Mirror of the SecFreeForKsecCaller change. Same null-handle skip and same non-reachability of an attacker-chosen kernel address at the ExFreePoolWithTag routine.",
+      "assembly_diff": "UNPATCHED SecFreeCommon protected branch (0x1C0004F30):\n  0x1C0004F95: cmp     esi, 0FFFFFFFDh                 ; package == -3 ?\n  0x1C0004F98: jnz     short loc_1C0004FD3\n  0x1C0004F9D: call    cs:__imp_PsIsProtectedProcess\n  0x1C0004FA9: test    eax, eax\n  0x1C0004FAB: jz      short loc_1C0004FD3\n  0x1C0004FAD: mov     rdx, [rbp+BaseAddress]\n  0x1C0004FB4: call    KsecRemoveValidVm\n  0x1C0004FB9: test    rax, rax\n  0x1C0004FBC: jz      loc_1C0005045                   ; handle == null -> free SKIPPED\n  ... shared free site: 0x1C0004FEE cmp rcx,[MmUserProbeAddress]; 0x1C0005014 call ExFreePoolWithTag\n\nPATCHED SecFreeCommon (0x1C0004F70) inserts at 0x1C0004FED:\n  lea rcx, g_Feature_4032523578_59197666_FeatureDescriptorDetails\n  call EvaluateCurrentState\n  mov rcx, [rbp+BaseAddress]; test eax,eax; jz legacy\n  mov rax, cs:__imp_MmHighestUserAddress; cmp rcx,[rax]; ja KsecRemoveValidAddressCommon"
+    },
+    {
+      "name": "KsecInsertValidAddress (0x1C00018C0)",
+      "similarity": 0.9914,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only change: passes the explicit &g_Feature_263211323_55489181_FeatureDescriptorDetails to the now-parameterized EvaluateCurrentState (unpatched passed an uninitialized argument that the old hardcoded evaluator ignored). No change to insertion/validation logic. Note: this function inserts tracking records with a NULL handle."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsecRemoveValidAddressCommon (0x1C0001360 unpatched -> 0x1C0001380 patched)",
+      "similarity": 0.9923,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Same EvaluateCurrentState argument change as KsecInsertValidAddress (explicit feature descriptor passed to the parameterized evaluator). No change to removal/validation logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "SecFreeForKsecCaller (0x1C0001240) and SecFreeCommon (0x1C0004F30 -> 0x1C0004F70)",
+      "entry_point": "FreeContextBuffer (exported SSPI API at 0x1C001D8A0, calls SecFreeForKsecCaller directly) and KsecFastIoDeviceControl (0x1C0003B40) via \\Device\\KsecDD, IOCTL 0x39002C (3735596) -> KsecIoctlFreePool (0x1C000DC7C) -> SecFreeCommon",
+      "call_chain": [
+        "FreeContextBuffer (0x1C001D8A0, exported)",
+        "SecFreeForKsecCaller (0x1C0001240)",
+        "KsecRemoveValidVm (0x1C0003918, protected-branch tracking-record removal; returns stored handle)",
+        "shared free site: ZwFreeVirtualMemory (user addr) or ExFreePoolWithTag (kernel addr, only if the record's handle was non-null)"
+      ],
+      "vulnerability_class": "Feature-staging-gated defense-in-depth range check (no demonstrated reachable vulnerability). No CWE substantiated by the diff.",
+      "description": "The patched build adds, in the Protected-Process (PPL) branch of SecFreeForKsecCaller and SecFreeCommon, an evaluation of Windows Feature g_Feature_4032523578_59197666 (EvaluateCurrentState -> EvaluateFeature) and, when enabled, a comparison of BaseAddress against *MmHighestUserAddress; a kernel-space address is redirected to KsecRemoveValidAddressCommon instead of KsecRemoveValidVm. When the feature evaluates disabled the original KsecRemoveValidVm path runs unchanged, so this is a staged rollout / defense-in-depth change, not an unconditionally enforced fix. The described arbitrary-kernel-pool-free primitive is not demonstrable in the unpatched build (see reachability below). Direction is correct (the patched build is the stricter one when the feature is enabled) but no reachable attacker primitive is closed by the diff.",
+      "trigger_conditions": "Protected branch requires: (1) PsIsProtectedProcess(EPROCESS) true (PPL only); (2) KsecddLsaStateRef::IsValid true, current process not KsecSystemProcess and not the silo-state process; (3) a matching (process, BaseAddress) record in the KsecValidVm tracking table; (4) that record's stored handle non-null, else KsecRemoveValidVm returns null and the free is skipped. For SecFreeCommon via IOCTL 0x39002C: the 16-byte input's package dword at offset 8 must equal 0xFFFFFFFD (-3). The free routine (ExFreePoolWithTag vs ZwFreeVirtualMemory) is then chosen by BaseAddress vs *MmUserProbeAddress at the shared free site.",
+      "primitive": "None demonstrable. To reach ExFreePoolWithTag on the protected branch, the tracking record must carry a non-null handle. The only KsecInsertValidVm caller that stores a non-null handle is KsecIoctlAllocVm (0x1C00037A4), and it stores a driver-allocated user-space address (from ZwAllocateVirtualMemory into a target process), which takes the ZwFreeVirtualMemory routine, never ExFreePoolWithTag. The attacker-seedable inserts (KsecIoctlInsertProtectedProcessAddress at 0x1C0002BB4 and KsecInsertValidAddress at 0x1C00018C0) store a NULL handle, so KsecRemoveValidVm returns null and the free is skipped. No path stores a kernel-space address with a non-null handle.",
+      "evidence": "UNPATCHED SecFreeForKsecCaller (decompiled, condensed):\n  void SecFreeForKsecCaller(void *BaseAddress) {\n    EPROCESS *cur = PsGetCurrentProcess();\n    KsecddLsaStateRef state;\n    if (state.IsValid() && cur != KsecSystemProcess && cur != *state) {\n      if (PsIsProtectedProcess(cur)) {\n        HANDLE h = KsecRemoveValidVm(cur, BaseAddress); // returns stored handle\n        if (h == nullptr) goto cleanup;                 // free SKIPPED if handle null\n        ZwClose(h);\n        goto free_site;\n      }\n    }\n    if (!KsecRemoveValidAddressCommon(BaseAddress, 0)) goto cleanup;\n  free_site:\n    if ((uintptr_t)BaseAddress >= MmUserProbeAddress) ExFreePoolWithTag(BaseAddress, 0);\n    else ZwFreeVirtualMemory((HANDLE)-1, &BaseAddress, &RegionSize, MEM_RELEASE);\n  cleanup: ;\n  }\n\nKsecInsertValidVm stores record fields (handle, EPROCESS, address, end, flags); KsecRemoveValidVm returns field0 (handle). KsecIoctlInsertProtectedProcessAddress and KsecInsertValidAddress both pass handle=nullptr; KsecIoctlAllocVm passes a non-null ProcessHandle with a ZwAllocateVirtualMemory (user-space) address.\n\nPATCHED SecFreeForKsecCaller inserts before the KsecRemoveValidVm call:\n  if (EvaluateCurrentState(&g_Feature_4032523578_59197666_FeatureDescriptorDetails) && (uintptr_t)BaseAddress > MmHighestUserAddress)\n    goto KsecRemoveValidAddressCommon_path;",
+      "assembly": "See changed_functions[1].assembly_diff and changed_functions[2].assembly_diff for the real disassembly of both branches in both builds.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksecdd!FreeContextBuffer",
+            "address": "0x1C001D8A0",
+            "why": "Exported SSPI entry; rcx = buffer pointer passed to SecFreeForKsecCaller. Confirms the SSPI call chain."
+          },
+          {
+            "symbol": "ksecdd_unpatched!SecFreeForKsecCaller+0x69",
+            "address": "0x1C00012A9",
+            "why": "call KsecRemoveValidVm in the protected branch. rcx = EPROCESS, rdx = BaseAddress. The subsequent test rax,rax / jz at 0x1C00012B1 skips the free when the returned handle is null (the case for addresses seeded via KsecIoctlInsertProtectedProcessAddress / KsecInsertValidAddress)."
+          },
+          {
+            "symbol": "ksecdd_unpatched!SecFreeForKsecCaller+0xD0",
+            "address": "0x1C0001310",
+            "why": "call ExFreePoolWithTag at the shared free site (kernel-address routine). Reached only when the tracking record carried a non-null handle; per reachability analysis, no attacker-seeded kernel address reaches here."
+          },
+          {
+            "symbol": "ksecdd!KsecFastIoDeviceControl",
+            "address": "0x1C0003B40",
+            "why": "IOCTL dispatcher. IOCTL 0x39002C (3735596) dispatches to KsecIoctlFreePool -> SecFreeCommon."
+          }
+        ],
+        "watch": [
+          "rax after KsecRemoveValidVm at 0x1C00012AE (unpatched) = stored handle; null => free skipped.",
+          "eax return of PsIsProtectedProcess at 0x1C000129D must be non-zero to enter the protected branch.",
+          "Patched: eax return of EvaluateCurrentState at 0x1C00012AD gates the new MmHighestUserAddress compare; when zero the legacy KsecRemoveValidVm path runs."
+        ],
+        "key_offsets": [
+          "0x1C000129F (unpatched): jz after PsIsProtectedProcess; protected branch requires ZF=0.",
+          "0x1C00012A9 (unpatched): call KsecRemoveValidVm (returns stored handle).",
+          "0x1C00012B1 (unpatched): jz taken when handle is null -> free skipped.",
+          "0x1C00012E4 (unpatched): cmp BaseAddress, *MmUserProbeAddress -> selects ExFreePoolWithTag vs ZwFreeVirtualMemory (routine selector, unchanged, present in both builds).",
+          "0x1C00012A8 (patched): call EvaluateCurrentState(&g_Feature_4032523578_59197666); 0x1C00012BD cmp BaseAddress,[__imp_MmHighestUserAddress]; 0x1C00012C0 ja to KsecRemoveValidAddressCommon (the inserted redirect)."
+        ],
+        "trigger_setup": "Protected branch is PPL-only. Even from a PPL context, seeding a kernel address via KsecIoctlInsertProtectedProcessAddress (IOCTL) or KsecInsertValidAddress stores a null handle, so KsecRemoveValidVm returns null and SecFreeForKsecCaller/SecFreeCommon skip the free; no ExFreePoolWithTag on an attacker-chosen kernel address results. No exploit primitive is established by this diff.",
+        "expected_observation": "In the protected branch, KsecRemoveValidVm returns the stored handle; for entries inserted via KsecIoctlInsertProtectedProcessAddress / KsecInsertValidAddress the handle is null and the free is skipped. Entries inserted via KsecIoctlAllocVm hold user-space addresses and take the ZwFreeVirtualMemory routine.",
+        "notes": "The gate is Windows Feature staging (EvaluateCurrentState -> EvaluateFeature over reg_FeatureDescriptor g_Feature_4032523578_59197666), not a hardening/VBS flag. The unpatched EvaluateCurrentState hardcoded g_Feature_263211323_55489181 and ignored its argument; the patched build parameterizes it. The MmUserProbeAddress comparison at the shared free site is a routine selector, not a security boundary, and is unchanged."
+      }
+    }
+  ],
+  "summary": "The only behavioral delta between the two ksecdd.sys builds is a Windows-Feature-staging-gated MmHighestUserAddress range check added to the Protected-Process (PPL) branch of two free helpers, SecFreeForKsecCaller (0x1C0001240) and SecFreeCommon (0x1C0004F30 -> 0x1C0004F70). When feature g_Feature_4032523578_59197666 is enabled, a kernel-space BaseAddress is redirected from KsecRemoveValidVm to KsecRemoveValidAddressCommon; when the feature is disabled the original path runs unchanged (staged rollout). The three remaining changed functions (EvaluateCurrentState, KsecInsertValidAddress, KsecRemoveValidAddressCommon) are Windows-Feature-staging plumbing from parameterizing EvaluateCurrentState. The previously claimed arbitrary-kernel-pool-free primitive is not demonstrable: in the protected branch KsecRemoveValidVm returns the tracking record's stored handle and the free is skipped when that handle is null; the attacker-seedable insert paths (KsecIoctlInsertProtectedProcessAddress, KsecInsertValidAddress) store a null handle, and the only non-null-handle inserter (KsecIoctlAllocVm) stores driver-allocated user-space addresses that take the ZwFreeVirtualMemory routine, never ExFreePoolWithTag. The change is defense-in-depth, PPL-gated, and feature-staged; no CWE or exploit primitive is substantiated by the diff."
+}

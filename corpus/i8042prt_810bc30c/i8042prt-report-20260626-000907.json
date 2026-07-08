@@ -1,0 +1,179 @@
+{
+  "binaries": {
+    "id_unpatched": "i8042prt_unpatched.sys",
+    "id_patched": "i8042prt_patched.sys",
+    "unpatched_version": "10.0.17763.1",
+    "patched_version": "10.0.28000.1896",
+    "overall_similarity": 0.5167,
+    "matched": 183,
+    "changed": 157,
+    "identical": 26,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "verdict": "No security-relevant change. The two binaries are an ~8-year version pair (2018 vs 2026 build), not an adjacent security update, and no CVE is attributed to this component. The large diff is non-security churn: image rebase (0x1C0000000 -> 0x140000000), WPP trace-enable gating, ExAllocatePoolWithTag -> ExAllocatePool2 modernization, and register-allocation/scheduling differences. The keyboard-hook IOCTL handler and the keyboard/mouse ISRs are behaviorally identical across the two builds.",
+  "changed_functions": [
+    {
+      "name": "I8xInternalDeviceControl",
+      "similarity": 0.1121,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "IOCTL_INTERNAL_I8042_HOOK_KEYBOARD (0xB3FC3) handler copies three caller-supplied pointer-sized values from Type3InputBuffer into device extension fields (+0x3A8 context, +0x398 and +0x3A0 routine pointers) after a >= 0x30 input-buffer size check; this store sequence is IDENTICAL in both builds and is not wrapped in KeSynchronizeExecution in either build",
+        "The keyboard-connect path (IOCTL 0xB0203) allocates via ExAllocatePoolWithTag in the unpatched build and ExAllocatePool2 in the patched build (API modernization)",
+        "Low similarity is dominated by WPP trace-enable gating (off_140012008 compares) and register allocation, not by any validation or synchronization change"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The keyboard-hook store sequence (DeviceExtension+0x3A8/+0x398/+0x3A0) is instruction-for-instruction identical in both builds: unpatched 0x1C0002C25..0x1C0002C50, patched 0x1400076E0..0x140007707. No KeSynchronizeExecution was added (both builds contain 20 KeSynchronizeExecution call sites). IOCTL 0xB3FC3 is IOCTL_INTERNAL_I8042_HOOK_KEYBOARD, a METHOD_NEITHER internal control code issued by a kernel-mode upper keyboard-filter driver, not a user-mode-reachable surface; the installed pointer is a kernel routine chosen by that trusted driver. The ISR-side invocation of the installed pointer is Control-Flow-Guard-protected in both builds.",
+      "assembly_diff": "UNPATCHED I8xInternalDeviceControl @ 0x1C0002B30 - HOOK_KEYBOARD (0xB3FC3) store sequence:\n0x1C0002C16: cmp     dword ptr [rdi+10h], 30h ; InputBufferLength >= 0x30\n0x1C0002C25: mov     rcx, [rdi+20h]           ; Type3InputBuffer\n0x1C0002C29: mov     rax, [rcx]\n0x1C0002C2C: mov     [rbx+3A8h], rax          ; store context\n0x1C0002C3C: mov     [rbx+398h], rax          ; store routine ptr (if non-zero)\n0x1C0002C50: mov     [rbx+3A0h], rax          ; store routine ptr (if non-zero)\n\nPATCHED (content-matched block) @ 0x1400076C2 - IDENTICAL:\n0x1400076C2: cmp     dword ptr [rsi+10h], 30h ; InputBufferLength >= 0x30\n0x1400076E0: mov     rcx, [rsi+20h]           ; Type3InputBuffer\n0x1400076E4: mov     rax, [rcx]\n0x1400076E7: mov     [rdi+3A8h], rax          ; store context\n0x1400076F7: mov     [rdi+398h], rax          ; store routine ptr (if non-zero)\n0x140007707: mov     [rdi+3A0h], rax          ; store routine ptr (if non-zero)"
+    },
+    {
+      "name": "I8042KeyboardInterruptService",
+      "similarity": 0.2454,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Keyboard ISR reads the hook routine pointer from DeviceExtension+0x3A0, and if non-zero invokes it via a Control-Flow-Guard-protected indirect call, passing the context at DeviceExtension+0x3A8 as the first argument",
+        "This read/NULL-check/CFG-guarded-call sequence is identical in both builds (unpatched 0x1C0006201..0x1C0006253, patched 0x140001E78..0x140002195)",
+        "Diff is WPP trace-enable gating and register allocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The ISR invocation of the installed hook pointer is guarded by Control Flow Guard (__guard_dispatch_icall_fptr / _guard_dispatch_icall) in both builds. No synchronization, validation, or bounds handling was added or removed.",
+      "assembly_diff": "UNPATCHED keyboard ISR @ 0x1C0006050:\n0x1C0006201: mov     rax, [rbx+3A0h]              ; hook routine pointer\n0x1C0006208: test    rax, rax\n0x1C000620B: jz      short 0x1C0006267            ; skip if none installed\n0x1C000624C: mov     rcx, [rbx+3A8h]              ; context -> arg1\n0x1C0006253: call    cs:__guard_dispatch_icall_fptr ; CFG-guarded indirect call\n\nPATCHED keyboard ISR @ 0x140001DD0 - IDENTICAL:\n0x140001E78: mov     rax, [rdi+3A0h]              ; hook routine pointer\n0x140001E7F: test    rax, rax\n0x140001E82: jnz     0x14000214E                  ; invoke if installed\n0x14000218E: mov     rcx, [rdi+3A8h]              ; context -> arg1\n0x140002195: call    _guard_dispatch_icall        ; CFG-guarded indirect call"
+    },
+    {
+      "name": "I8042MouseInterruptService",
+      "similarity": 0.0759,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Mouse ISR processes multi-byte mouse packets through a state machine and queues data via I8xWriteDataToMouseQueue",
+        "Queue write (24-byte entry, full check, +0x18 advance, wraparound) is identical in both builds",
+        "Low similarity is dominated by WPP trace-enable gating and instruction scheduling, not a synchronization or bounds change"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change identified. Packet handling and queue-write logic match between builds.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xWriteDataToKeyboardQueue",
+      "similarity": 0.4127,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "WPP tracing macro gating differences",
+        "Core queue logic identical: 12-byte entry, advance pointer by 0xc",
+        "Queue full check: write_ptr == read_ptr && count != 0",
+        "Wrap-around: when write_ptr == queue_end, reset to queue_base"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xWriteDataToMouseQueue",
+      "similarity": 0.3248,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "WPP tracing macro gating differences",
+        "Core queue logic identical: 24-byte entry, advance pointer by 0x18",
+        "Queue full check: write_ptr == read_ptr && count != 0",
+        "Wrap-around: when write_ptr == queue_end, reset to queue_base"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xKeyboardServiceParameters",
+      "similarity": 0.1689,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Reads HKLM registry parameters that control keyboard configuration (queue size, poll interval, failed-reset handling)",
+        "Defaults, the KeyboardFailedReset > 2 clamp, the zero-queue-size fallback, and the 12*count allocation math are identical in both builds",
+        "Low similarity is WPP gating and register allocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. Registry values here are administrator-controlled (HKLM), not an attacker-controlled boundary. No validation was added or removed between builds; the size-computation and clamp logic match.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xMouseServiceParameters",
+      "similarity": 0.3826,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Reads mouse configuration from registry",
+        "WPP tracing gating differences",
+        "Mouse sample rate and button count configuration"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xQueueCurrentMouseInput",
+      "similarity": 0.3284,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Calls I8xWriteDataToMouseQueue to queue mouse data",
+        "Queues DPC for processing when data is available",
+        "Overflow handling triggers error DPC"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xProcessCrashDump",
+      "similarity": 0.0116,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Very low similarity, but function is only active during crash-dump scenarios",
+        "Processes keyboard scan codes during crash dump mode",
+        "Called from keyboard ISR when crash dump is active"
+      ],
+      "security_relevant": false,
+      "security_notes": "Only active during crash-dump scenarios and not attacker-reachable. No security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "I8xInitializeKeyboard",
+      "similarity": 0.4548,
+      "change_type": "non_security_churn",
+      "key_changes": [
+        "Largest changed function",
+        "Initializes keyboard hardware with registry-supplied parameters via polled I/O",
+        "Sets typematic rate and scan code set"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization routine, not IOCTL-reachable. No security-relevant change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "I8xInternalDeviceControl",
+      "entry_point": "IRP_MJ_INTERNAL_DEVICE_CONTROL, IOCTL_INTERNAL_I8042_HOOK_KEYBOARD (0xB3FC3) branch",
+      "call_chain": ["I8xInternalDeviceControl (IRP_MJ_INTERNAL_DEVICE_CONTROL)", "keyboard-hook store to device extension (+0x3A8/+0x398/+0x3A0)", "I8042KeyboardInterruptService reads +0x3A0 and invokes it via CFG-guarded indirect call"],
+      "vulnerability_class": "N/A (no security-relevant change)",
+      "description": "A prior hypothesis held that the unpatched I8xInternalDeviceControl updated ISR callback pointers without synchronization and that the patch added KeSynchronizeExecution. Direct comparison of both binaries refutes this. The keyboard-hook store sequence (DeviceExtension+0x3A8 context, +0x398 and +0x3A0 routine pointers) is instruction-for-instruction identical between builds: unpatched at 0x1C0002C25..0x1C0002C50 and patched at 0x1400076E0..0x140007707. Neither build wraps these stores in KeSynchronizeExecution, and both builds contain exactly 20 KeSynchronizeExecution call sites, so no synchronization was added. The ISR-side invocation of the installed pointer is Control-Flow-Guard-protected in both builds (unpatched 0x1C0006253 via __guard_dispatch_icall_fptr, patched 0x140002195 via _guard_dispatch_icall). IOCTL 0xB3FC3 is IOCTL_INTERNAL_I8042_HOOK_KEYBOARD, a METHOD_NEITHER internal control code issued by a kernel-mode upper keyboard-filter driver during device setup, not a user-mode-reachable surface; the pointer it installs is a kernel routine address chosen by that trusted driver. The two binaries are an ~8-year version pair (10.0.17763.1 vs 10.0.28000.1896) with no CVE attributed to this component; the diff is non-security churn (image rebase, WPP trace-enable gating, ExAllocatePoolWithTag -> ExAllocatePool2, register allocation).",
+      "trigger_conditions": "None. There is no security-relevant change to trigger.",
+      "primitive": "None. No control-flow-hijack, arbitrary-write, or information-disclosure primitive is demonstrable; the code path is identical in both builds and the ISR-side call is CFG-guarded.",
+      "evidence": "UNPATCHED I8xInternalDeviceControl @ 0x1C0002B30 - HOOK_KEYBOARD store sequence:\n0x1C0002C16: cmp     dword ptr [rdi+10h], 30h ; InputBufferLength >= 0x30\n0x1C0002C25: mov     rcx, [rdi+20h]           ; Type3InputBuffer\n0x1C0002C2C: mov     [rbx+3A8h], rax          ; store context\n0x1C0002C3C: mov     [rbx+398h], rax          ; store routine ptr (if non-zero)\n0x1C0002C50: mov     [rbx+3A0h], rax          ; store routine ptr (if non-zero)\n\nPATCHED (content-matched block) @ 0x1400076C2 - IDENTICAL:\n0x1400076E7: mov     [rdi+3A8h], rax\n0x1400076F7: mov     [rdi+398h], rax\n0x140007707: mov     [rdi+3A0h], rax\n\nISR invocation, CFG-guarded in both builds:\nUNPATCHED: 0x1C0006201 mov rax,[rbx+3A0h]; 0x1C000624C mov rcx,[rbx+3A8h]; 0x1C0006253 call cs:__guard_dispatch_icall_fptr\nPATCHED:   0x140001E78 mov rax,[rdi+3A0h]; 0x14000218E mov rcx,[rdi+3A8h]; 0x140002195 call _guard_dispatch_icall",
+      "assembly": "See evidence field. Both builds are equivalent in this path; no KeSynchronizeExecution is present in either, and the ISR call is CFG-guarded in both.",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [
+          "0x1C0002C25 (unpatched) / 0x1400076E0 (patched): start of the identical keyboard-hook store sequence",
+          "0x1C0006253 (unpatched) / 0x140002195 (patched): CFG-guarded ISR invocation of the installed pointer"
+        ],
+        "trigger_setup": "None. No vulnerability to reproduce.",
+        "expected_observation": "None.",
+        "notes": "Device-extension keyboard-hook fields: +0x3A8 = hook context, +0x398 and +0x3A0 = installed routine pointers (the keyboard ISR invokes the pointer at +0x3A0 under Control Flow Guard). These offsets and the surrounding logic are identical in both builds."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. A prior race-condition hypothesis (CWE-362) against i8042prt.sys was refuted by direct comparison of both binaries. The keyboard-hook IOCTL handler (I8xInternalDeviceControl, IOCTL_INTERNAL_I8042_HOOK_KEYBOARD 0xB3FC3) writes three caller-supplied values into device-extension offsets +0x3A8/+0x398/+0x3A0, and this store sequence is instruction-for-instruction identical in the unpatched (0x1C0002C25..0x1C0002C50) and patched (0x1400076E0..0x140007707) builds. No KeSynchronizeExecution was added (20 call sites in each build), and the keyboard ISR invokes the installed pointer via a Control-Flow-Guard-protected indirect call in both builds. IOCTL 0xB3FC3 is an internal METHOD_NEITHER code set by a kernel-mode upper keyboard-filter driver, not a user-mode surface. The two binaries are an ~8-year version pair (10.0.17763.1 vs 10.0.28000.1896) with no CVE attributed to this component; the 0.5167 similarity reflects image rebase, WPP trace-enable gating, ExAllocatePoolWithTag -> ExAllocatePool2 modernization, and compiler churn, none of which is a security fix."
+}

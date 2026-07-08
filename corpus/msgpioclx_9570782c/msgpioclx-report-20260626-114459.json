@@ -1,0 +1,80 @@
+{
+  "binaries": {
+    "id_unpatched": "msgpioclx_unpatched.sys",
+    "id_patched": "msgpioclx_patched.sys",
+    "overall_similarity": 0.9929,
+    "matched": 360,
+    "changed": 3,
+    "identical": 357,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "GpiopGetBaseRegistrationBufferSize",
+      "similarity": 1.0,
+      "change_type": "layout_update",
+      "key_changes": [
+        "Return value changed from 0x68 to 0x70 (mov eax, 0x68 -> mov eax, 0x70). This constant is the base allocation size for the PO_FX_DEVICE registration buffer and grows by 8 bytes to match the enlarged structure layout.",
+        "Missed by structure-only comparison because only the immediate operand changed, not the opcode/register structure."
+      ],
+      "security_relevant": false,
+      "security_notes": "The base registration-buffer size grew by 8 bytes (0x68 -> 0x70), consistent with a new DWORD field being inserted into the PO_FX_DEVICE layout. Whether the pre-patch smaller/differently-laid-out buffer produced any misbehavior depends on the kernel's PoFxRegisterPrimaryDevice parser, which is not part of these binaries. No attacker-controlled input reaches this size; it is a fixed constant. Not scored as a security fix.",
+      "assembly_diff": "GpiopGetBaseRegistrationBufferSize @ 0x1c0013c14 (UNPATCHED):\n  00000001C0013C14  mov     eax, 68h\n  00000001C0013C19  retn\n\nGpiopGetBaseRegistrationBufferSize @ 0x1c0013c14 (PATCHED):\n  00000001C0013C14  mov     eax, 70h\n  00000001C0013C19  retn"
+    },
+    {
+      "name": "GpiopInitializePrimaryDevice",
+      "similarity": 0.6961,
+      "change_type": "layout_update",
+      "key_changes": [
+        "New DWORD field added at offset 0x08 of the PO_FX_DEVICE registration buffer, initialized to 1.",
+        "All six callback function pointers shifted +8 bytes: ActiveConditionCallback 0x08->0x10, IdleConditionCallback 0x10->0x18, IdleStateCallback 0x18->0x20, PowerRequiredCallback 0x20->0x28, PowerNotRequiredCallback 0x28->0x30, CriticalTransitionCallback 0x38->0x40.",
+        "Zeroed field shifted 0x30->0x38; DeviceContext shifted 0x40->0x48. Both builds write version=1 at offset 0x00 and the component count at offset 0x04."
+      ],
+      "security_relevant": false,
+      "security_notes": "The function fills the PO_FX_DEVICE buffer with the same callback targets, component count, and device-context pointer in both builds; only the field offsets and the extra DWORD at 0x08 differ. The value at offset 0x00 (the structure version field passed to PoFxRegisterPrimaryDevice) is 1 in both builds. The buffer contents are fixed at compile time; no IOCTL or other attacker-controlled input reaches these fields. Any consequence of the layout difference is a property of the out-of-scope kernel PoFx parser, so no reachable primitive is demonstrable from the driver binaries. The change is consistent with a recompile against an updated PO_FX_DEVICE definition (coordinated servicing) and is not scored as a security fix.",
+      "assembly_diff": "GpiopInitializePrimaryDevice @ 0x1c0013c44 (UNPATCHED):\n  00000001C0013C44  and     qword ptr [rcx+30h], 0\n  00000001C0013C49  lea     rax, GpioClxBankIdleStateCallback\n  00000001C0013C50  mov     [rcx+18h], rax\n  00000001C0013C54  lea     rax, GpioClxBankActiveConditionCallback\n  00000001C0013C5B  mov     [rcx+8], rax\n  00000001C0013C5F  lea     rax, GpioClxBankIdleConditionCallback\n  00000001C0013C66  mov     [rcx+10h], rax\n  00000001C0013C6A  lea     rax, GpioClxDevicePowerRequiredCallback\n  00000001C0013C71  mov     [rcx+20h], rax\n  00000001C0013C75  lea     rax, GpioClxDevicePowerNotRequiredCallback\n  00000001C0013C7C  mov     [rcx+28h], rax\n  00000001C0013C80  mov     rax, [rsp+arg_40]\n  00000001C0013C85  mov     [rcx+40h], rax\n  00000001C0013C89  lea     rax, GpioClxCriticalTransitionCallback\n  00000001C0013C90  mov     [rcx+38h], rax\n  00000001C0013C94  mov     dword ptr [rcx], 1\n  00000001C0013C9A  mov     [rcx+4], edx\n  00000001C0013C9D  retn\n\nGpiopInitializePrimaryDevice @ 0x1c0013c40 (PATCHED):\n  00000001C0013C40  and     qword ptr [rcx+38h], 0\n  00000001C0013C45  mov     eax, 1\n  00000001C0013C4A  mov     [rcx], eax\n  00000001C0013C4C  mov     [rcx+8], eax\n  00000001C0013C4F  lea     rax, GpioClxBankIdleStateCallback\n  00000001C0013C56  mov     [rcx+20h], rax\n  00000001C0013C5A  lea     rax, GpioClxBankActiveConditionCallback\n  00000001C0013C61  mov     [rcx+10h], rax\n  00000001C0013C65  lea     rax, GpioClxBankIdleConditionCallback\n  00000001C0013C6C  mov     [rcx+18h], rax\n  00000001C0013C70  lea     rax, GpioClxDevicePowerRequiredCallback\n  00000001C0013C77  mov     [rcx+28h], rax\n  00000001C0013C7B  lea     rax, GpioClxDevicePowerNotRequiredCallback\n  00000001C0013C82  mov     [rcx+30h], rax\n  00000001C0013C86  mov     rax, [rsp+arg_40]\n  00000001C0013C8B  mov     [rcx+48h], rax\n  00000001C0013C8F  lea     rax, GpioClxCriticalTransitionCallback\n  00000001C0013C96  mov     [rcx+40h], rax\n  00000001C0013C9A  mov     [rcx+4], edx\n  00000001C0013C9D  retn"
+    },
+    {
+      "name": "GpiopInitializeIdleStateBufferAndCount",
+      "similarity": 0.6795,
+      "change_type": "layout_update",
+      "key_changes": [
+        "Per-component IdleStates pointer moved from (i+3)*32 to i*32+0x68, matching the enlarged component-array base.",
+        "Per-component IdleStateCount moved from i*32+0x58 to (i+3)*32.",
+        "Register allocation changed as a side effect of the reordering (r10 now holds comp_idx*32)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The same count and pointer values are written in both builds; only the destination offsets changed to track the enlarged registration-structure layout. No attacker-controlled input reaches these fields. Consistent with a recompile against an updated PO_FX_DEVICE/PO_FX_COMPONENT definition; not scored as a security fix.",
+      "assembly_diff": "GpiopInitializeIdleStateBufferAndCount @ 0x1c0013c20 (UNPATCHED):\n  00000001C0013C20  mov     eax, edx\n  00000001C0013C22  shl     rax, 5\n  00000001C0013C26  mov     r10d, edx\n  00000001C0013C29  mov     [rax+rcx+58h], r9d\n  00000001C0013C2E  lea     rax, [r10+3]\n  00000001C0013C32  shl     rax, 5\n  00000001C0013C36  mov     [rax+rcx], r8\n  00000001C0013C3A  retn\n\nGpiopInitializeIdleStateBufferAndCount @ 0x1c0013c20 (PATCHED):\n  00000001C0013C20  mov     r10d, edx\n  00000001C0013C23  lea     rax, [r10+3]\n  00000001C0013C27  shl     r10, 5\n  00000001C0013C2B  shl     rax, 5\n  00000001C0013C2F  mov     [r10+rcx+68h], r8\n  00000001C0013C34  mov     [rax+rcx], r9d\n  00000001C0013C38  retn"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "GpiopInitializePrimaryDevice / GpiopGetBaseRegistrationBufferSize / GpiopInitializeIdleStateBufferAndCount",
+      "entry_point": "GpioClxEvtDeviceSelfManagedIoInit (WDF EvtDeviceSelfManagedIoInit callback) — runs during GPIO controller PnP device start",
+      "call_chain": [
+        "GpioClxEvtDeviceSelfManagedIoInit @ 0x1c0003ed0",
+        "GpiopRegisterWithPowerFramework @ 0x1c0025b10",
+        "GpiopGetBaseRegistrationBufferSize @ 0x1c0013c14 (returns 0x68 unpatched, 0x70 patched)",
+        "ExAllocatePoolWithTag (allocates the PO_FX_DEVICE registration buffer)",
+        "GpiopInitializePrimaryDevice @ 0x1c0013c44 unpatched / 0x1c0013c40 patched (fills the buffer)",
+        "GpiopInitializeIdleStateBufferAndCount @ 0x1c0013c20 (fills per-component idle-state fields)",
+        "GpiopRegisterPrimaryDeviceInternal @ 0x1c0013ca4 -> PoFxRegisterPrimaryDevice"
+      ],
+      "vulnerability_class": "No security-relevant change — PoFx registration structure layout/version update",
+      "description": "The patch enlarges the PO_FX_DEVICE power-framework registration buffer by 8 bytes (GpiopGetBaseRegistrationBufferSize 0x68 -> 0x70), inserts a new DWORD field (initialized to 1) at offset 0x08, and shifts every subsequent field down by 8 bytes (six callback pointers and the DeviceContext), with matching per-component offset adjustments in GpiopInitializeIdleStateBufferAndCount. Both builds write the same version value (1) at offset 0x00 and the same component count at offset 0x04, and fill the buffer with the same fixed compile-time callback addresses and device-context pointer. No attacker-controlled input reaches the changed fields. The security consequence of the layout difference, if any, is a property of the kernel's PoFxRegisterPrimaryDevice parser, which is not part of these binaries and cannot be evaluated from a driver-to-driver diff. The change is consistent with the driver being recompiled against an updated PO_FX_DEVICE structure definition (coordinated servicing) and is not scored as a security fix. The earlier characterization as a V1/V3 type-confusion leading to kernel memory corruption is not supported: the driver stamps the same version value in both builds, and the specific corruption arithmetic previously cited (a callback pointer's low DWORD read as ~19 million idle states) is incorrect — the low 32 bits of the callback address 0x1c0013020 are 0xc0013020, and no such kernel misread is demonstrable from these binaries.",
+      "trigger_conditions": "The registration path runs during ordinary GPIO controller device start (GpioClxEvtDeviceSelfManagedIoInit -> GpiopRegisterWithPowerFramework -> PoFxRegisterPrimaryDevice). The buffer contents are fixed at compile time; no IOCTL or other attacker-controlled data reaches the changed fields. Whether the layout difference between builds causes any misbehavior depends on the out-of-scope kernel PoFx parser.",
+      "primitive": "None demonstrable from the driver binaries. Inputs to the changed functions are the buffer pointer, fixed compile-time callback addresses, the component count, and the device-context pointer — none attacker-tunable.",
+      "evidence": "UNPATCHED GpiopInitializePrimaryDevice (a1 = buffer, a2 = component count, a9 = device context):\n  *(_QWORD *)(a1 + 48) = 0;\n  *(_QWORD *)(a1 + 24) = GpioClxBankIdleStateCallback;\n  *(_QWORD *)(a1 + 8)  = GpioClxBankActiveConditionCallback;\n  *(_QWORD *)(a1 + 16) = GpioClxBankIdleConditionCallback;\n  *(_QWORD *)(a1 + 32) = GpioClxDevicePowerRequiredCallback;\n  *(_QWORD *)(a1 + 40) = GpioClxDevicePowerNotRequiredCallback;\n  *(_QWORD *)(a1 + 64) = a9;\n  *(_QWORD *)(a1 + 56) = GpioClxCriticalTransitionCallback;\n  *(_DWORD *)a1 = 1;\n  *(_DWORD *)(a1 + 4) = a2;\n\nPATCHED GpiopInitializePrimaryDevice:\n  *(_QWORD *)(a1 + 56) = 0;\n  *(_DWORD *)a1 = 1;\n  *(_DWORD *)(a1 + 8) = 1;   // new DWORD field\n  *(_QWORD *)(a1 + 32) = GpioClxBankIdleStateCallback;\n  *(_QWORD *)(a1 + 16) = GpioClxBankActiveConditionCallback;\n  *(_QWORD *)(a1 + 24) = GpioClxBankIdleConditionCallback;\n  *(_QWORD *)(a1 + 40) = GpioClxDevicePowerRequiredCallback;\n  *(_QWORD *)(a1 + 48) = GpioClxDevicePowerNotRequiredCallback;\n  *(_QWORD *)(a1 + 72) = a9;\n  *(_QWORD *)(a1 + 64) = GpioClxCriticalTransitionCallback;\n  *(_DWORD *)(a1 + 4) = a2;\n\nGpiopGetBaseRegistrationBufferSize: return 104 (0x68) unpatched -> return 112 (0x70) patched.",
+      "assembly": "=== GpiopGetBaseRegistrationBufferSize @ 0x1c0013c14 (UNPATCHED) ===\n  00000001C0013C14  mov     eax, 68h\n  00000001C0013C19  retn\n\n=== GpiopInitializePrimaryDevice @ 0x1c0013c44 (UNPATCHED) ===\n  00000001C0013C44  and     qword ptr [rcx+30h], 0\n  00000001C0013C49  lea     rax, GpioClxBankIdleStateCallback\n  00000001C0013C50  mov     [rcx+18h], rax\n  00000001C0013C54  lea     rax, GpioClxBankActiveConditionCallback\n  00000001C0013C5B  mov     [rcx+8], rax\n  00000001C0013C5F  lea     rax, GpioClxBankIdleConditionCallback\n  00000001C0013C66  mov     [rcx+10h], rax\n  00000001C0013C6A  lea     rax, GpioClxDevicePowerRequiredCallback\n  00000001C0013C71  mov     [rcx+20h], rax\n  00000001C0013C75  lea     rax, GpioClxDevicePowerNotRequiredCallback\n  00000001C0013C7C  mov     [rcx+28h], rax\n  00000001C0013C80  mov     rax, [rsp+arg_40]\n  00000001C0013C85  mov     [rcx+40h], rax\n  00000001C0013C89  lea     rax, GpioClxCriticalTransitionCallback\n  00000001C0013C90  mov     [rcx+38h], rax\n  00000001C0013C94  mov     dword ptr [rcx], 1\n  00000001C0013C9A  mov     [rcx+4], edx\n  00000001C0013C9D  retn\n\n=== GpiopInitializeIdleStateBufferAndCount @ 0x1c0013c20 (UNPATCHED) ===\n  00000001C0013C20  mov     eax, edx\n  00000001C0013C22  shl     rax, 5\n  00000001C0013C26  mov     r10d, edx\n  00000001C0013C29  mov     [rax+rcx+58h], r9d\n  00000001C0013C2E  lea     rax, [r10+3]\n  00000001C0013C32  shl     rax, 5\n  00000001C0013C36  mov     [rax+rcx], r8\n  00000001C0013C3A  retn\n\n=== GpiopRegisterWithPowerFramework @ 0x1c0025b10 (allocation sequence, identical in both builds) ===\n  00000001C0025B28  movzx   r9d, word ptr [rcx+2D8h]\n  00000001C0025B33  call    GpiopGetBaseRegistrationBufferSize\n  00000001C0025B3E  shl     edx, 5\n  00000001C0025B48  lea     edi, [rdx-19h]\n  00000001C0025B4F  add     edi, eax\n  00000001C0025B51  and     edi, 0FFFFFFF8h\n  00000001C0025B8A  lea     ecx, [rdi+rax*8]\n  00000001C0025B94  call    ExAllocatePoolWithTag\n  00000001C0025C03  call    GpiopInitializePrimaryDevice\n  00000001C0025C3F  call    GpiopInitializeIdleStateBufferAndCount\n  00000001C0025CB6  call    GpiopRegisterPrimaryDeviceInternal",
+      "notes": "An independent content diff of both builds confirms the change is confined to these three functions; no other function differs, and no new sanitizer, guard, or mitigation was introduced. Establishing any reachable security impact would require the specific kernel build's PoFxRegisterPrimaryDevice parser, which is out of scope for a driver-to-driver diff."
+    }
+  ],
+  "summary": "The patch updates the layout of msgpioclx.sys's PO_FX_DEVICE power-framework registration buffer: the base allocation size grows from 0x68 to 0x70, a new DWORD field (=1) is inserted at offset 0x08, and every subsequent field (six callback pointers and the DeviceContext) shifts down by 8 bytes, with matching per-component offset adjustments. Three functions changed: GpiopGetBaseRegistrationBufferSize, GpiopInitializePrimaryDevice, and GpiopInitializeIdleStateBufferAndCount. Both builds write the same version value (1) at offset 0x00 and fill the buffer with the same fixed compile-time callback addresses, component count, and device-context pointer; no attacker-controlled input reaches the changed fields. Any consequence of the layout difference is a property of the out-of-scope kernel PoFxRegisterPrimaryDevice parser and is not demonstrable from these driver binaries. The change is treated as a coordinated structure-version update (recompile against an updated definition), not a delivered security fix. No severity or CWE is assigned."
+}

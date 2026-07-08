@@ -1,0 +1,166 @@
+{
+  "binaries": {
+    "title": "http.sys - No security-relevant change (KIR/feature-staged HTTP/2 MaxHeadersCount limit)",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9915,
+    "matched": 4402,
+    "changed": 8,
+    "identical": 4394,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlParseRequestHeaderPairs (0x1400C7BD0)",
+      "similarity": 0.917,
+      "change_type": "feature_gated_behavioral",
+      "key_changes": [
+        "Added a header-count check comparing HTTP/2 entry count (arg2[1]) against MaxHeadersCount (read from *(*(obj+0x18)+0x448)+0x1128) + 4",
+        "Entire new block is gated on UxKirMaxHeadersCountLimit (Known-Issue-Rollback / WIL feature-staging flag): it runs only when the flag is non-zero",
+        "When entry count exceeds MaxHeadersCount+4, sets fault code 0x14 and returns 0xc0000040 (STATUS_FAIL_CHECK) before the loop",
+        "Loop body is unchanged; per-entry work is constant (hash-dispatched name matching + fixed-slot duplicate tracking)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The patched build adds a feature-gated MaxHeadersCount cap on HTTP/2 header count. The check is inert unless UxKirMaxHeadersCountLimit is non-zero (a UxKir* Known-Issue-Rollback / feature-staging flag set at init from WIL feature Feature_3936850235). The pre-patch path has no exploitable resource-exhaustion primitive: per-entry work is constant (name hashed via HashCountedStringNoCaseA @ 0x14006D5A0, then dispatched to a fixed set of known/sensitive header handlers with fixed-slot duplicate tracking), total work is O(n) linear, and the entry count n is already bounded by the existing MaxRequestBytes request-size cap. There is no super-linear amplification and no memory-safety difference. This is feature-staged robustness/serviceability hardening (a new configurable header-count limit), not a fix for an exploitable vulnerability.",
+      "assembly_diff": "Patched (added, inside 0x1400C7E20):\n+cmp     cs:UxKirMaxHeadersCountLimit, r10b   ; 0x1400C7EE4  r10b=0; feature gate\n+jz      loc_1400C8068                        ; 0x1400C7EF1  flag==0 -> skip check, enter loop\n+mov     rax, [rcx+448h]                      ; 0x1400C7EF7  server config\n+mov     r9d, [r12+8]                         ; 0x1400C7EFE  header count\n+mov     r8d, [rax+1128h]                     ; 0x1400C7F03  MaxHeadersCount\n+lea     eax, [r8+4]                          ; 0x1400C7F0A  MaxHeadersCount + 4\n+cmp     r9d, eax                             ; 0x1400C7F0E  count vs limit\n+jbe     loc_1400C8068                        ; 0x1400C7F11  within limit -> enter loop\n+mov     [rbp+var_AC], 14h                    ; 0x1400C7F48  fault code 0x14\n+mov     [rbp+var_B0], 0C0000040h             ; 0x1400C7F4F  STATUS_FAIL_CHECK\n\nUnpatched (0x1400C7BD0): none of the above exist. After capturing the 0x1000 flag it proceeds directly to the loop bound 'cmp eax, [r12+8]' at 0x1400C7C9C. loc_1400C8068 is the shared loop-entry target for both the gate-off and within-limit branches."
+    },
+    {
+      "name": "UxDuoFaultCodeFromHttpReceiveFault (0x1400B9BB8)",
+      "similarity": 0.8186,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new lookup-table case 0x14 (the new over-count fault) reading UxKirMaxHeadersCountLimit",
+        "Reordered switch cases (values shifted by one index position)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Telemetry/fault-mapping plumbing for the new feature-gated header-count limit.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxQuicErrorCodeFromHttpReceiveFault (0x1400FE03C)",
+      "similarity": 0.8491,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new lookup-table case 0x14",
+        "Case 4 now uses computed value arg1+0x47 instead of constant 0x4b",
+        "Added case 9 returning arg1+0x47"
+      ],
+      "security_relevant": false,
+      "security_notes": "HTTP/3 (QUIC) fault-code mapping plumbing for the new feature-gated header-count limit.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpPktMonFaultToDropStatus (0x14014C4F8)",
+      "similarity": 0.8565,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new lookup-table case 0x14 returning 0xd71 when UxKirMaxHeadersCountLimit is set",
+        "Switch case reorder"
+      ],
+      "security_relevant": false,
+      "security_notes": "PacketMon drop-reason plumbing for the new feature-gated header-count limit.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxReadHttp11ParserSettings (0x1400BB8B0 / patched 0x1400BBA58)",
+      "similarity": 0.9114,
+      "change_type": "behavioral",
+      "key_changes": [
+        "When UxKirMaxHeadersCountLimit is set, reads the 'MaxHeadersCount' registry value into ServerConfig+0x1128",
+        "Default computed as max(MaxRequestBytes >> 9, 0xC8) (200), bounds 0x32..0xFFFF, via UxReadBoundedULongSetting",
+        "Prior config fields shifted +4 bytes (old field now written to +0x112C) to make room for MaxHeadersCount at 0x1128"
+      ],
+      "security_relevant": false,
+      "security_notes": "Supporting config loader for the new MaxHeadersCount field consumed by UlParseRequestHeaderPairs. Verified at patched 0x1400BBB11 (gate), 0x1400BBB20 (shr 9), 0x1400BBB2B (floor 0xC8), 0x1400BBB40 (write target +0x1128), 0x1400BBB5C (UxReadBoundedULongSetting).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpParseNextRequest (0x140029C20)",
+      "similarity": 0.9399,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable name and stack offset changes (var_b0 -> var_b4, uint64_t r14 -> void* r14)",
+        "No logic changes observed"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxStartEnvironmentModule (0x1400BC5E0)",
+      "similarity": 0.9554,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Driver initialization: sets UxKirMaxHeadersCountLimit (setnz at 0x1400BC95E) from WIL feature Feature_3936850235 (call at 0x1400BC947), alongside other UxKir* flags",
+        "Reordered global initialization; recompiled call targets"
+      ],
+      "security_relevant": false,
+      "security_notes": "Establishes the Known-Issue-Rollback / feature-staging flag that gates the new header-count limit. Standard staged-servicing plumbing.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxPktMonTraceDropHttpReceiveWithFault (0x14014C1E0)",
+      "similarity": 0.9848,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Instruction reordering: call to lookup table moved before pointer loads",
+        "No semantic logic change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "UlParseRequestHeaderPairs (0x1400C7BD0)",
+      "entry_point": "HTTP/2 header processing, reached via UlHttpReceiveHeadersEvent (0x1400C6CB0)",
+      "call_chain": ["HTTP/2 header event", "UlHttpReceiveHeadersEvent (0x1400C6CB0) calls UlParseRequestHeaderPairs at 0x1400C6FDE", "UlParseRequestHeaderPairs (0x1400C7BD0) header validation/processing loop"],
+      "vulnerability_class": "No security-relevant change (feature-gated resource-limit hardening)",
+      "description": "The patched build adds a new, configurable MaxHeadersCount cap to the HTTP/2 header-processing function UlParseRequestHeaderPairs. The whole block is gated behind UxKirMaxHeadersCountLimit, a UxKir* Known-Issue-Rollback / WIL feature-staging flag set at driver init (setnz at 0x1400BC95E) from Feature_3936850235 (call at 0x1400BC947). When the flag is non-zero, the function reads MaxHeadersCount from the server config at *(*(obj+0x18)+0x448)+0x1128 (default max(MaxRequestBytes>>9, 0xC8)=200, bounds 0x32..0xFFFF, registry value 'MaxHeadersCount') and, if the decoded HPACK entry count (arg2[1]) exceeds MaxHeadersCount+4, sets fault code 0x14 and returns 0xc0000040 (STATUS_FAIL_CHECK) before the loop. The unpatched build has neither the flag nor the check. This is not an exploitable-vulnerability fix: per-entry work is constant (name hashed via HashCountedStringNoCaseA @ 0x14006D5A0, then hash-dispatched to a fixed set of known/sensitive header handlers with fixed-slot duplicate tracking), total processing is O(n) linear, and the entry count n is already bounded by the existing MaxRequestBytes request-size cap. There is no super-linear amplification, no attacker-controlled unbounded workload, and no memory-safety difference. The change is feature-staged robustness/serviceability hardening.",
+      "trigger_conditions": "With the feature flag enabled on the patched build, an HTTP/2 request whose decoded header-entry count exceeds MaxHeadersCount+4 is rejected early with STATUS_FAIL_CHECK. In the unpatched build (or when the flag is off) all entries are processed. Because the entry count is bounded by MaxRequestBytes and per-entry work is constant, neither build exposes an attacker-controlled unbounded workload; there is no exploitable trigger.",
+      "primitive": "None. The pre-patch path is ordinary linear header parsing bounded by MaxRequestBytes, with constant per-entry cost. The patch only adds an early error return; it introduces no new exposure and closes no exploitable primitive. No memory corruption is present in either build.",
+      "evidence": "Patched added block inside 0x1400C7E20 (addresses verified in http_patched.asm):\n  0x1400C7EE4  cmp cs:UxKirMaxHeadersCountLimit, r10b   ; r10b=0; feature gate\n  0x1400C7EF1  jz loc_1400C8068                          ; flag==0 -> skip check, enter loop\n  0x1400C7EF7  mov rax, [rcx+448h]                       ; server config\n  0x1400C7EFE  mov r9d, [r12+8]                          ; header count\n  0x1400C7F03  mov r8d, [rax+1128h]                      ; MaxHeadersCount\n  0x1400C7F0A  lea eax, [r8+4]                           ; MaxHeadersCount + 4\n  0x1400C7F0E  cmp r9d, eax                              ; count vs limit\n  0x1400C7F11  jbe loc_1400C8068                         ; within limit -> enter loop\n  0x1400C7F48  mov [rbp+var_AC], 14h                     ; fault code 0x14\n  0x1400C7F4F  mov [rbp+var_B0], 0C0000040h             ; STATUS_FAIL_CHECK\nloc_1400C8068 is the shared loop-entry target. In the unpatched 0x1400C7BD0 none of these exist; after 'and ebx,1000h' (0x1400C7C7B) control goes straight to the loop bound 'cmp eax,[r12+8]' (0x1400C7C9C). Flag origin: setnz cs:UxKirMaxHeadersCountLimit at 0x1400BC95E after call Feature_3936850235__private_IsEnabledDeviceUsageNoInline at 0x1400BC947. UxKirMaxHeadersCountLimit has 0 occurrences in http_unpatched.asm.",
+      "assembly": "See evidence field. Patched adds a feature-gated count check (0x1400C7EE4..0x1400C7F11) plus an over-count error path (0x1400C7F48/0x1400C7F4F -> return 0xc0000040). Unpatched 0x1400C7BD0 has no feature-flag read, no [obj+0x448] config read, no [config+0x1128] MaxHeadersCount read, and no count comparison; the only loop terminator is the natural entry count at 0x1400C7C9C.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlParseRequestHeaderPairs",
+            "address": "0x1400c7bd0 (unpatched) / 0x1400c7e20 (patched)",
+            "why": "HTTP/2 header processing entry. RDX (arg2) = decoded HPACK entry array; [RDX+8] = entry count. R8D (arg3) carries flags including bit 0x1000."
+          },
+          {
+            "symbol": "http!UlHttpReceiveHeadersEvent",
+            "address": "0x1400c6cb0",
+            "why": "Caller (call at 0x1400c6fde unpatched). Confirms the header-processing path is reached."
+          }
+        ],
+        "watch": [
+          "RDX+0x8 (arg2[1]) = decoded HPACK entry count (bounded by MaxRequestBytes)",
+          "[[RCX+0x18]+0x448]+0x1128 = MaxHeadersCount in patched config (absent read in unpatched)",
+          "UxKirMaxHeadersCountLimit byte = feature-staging gate (non-zero = check enabled)"
+        ],
+        "key_offsets": [
+          "0x1400c7bd0 = function entry (unpatched)",
+          "0x1400c7e20 = function entry (patched)",
+          "0x1400c7ee4 = patched feature-gate cmp; 0x1400c7ef1 = jz to loop entry",
+          "0x1400c7f0e = patched 'cmp r9d, eax' (count vs MaxHeadersCount+4); 0x1400c7f11 = jbe to loop entry (loc_1400C8068)",
+          "0x1400c7f4f = patched STATUS_FAIL_CHECK (0xc0000040) on over-count",
+          "0x14006d5a0 = HashCountedStringNoCaseA (per-entry name hash)",
+          "0x1400bb8b0 (unpatched) / 0x1400bba58 (patched) = UxReadHttp11ParserSettings; writes MaxHeadersCount to config+0x1128",
+          "0x1400bc947 = call Feature_3936850235 (WIL); 0x1400bc95e = setnz UxKirMaxHeadersCountLimit"
+        ],
+        "trigger_setup": "Not applicable as an exploit. The change is a feature-gated configurable cap on HTTP/2 header count. With the flag enabled, a request whose decoded entry count exceeds MaxHeadersCount+4 returns STATUS_FAIL_CHECK before the loop; otherwise all entries are processed. The entry count is bounded by MaxRequestBytes and per-entry cost is constant.",
+        "expected_observation": "Patched (flag enabled): the count check at 0x1400c7f0e rejects over-count requests, returning 0xc0000040. Patched (flag disabled) and unpatched: the loop processes all entries. In all cases the workload is linear and bounded by MaxRequestBytes; no sustained/unbounded CPU consumption arises from header count alone.",
+        "notes": "MaxHeadersCount is computed in UxReadHttp11ParserSettings as max(MaxRequestBytes >> 9, 0xC8) = max(MaxRequestBytes/512, 200), bounds 0x32..0xFFFF, read from registry value 'MaxHeadersCount'; default MaxRequestBytes 0x4000 (16384) gives default 200. The +4 tolerance covers the four mandatory HTTP/2 pseudo-headers. UxKirMaxHeadersCountLimit is a Known-Issue-Rollback / WIL feature-staging flag; its runtime default is set from Feature_3936850235 and is not statically decidable from the binary. The unpatched build has no such flag."
+      }
+    }
+  ],
+  "summary": "The patch adds a new, configurable MaxHeadersCount cap to the HTTP/2 header-processing function UlParseRequestHeaderPairs (0x1400C7BD0 -> 0x1400C7E20), gated behind the Known-Issue-Rollback / WIL feature-staging flag UxKirMaxHeadersCountLimit (set at init from Feature_3936850235). When enabled, an HTTP/2 request whose decoded entry count exceeds MaxHeadersCount+4 is rejected early with STATUS_FAIL_CHECK (0xc0000040); MaxHeadersCount defaults to max(MaxRequestBytes>>9, 200) and is loaded by UxReadHttp11ParserSettings into config+0x1128. This is NOT an exploitable-vulnerability fix: the pre-patch path is ordinary linear header parsing with constant per-entry cost, the entry count is already bounded by the existing MaxRequestBytes cap, there is no super-linear amplification, and no memory-safety difference exists. Classified as no security-relevant change (feature-staged resource-limit hardening / serviceability). The remaining changed functions (three fault-code lookup tables, the config loader, driver init, and two cosmetic/register-allocation changes) are supporting plumbing for the same feature."
+}

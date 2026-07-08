@@ -1,0 +1,221 @@
+{
+  "binaries": {
+    "title": "cea.sys (Windows Brokered Event Aggregation driver) - Integer overflow in EaSignalAggregatedEvent leading to kernel pool overflow",
+    "id_unpatched": "cea_unpatched.sys",
+    "id_patched": "cea_patched.sys",
+    "overall_similarity": 0.9,
+    "matched": 146,
+    "changed": 84,
+    "identical": 62,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EaSignalAggregatedEvent",
+      "similarity": 0.8528,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched computes pool allocation size via 32-bit arithmetic: rbx_5 = (arg6?0x10:0) + arg8 + (arg5?0x10:0) at 0x1c00035db-0x1c00035df with NO integer overflow check",
+        "Integer overflow in size allows small allocation followed by large data copies (0x10 for arg5, 0x10 for arg6, arg8 bytes via memmove (sub_1c0008d80)), causing kernel pool overflow",
+        "Patched version replaces inline size computation with call to new EapSignalContentPrepareEventForPublishing (sub_140008b90) which contains explicit overflow check: 'lea eax,[rdi+r8]; cmp eax,edi; jb overflow' at 0x140008c0a-0x140008c10, returning STATUS_INTEGER_OVERFLOW (0xc0000095) on overflow",
+        "Patched version also adds buffer-too-small validation via 'cmp dword [r9],edi; jae error' at 0x140008c14-0x140008c17, returning STATUS_BUFFER_TOO_SMALL (0xc0000023)",
+        "Pool allocation migrated from ExAllocatePoolWithTag to ExAllocatePool2 with POOL_FLAG_NON_PAGED (0x100)"
+      ],
+      "security_relevant": true,
+      "security_notes": "CRITICAL: The unpatched EaSignalAggregatedEvent function computes the total buffer size for a pool allocation using 32-bit addition of three components: (arg5 ? 0x10 : 0) + arg8 + (arg6 ? 0x10 : 0). arg8 is the caller-supplied variable-length data size, loaded as a 32-bit DWORD at 0x1c0003545, so the arithmetic and the copy length are 32-bit-bounded (max ~4 GB). When arg8 is large enough (e.g., 0xFFFFFFF0 with both arg5 and arg6 present), this sum wraps around to a small value (e.g., 0x10). The function then allocates a pool buffer of that small size but proceeds to copy arg5 data (16 bytes), arg6 data (16 bytes), and then arg8 bytes of variable data via memmove (sub_1c0008d80) into the undersized buffer. This produces a kernel pool out-of-bounds write (CWE-190 Integer Overflow -> CWE-122 Heap/Pool Buffer Overflow) whose length is caller-chosen. The patched version adds explicit overflow detection in the new helper EapSignalContentPrepareEventForPublishing (sub_140008b90).",
+      "assembly_diff": "UNPATCHED (0x1c00035c4-0x1c00035e1) - vulnerable size computation:\n0x1c00035c4 : mov     rax, qword [rbp-0x69]   ; arg5 pointer\n0x1c00035c8 : neg     rax                      ; test if arg5 != 0\n0x1c00035cb : mov     rax, r13                 ; arg6 pointer\n0x1c00035ce : sbb     ecx, ecx                 ; ecx = arg5 ? 0xFFFFFFFF : 0\n0x1c00035d0 : and     ecx, 0x10                ; ecx = arg5 ? 0x10 : 0\n0x1c00035d3 : neg     rax                      ; test if arg6 != 0\n0x1c00035d6 : sbb     ebx, ebx                 ; ebx = arg6 ? 0xFFFFFFFF : 0\n0x1c00035d8 : and     ebx, 0x10                ; ebx = arg6 ? 0x10 : 0\n0x1c00035db : lea     eax, [r15+rcx]           ; eax = arg8 + (arg5 ? 0x10 : 0)  [OVERFLOW POSSIBLE]\n0x1c00035df : add     ebx, eax                 ; ebx = (arg6 ? 0x10 : 0) + arg8 + (arg5 ? 0x10 : 0) [OVERFLOW POSSIBLE]\n0x1c00035e1 : je      0x1c000364a              ; only checks if total == 0\n\nPATCHED (sub_140008b90 at 0x140008c0a-0x140008c10) - overflow check ADDED:\n0x140008c0a : lea     eax, [rdi+r8]            ; eax = base_size + var_data_size\n0x140008c0e : cmp     eax, edi                 ; OVERFLOW CHECK: result < base?\n0x140008c10 : jb      0x140008c26              ; if overflow, return STATUS_INTEGER_OVERFLOW\n0x140008c14 : cmp     dword [r9], edi          ; BUFFER SIZE CHECK: provided >= needed?\n0x140008c17 : jae     0x140008c30              ; if enough space, proceed\n0x140008c19 : mov     dword [r9], edi          ; output needed size\n0x140008c1c : mov     ebx, 0xc0000023          ; STATUS_BUFFER_TOO_SMALL\n\n0x140008c26 : mov     ebx, 0xc0000095          ; STATUS_INTEGER_OVERFLOW (new error path)"
+    },
+    {
+      "name": "WnfEventCallback (sub_1C00018C8)",
+      "similarity": 0.5941,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched parses the WNF state buffer inline with 32-bit bitfield extraction AND inline bounds checks: size >= 8 (cmp r9d,8; jnb at 0x1c00019b9) and size >= count+8 (cmp r9,rcx; jnb at 0x1c0001a41)",
+        "Patched moves the same bitfield parsing and the same checks into new helper EapSignalMessageReadFromBuffer (sub_140008a98): size >= 8 at 0x140008aab (STATUS_BUFFER_TOO_SMALL), size >= count+8 at 0x140008ada (0xc000090b), trailing per-field check (STATUS_DATA_ERROR 0xc000003e)",
+        "Both builds then call EaiProcessNotification (sub_1c0001bc4) directly; this path does not reach the EaSignalAggregatedEvent size computation and does not call EapSignalContentPrepareEventForPublishing (sub_140008b90)",
+        "Refactor only: no bounds check is added or removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactor, not a security fix. The unpatched WnfEventCallback already validates the WNF buffer inline (size >= 8 at 0x1c00019b9, size >= count+8 at 0x1c0001a41). The patched build relocates this same parsing and validation into the shared helper EapSignalMessageReadFromBuffer (sub_140008a98) with equivalent checks. No missing check is introduced and none is removed. This path calls EaiProcessNotification directly and does not reach the integer-overflow computation of the EaSignalAggregatedEvent finding.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BripCreateBrokeredEvent (sub_1C0005340)",
+      "similarity": 0.745,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured RPC call flow: unpatched calls BripMapRpcStatus (sub_1c0005f84) for error mapping, patched calls BripMapRpcStatus (sub_140005dac)",
+        "Unpatched calls BripCreateRpcBindingHandle (sub_1c00058c0)/BripCreateEventContext (sub_1c0005580) for RPC binding, patched calls BripCreateRpcBindingHandle (sub_140005ab4)/BripCreateEventContext (sub_1400059bc)",
+        "Changed RPC stub from data_1c000aab0 to data_14000b860 with procedure index 0 instead of 5",
+        "Reordered validation: patched checks RtlValidSid BEFORE RtlRunOnceExecuteOnce; unpatched checks after",
+        "Cleaner error handling path with unified cleanup label"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaCreateAggregation",
+      "similarity": 0.9654,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(PagedPool, 0x38, ...) migrated to ExAllocatePool2(POOL_FLAG_NON_PAGED, 0x38, ...)",
+        "ExAllocatePoolWithTag(PagedPool, 0x28, ...) migrated to ExAllocatePool2(POOL_FLAG_NON_PAGED, 0x28, ...)",
+        "Error handling restructured: added NULL check for rdi before calling cleanup, preventing potential null dereference on error paths"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BriDeleteBrokeredEvent",
+      "similarity": 0.979,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced EapSystemBriDeleteEvent (sub_1c0008a58) (complex RPC client dispatch with UUID comparison) with EapSystemBriDeleteEvent (sub_140008984) (simplified UuidEqual-based comparison)",
+        "Replaced BripGetEventContextData (sub_1c0005ce8) (3-output parameter version) with BripGetEventContextData (sub_140005d38) (2-output parameter version, simplified)",
+        "Replaced BripCreateRpcBindingHandle (sub_1c00058c0)/BripMapRpcStatus (sub_1c0005f84) with BripCreateRpcBindingHandle (sub_140005ab4)/BripMapRpcStatus (sub_140005dac) (renamed/updated RPC helpers)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EACreateAggregateEvent",
+      "similarity": 0.9885,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration for all 4 pool allocations in this function",
+        "Stack variable reordering and security cookie offset adjustment"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaiDuplicateConditionsVisitNode (sub_1C0003840)",
+      "similarity": 0.8424,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag(PagedPool, (count+5)*0x38, ...) → ExAllocatePool2(POOL_FLAG_NON_PAGED, (count+5)*0x38, ...)",
+        "ExAllocatePoolWithTag(PagedPool, count*0x38, ...) → ExAllocatePool2(POOL_FLAG_NON_PAGED, count*0x38, ...)",
+        "Register reallocation r14→rdi, r15→r15, improved copy loop structure"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EaiProcessNotification (sub_1C0001BC4)",
+      "similarity": 0.9417,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Register reallocation: r14↔r15 swapped, r12↔r15b swapped, rdi↔rsi swapped throughout",
+        "EaiSignalCallback (sub_1c00021d4) renamed to EaiSignalCallback (sub_14000413c) (event signal dispatcher)",
+        "EaiEvaluateConditions (sub_1c00014c0) renamed to EaiEvaluateConditions (sub_1400031ec) (state query)",
+        "EaLibCreateAndSetLimitTimer (sub_1c00118c4) renamed to EaLibCreateAndSetLimitTimer (sub_140011470), EaiFreeTriggerPayload (sub_1c00044dc) renamed to EaiFreeTriggerPayload (sub_14000352c)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "EapQueryAggregatedEventConditionPostVisitNode (sub_1C0007760)",
+      "similarity": 0.9045,
+      "change_type": "behavioral",
+      "key_changes": [
+        "ExAllocatePoolWithTag → ExAllocatePool2 migration",
+        "Inline RtlCompareUnicodeString comparison extracted to new helper EapInitConditionParams (sub_140007008)",
+        "Copy loop arithmetic restructured (rax_12*6 vs rax_10*6 for stride calculation)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__cpu_features_init (sub_1C0008C80)",
+      "similarity": 0.3933,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Compiler-generated CPUID feature detection reordering",
+        "Register r8/r9 swapped for feature flag storage",
+        "XGETBV check reordered before CPUID leaf 7 check"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "critical",
+      "function": "EaSignalAggregatedEvent",
+      "entry_point": "Exported function EaSignalAggregatedEvent (0x1c00034b0). It has no internal callers in the driver; the vulnerable size computation and 'EtvA' allocation exist only inside it, so it is reached through its export. The exact RPC opnum that dispatches into it from user mode is not determinable from these binaries. The WNF notification path does NOT reach this function: WnfEventCallback (sub_1c00018c8) calls EaiProcessNotification (sub_1c0001bc4) directly, and EaiProcessNotification is itself a callee of EaSignalAggregatedEvent (invoked at 0x1c0003670), not a route back into the vulnerable code.",
+      "call_chain": [
+        "External caller of exported EaSignalAggregatedEvent (0x1c00034b0), supplying arg1 (context), arg2 (event-ID pair), arg5/arg6 (optional 16-byte blocks), arg7 (variable data ptr), arg8 (variable data size) -> inline 32-bit size computation at 0x1c00035db-0x1c00035e1 -> ExAllocatePoolWithTag at 0x1c00035f0 -> memmove at 0x1c0003645"
+      ],
+      "vulnerability_class": "Integer overflow (CWE-190) leading to kernel pool buffer overflow (CWE-122)",
+      "description": "The unpatched EaSignalAggregatedEvent function computes the pool allocation size for an event signal payload using 32-bit arithmetic that can overflow. The computation at 0x1c00035db-0x1c00035df is: total_size = (arg6 ? 0x10 : 0) + arg8 + (arg5 ? 0x10 : 0), where arg8 is an attacker-controlled 32-bit integer representing variable-length data size. When arg8 is sufficiently large (e.g., 0xFFFFFFF0) and both arg5 and arg6 are non-NULL (each contributing 0x10 bytes), the 32-bit sum wraps around: 0xFFFFFFF0 + 0x10 + 0x10 = 0x100000010 → truncated to 0x10 in 32-bit. The function allocates only 0x10 bytes of pool memory but then copies: 16 bytes from arg5 (via movdqu at 0x1c0003624), 16 bytes from arg6 (via movdqu at 0x1c0003636), and arg8 bytes (0xFFFFFFF0) via memmove (sub_1c0008d80) at 0x1c0003645. This writes approximately 4GB past the end of the 16-byte allocation, causing a catastrophic kernel pool overflow.",
+      "trigger_conditions": "1. Call EaSignalAggregatedEvent with a valid aggregation context (arg1 must reference a valid hash table entry found via EaiFindAndAcquireAggregateEvent (sub_1c000251c)). 2. Set arg2 to a non-zero event ID pair (both *arg2 and arg2[1] must not be simultaneously zero). 3. Provide non-NULL arg5 pointer (adds 0x10 to size). 4. Provide non-NULL arg6 pointer (adds 0x10 to size). 5. Set arg8 to a value that causes 32-bit overflow when added to 0x20: e.g., arg8 = 0xFFFFFFE0 causes total = 0xFFFFFFE0 + 0x10 + 0x10 = 0x00000000 (wraps to zero, takes no-alloc path). Better: arg8 = 0xFFFFFFF0 causes total = 0xFFFFFFF0 + 0x10 + 0x10 = 0x10 (allocates 16 bytes, overflows massively). The condition at 0x1c00035e1 (je) only checks if the overflowed sum equals zero, not for general overflow.",
+      "primitive": "Kernel pool out-of-bounds write with caller-controlled length (32-bit arg8, up to ~4 GB) and controlled content for the first 32 bytes (arg5, arg6 16-byte blocks) plus arg7 data. Choosing arg8 to wrap to a small non-zero total (e.g. 0xFFFFFFE1 -> 1) yields a short, controlled-length overflow. End-to-end exploitation (pool layout control, adjacent-object selection, control-flow hijack) is not established from these binaries and is not claimed; the verified reachable impact is a controlled-length kernel pool out-of-bounds write.",
+      "evidence": "UNPATCHED EaSignalAggregatedEvent pseudocode (0x1c00034b0):\n\n// Vulnerable size computation - 32-bit arithmetic, NO overflow check:\nint32_t rbx_4 = sbb.d((rdi + 0x50).d, (rdi + 0x50).d, arg6 != 0) & 0x10;  // 0x10 if arg6 present\nint32_t rax_10 = r15_1.d + (sbb.d(rcx_6, rcx_6, arg5 != 0) & 0x10);        // arg8 + 0x10 if arg5 present\nint32_t rbx_5 = rbx_4 + rax_10;  // OVERFLOW: (arg6?0x10:0) + arg8 + (arg5?0x10:0)\n\nif (rbx_4 == neg.d(rax_10))  // Only checks if total wraps to EXACTLY zero\n{\n    // No allocation, uses existing buffer - problematic but different path\n    goto label_1c0003651;\n}\nelse\n{\n    P_1 = ExAllocatePoolWithTag(PagedPool, zx.q(rbx_5), 0x41747645);  // Allocates overflowed size!\n    P = P_1;\n    if (P_1)\n    {\n        if (arg5 != 0) { *P = *arg5; r12 = 2; P_2 = &P[1]; }  // Copy 16 bytes\n        if (arg6 != 0) { *P_2 = *arg6; r12 |= 1; P_2 = &P_2[2]; }  // Copy 16 bytes\n        r8 = memmove (sub_1c0008d80)(P_2, var_a8, r15_1);  // Copy arg8 bytes - MASSIVE OVERFLOW\n        goto label_1c0003651;\n    }\n}\n\nPATCHED EapSignalContentPrepareEventForPublishing (sub_140008b90) - new helper with overflow check:\nint32_t rax_3 = rdi_1 + r8;   // base_size + variable_data_size\nif (rax_3 u< rdi_1)            // OVERFLOW CHECK ADDED\n    rbx = 0xc0000095;          // STATUS_INTEGER_OVERFLOW\nrdi_1 = rax_3;\nif (*arg4 u>= rdi_1)           // Buffer size validation\n    // OK - proceed with memset and structured copy\nelse\n    rbx = 0xc0000023;          // STATUS_BUFFER_TOO_SMALL",
+      "assembly": "UNPATCHED EaSignalAggregatedEvent (0x1c00034b0) - FULL VULNERABLE PATH:\n\n0x1c00034b0 : push    rbp\n0x1c00034b2 : push    rbx\n0x1c00034b3 : push    rsi\n0x1c00034b4 : push    rdi\n0x1c00034b5 : push    r12\n0x1c00034b7 : push    r13\n0x1c00034b9 : push    r14\n0x1c00034bb : push    r15\n0x1c00034bd : lea     rbp, [rsp-0x7]\n0x1c00034c2 : sub     rsp, 0xc8\n0x1c00034c9 : mov     rax, qword [rel 0x1c000e040]   ; __security_cookie\n0x1c00034d0 : xor     rax, rsp\n0x1c00034d3 : mov     qword [rbp-0x11], rax\n0x1c00034d7 : mov     rax, qword [rbp+0x6f]          ; arg5 (128-bit event data ptr)\n0x1c00034db : xor     edi, edi\n0x1c00034dd : mov     r13, qword [rbp+0x77]          ; arg6 (128-bit event data ptr)\n0x1c00034e1 : mov     rbx, rcx                        ; arg1 (aggregation context)\n0x1c00034e4 : mov     rcx, qword [rbp+0x8f]          ; arg9 (output ptr)\n0x1c00034eb : xor     esi, esi\n0x1c00034ed : mov     qword [rbp-0x69], rax           ; save arg5\n0x1c00034f1 : xor     r12d, r12d\n0x1c00034f4 : cmp     dword [rel 0x1c000e000], 0x4   ; ETW level check\n0x1c00034fb : mov     r14, rdx                        ; arg2 (event ID pair)\n0x1c00034fe : mov     rax, qword [rbp+0x7f]          ; arg7 (variable data ptr)\n0x1c0003502 : mov     qword [rbp-0x61], rax           ; save arg7\n0x1c0003506 : mov     byte [rbp-0x80], r9b            ; save arg4 flag\n0x1c000350a : mov     byte [rsp+0x40], r8b            ; save arg3 flag\n0x1c000350f : mov     qword [rbp-0x71], rcx           ; save arg9\n0x1c0003513 : mov     qword [rbp-0x79], rdi\n\n; --- After lookup and validation passes, reach size computation ---\n0x1c00035bf : call    0x1c0011614                     ; release push lock, get context\n0x1c00035c4 : mov     rax, qword [rbp-0x69]           ; arg5 pointer\n0x1c00035c8 : neg     rax                              ; test arg5 != NULL\n0x1c00035cb : mov     rax, r13                         ; arg6 pointer\n0x1c00035ce : sbb     ecx, ecx                         ; ecx = (arg5 != 0) ? 0xFFFFFFFF : 0\n0x1c00035d0 : and     ecx, 0x10                        ; ecx = arg5 ? 0x10 : 0\n0x1c00035d3 : neg     rax                              ; test arg6 != NULL\n0x1c00035d6 : sbb     ebx, ebx                         ; ebx = (arg6 != 0) ? 0xFFFFFFFF : 0\n0x1c00035d8 : and     ebx, 0x10                        ; ebx = arg6 ? 0x10 : 0\n0x1c00035db : lea     eax, [r15+rcx]                   ; *** OVERFLOW: eax = arg8 + (arg5?0x10:0) ***\n0x1c00035df : add     ebx, eax                         ; *** OVERFLOW: ebx = total_size (32-bit!) ***\n0x1c00035e1 : je      0x1c000364a                     ; only jumps if ebx == 0\n\n; --- Allocation with potentially overflowed size ---\n0x1c00035e3 : mov     edx, ebx                         ; edx = (possibly overflowed) size\n0x1c00035e5 : mov     ecx, 0x1                         ; PagedPool\n0x1c00035ea : mov     r8d, 0x41747645                  ; 'EtvA' tag\n0x1c00035f0 : call    qword [rel 0x1c0010178]         ; ExAllocatePoolWithTag(PagedPool, size, tag)\n0x1c00035f7 : nop\n0x1c00035fc : mov     rsi, rax                         ; rsi = allocated buffer (possibly tiny!)\n0x1c00035ff : test    rax, rax\n0x1c0003602 : jne     0x1c000360b                      ; if allocated, proceed to copy\n\n; --- Data copy into undersized buffer ---\n0x1c000360b : mov     rax, qword [rbp-0x69]           ; arg5 pointer\n0x1c000360f : mov     rcx, rsi                         ; rcx = buffer pointer\n0x1c0003612 : test    rax, rax\n0x1c0003615 : je      0x1c0003628\n0x1c0003617 : movups  xmm0, xmmword [rax]              ; load 16 bytes from arg5\n0x1c000361a : mov     r12d, 0x2\n0x1c0003620 : lea     rcx, [rsi+0x10]                  ; advance pointer past 16 bytes\n0x1c0003624 : movdqu  xmmword [rsi], xmm0             ; *** WRITE 16 bytes (buffer may be <16!) ***\n0x1c0003628 : test    r13, r13                         ; arg6\n0x1c000362b : je      0x1c000363e\n0x1c000362d : movups  xmm0, xmmword [r13]              ; load 16 bytes from arg6\n0x1c0003632 : or      r12d, 0x1\n0x1c0003636 : movdqu  xmmword [rcx], xmm0             ; *** WRITE 16 bytes past arg5 ***\n0x1c000363a : add     rcx, 0x10\n0x1c000363e : mov     rdx, qword [rbp-0x61]           ; arg7 (variable data)\n0x1c0003642 : mov     r8, r15                          ; arg8 (variable data size = HUGE)\n0x1c0003645 : call    0x1c0008d80                      ; *** MASSIVE COPY: copies arg8 bytes ***\n; --- memmove (sub_1c0008d80) copies r8 bytes from rdx to rcx → pool overflow ---",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cea_unpatched!EaSignalAggregatedEvent",
+            "address": "0x1c00034b0",
+            "why": "Entry point to the vulnerable function. At this point: RCX = arg1 (aggregation context), RDX = arg2 (event ID pair pointer), R8D = arg3 (flag), R9B = arg4 (flag), [rsp+0x28] = arg5 pointer (128-bit event data, non-NULL triggers +0x10 size), [rsp+0x30] = arg6 pointer (128-bit event data, non-NULL triggers +0x10 size), [rsp+0x38] = arg7 (variable-length data pointer), [rsp+0x40] = arg8 (variable-length data SIZE - this is the attacker-controlled overflow trigger value)"
+          },
+          {
+            "symbol": "cea_unpatched!EaSignalAggregatedEvent+0x12B",
+            "address": "0x1c00035db",
+            "why": "The vulnerable size computation instruction 'lea eax, [r15+rcx]'. At this point: R15D = arg8 (data size from attacker), ECX = 0x10 if arg5 is non-NULL, 0 otherwise. EAX will be arg8 + 0x10 (or arg8). Check if this overflows 32 bits."
+          },
+          {
+            "symbol": "cea_unpatched!EaSignalAggregatedEvent+0x12F",
+            "address": "0x1c00035df",
+            "why": "The final size addition 'add ebx, eax'. EBX = (arg6 ? 0x10 : 0), EAX = arg8 + (arg5 ? 0x10 : 0). EBX = total allocation size after this instruction. If EBX is small but R15D (arg8) is large, overflow has occurred. Set a conditional breakpoint: break when ebx < 0x30 && r15d > 0x100."
+          },
+          {
+            "symbol": "cea_unpatched!ExAllocatePoolWithTag (via indirect call)",
+            "address": "0x1c00035f0",
+            "why": "The pool allocation call. Check EDX (size argument) - if it's small (< 0x30) while the caller's R15D was large, the allocation is undersized. Watch what size is actually allocated vs what will be copied."
+          },
+          {
+            "symbol": "cea_unpatched!EaSignalAggregatedEvent+0x195",
+            "address": "0x1c0003645",
+            "why": "The call to memmove (sub_1c0008d80) (copy function). At this point: RCX = destination buffer pointer (within the undersized allocation), RDX = source (arg7 data), R8 = arg8 (copy length). If R8 >> allocated size, pool overflow is imminent."
+          }
+        ],
+        "watch": [
+          "R15D at 0x1c00035db - holds arg8 (attacker-controlled data size, the overflow trigger)",
+          "EBX at 0x1c00035e1 - holds the computed total allocation size (check for small value indicating overflow)",
+          "EDX at 0x1c00035e3 - the size passed to ExAllocatePoolWithTag (pool allocation size)",
+          "R8 at 0x1c0003645 - the copy length passed to memmove (sub_1c0008d80) (compare against allocated size)",
+          "RCX at 0x1c0003645 - destination buffer within the undersized pool allocation",
+          "R14D (dword at [r14]) and [r14+4] - event ID pair that must be non-zero to pass the initial validation gate"
+        ],
+        "key_offsets": [
+          "0x1c00035db: 'lea eax, [r15+rcx]' - OVERFLOW POINT: arg8 + (arg5?0x10:0), 32-bit addition can wrap",
+          "0x1c00035df: 'add ebx, eax' - OVERFLOW POINT: adds (arg6?0x10:0) to potentially-wrapped result",
+          "0x1c00035e1: 'je 0x1c000364a' - only checks if total == 0, misses general overflow",
+          "0x1c00035f0: 'call ExAllocatePoolWithTag' - allocates with overflowed (small) size",
+          "0x1c0003624: 'movdqu [rsi], xmm0' - writes 16 bytes (arg5 data) into undersized buffer",
+          "0x1c0003636: 'movdqu [rcx], xmm0' - writes 16 more bytes (arg6 data) past allocation",
+          "0x1c0003645: 'call memmove (sub_1c0008d80)' - copies arg8 bytes (potentially ~4GB) into tiny buffer",
+          "PATCHED overflow check at 0x140008c0e-0x140008c10: 'cmp eax,edi; jb error' - this is the ADDED check that prevents the overflow"
+        ],
+        "trigger_setup": "1. The driver cea.sys is the Windows Brokered Event Aggregation driver, loaded as part of the Windows kernel. 2. EaSignalAggregatedEvent is an exported function with no internal callers, reached through its export. 3. Reach it with: a valid aggregation handle in arg1 (resolvable by EaiFindAndAcquireAggregateEvent (sub_1c000251c)), a non-zero event ID pair in arg2, non-NULL arg5 and arg6 (each pointing to 16 bytes of data), a non-NULL arg7 pointing to a data buffer, and arg8 set to 0xFFFFFFF0 (or 0xFFFFFFE1 for a small controlled-length overflow). 4. The WNF notification path does NOT reach this computation: WnfEventCallback (sub_1c00018c8) calls EaiProcessNotification (sub_1c0001bc4) directly, not EaSignalAggregatedEvent.",
+        "expected_observation": "With arg8 = 0xFFFFFFF0 and both arg5/arg6 present: at 0x1c00035db, EAX = 0xFFFFFFF0 + 0x10 = 0x00000000 (32-bit overflow). At 0x1c00035df, EBX = 0x10 + 0 = 0x10. ExAllocatePoolWithTag allocates only 16 bytes. Then movdqu at 0x1c0003624 writes 16 bytes (fills the allocation). movdqu at 0x1c0003636 writes 16 bytes past the end (first 16 bytes of overflow). memmove (sub_1c0008d80) at 0x1c0003645 copies arg8 bytes past the allocation, an out-of-bounds kernel pool write. Use !poolfind 0x41747645 1 to enumerate 'EtvA' allocations and !pool to inspect corrupted headers.",
+        "notes": "The pool tag is 'EtvA' (0x41747645) for all EA allocations - use !poolfind to locate allocations. The allocation size field in the pool header will show the small value while the copy will extend far beyond. To distinguish the vulnerable path from safe paths: if EBX (total computed size) < 0x30 but R15D (arg8 original) > 0x100, overflow has occurred. The patched version adds EapSignalContentPrepareEventForPublishing (sub_140008b90) which returns STATUS_INTEGER_OVERFLOW (0xc0000095) when 'lea eax,[rdi+r8]; cmp eax,edi; jb' detects that the sum wrapped. Note: arg8 values that make the total wrap to exactly 0 take the je branch at 0x1c00035e1 (no allocation, no copy)."
+      }
+    }
+  ],
+  "summary": "The patch fixes a critical integer overflow vulnerability (CWE-190) in the EaSignalAggregatedEvent function of the Windows cea.sys (Brokered Event Aggregation) kernel driver. The unpatched version computes a pool buffer size as the 32-bit sum of three components — (arg5 ? 0x10 : 0) + arg8 + (arg6 ? 0x10 : 0) — without checking for integer overflow. When the caller-supplied arg8 (a 32-bit variable data size) is large enough (e.g., 0xFFFFFFF0), the sum wraps to a small value, causing a tiny pool allocation followed by copies whose length is arg8 (up to ~4 GB), resulting in a kernel pool out-of-bounds write (CWE-122). The patched version introduces a new helper function EapSignalContentPrepareEventForPublishing (sub_140008b90) that performs explicit overflow detection via 'lea eax,[rdi+r8]; cmp eax,edi; jb overflow_error' and returns STATUS_INTEGER_OVERFLOW on detection. The patch also migrates all ExAllocatePoolWithTag calls to ExAllocatePool2 across 84 changed functions as defense-in-depth hardening. A PoC would call EaSignalAggregatedEvent via the Broker Infrastructure RPC interface with arg5 and arg6 set to non-NULL 16-byte buffers and arg8 set to a value like 0xFFFFFFF0 to trigger the overflow."
+}

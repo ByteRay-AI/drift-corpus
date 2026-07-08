@@ -1,0 +1,108 @@
+{
+  "binaries": {
+    "title": "http.sys - No security-relevant change: feature-staged QUIC frame length-check guard (UxKirQuicParseLengthCheck / Feature_1164959034) with old path retained",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9923,
+    "matched": 4408,
+    "changed": 2,
+    "identical": 4406,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UxQuicParseFrame",
+      "address_unpatched": "0x1400FD714",
+      "address_patched": "0x1400FD794",
+      "similarity": 0.9718,
+      "change_type": "feature_staged_no_delivered_change",
+      "key_changes": [
+        "Added a new feature-staging gate 'UxKirQuicParseLengthCheck' (cmp cs:UxKirQuicParseLengthCheck, 0 at patched 0x1400FD95D) around the second (length) QUIC varint size read. When the gate is enabled, a 'test r14d, r14d' zero-remaining guard is applied before the read at loc_1400FD97C. When the gate is disabled, control jumps straight to the same unconditional 'movzx ecx, byte ptr [rsi]' read as the unpatched build (unpatched read at 0x1400FD8DD).",
+        "Decompiled patched condition: 'if ( (UxKirQuicParseLengthCheck == 0 || v25 != 0) && v25 >= 1 << (*v23 >> 6) )'. When the gate is 0 the left operand is true via short-circuit, so *v23 is dereferenced regardless of remaining length (v25) -- identical to the unpatched 'if ( v25 < 1 << (*v23 >> 6) )'. The old read path is fully retained behind the gate.",
+        "The first (type) varint read is already guarded against zero length in BOTH builds via short-circuit 'if ( a4 == 0 || a4 < 1 << (*a3 >> 6) )'."
+      ],
+      "security_relevant": false,
+      "security_notes": "UxQuicParseFrame is the generic HTTP/3 (QUIC) frame-header parser (frame type varint + frame length varint, then dispatch to Data/Headers/CancelPush/Settings/PushPromise/Goaway/MaxPushId handlers). It is not a PRIORITY-frame parser. The read guarded by the patch is a 1-byte read of the length-varint size byte, performed after the type varint is consumed. In the unpatched build this read occurs even when remaining == 0 (frame body was exactly one type varint with no length byte), reading one byte past the currently buffered stream data. The callers (UxpQuicReceiveControlStreamReceiveEvent @ 0x1400FBCF4 and UxpQuicStreamParseReceiveBuffer @ 0x140106404) pass a pointer into a QUIC stream reassembly buffer (base + offset) and the buffered byte count, so this is a read one byte past buffered data, not demonstrably past the pool allocation. The over-read byte is right-shifted by 6 and used only as a size threshold; because remaining == 0 the comparison always routes to the benign incomplete-frame path, so the byte value has no effect on control flow or returned data. The patch gates the added guard behind the WIL feature Feature_1164959034 (via UxKirQuicParseLengthCheck) and retains the old read path when the gate is off, so it delivers no security-relevant behavioral change by default. No reachable impact (page fault / DoS, info leak, corruption) is demonstrable from the binaries.",
+      "assembly_diff": "=== UNPATCHED (UxQuicParseFrame @ 0x1400FD714) ===\n\nFirst (type) varint read is guarded by a zero test:\n  0x1400FD7C4: test    r15d, r15d          ; r15d = length\n  0x1400FD7C7: jnz     short loc_1400FD817\n  0x1400FD7C9: mov     byte ptr [r12], 1    ; length 0 -> no deref\n  ...\n  0x1400FD817: movzx   ecx, byte ptr [rsi]  ; type-varint byte (guarded)\n  0x1400FD837: call    UxpQuicParseVariableLengthInteger\n\nCompute remaining after type varint:\n  0x1400FD84C: mov     ecx, [rbp+37h+arg_18] ; consumed\n  0x1400FD853: add     rsi, rcx\n  0x1400FD85C: sub     r15d, ecx             ; r15d = remaining (can be 0)\n\nFrame-type acceptance checks reach the length-varint read (NO zero guard):\n  0x1400FD8DD: movzx   ecx, byte ptr [rsi]   ; 1-byte read past buffered data when remaining==0\n  0x1400FD8E5: shr     ecx, 6\n  0x1400FD8E8: shl     eax, cl\n  0x1400FD8EA: cmp     r15d, eax\n  0x1400FD8ED: jnb     short loc_1400FD900   ; remaining>=size -> parse length\n  0x1400FD8EF: mov     rdi, [rbp+37h+arg_20] ; else incomplete-frame path\n  0x1400FD8FB: jmp     loc_1400FDAE7\n\n=== PATCHED (UxQuicParseFrame @ 0x1400FD794) ===\n\nSame acceptance checks reach loc_1400FD95D, then the new gate:\n  0x1400FD95D: cmp     cs:UxKirQuicParseLengthCheck, 0  ; feature-staging gate\n  0x1400FD964: jz      short loc_1400FD97C              ; gate off -> old read\n  0x1400FD966: test    r14d, r14d                       ; gate on: remaining==0?\n  0x1400FD969: jnz     short loc_1400FD97C              ; nonzero -> read\n  0x1400FD96B: mov     rdi, [rbp+37h+arg_20]            ; zero -> safe exit, no read\n  0x1400FD972: mov     byte ptr [r12], 1\n  0x1400FD977: jmp     loc_1400FDB75\n\n  0x1400FD97C: movzx   ecx, byte ptr [rsi]              ; length-varint size read\n  0x1400FD984: shr     ecx, 6\n  0x1400FD987: shl     eax, cl\n  0x1400FD989: cmp     r14d, eax\n  0x1400FD98C: jb      short loc_1400FD96B\n  0x1400FD99C: call    UxpQuicParseVariableLengthInteger ; parse length\n\nNote: remaining register is r15d (unpatched) / r14d (patched). Gate-off branch matches unpatched behavior exactly."
+    },
+    {
+      "name": "UxStartEnvironmentModule",
+      "address_unpatched": "0x1400BCA70",
+      "address_patched": "0x1400BCAC0",
+      "similarity": 0.9726,
+      "change_type": "feature_flag_init",
+      "key_changes": [
+        "Environment/feature initialization function. The patched build adds initialization of the new gate: 'UxKirQuicParseLengthCheck = (unsigned int)Feature_1164959034__private_IsEnabledDeviceUsageNoInline() != 0;', plus its associated WPP trace. This is the source of the gate consumed by UxQuicParseFrame.",
+        "Neither UxKirQuicParseLengthCheck nor Feature_1164959034 exists in the unpatched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "Adds WIL feature-staging state for the QUIC length-check gate. No delivered security-relevant behavioral change; the runtime default of Feature_1164959034 is determined outside the binary.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_1164959034__private_IsEnabledDeviceUsageNoInline",
+      "Feature_1164959034__private_IsEnabledFallback"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "UxQuicParseFrame",
+      "address_unpatched": "0x1400FD714",
+      "address_patched": "0x1400FD794",
+      "entry_point": "Remote HTTP/3 (QUIC) stream data (control stream and request/other streams)",
+      "call_chain": [
+        "Remote HTTP/3 QUIC connection delivering stream data",
+        "UxpQuicReceiveControlStreamReceiveEvent @ 0x1400FBCF4 (control stream receive) OR UxpQuicStreamParseReceiveBuffer @ 0x140106404 (request/other stream receive-buffer parse)",
+        "UxQuicParseFrame (generic HTTP/3 frame-header parser: type + length varints)"
+      ],
+      "vulnerability_class": "Feature-gated 1-byte over-read guard (nature CWE-125), value discarded; old path retained behind gate -> no delivered change",
+      "description": "UxQuicParseFrame parses the HTTP/3 (QUIC) frame header: a type varint followed by a length varint, then dispatches to per-type handlers. After the type varint is consumed, the code reads the first byte of the length varint to determine its encoded size. In the unpatched build this read ('if ( v25 < 1 << (*v23 >> 6) )', asm 0x1400FD8DD) occurs even when remaining (v25) == 0, i.e. when the frame body was exactly one type varint with no length byte, reading one byte past the currently buffered stream data. The patched build wraps this read in a new feature-staging gate: 'if ( (UxKirQuicParseLengthCheck == 0 || v25 != 0) && v25 >= 1 << (*v23 >> 6) )'. When the gate (Feature_1164959034) is enabled, the read is skipped for remaining==0; when the gate is disabled, the identical unpatched read executes. The old code path is fully retained behind the gate, so no security-relevant behavior is delivered by default. The guarded read has no demonstrable reachable impact: the buffer is a QUIC stream reassembly buffer so the read is one byte past buffered data (not demonstrably past the allocation), and the byte value is only shifted to form a size threshold that always routes to the benign incomplete-frame path when remaining==0.",
+      "trigger_conditions": "An HTTP/3 (QUIC) frame arriving on a control or request stream whose available body is exactly one frame-type varint with no length byte, for a frame type that carries a length field (type value >= 0x0E, or a type whose bit is set in the acceptance table byte_14018E4C8). After the type varint is consumed, remaining == 0 and the length-varint size read at 0x1400FD8DD (unpatched) executes. The patched gate UxKirQuicParseLengthCheck suppresses this read when the feature is enabled.",
+      "primitive": "None demonstrable. The guarded read is a single byte one position past the buffered stream data within a reassembly buffer; the value is right-shifted by 6 and used only as a size threshold that, at remaining==0, always routes to the benign incomplete-frame path. No control-flow influence, no returned-data influence, and no demonstrable page fault / info leak / corruption from the binaries.",
+      "evidence": "// UNPATCHED UxQuicParseFrame @ 0x1400FD714:\n//   v23 = &a3[consumed]; v25 = a4 - consumed;   // v25 = remaining\nif ( v25 < 1 << (*v23 >> 6) )   // *v23 dereferenced unconditionally (read at 0x1400FD8DD)\n    goto LABEL_21;\n\n// First (type) varint read is already zero-guarded in BOTH builds:\nif ( a4 == 0 || a4 < 1 << (*a3 >> 6) ) { /* incomplete */ }\n\n// PATCHED UxQuicParseFrame @ 0x1400FD794 (gate added, old path retained):\nif ( (UxKirQuicParseLengthCheck == 0 || v25 != 0) && v25 >= 1 << (*v23 >> 6) )\n{\n    // parse length varint...\n}\n// UxStartEnvironmentModule:\n//   UxKirQuicParseLengthCheck = Feature_1164959034__private_IsEnabledDeviceUsageNoInline() != 0;",
+      "assembly": "=== UNPATCHED UxQuicParseFrame @ 0x1400FD714 (read region) ===\n  0x1400FD7C4: test    r15d, r15d          ; type-varint read guarded here\n  0x1400FD7C7: jnz     short loc_1400FD817\n  0x1400FD817: movzx   ecx, byte ptr [rsi] ; type-varint byte (guarded)\n  0x1400FD837: call    UxpQuicParseVariableLengthInteger\n  0x1400FD84C: mov     ecx, [rbp+37h+arg_18]\n  0x1400FD853: add     rsi, rcx\n  0x1400FD85C: sub     r15d, ecx           ; remaining (can be 0)\n  0x1400FD886: cmp     rdi, 0Eh            ; frame-type acceptance\n  0x1400FD88A: jnb     short loc_1400FD8DD\n  0x1400FD89D: test    [rdi+rdx], al       ; type bit in byte_14018E4C8\n  0x1400FD8A0: jnz     short loc_1400FD8DD\n  0x1400FD8DD: movzx   ecx, byte ptr [rsi] ; length-varint size read (unconditional)\n  0x1400FD8EA: cmp     r15d, eax\n  0x1400FD8ED: jnb     short loc_1400FD900\n\n=== PATCHED UxQuicParseFrame @ 0x1400FD794 (gated region) ===\n  0x1400FD95D: cmp     cs:UxKirQuicParseLengthCheck, 0\n  0x1400FD964: jz      short loc_1400FD97C ; gate off -> old read\n  0x1400FD966: test    r14d, r14d          ; gate on: remaining==0?\n  0x1400FD969: jnz     short loc_1400FD97C\n  0x1400FD96B: mov     rdi, [rbp+37h+arg_20] ; zero -> safe exit, no read\n  0x1400FD97C: movzx   ecx, byte ptr [rsi] ; length-varint size read\n  0x1400FD989: cmp     r14d, eax\n  0x1400FD99C: call    UxpQuicParseVariableLengthInteger",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UxQuicParseFrame",
+            "address_unpatched": "0x1400FD714",
+            "address_patched": "0x1400FD794",
+            "why": "Entry of the generic HTTP/3 QUIC frame-header parser. Buffer pointer and buffered-length are supplied by the caller (UxpQuicReceiveControlStreamReceiveEvent or UxpQuicStreamParseReceiveBuffer)."
+          },
+          {
+            "symbol": "http!UxQuicParseFrame length-varint read (unpatched)",
+            "address": "0x1400FD8DD",
+            "why": "The unconditional 'movzx ecx, byte ptr [rsi]' length-varint size read. When remaining (r15d) == 0 this reads one byte past the buffered stream data. Value is discarded; used only to compute a size threshold that routes to the incomplete-frame path."
+          },
+          {
+            "symbol": "http!UxQuicParseFrame gate (patched)",
+            "address": "0x1400FD95D",
+            "why": "'cmp cs:UxKirQuicParseLengthCheck, 0' feature-staging gate. Gate off (jz 0x1400FD97C) executes the same read as unpatched; gate on adds 'test r14d, r14d' zero-remaining guard."
+          }
+        ],
+        "watch": [
+          "r15d (unpatched) / r14d (patched) = remaining bytes after the type varint",
+          "rsi = current parse pointer into the QUIC stream reassembly buffer",
+          "cs:UxKirQuicParseLengthCheck (patched only) = feature-staging gate from Feature_1164959034"
+        ],
+        "key_offsets": [
+          "0x1400FD7C4 (unpatched): 'test r15d, r15d' -- type-varint read guard (present in both builds)",
+          "0x1400FD85C (unpatched): 'sub r15d, ecx' -- computes remaining",
+          "0x1400FD8DD (unpatched): 'movzx ecx, byte ptr [rsi]' -- length-varint size read (unconditional)",
+          "0x1400FD95D (patched): 'cmp cs:UxKirQuicParseLengthCheck, 0' -- added feature-staging gate",
+          "0x1400FD966 (patched): 'test r14d, r14d' -- zero-remaining guard, active only when gate enabled",
+          "0x1400FD97C (patched): 'movzx ecx, byte ptr [rsi]' -- relocated length-varint size read"
+        ],
+        "trigger_setup": "Deliver an HTTP/3 (QUIC) frame on a control or request stream whose available body is exactly one frame-type varint (type >= 0x0E, or a type whose bit is set in byte_14018E4C8) and no length byte, so remaining == 0 after the type varint is consumed.",
+        "expected_observation": "In the unpatched build, execution reaches 0x1400FD8DD with remaining (r15d) == 0 and reads one byte past the buffered stream data; the value is discarded and control routes to the incomplete-frame path. In the patched build with UxKirQuicParseLengthCheck enabled, the read is skipped. With the gate disabled, the patched build behaves identically to the unpatched build.",
+        "notes": "The gate UxKirQuicParseLengthCheck is initialized in UxStartEnvironmentModule from Feature_1164959034__private_IsEnabledDeviceUsageNoInline(). This is a WIL feature-staging / Known-Issue-Rollback mechanism; its runtime default is set outside the binary. Because the old read path is retained when the gate is off, the patch delivers no security-relevant behavioral change by default."
+      }
+    }
+  ],
+  "summary": "The patch does not deliver a security fix. It adds a new feature-staging gate 'UxKirQuicParseLengthCheck' (backed by the WIL feature Feature_1164959034, initialized in UxStartEnvironmentModule) around the length-varint size read in the generic HTTP/3 (QUIC) frame-header parser UxQuicParseFrame (unpatched 0x1400FD714 / patched 0x1400FD794). When the gate is enabled, a zero-remaining guard ('test r14d, r14d') is applied before the read at 0x1400FD97C; when the gate is disabled, the parser executes the identical pre-existing unconditional read (unpatched 0x1400FD8DD). The old path is fully retained behind the gate, so this is a staged / rollback-capable change rather than a delivered fix. The guarded read is a single byte one position past the buffered stream data within a QUIC stream reassembly buffer; its value is discarded (used only to derive a size threshold that always routes to the benign incomplete-frame path when remaining==0). No reachable impact (DoS/BSOD, info leak, corruption) is demonstrable from the binaries. The report's earlier 'PRIORITY frame' framing, 'data_1401ab375' flag, frame types 0x0002/0x0707, and multi-hop call chain were not supported by the binaries and have been corrected."
+}

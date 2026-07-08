@@ -1,0 +1,183 @@
+{
+  "binaries": {
+    "title": "bthpan.sys (Bluetooth Personal Area Network NDIS miniport) - No security-relevant change (feature-staged async request-lifetime refactor)",
+    "id_unpatched": "bthpan_unpatched.sys",
+    "id_patched": "bthpan_patched.sys",
+    "overall_similarity": 0.9805,
+    "matched": 328,
+    "changed": 8,
+    "identical": 320,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "BthpanConnectionNotificationRegister (sub_1c00183e8 -> sub_1c0019828)",
+      "similarity": 0.2611,
+      "change_type": "refactor",
+      "key_changes": [
+        "BOTH BUILDS: Uses a GLOBAL linked list (g_NotificationRequestList / data_1c001d3d0, tail data_1c001d3d8) protected by a GLOBAL spinlock (g_NotificationLock / data_1c001d3e0) to track pending connection-notification requests across all Bluetooth PAN connections. Each 0x28-byte entry stores the request-context pointer at +0x10 and the connection handle at +0x18; the global list is NOT replaced by the patch.",
+        "BOTH BUILDS: Stores the cancel callback (BthpanConnectionNotificationCancel / sub_1c00182f0) into the connection object at offset +0x68 via xchg, and when the connection is tearing down (offset +0x44 set) clears +0x68 and returns without registering.",
+        "PATCHED (sub_1c0019828): On the teardown / duplicate-entry path, gated by the newly introduced WIL feature flag Feature_1769988411__private_IsEnabledDeviceUsage (sub_1c0003c08), the function returns STATUS_PENDING (0x103) instead of 0, signaling the reworked dispatch handler BthpanReqNwi to unlink the request from the per-connection list and destroy it rather than leaving it linked.",
+        "PATCHED: Control flow reordered (loop-termination and allocation branches restructured), but the global-list semantics are unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "BthpanConnectionNotificationRegister runs as the case-6 operation inside the async work-item handler and dereferences the connection object at [request_context+0x260]. In BOTH builds that connection object is kept alive across the entire work-item dispatch by the per-connection reference count at connection+0x50, which is taken before the work item is queued (BthpanReqAdd / BthpanReqCreate) and released only after the operation completes (BthpanReqDestroy). The global notification list holds the request-context pointer (entry+0x10) keyed by connection handle (entry+0x18); the pending request keeps its connection reference held until it is drained. The patch does not remove the global notification list. The only behavioral change is the Feature_1769988411__private_IsEnabledDeviceUsage-gated STATUS_PENDING (0x103) return that drives the reworked handler's unlink-and-BthpanReqDestroy drain path. This is a feature-staged refactor, not a memory-safety fix."
+    },
+    {
+      "name": "BthpanReqNwi (sub_1c0004110 -> sub_1c0004270)",
+      "similarity": 0.7599,
+      "change_type": "refactor",
+      "key_changes": [
+        "BOTH BUILDS: The work-item handler dispatches based on the operation type at request_context+0x28 (values 0-6). It loads the connection object pointer (r10 = [request_context+0x20]) and, for case 6, calls BthpanConnectionNotificationRegister. The connection object is already kept alive across this dispatch by the connection+0x50 reference taken in BthpanReqAdd before the work item was queued.",
+        "UNPATCHED (sub_1c0004110): After dispatching, calls BthpanReqCompleteByRcb (sub_1c0003cb0) which unlinks the request from the per-connection list (connection+0x680) under the per-connection spinlock (connection+0x670) and, on completion, invokes BthpanReqDestroy to release the connection+0x50 reference. The request was linked into the per-connection list at queue time in BthpanReqAdd.",
+        "PATCHED (sub_1c0004270): First checks Feature_1769988411__private_IsEnabledDeviceUsage (sub_1c0003c08). If the feature is disabled it runs the legacy dispatch path (0x1c00046a9-0x1c0004822), which is structurally identical to the unpatched handler. If enabled it runs the hardened path below.",
+        "PATCHED (hardened path): Copies the operation parameters to a stack-local buffer, then takes an additional connection+0x50 reference (0x1c0004382, running the activation callback at connection+0x58 on the 0->1 transition) as a worker-side bracket.",
+        "PATCHED (hardened path): For cases 0/1/6, acquires the per-connection spinlock (connection+0x670) and inserts the request into the per-connection list (connection+0x680) at EXECUTION time (rather than queue time), guarded by a list-integrity __fastfail(3) check, then processes the operation and unlinks under the same lock.",
+        "PATCHED (hardened path): Drops the worker-side reference via lock xadd on connection+0x50 (0x1c000466f); on the last reference it clears connection+0x60/connection+0x68 and invokes the cleanup callback (connection+0x60). BthpanConnectionNotificationRegister returning STATUS_PENDING (0x103) drives the unlink-and-BthpanReqDestroy drain path."
+      ],
+      "security_relevant": false,
+      "security_notes": "In BOTH builds the connection object referenced by an in-flight work item is kept alive by the connection+0x50 reference taken in BthpanReqAdd (unpatched) / BthpanReqCreate (patched) before the work item is queued, and released only in BthpanReqDestroy after the operation completes. That single reference already spans the entire BthpanReqNwi dispatch, so the connection object cannot be freed while a request for it is outstanding. The patched hardened path adds a second, redundant worker-side reference and moves the per-connection list insertion from queue time to execution time; it does not close any window that is open in the unpatched build. The change is gated behind the newly introduced WIL feature flag Feature_1769988411__private_IsEnabledDeviceUsage with the legacy path retained in the else branch, which is the signature of a staged rollout rather than a delivered memory-safety fix.",
+      "assembly_diff": "; UNPATCHED BthpanReqNwi (sub_1c0004110) - dispatch on a connection already referenced by BthpanReqAdd\n0x1c0004162  mov     ecx, [rbx+28h]        ; operation type at request_context+0x28\n0x1c0004165  mov     r10, [rbx+20h]        ; connection object (held alive by connection+0x50 ref)\n0x1c00041a1  mov     rcx, rbx              ; case 6: arg1 = request context\n0x1c00041a4  call    BthpanConnectionNotificationRegister\n0x1c000424a  call    BthpanReqCompleteByRcb ; unlink under connection+0x670, then BthpanReqDestroy on completion\n0x1c0004252  call    [rel 0x1c001f088]      ; NdisFreeIoWorkItem\n0x1c000428c  lock dec [rel 0x1c001d228]     ; g_lDriverUnload\n; PATCHED BthpanReqNwi (sub_1c0004270)\n0x1c0004299  call    Feature_1769988411__private_IsEnabledDeviceUsage\n0x1c000429e  test    eax, eax\n0x1c00042a0  jz      0x1c00046a9            ; flag disabled -> legacy path (matches unpatched)\n0x1c000434b  lea     r14, [rdi+50h]        ; hardened path: r14 = connection+0x50\n0x1c0004382  lock xadd [r14], eax          ; redundant worker-side reference bracket\n0x1c00043ef  call    [rel ...]KeAcquireSpinLockRaiseToDpc ; connection+0x670\n0x1c00043fe  lea     rsi, [rdi+680h]       ; per-connection list, linked at EXECUTION time\n0x1c000443e  call    BthpanConnectionNotificationRegister\n0x1c0004446  cmp     eax, 103h             ; STATUS_PENDING drives the drain\n0x1c000466f  lock xadd [r14], eax          ; drop worker reference\n0x1c0004697  call    [rel ...]__guard_dispatch_icall_fptr ; connection+0x60 cleanup at zero"
+    },
+    {
+      "name": "BthpanReqAdd (sub_1c00042b0 -> sub_1c000482c)",
+      "similarity": 0.7599,
+      "change_type": "refactor",
+      "key_changes": [
+        "UNPATCHED: Allocates a 0x268-byte request context (tag BTPN), increments the per-connection reference count (connection+0x50, lock xadd at 0x1c000437f), copies operation parameters, links the request into the per-connection list (connection+0x680) under the per-connection spinlock (connection+0x670), then queues the work item via NdisQueueIoWorkItem(g_hMiniportHandle, BthpanReqNwi, request_context).",
+        "PATCHED (sub_1c000482c): Adds a Feature_1769988411__private_IsEnabledDeviceUsage (sub_1c0003c08) branch. On the hardened path the request context is allocated via the extracted helper BthpanReqCreate (sub_1c0003c40) - which performs the same 0x268 allocation, zero-fill, and connection+0x50 increment - and the per-connection list linking is deferred to the handler BthpanReqNwi (done at execution time) rather than at queue time.",
+        "PATCHED: On NdisAllocateIoWorkItem failure, calls BthpanReqDestroy (sub_1c0003d4c) to drop the reference. The legacy path retains the unpatched inline allocation, reference count, and queue-time list linking."
+      ],
+      "security_relevant": false,
+      "security_notes": "Both builds increment the per-connection reference count at connection+0x50 before the work item is queued. The patch's change is the Feature_1769988411__private_IsEnabledDeviceUsage-gated hardened path in which allocation is done through the extracted BthpanReqCreate helper and per-connection list insertion is deferred to the handler. The reference that governs the connection object's lifetime across the async dispatch is taken here in both builds; the change is a refactor of where allocation and list-linking occur, not a fix for a missing reference count.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BthpanReqCreate (sub_1c0003c40, patched: request context allocation helper)",
+      "similarity": 0.5173,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Refactored from inline code in the unpatched BthpanReqAdd (sub_1c00042b0) into a standalone function.",
+        "Performs NdisAllocateMemoryWithTag for 0x268 bytes, zeroes the allocation, and increments the per-connection reference count (connection+0x50, lock xadd at 0x1c0003cda).",
+        "Functionally equivalent to the unpatched inline allocation but extracted for reuse by the feature-gated BthpanReqAdd path."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1c0019508 -> sub_1c0005020, feature usage telemetry)",
+      "similarity": 0.9765,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed from using global constants (0x355f13c, data_1c001d1c8) to per-instance context pointers (*(arg1+0x18), *(arg1+0x8)).",
+        "RtlNotifyFeatureUsage now receives per-instance parameters instead of global ones."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToService (sub_1c00195f8 -> sub_1c0005108, feature telemetry mapping)",
+      "similarity": 0.9897,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Collapsed cascading if-else chain into flat if-else for the report-code computation (compiler/decompiler difference).",
+        "Changed from global feature ID (0x355f13c) to per-instance context (*(arg1+0x18))."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (sub_1c0019758 -> sub_1c0004c60, feature telemetry wrapper)",
+      "similarity": 0.9535,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added third parameter arg3 (context pointer) propagated through to wil_details_FeatureReporting_ReportUsageToService (sub_1c0005108) and wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1c0004cf4).",
+        "Changed from global data reference (data_1c001d570, data_1c001c7c0) to per-instance dereference (*arg3)."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (sub_1c0019714 -> sub_1c0004cf4, feature state flag update)",
+      "similarity": 0.8176,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Changed from global state variable (data_1c001d570) to per-instance state (*arg3, with additional flag checks at *(arg3+0x1d) and *(arg3+0x1e)).",
+        "Same atomic cmpxchg pattern but operating on a per-instance state pointer."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    },
+    {
+      "name": "Feature_2327586105__private_IsEnabledFallback (sub_1c00197e4 -> sub_1c0019e74, telemetry thunk)",
+      "similarity": 0.6736,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Updated call target from wil_details_IsEnabledFallback (sub_1c0019758)(arg1, arg2) to wil_details_IsEnabledFallback (sub_1c0004c60)(arg1, arg2, &data_1c001d7e0), passing the per-instance context."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "BthpanReqNwi (sub_1c0004110 -> sub_1c0004270) work-item handler and BthpanConnectionNotificationRegister (sub_1c00183e8 -> sub_1c0019828) case-6 operation",
+      "entry_point": "NDIS OID request / IOCTL paths that call BthpanReqAdd (sub_1c00042b0) to queue async work items via NdisQueueIoWorkItem",
+      "call_chain": [
+        "NDIS OID request / IOCTL path",
+        "BthpanReqAdd (sub_1c00042b0) - allocates the request context, takes the connection+0x50 reference, and queues the async work item via NdisQueueIoWorkItem",
+        "BthpanReqNwi (sub_1c0004110) - NDIS work-item callback, executes on a worker thread while the connection+0x50 reference is held",
+        "BthpanConnectionNotificationRegister (sub_1c00183e8) - case 6: tracks the pending request in the global notification list; the connection remains referenced until the request is drained"
+      ],
+      "vulnerability_class": "No security-relevant change (feature-staged async request-lifetime refactor; CWE: none)",
+      "description": "This entry documents why the async work-item path is NOT a reachable use-after-free in the unpatched build. The unpatched work-item queuing function BthpanReqAdd (sub_1c00042b0) increments the per-connection reference count at connection+0x50 (lock xadd at 0x1c000437f) BEFORE the work item is queued via NdisQueueIoWorkItem, and links the request into the per-connection list at connection+0x680 under the per-connection spinlock at connection+0x670. The work-item handler BthpanReqNwi (sub_1c0004110) loads the connection object from request_context+0x20 (r10 at 0x1c0004165) and dispatches the operation; for case 6 it calls BthpanConnectionNotificationRegister (sub_1c00183e8), which tracks the pending request in the global notification list (g_NotificationRequestList / data_1c001d3d0) under the global spinlock (g_NotificationLock / data_1c001d3e0). The completion path BthpanReqCompleteByRcb (sub_1c0003cb0) unlinks the request under the same per-connection spinlock, and BthpanReqDestroy (sub_1c0003bec) decrements connection+0x50 (lock xadd -1 at 0x1c0003c39) and runs the cleanup callback at connection+0x60 only when the count reaches zero. Because the reference taken at queue time is held across the entire asynchronous dispatch, the connection object cannot be freed while a work item for it is outstanding; a disconnect during pending work items decrements the reference but cannot drive it to zero while a request remains in flight. The per-connection reference count (connection+0x50), per-connection spinlock (connection+0x670), per-connection list (connection+0x680), the global notification list, and the __fastfail(3) list-integrity guards all exist in BOTH builds. The patch introduces a WIL feature-staged (Feature_1769988411__private_IsEnabledDeviceUsage / sub_1c0003c08, a function absent from the unpatched build) refactor that extracts allocation into BthpanReqCreate (sub_1c0003c40), moves per-connection list insertion from queue time to execution time, adds a second (redundant) worker-side connection+0x50 reference bracket in the handler, and has BthpanConnectionNotificationRegister return STATUS_PENDING (0x103) to drive an unlink-and-BthpanReqDestroy drain. With the flag disabled the legacy paths (retained in the else branches) match the unpatched behavior. This is a staged-rollout refactor of the async request-context lifetime bookkeeping, not a delivered memory-safety fix. There is no reachable use-after-free or reference-count gap to remediate in the unpatched build.",
+      "trigger_conditions": "None. In both builds the connection object referenced by an in-flight request is kept alive by the connection+0x50 reference taken in BthpanReqAdd before the work item is queued and released only in BthpanReqDestroy after the operation completes. A rapid disconnect during pending work items decrements the reference but cannot free the connection while a request for it remains outstanding.",
+      "primitive": "None. The connection object's lifetime is governed by the connection+0x50 reference count in both builds, and the per-connection list operations at connection+0x680 are performed under the per-connection spinlock at connection+0x670 with __fastfail(3) integrity guards in both builds. The function pointers at connection+0x58 / connection+0x60 / connection+0x68 are only invoked while a reference is held, so there is no attacker-controlled use-after-free through which to reach them.",
+      "evidence": "; UNPATCHED BthpanReqAdd (sub_1c00042b0) - reference taken on the connection BEFORE the work item is queued\n0x1c0004376  lea     rcx, [rbp+50h]        ; rbp = connection object; rcx = connection+0x50\n0x1c000437a  mov     eax, 1\n0x1c000437f  lock xadd [rcx], eax          ; take reference on the connection\n0x1c0004383  inc     eax\n0x1c0004385  cmp     eax, 1\n0x1c0004388  jnz     0x1c0004399\n0x1c000438a  mov     rax, [rcx+8]          ; connection+0x58 activation callback\n0x1c0004393  call    [rel ...]__guard_dispatch_icall_fptr ; run on 0->1 transition\n0x1c000446c  lea     rsi, [rbp+670h]       ; per-connection spinlock\n0x1c000449f  call    [rel ...]KeAcquireSpinLockRaiseToDpc\n0x1c00044b1  lea     rax, [rbp+680h]       ; per-connection list head\n0x1c00044c5  mov     [rbx+8], rcx          ; link request into per-connection list\n0x1c00044dc  call    [rel ...]KeReleaseSpinLock\n0x1c00045b8  call    [rel ...]NdisQueueIoWorkItem ; queue BthpanReqNwi (reference already held)\n0x1c0004616  int     29h                   ; __fastfail(3) list-integrity guard\n\n; UNPATCHED BthpanReqDestroy (sub_1c0003bec) - reference released; cleanup only at zero\n0x1c0003c2e  mov     rcx, [rbx+20h]        ; rbx = request; rcx = connection object\n0x1c0003c32  add     rcx, 50h              ; connection+0x50\n0x1c0003c36  or      eax, 0FFFFFFFFh\n0x1c0003c39  lock xadd [rcx], eax          ; release reference\n0x1c0003c3d  cmp     eax, 1                ; last reference?\n0x1c0003c40  jnz     0x1c0003c5b\n0x1c0003c42  mov     rax, [rcx+10h]        ; connection+0x60 cleanup callback\n0x1c0003c55  call    [rel ...]__guard_dispatch_icall_fptr ; run cleanup only at zero\n0x1c0003c63  call    [rel ...]NdisFreeMemory ; free request context\n\n; PATCHED BthpanReqNwi (sub_1c0004270) - feature gate selects the hardened path; else falls through to a legacy path that matches the unpatched handler\n0x1c0004299  call    Feature_1769988411__private_IsEnabledDeviceUsage ; new function, absent from the unpatched build\n0x1c000429e  test    eax, eax\n0x1c00042a0  jz      0x1c00046a9           ; flag disabled -> legacy path (0x1c00046de-0x1c0004822 mirrors the unpatched handler)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "bthpan_unpatched!BthpanReqAdd",
+            "address": "0x1c00042b0",
+            "why": "Observe the connection+0x50 reference (lock xadd at 0x1c000437f, rcx = [rbp+0x50]) being taken before NdisQueueIoWorkItem. This reference keeps the connection object alive for the whole async dispatch."
+          },
+          {
+            "symbol": "bthpan_unpatched!BthpanReqNwi",
+            "address": "0x1c0004110",
+            "why": "NDIS work-item dispatch handler. rcx = request context, rdx = NDIS work item. [rcx+0x20] (r10 = connection object at 0x1c0004165) is backed by the reference taken in BthpanReqAdd, so it points to live pool for the duration of the dispatch."
+          },
+          {
+            "symbol": "bthpan_unpatched!BthpanReqDestroy",
+            "address": "0x1c0003bec",
+            "why": "The connection+0x50 reference is released here (lock xadd -1 at 0x1c0003c39); the cleanup callback at connection+0x60 (0x1c0003c55) runs only when the count reaches zero, so the connection is torn down only after the last outstanding request is destroyed."
+          }
+        ],
+        "watch": [
+          "[connection+0x50] = per-connection reference count (present in both builds); incremented in BthpanReqAdd before queuing, decremented in BthpanReqDestroy after completion",
+          "r10 (in BthpanReqNwi / sub_1c0004110) = [request_context+0x20] = connection object pointer; live for the whole dispatch because of the connection+0x50 reference",
+          "rdi (in BthpanConnectionNotificationRegister / sub_1c00183e8) = [request_context+0x260] = connection object; the pending request keeps its connection reference held until drained",
+          "g_NotificationRequestList (data_1c001d3d0) and g_NotificationLock (data_1c001d3e0) = global notification list head and spinlock, present and functionally unchanged in both builds",
+          "[connection+0x670] = per-connection spinlock, [connection+0x680] = per-connection request list head (both present in both builds)"
+        ],
+        "key_offsets": [
+          "0x1c0004376-0x1c000437f: connection+0x50 reference taken in BthpanReqAdd before NdisQueueIoWorkItem",
+          "0x1c00044b1-0x1c00044c5: request linked into the per-connection list at connection+0x680 under the per-connection spinlock",
+          "0x1c0003c39: connection+0x50 reference released in BthpanReqDestroy; cleanup at connection+0x60 (0x1c0003c55) runs only at zero",
+          "0x1c0004165: BthpanReqNwi loads the connection object from request_context+0x20 (already referenced)",
+          "0x1c0004299: patched BthpanReqNwi gates on Feature_1769988411__private_IsEnabledDeviceUsage, a function absent from the unpatched build",
+          "0x1c00046de-0x1c0004822: patched legacy dispatch path, structurally identical to the unpatched handler"
+        ],
+        "trigger_setup": "Not applicable. There is no memory-safety condition to trigger: the connection object is kept alive by the connection+0x50 reference across the async dispatch in both builds.",
+        "expected_observation": "No fault. The connection+0x50 reference taken in BthpanReqAdd holds the connection object live from queue time through BthpanReqNwi dispatch until BthpanReqDestroy, so a disconnect during pending work items cannot free the connection while a request for it is outstanding.",
+        "notes": "The request context is allocated at 0x268 bytes (tag 'BTPN') and holds: +0x20 connection object pointer, +0x28 operation type, +0x258/+0x260 completion callback context. The connection object holds: +0x44 teardown flag, +0x50 reference count (both builds), +0x58 activation callback, +0x60 cleanup callback, +0x68 notification-cancel callback, +0x670 per-connection spinlock (both builds), +0x680 per-connection request-list head (both builds). The global notification-list entries (g_NotificationRequestList / data_1c001d3d0, tail data_1c001d3d8, lock data_1c001d3e0) are 0x28 bytes: +0x00 prev, +0x08 next, +0x10 request-context pointer, +0x18 connection handle, +0x20 flags byte. Pool tag 'BTPN' (0x4e505442)."
+      }
+    }
+  ],
+  "summary": "The bthpan.sys (Bluetooth Personal Area Network NDIS miniport) patch does not remediate a memory-safety vulnerability. The prior titled concern - a use-after-free / missing reference count in the async work-item handler BthpanReqNwi - is not present in the unpatched build: the queuing function BthpanReqAdd (sub_1c00042b0) increments the per-connection reference count at connection+0x50 (lock xadd at 0x1c000437f) before the work item is queued via NdisQueueIoWorkItem, and BthpanReqDestroy (sub_1c0003bec) releases it (lock xadd -1 at 0x1c0003c39) only after the operation completes, running the cleanup callback at connection+0x60 only when the count reaches zero. That single reference is held across the entire BthpanReqNwi dispatch, so the connection object cannot be freed while a work item for it is outstanding. The per-connection reference count (connection+0x50), per-connection spinlock (connection+0x670), per-connection list (connection+0x680), global notification list (g_NotificationRequestList / data_1c001d3d0), and __fastfail(3) list-integrity guards all exist in both builds. The patch introduces a WIL feature-staged (Feature_1769988411__private_IsEnabledDeviceUsage / sub_1c0003c08, a function absent from the unpatched build) refactor: request-context allocation is extracted into BthpanReqCreate (sub_1c0003c40), per-connection list insertion is moved from queue time to execution time, a second (redundant) worker-side connection+0x50 reference bracket is added in the handler, and BthpanConnectionNotificationRegister returns STATUS_PENDING (0x103) to drive an unlink-and-BthpanReqDestroy drain. With the feature flag disabled the legacy paths are retained in the else branches and match the unpatched behavior. This is a staged-rollout refactor of async request-context lifetime bookkeeping plus WIL feature-telemetry plumbing, not a delivered memory-safety fix. Final assessment: No security-relevant change (severity none, CWE none)."
+}

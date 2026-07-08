@@ -1,0 +1,193 @@
+{
+  "binaries": {
+    "title": "fvevol.sys (BitLocker Drive Encryption) - Patch diff analysis",
+    "id_unpatched": "fvevol_unpatched.sys",
+    "id_patched": "fvevol_patched.sys",
+    "overall_similarity": 0.7398,
+    "matched": 1379,
+    "changed": 1140,
+    "identical": 239,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FveEowBuildBootSector (0x1C00033EC unpatched / 0x140012A74 patched)",
+      "similarity": 0.9555,
+      "change_type": "codegen_artifact",
+      "key_changes": [
+        "Patched build inserts 'test rdx, rdx; jz loc_140012ADE' at 0x140012AA4-0x140012AA7 on the search-miss fallback path",
+        "The inserted test runs AFTER 'movdqu [rdx], xmm0' at 0x140012AA0, which has already dereferenced the same rdx = arg1+0xF0",
+        "The GUID-found branch (jnz) targets 0x140012AA9, skipping the added test; it is reachable only on the fallback path",
+        "Decompiled patched condition is 'result != 0 || (v7 = v5+240, *(_OWORD*)(v5+240) = EOW_INFORMATION_OFFSET_GUID, v5 != -240)'; the added term is v5 != -240 (i.e. arg1+0xF0 != 0)"
+      ],
+      "security_relevant": false,
+      "security_notes": "FveEowBuildBootSector calls FveEowFindGuidRecognition, which scans the caller-supplied buffer (arg1) for the EOW information GUID and returns a pointer to the matching entry or NULL. On a NULL return both builds set v7 = arg1+0xF0, write default GUID data there via 'movdqu [rdx], xmm0' (unpatched 0x1C0003418 / patched 0x140012AA0), and then, if arg3 and arg4 are non-NULL, write through v7 at +0x10, +0x20, and in a two-iteration loop. The only difference is the patched build's inserted 'test rdx, rdx; jz' at 0x140012AA4. This is not a security fix: (1) the test executes after the 'movdqu [rdx], xmm0' at 0x140012AA0 has already dereferenced the same rdx, so it cannot prevent any invalid access; (2) rdx is arg1+0xF0 computed by lea, zero only for the impossible input arg1 == -0xF0 (0xFFFFFFFFFFFFFF10); (3) the sole caller FvepWriteBootSectors passes a driver-allocated pool buffer as arg1, so arg1+0xF0 is a valid in-buffer offset in both builds. The unpatched build is not exposed to a NULL/invalid-pointer dereference on this path, and the patched instruction adds no reachable protection. Code-generation artifact of the OS-build refresh, not a security fix.",
+      "assembly_diff": "Unpatched FveEowBuildBootSector (0x1C00033EC):\n  00000001C00033FD  call    FveEowFindGuidRecognition\n  00000001C0003402  mov     rdx, rax\n  00000001C0003405  test    rax, rax\n  00000001C0003408  jnz     short loc_1C000341C   ; GUID found -> skip fallback\n  00000001C000340A  movups  xmm0, cs:EOW_INFORMATION_OFFSET_GUID\n  00000001C0003411  lea     rdx, [rcx+0F0h]        ; rdx = arg1 + 0xF0\n  00000001C0003418  movdqu  xmmword ptr [rdx], xmm0 ; dereferences rdx\n  00000001C000341C  test    rbx, rbx              ; check arg3\n  00000001C000341F  jz      short loc_1C0003451\n  00000001C0003421  test    r11, r11             ; check arg4\n  00000001C0003424  jz      short loc_1C0003451\n  00000001C0003433  movups  xmmword ptr [rdx+10h], xmm0\n  00000001C0003437  movsd   qword ptr [rdx+20h], xmm1\n  00000001C000343C  sub     rdx, r11\n  00000001C000343F  mov     rax, [r11]\n  00000001C0003442  mov     [rdx+r11+28h], rax\n\nPatched FveEowBuildBootSector (0x140012A74):\n  0000000140012A85  call    FveEowFindGuidRecognition\n  0000000140012A8A  mov     rdx, rax\n  0000000140012A8D  test    rax, rax\n  0000000140012A90  jnz     short loc_140012AA9   ; GUID found -> skip fallback AND the added test\n  0000000140012A92  movups  xmm0, cs:EOW_INFORMATION_OFFSET_GUID\n  0000000140012A99  lea     rdx, [rcx+0F0h]        ; rdx = arg1 + 0xF0\n  0000000140012AA0  movdqu  xmmword ptr [rdx], xmm0 ; dereferences rdx (same as unpatched)\n  0000000140012AA4  test    rdx, rdx              ; ADDED, but rdx already dereferenced above\n  0000000140012AA7  jz      short loc_140012ADE   ; taken only if arg1 == -0xF0 (impossible for a real buffer)\n  0000000140012AA9  test    rbx, rbx\n  0000000140012AAC  jz      short loc_140012ADE\n  0000000140012AAE  test    r11, r11\n  0000000140012AB1  jz      short loc_140012ADE\n  0000000140012AC0  movups  xmmword ptr [rdx+10h], xmm0\n  0000000140012AC4  movsd   qword ptr [rdx+20h], xmm1\n  0000000140012AC9  sub     rdx, r11\n  0000000140012ACC  mov     rax, [r11]\n  0000000140012ACF  mov     [r11+rdx+28h], rax"
+    },
+    {
+      "name": "GetKeyRing (0x1C00C2CC8 unpatched / 0x140D8078 patched)",
+      "similarity": 0.9767,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Sole caller of MmMapIoSpaceEx in the driver; two call sites (0x1C00C305E and 0x1C00C30B8 unpatched, 0x1400D840D and 0x1400D8467 patched)",
+        "The MmMapIoSpaceEx setup (physical address in rcx, size 0x1000 in edx, Protect=4 in r8d) is byte-identical between the two builds at both call sites",
+        "The only in-function difference is an equivalent restatement of a NUL/space character test during string parsing (unpatched 'mov ecx,0FFDFh; test [rdx],cx; jz' vs patched 'test ax,ax; jz' plus 'cmp ax,0x20; jz')"
+      ],
+      "security_relevant": false,
+      "security_notes": "GetKeyRing parses a decimal ASCII string into a physical address (accumulated in r14 via r14 = r14*10 + digit), maps 0x1000 bytes at that physical address with Protect=4 (PAGE_READWRITE) via MmMapIoSpaceEx, validates the mapped region with FveKeyringIsValid, unmaps it, and remaps using the size read from the mapped header ([rsi+8]). This mapping code is identical in the unpatched and patched builds; this patch does not add any bounds or validation check on the physical address or size. The only change inside the function is a semantically equivalent refactor of a NUL/space character test during string parsing. No security-relevant change was made to this function in this patch.",
+      "assembly_diff": "First MmMapIoSpaceEx call site is identical across builds.\nUnpatched (0x1C00C2CC8):\n  00000001C00C304B  mov     ebx, 1000h\n  00000001C00C3050  mov     r8d, 4            ; Protect = PAGE_READWRITE\n  00000001C00C3056  mov     edx, ebx          ; NumberOfBytes = 0x1000\n  00000001C00C3058  mov     rcx, r14          ; PhysicalAddress (parsed from ASCII string)\n  00000001C00C305B  mov     r15d, ebx\n  00000001C00C305E  call    cs:__imp_MmMapIoSpaceEx\nPatched (0x140D8078):\n  00000001400D83FA  mov     ebx, 1000h\n  00000001400D83FF  mov     r8d, 4\n  00000001400D8405  mov     edx, ebx\n  00000001400D8407  mov     rcx, r14\n  00000001400D840A  mov     r15d, ebx\n  00000001400D840D  call    cs:__imp_MmMapIoSpaceEx\nRegister setup, mapping size, and protection are identical; no validation was added before the mapping call."
+    },
+    {
+      "name": "FveTryInlineWriteEncrypt (0x1C0048B28 unpatched / 0x140079DC0 patched)",
+      "similarity": 0.3232,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Size-driven allocation/IoAllocateMdl decision is functionally identical (De-Morgan-refactored); the same length flows to the MDL and to memmove in both builds with no new guard",
+        "New code is feature staging (Feature_SteelixInlineNvmeCryptoEngine, Feature_BitLockerEphemeralVolumeSupport) plus a per-CPU AcquireInlineControl/ReleaseInlineControl refactor",
+        "ExAllocatePoolWithTag to ExAllocatePool2 migration"
+      ],
+      "security_relevant": false,
+      "security_notes": "OS-build churn: allocation size handling is unchanged; new instructions are feature-staging gates and the pool-API modernization. No added bounds or length validation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveConfigManageLoad (0x1C00222F8 unpatched / 0x14001EEE4 patched)",
+      "similarity": 0.8548,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The integer-overflow guard (RtlULongToUShort with a negative-return check) exists identically in both builds",
+        "The MmProbeAndLockPages/memmove flow inside KeStackAttachProcess/KeUnstackDetachProcess is byte-for-byte the same in both builds",
+        "Differences are the ExAllocatePoolWithTag to ExAllocatePool2 migration and struct-offset shifts"
+      ],
+      "security_relevant": false,
+      "security_notes": "The validations present here (integer-overflow guard, probe-and-lock flow) are identical in both builds. No security-relevant change delivered by this patch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveWipeInfoFileCreate (0x1C008221C unpatched / 0x1400A82B0 patched)",
+      "similarity": 0.4008,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched build consolidates a manual FveAllocateUnicodePath/FveFileGetPath/ZwCreateFile/ZwFsControlFile(0x9C280) fallback into a second FveFileOpenEx call",
+        "Sector-alignment computation is identical between builds",
+        "Refactor/consolidation, code removed rather than validation added"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural consolidation of the file-open path. No new bounds or input validation was added.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FveInitialDataReadEDrv (0x1C006D52C unpatched / 0x140050F3C patched)",
+      "similarity": 0.3343,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched build inserts a Feature_BitLockerEphemeralVolumeSupport report and a device/feature-flag gate on internal Context fields (not on attacker-supplied buffer contents)",
+        "The pre-existing FveValidateInformation corruption check (FVE_METADATA_CORRUPT_ERROR) is present in both builds",
+        "Sensitive-buffer zeroing changed from memset to an inline byte loop over the same buffer/length (codegen); ExAllocatePoolWithTag to ExAllocatePool2 migration"
+      ],
+      "security_relevant": false,
+      "security_notes": "The new gate keys off internal device/feature flags, not external input. Existing metadata validation is unchanged. Feature staging plus pool-API modernization, not input validation.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "FveEowBuildBootSector (0x1C00033EC unpatched / 0x140012A74 patched)",
+      "entry_point": "Called from FvepWriteBootSectors during BitLocker EOW boot-sector handling",
+      "call_chain": ["FvepWriteBootSectors (0x1C0049750)", "FveEowBuildBootSector (0x1C00033EC)"],
+      "vulnerability_class": "No security-relevant change (added pointer test is a no-op guard)",
+      "description": "FveEowBuildBootSector calls FveEowFindGuidRecognition, which scans the caller-supplied buffer (arg1) for the EOW information GUID and returns a pointer to the matching entry or NULL. On a NULL return both builds set v7 = arg1+0xF0 and write default GUID data there via 'movdqu [rdx], xmm0' (unpatched 0x1C0003418 / patched 0x140012AA0), then, if arg3 and arg4 are non-NULL, write through v7 at +0x10, +0x20, and in a two-iteration loop. The only difference between builds is the patched build's inserted 'test rdx, rdx; jz loc_140012ADE' at 0x140012AA4-0x140012AA7. This delivers no security effect: (1) the test runs after 'movdqu [rdx], xmm0' at 0x140012AA0 has already dereferenced the same rdx = arg1+0xF0; (2) rdx is arg1+0xF0 via lea, zero only for the impossible input arg1 == -0xF0; (3) the sole caller FvepWriteBootSectors passes a driver-allocated pool buffer as arg1, so arg1+0xF0 is a valid in-buffer address in both builds. The unpatched build has no reachable NULL/invalid-pointer dereference on this path. Code-generation artifact of the OS-build refresh, not a fix.",
+      "trigger_conditions": "N/A. On the search-miss fallback path both builds write default GUID data to arg1+0xF0 (a valid offset within the driver-allocated buffer supplied by FvepWriteBootSectors) and then the adjacent fields when arg3/arg4 are non-NULL. The patched build's added test is reachable only after the pointer has already been dereferenced and is taken only for the impossible input arg1 == -0xF0, so no observable behavior changes between builds.",
+      "primitive": "None. The added instruction gates no reachable dereference, and the unpatched build is not exposed on this path.",
+      "evidence": "Patched decompilation (FveEowBuildBootSector @ 0x140012A74):\n  result = FveEowFindGuidRecognition(a1, 0x2000u);\n  v7 = result;\n  if ( result != 0 || (v7 = v5 + 240, *(_OWORD *)(v5 + 240) = EOW_INFORMATION_OFFSET_GUID, v5 != -240) )\n  {\n      if ( a3 != 0 && v6 != nullptr )\n      {\n          *(_OWORD *)(v7 + 16) = *(_OWORD *)a3;\n          *(_QWORD *)(v7 + 32) = v9;\n          // two-iteration loop\n      }\n  }\n  return result;\nThe added term is 'v5 != -240' (test rdx,rdx where rdx = v5+240). The fallback write '*(_OWORD *)(v5 + 240) = ...' dereferences v5+240 before that term is evaluated, so the term cannot prevent any access.",
+      "assembly": "Unpatched FveEowBuildBootSector (0x1C00033EC):\n  00000001C00033FD  call    FveEowFindGuidRecognition\n  00000001C0003402  mov     rdx, rax\n  00000001C0003405  test    rax, rax\n  00000001C0003408  jnz     short loc_1C000341C   ; GUID found -> skip fallback\n  00000001C000340A  movups  xmm0, cs:EOW_INFORMATION_OFFSET_GUID\n  00000001C0003411  lea     rdx, [rcx+0F0h]        ; rdx = arg1 + 0xF0\n  00000001C0003418  movdqu  xmmword ptr [rdx], xmm0 ; dereferences rdx\n  00000001C000341C  test    rbx, rbx\n  00000001C000341F  jz      short loc_1C0003451\n  00000001C0003421  test    r11, r11\n  00000001C0003424  jz      short loc_1C0003451\n  00000001C0003442  mov     [rdx+r11+28h], rax\n\nPatched FveEowBuildBootSector (0x140012A74):\n  0000000140012A85  call    FveEowFindGuidRecognition\n  0000000140012A8A  mov     rdx, rax\n  0000000140012A8D  test    rax, rax\n  0000000140012A90  jnz     short loc_140012AA9   ; GUID found -> skips fallback AND the added test\n  0000000140012A92  movups  xmm0, cs:EOW_INFORMATION_OFFSET_GUID\n  0000000140012A99  lea     rdx, [rcx+0F0h]        ; rdx = arg1 + 0xF0\n  0000000140012AA0  movdqu  xmmword ptr [rdx], xmm0 ; dereferences rdx (same as unpatched)\n  0000000140012AA4  test    rdx, rdx              ; ADDED, but rdx already dereferenced above\n  0000000140012AA7  jz      short loc_140012ADE   ; taken only if arg1 == -0xF0\n  0000000140012AA9  test    rbx, rbx\n  0000000140012ACF  mov     [r11+rdx+28h], rax",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fvevol_unpatched!FveEowBuildBootSector",
+            "address": "0x1C00033EC",
+            "why": "Break at entry to observe arg1 (rcx, the driver-allocated buffer), arg3 (r8), arg4 (r9)."
+          },
+          {
+            "symbol": "fvevol_unpatched!FveEowBuildBootSector+0x16",
+            "address": "0x1C0003402",
+            "why": "After the search call. rax=0 selects the fallback path; rdx becomes rcx+0xF0 at 0x1C0003411."
+          },
+          {
+            "symbol": "fvevol_unpatched!FveEowBuildBootSector+0x2C",
+            "address": "0x1C0003418",
+            "why": "The fallback write 'movdqu [rdx], xmm0' dereferences rdx = arg1+0xF0. In the patched build the added 'test rdx, rdx' at 0x140012AA4 runs after this same write, so it cannot prevent an access."
+          }
+        ],
+        "watch": [
+          "rax at 0x1C0003402 = return of FveEowFindGuidRecognition (0 selects the fallback path)",
+          "rdx at 0x1C0003411 = arg1+0xF0 (an offset inside the caller's driver-allocated buffer)",
+          "rbx (r8) = arg3 - must be non-NULL to reach the write block",
+          "r11 (r9) = arg4 - must be non-NULL to reach the write block",
+          "rcx = arg1 (driver-allocated pool buffer supplied by FvepWriteBootSectors)"
+        ],
+        "key_offsets": [
+          "0x1C00033FD: call FveEowFindGuidRecognition - buffer search that can return NULL",
+          "0x1C0003411: lea rdx, [rcx+0xF0] - fallback pointer derivation",
+          "0x1C0003418 / patched 0x140012AA0: movdqu [rdx], xmm0 - fallback write that dereferences rdx",
+          "Patched 0x140012AA4: test rdx, rdx - the added instruction, executed after the dereference above"
+        ],
+        "trigger_setup": "N/A - no vulnerability to trigger. On the fallback path both builds write to arg1+0xF0, a valid offset inside the caller's driver-allocated buffer.",
+        "expected_observation": "On both binaries the fallback path writes default GUID data to arg1+0xF0 and, when arg3/arg4 are non-NULL, the adjacent fields. In the patched build 'test rdx, rdx' at 0x140012AA4 finds rdx non-zero for any real buffer, so the branch at 0x140012AA7 is not taken.",
+        "notes": "The caller FvepWriteBootSectors passes a driver-allocated pool buffer as arg1. FveEowFindGuidRecognition is a buffer search, not an allocator; its NULL return means the EOW GUID was not found, in which case the code uses the default in-buffer offset arg1+0xF0."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "GetKeyRing (0x1C00C2CC8 unpatched / 0x140D8078 patched)",
+      "entry_point": "Physical memory mapping via MmMapIoSpaceEx - sole caller of MmMapIoSpaceEx in the driver",
+      "call_chain": ["GetKeyRing (0x1C00C2CC8)", "MmMapIoSpaceEx"],
+      "vulnerability_class": "No patch-introduced change (physical-memory mapping path identical in both builds)",
+      "description": "GetKeyRing is the only function in fvevol.sys that calls MmMapIoSpaceEx. It parses a decimal ASCII string into a physical address (accumulated in r14 via r14 = r14*10 + digit), maps 0x1000 bytes at that physical address with Protect=4 (PAGE_READWRITE) at the first call site (0x1C00C305E), validates the mapped region with FveKeyringIsValid, unmaps it via MmUnmapIoSpace, and remaps using the size read from the mapped header ([rsi+8]) at the second call site (0x1C00C30B8). The MmMapIoSpaceEx register setup - physical address in rcx, NumberOfBytes in edx, Protect in r8d - is byte-identical between the unpatched and patched builds at both call sites. This patch makes no change to the mapping path. The only in-function difference is a semantically equivalent restatement of a NUL/space character test during string parsing.",
+      "trigger_conditions": "N/A for this patch. The physical-memory mapping behavior of GetKeyRing is identical in the unpatched and patched drivers; no security condition was introduced or removed by this patch.",
+      "primitive": "None introduced by this patch. The mapping of a string-parsed physical address (0x1000 bytes, PAGE_READWRITE) is present identically in both builds and is not modified here.",
+      "evidence": "First MmMapIoSpaceEx call site, identical across builds.\nUnpatched:\n  00000001C00C304B  mov ebx, 1000h\n  00000001C00C3050  mov r8d, 4            ; Protect = PAGE_READWRITE\n  00000001C00C3056  mov edx, ebx          ; NumberOfBytes = 0x1000\n  00000001C00C3058  mov rcx, r14          ; PhysicalAddress (parsed from ASCII string)\n  00000001C00C305E  call cs:__imp_MmMapIoSpaceEx\nPatched:\n  00000001400D83FA  mov ebx, 1000h\n  00000001400D83FF  mov r8d, 4\n  00000001400D8405  mov edx, ebx\n  00000001400D8407  mov rcx, r14\n  00000001400D840D  call cs:__imp_MmMapIoSpaceEx\nThe only difference inside GetKeyRing is a NUL/space character test refactor during string parsing (unpatched 'mov ecx,0FFDFh; test [rdx],cx; jz' vs patched 'test ax,ax; jz' plus 'cmp ax,0x20; jz'), which is semantically equivalent.",
+      "assembly": "Both call sites (0x1C00C305E and 0x1C00C30B8 unpatched; 0x1400D840D and 0x1400D8467 patched) set up MmMapIoSpaceEx identically across builds: PhysicalAddress in rcx (from r14), NumberOfBytes in edx (0x1000 at the first site, [rsi+8] at the second), Protect=4 in r8d. No conditional check or comparison was added before the mapping call in the patched build.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fvevol_unpatched!GetKeyRing",
+            "address": "0x1C00C2CC8",
+            "why": "Break at entry to observe how the physical address is parsed (accumulated in r14) and how the mapping parameters are prepared for MmMapIoSpaceEx."
+          },
+          {
+            "symbol": "fvevol_unpatched!GetKeyRing+0x396",
+            "address": "0x1C00C305E",
+            "why": "First MmMapIoSpaceEx call site. rcx holds the physical address (from r14), edx holds NumberOfBytes (0x1000), r8d holds Protect (4). The same setup appears in the patched build at 0x1400D840D."
+          },
+          {
+            "symbol": "fvevol_unpatched!GetKeyRing+0x3F0",
+            "address": "0x1C00C30B8",
+            "why": "Second MmMapIoSpaceEx call site, remapping with the size read from the mapped header ([rsi+8]). Identical setup in the patched build at 0x1400D8467."
+          }
+        ],
+        "watch": [
+          "rcx = PhysicalAddress parsed from the ASCII string (accumulated in r14)",
+          "edx = NumberOfBytes (0x1000 at the first call, [rsi+8] at the second)",
+          "r8d = Protect (4 = PAGE_READWRITE)",
+          "Comparing the instructions around 0x1C00C305E with the patched build at 0x1400D840D shows identical setup - no validation was added"
+        ],
+        "key_offsets": [
+          "0x1C00C305E: first MmMapIoSpaceEx call site (patched: 0x1400D840D)",
+          "0x1C00C30B8: second MmMapIoSpaceEx call site (patched: 0x1400D8467)",
+          "The MmMapIoSpaceEx register setup is byte-identical across builds; the only in-function change is a NUL/space character-test refactor during string parsing"
+        ],
+        "trigger_setup": "N/A for this patch - the mapping behavior is unchanged between builds.",
+        "expected_observation": "On both binaries: MmMapIoSpaceEx is called with the string-parsed physical address in rcx, 0x1000 (then [rsi+8]) in edx, and Protect=4 in r8d. There is no added validation in the patched build.",
+        "notes": "The two MmMapIoSpaceEx call sites serve the map/validate/unmap/remap flow (first a fixed 0x1000-byte probe, then a remap using the header-reported size). Both are identical across builds; this patch does not modify the physical-memory mapping path."
+      }
+    }
+  ],
+  "summary": "The patch diff of fvevol.sys (BitLocker Drive Encryption driver) spans 1140 changed functions across a broad OS-version difference (0.7398 similarity). No security-relevant change was delivered. The one instruction-level edit that survived scrutiny is in FveEowBuildBootSector: the patched build inserts 'test rdx, rdx; jz' at 0x140012AA4 on the search-miss fallback path, but that test runs after the preceding 'movdqu [rdx], xmm0' at 0x140012AA0 has already dereferenced the same rdx = arg1+0xF0, and rdx is zero only for the impossible input arg1 == -0xF0; the sole caller FvepWriteBootSectors passes a driver-allocated pool buffer as arg1, so the fallback pointer is a valid in-buffer offset in both builds. The instruction prevents no reachable dereference and is a code-generation artifact, not a fix. GetKeyRing (sole MmMapIoSpaceEx caller) has a byte-identical mapping path in both builds; its only in-function change is a semantically equivalent NUL/space character-test refactor. The low-similarity behavioral functions (FveTryInlineWriteEncrypt, FveConfigManageLoad, FveWipeInfoFileCreate, FveInitialDataReadEDrv) differ only by ExAllocatePool2 migration, feature-staging gates, WPP/ETW tracing, and register-allocation/struct-offset churn; their existing validations are present identically in both builds."
+}

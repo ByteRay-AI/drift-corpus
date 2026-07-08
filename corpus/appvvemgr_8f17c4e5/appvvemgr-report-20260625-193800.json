@@ -1,0 +1,100 @@
+{
+  "binaries": {
+    "id_unpatched": "appvvemgr_unpatched.sys",
+    "id_patched": "appvvemgr_patched.sys",
+    "overall_similarity": 0.9928,
+    "matched": 332,
+    "changed": 0,
+    "identical": 332,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "None — no code change in this pairing",
+      "similarity": 1.0,
+      "change_type": "none",
+      "key_changes": [
+        "All 332 functions are instruction-identical between the two builds. Section-level hashing confirms .text, PAGE, INIT, .pdata, .idata, .data, GFIDS, and .reloc are byte-identical.",
+        "Overall similarity is 0.9928 (not 1.0) but none of the differing bytes fall in an executable section; the delta is entirely build metadata and signature.",
+        "All 13 PE section sizes are identical between unpatched and patched binaries (.text: 104099, .rdata: 33416, .data: 1248, PAGE: 6720, INIT: 1242, etc.); no code was added, removed, or modified.",
+        "Differing regions: .rsrc version resource (10.0.19041.3570 -> 10.0.19041.3636), .rdata debug directory (CodeView/RSDS PDB GUID and age; PDB name AppvVemgr.pdb unchanged), .edata export directory and PE optional-header timestamps/checksum, and the Authenticode signature (unpatched file is 112 bytes larger solely due to the signature blob).",
+        "Spot-checked functions confirmed instruction-identical: ProcessNotifyCallbackEx (0x1c0015340), PiRegStateReadStackCreationSettingsFromKey (0x1c0028f60), SepSddlSecurityDescriptorFromSDDLString (0x1c00284cc), IoDevObjCreateDeviceSecure (0x1c0028190).",
+        "This pairing represents a version rebuild and re-signing, not a security code patch."
+      ],
+      "security_relevant": false,
+      "security_notes": "The two builds differ only in the version resource, debug-directory GUID, PE/export timestamps, and Authenticode signature; the executable code is byte-identical. No vulnerable function was removed and no sanitizer was added in this pairing. The driver is appvvemgr.sys (Microsoft App-V Virtual Environment Manager), a kernel-mode minifilter driver whose attack surface (FltSendMessage user-kernel communication, process notification callbacks, virtual environment management with JITV injection, and security descriptor manipulation APIs) is documented below for reference, but is unchanged between the two versions.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "notify_client_message@vemgr_listener_connection_manager (attack surface; byte-identical in both builds)",
+      "entry_point": "FltSendMessage / FltCreateCommunicationPort user-kernel messaging channel",
+      "call_chain": [
+        "FilterConnectCommunicationPort (user-mode)",
+        "FltSendMessage (fltMgr.sys dispatches to minifilter)",
+        "notify_client_message@vemgr_listener_connection_manager (0x1c00016a0, 1909 bytes, 6 params)",
+        "VirtualEnvironmentManager methods (AddJITVThread 0x1c00022bc, RemoveJITVThread 0x1c000209c, SetJITVInjectionAllowList 0x1c0002450, etc.)"
+      ],
+      "vulnerability_class": "Insufficient input validation / authorization bypass surface in user-kernel message handling (CWE-20); no code change in this pairing",
+      "description": "appvvemgr.sys is a kernel-mode minifilter driver that exposes a user-kernel communication port via FltCreateCommunicationPort. User-mode processes send messages through this port via FilterSendMessage/FltSendMessage, which are dispatched to notify_client_message@vemgr_listener_connection_manager (0x1c00016a0). This function (1909 bytes, the largest in the binary) processes attacker-controlled message buffers. Section-level and byte-level comparison show this function, and all other functions, are byte-identical between the two builds; the overall similarity of 0.9928 is accounted for entirely by non-code bytes (the version resource 10.0.19041.3570 -> 10.0.19041.3636, the debug-directory PDB GUID, PE/export timestamps, and the Authenticode signature). No input-validation, bounds-checking, or authorization change was applied in this pairing. The handler is documented here as the driver's principal attacker-reachable path: it imports critical security APIs (ZwOpenProcess, ZwTerminateProcess, ZwOpenProcessTokenEx, ZwQueryInformationToken, ZwSetSecurityObject, ObReferenceObjectByHandle) that would be reachable if a validation gap existed.",
+      "trigger_conditions": "Attack-surface documentation (no defect in this pairing): a client (1) opens the App-V VE Manager communication port via FilterConnectCommunicationPort, (2) sends a message via FilterSendMessage whose first DWORD is a command code 1..6 with the layout described below, (3) reaches the matching handler. The handler at 0x1c00016a0 validates InputBufferLength >= 0x28, OutputBufferLength >= 4 (>= 0xA2 for command 6), and bounds-checks each (offset,length) string region against InputBufferLength before use, returning STATUS_INVALID_PARAMETER (0xC000000D) otherwise.",
+      "primitive": "Attack surface for privilege escalation, unauthorized process manipulation, or security descriptor tampering if a validation gap exists; no such gap was introduced or removed in this pairing",
+      "evidence": "Byte-level and section-level comparison of the two .sys files: .text (104099 bytes), PAGE, INIT, .pdata, .idata, .data, GFIDS, and .reloc all hash identically. The only differing bytes are in .rsrc (version 3570 -> 3636), the .rdata debug directory (RSDS PDB GUID/age), .edata/PE-header timestamps and checksum, and the Authenticode certificate. notify_client_message@vemgr_listener_connection_manager (0x1c00016a0) is 1909 bytes with 6 parameters and is byte-identical in both builds. Attack surface indicators: FltSendMessage (2 call sites at 0x1c0005397, 0x1c0005439), SeCaptureSecurityDescriptor (2 call sites at 0x1c0029008, 0x1c0029350), ExAllocatePoolWithTag (50+ call sites), ObReferenceObjectByHandle, ZwOpenProcess, ZwTerminateProcess, ZwOpenProcessTokenEx.",
+      "assembly": "; notify_client_message@vemgr_listener_connection_manager\n; Function at 0x1c00016a0, 1909 bytes; byte-identical in both builds\n; Primary user-kernel message handler (FLT_MESSAGE_NOTIFY: PortCookie, InputBuffer, InputBufferLength, OutputBuffer, OutputBufferLength, ReturnOutputBufferLength)\n0x1c00016a0  mov     rax, rsp\n0x1c00016a3  mov     [rax+8], rbx\n0x1c00016af  mov     [rax+20h], r9\n0x1c00016d8  mov     rax, cs:?g_pDeviceExtn@vemgr@@   ; DEVICE_EXTENSION; VE manager at +0x20\n; --- input validation (present in both builds) ---\n0x1c0001718  cmp     r8d, 28h        ; InputBufferLength >= 0x28 ?\n0x1c000171c  jb      loc_1C00017EC   ; -> STATUS_INVALID_PARAMETER (0xC000000D)\n0x1c0001722  cmp     [rbp+80h+arg_20], 4  ; OutputBufferLength >= 4 ?\n0x1c0001729  jb      loc_1C00017EC\n0x1c000172f  mov     ebx, [rdx]      ; command code = InputBuffer[0]\n; --- command dispatch ---\n0x1c0001731  cmp     ebx, 4          ; cmd 4 -> SetJITVInjectionAllowList (0x1c0002450)\n0x1c00017f6  cmp     ebx, 6          ; cmd 6 -> ExePathStartsWithPackageRoot (0x1c0001e1c)\n; loc_1C0001A40 (cmd 1/2/3/5): bounds-check region offsets [rdx+10h]/[rdx+14h] and [rdx+18h]/[rdx+1Ch] vs r8d, then:\n0x1c0001bb5  sub     ebx, 1 ; jz AddJITVThread (0x1c00022bc)\n0x1c0001bbe  sub     ebx, 1 ; jz RemoveJITVThread (0x1c000209c)\n0x1c0001bc7  sub     ebx, 1 ; jz RemoveProcessFromVE\n0x1c0001bcc  cmp     ebx, 2 ; jz AddJITVProcess (0x1c000261c)\n; NOTE: byte-for-byte identical between the two builds; no code change in this pairing",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "appvvemgr_unpatched!notify_client_message@vemgr_listener_connection_manager",
+            "address": "0x1c00016a0",
+            "why": "Primary user-kernel message handler. Break here to observe message dispatch. rcx = ClientPort, rdx = SenderBuffer (attacker-controlled message), r8 = SenderBufferLength, r9 = second buffer pointer. Inspect the message type/command code at the start of SenderBuffer to determine which sub-handler is invoked."
+          },
+          {
+            "symbol": "appvvemgr_unpatched!VirtualEnvironmentManager::AddJITVThread",
+            "address": "0x1c00022bc (7516201660)",
+            "why": "Command-1 handler. Under an ExAcquireResourceExclusiveLite lock it looks up the ProcessTracker entry (indexed_avl_tree::find at 0x1c000232c) and calls ProcessTrackerValue::AddJitvThread (0x1c00023ba). Operates on internal tracking state; it does not open a process handle."
+          },
+          {
+            "symbol": "appvvemgr_unpatched!VirtualEnvironmentManager::SetJITVInjectionAllowList",
+            "address": "0x1c0002450 (7516202064)",
+            "why": "Command-4 handler. Under a mutex (scoped_lock at 0x1c0002480) it edits the package-config doubly_linked_list and allocates via ExAllocatePoolWithTag (0x1c0002531). No SeAccessCheck/token call is present inside this function."
+          },
+          {
+            "symbol": "appvvemgr_unpatched!ProcessNotifyCallbackEx",
+            "address": "0x1c0015340 (7516279616)",
+            "why": "Process creation/destruction callback. Identical between binaries. Calls FltGetFileNameInformationUnsafe (0x1c00153a4) and VirtualEnvironmentManager::AddProcess (0x1c001542c); it does not call token APIs. ZwOpenProcessTokenEx (0x1c00082d4) and ZwQueryInformationToken (0x1c000a013) live in other functions."
+          }
+        ],
+        "watch": [
+          "rdx at notify_client_message entry = pointer to attacker-controlled InputBuffer from FilterSendMessage",
+          "r8d at notify_client_message entry = InputBufferLength (attacker-controlled); handler rejects < 0x28 at 0x1c0001718",
+          "First DWORD of InputBuffer (offset 0x00) = command code (valid 1..6); ProcessId at 0x04, ThreadId at 0x08; three bounds-checked (offset,length) string regions at 0x10/0x14, 0x18/0x1C, 0x20/0x24",
+          "vemgr::g_pDeviceExtn (loaded at 0x1c00016d8) = DEVICE_EXTENSION; VirtualEnvironmentManager at +0x20",
+          "Pool tag 0x66446753 used by ExAllocatePoolWithTag inside notify_client_message at 0x1c0001ade (tag set at 0x1c0001ad2)",
+          "Pool tag 0x64536553 ('SeSd') used in SepSddlSecurityDescriptorFromSDDLString ExAllocatePoolWithTag at 0x1c00285ca"
+        ],
+        "key_offsets": [
+          "0x1c00016a0 = notify_client_message function start (primary attack surface, 1909 bytes)",
+          "0x1c0005397, 0x1c0005439 = FltSendMessage call sites within VEMgrNotifications::SendNotification",
+          "0x1c000209c = RemoveJITVThread (544 bytes, JITV thread removal)",
+          "0x1c00022bc = AddJITVThread (404 bytes, handles process/thread injection)",
+          "0x1c0002450 = SetJITVInjectionAllowList (460 bytes, modifies injection policy)",
+          "0x1c0015340 = ProcessNotifyCallbackEx (identical between binaries)",
+          "0x1c0028190 = IoDevObjCreateDeviceSecure (identical between binaries)",
+          "0x1c00284cc = SepSddlSecurityDescriptorFromSDDLString (identical between binaries)",
+          "0x1c0028f60 = PiRegStateReadStackCreationSettingsFromKey (identical between binaries)"
+        ],
+        "trigger_setup": "Attack-surface documentation (no defect in this pairing). 1. Load appvvemgr.sys (App-V VE Manager minifilter driver). 2. From a user-mode process, open the filter communication port using FilterConnectCommunicationPort with the driver's port name (the string argument to FltCreateCommunicationPort in .rdata). 3. Construct a message: DWORD command code at offset 0x00 (1=AddJITVThread, 2=RemoveJITVThread, 3=RemoveProcessFromVE, 4=SetJITVInjectionAllowList, 5=AddJITVProcess, 6=ExePathStartsWithPackageRoot), ProcessId at 0x04, ThreadId at 0x08, and up to three bounds-checked (offset,length) string regions at 0x10/0x14, 0x18/0x1C, 0x20/0x24; total length must be >= 0x28 and OutputBuffer >= 4 (>= 0xA2 for command 6). 4. Send via FilterSendMessage. 5. Both builds contain identical handler code, so no behavioral difference exists between them.",
+        "expected_observation": "The handler is byte-identical in both builds, so the response is the same in each. Out-of-range input (InputBufferLength < 0x28, a region offset+length exceeding InputBufferLength, or a command code outside 1..6) returns STATUS_INVALID_PARAMETER (0xC000000D) with no dispatch. A well-formed command 4 reaches SetJITVInjectionAllowList and sets *ReturnOutputBufferLength = 4; a well-formed command 1/2/3/5 reaches the matching VirtualEnvironmentManager method after both string regions are copied via managed_unicode_string::assign. The length checks are at 0x1c0001718 and 0x1c0001722; the command compares are at 0x1c0001731, 0x1c00017f6, and the subtract chain at 0x1c0001bb5.",
+        "notes": "No code changed in this pairing: all 332 functions are byte-identical and the .text section hashes the same in both builds. The 0.9928 similarity is entirely non-code (version resource 10.0.19041.3570 -> 10.0.19041.3636, debug-directory PDB GUID, PE/export timestamps, Authenticode signature). Attack-surface functions for future auditing: notify_client_message (0x1c00016a0, 1909 bytes), AddJITVThread (0x1c00022bc), RemoveJITVThread (0x1c000209c), SetJITVInjectionAllowList (0x1c0002450), VEMgrNotifications::SendNotification (0x1c0005204), and create_connection (0x1c00027a4, 0x1c00029a4). The App-V VE Manager driver manages virtual application environments and injects DLLs into processes (JITV = Just-In-Time Virtualization), making it a high-value kernel attack surface."
+      }
+    }
+  ],
+  "summary": "The target is appvvemgr.sys (Microsoft App-V Virtual Environment Manager), a kernel-mode minifilter driver with 332 functions that exposes user-kernel communication via FltSendMessage and manages process virtualization with JITV injection. A section-level and byte-level comparison of the two builds shows the executable code is identical: .text (104099 bytes), PAGE, INIT, .pdata, .idata, .data, GFIDS, and .reloc all hash the same, and every one of the 332 functions is instruction-identical. The 0.9928 overall similarity is accounted for entirely by non-code bytes: the version resource changed from 10.0.19041.3570 to 10.0.19041.3636, the debug-directory PDB GUID/age differ, the PE and export timestamps differ, and the Authenticode signature was regenerated (the unpatched file is 112 bytes larger solely due to the signature blob). This pairing is therefore a version rebuild and re-signing with no code-level vulnerability fix. The driver's principal attack surface, documented for reference but unchanged between the two versions, is notify_client_message@vemgr_listener_connection_manager (0x1c00016a0, 1909 bytes), which processes attacker-controlled messages from user mode and dispatches to virtual environment management handlers (AddJITVThread 0x1c00022bc, RemoveJITVThread 0x1c000209c, SetJITVInjectionAllowList 0x1c0002450); its imports of ZwOpenProcess, ZwTerminateProcess, ZwOpenProcessTokenEx, and ZwSetSecurityObject would make privilege escalation the primary concern were a validation gap present."
+}

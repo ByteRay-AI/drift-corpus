@@ -1,0 +1,396 @@
+{
+  "binaries": {
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9579,
+    "matched": 2566,
+    "changed": 83,
+    "identical": 2483,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaSampleInBall (sub_18002A2E8)",
+      "similarity": 0.763,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added iteration counter limit (0x79/121 iterations) to the inner rejection-sampling loop that was previously unbounded",
+        "Function now returns error code 0x8008 (SYMCRYPT_EXTERNAL_FAILURE) on loop overflow instead of looping",
+        "Patched version pushes r12 register to hold the counter variable"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA (FIPS 204) SampleInBall routine, which samples the challenge polynomial c. The unpatched version has an unbounded inner rejection loop: `do { SymCryptKeccakExtract(&var_138, &var_148, 1); } while (var_148[0] > rbx_1);` where the byte squeezed from the SHAKE/Keccak sponge is compared to an index threshold; if it stays above the threshold the loop does not terminate. With a well-formed sponge this terminates with overwhelming probability, so the pre-patch risk is non-termination only under a pathological/corrupted sponge state (CWE-835), not an attacker-controlled ASN.1 path. The patched version adds `if (rdi_1 >= 0x79) { r14 = 0x8008; goto label_180027512; }` to cap iterations. Called from SymCryptMlDsaSignEx (sub_180020c7c) during ML-DSA signing.",
+      "assembly_diff": "--- ci_unpatched.dll/sub_18002a2e8.assembly\n+++ ci_patched.dll/sub_1800273e0.assembly\n@@ -2,11 +2,12 @@\n push    rbx\n push    rsi\n push    rdi\n+push    r12\n push    r14\n push    r15\n-lea     rbp, [rsp-0x38]\n-sub     rsp, 0x138\n-mov     rax, qword [rel 0x180046280]\n+lea     rbp, [rsp-0x30]\n+sub     rsp, 0x130\n+mov     rax, qword [rel 0x1800482c0]\n xor     rax, rsp\n mov     qword [rbp+0x28], rax\n mov     rdi, r8\n@@ -15,75 +16,83 @@\n xor     edx, edx\n mov     r8d, 0x400\n mov     rcx, r9\n-mov     r14, r9\n-call    0x18002c940\n+mov     r15, r9\n+xor     r14d, r14d\n+call    0x18002d040\n xor     edx, edx\n lea     rcx, [rsp+0x30]\n mov     r8d, 0xf0\n-call    0x18002c940\n+call    0x18002d040\n mov     edx, 0xc8\n mov     dword [rbp-0x8], 0x88\n lea     rcx, [rsp+0x30]\n mov     byte [rbp], 0x1f\n-call    0x180011800\n+call    0x180011710\n mov     r8, rdi\n-mov     dword [rbp-0x4], 0x0\n+mov     dword [rbp-0x4], r14d\n mov     rdx, rbx\n-mov     byte [rbp+0x1], 0x0\n+mov     byte [rbp+0x1], r14b\n lea     rcx, [rsp+0x30]\n-call    0x18002b95c\n+call    0x18002c068\n xor     r9d, r9d\n+lea     r8d, [r14+0x8]\n lea     rdx, [rbp+0x20]\n lea     rcx, [rsp+0x30]\n-lea     r8d, [r9+0x8]\n-call    0x18002bb78\n+call    0x18002c284\n movzx   eax, byte [rsi+0x18]\n mov     ecx, 0x100\n-mov     r15, qword [rbp+0x20]\n+mov     r12, qword [rbp+0x20]\n mov     ebx, ecx\n sub     ebx, eax\n cmp     ebx, ecx\n-jae     0x18002a400\n+jae     0x180027508\n mov     edx, 0xf0\n lea     rcx, [rsp+0x30]\n-call    0x180011800\n+call    0x180011710\n+mov     eax, r14d\n mov     rcx, qword [rbp+0x28]\n xor     rcx, rsp\n-call    0x18002c4f0\n-add     rsp, 0x138\n+call    0x18002cc00\n+add     rsp, 0x130\n pop     r15\n pop     r14\n+pop     r12\n pop     rdi\n pop     rsi\n pop     rbx\n pop     rbp\n retn\n-lea     rdi, [r14+rbx*4]\n-mov     esi, 0x1\n+lea     rsi, [r15+rbx*4]\n+mov     r14d, 0x8008\n xor     r9d, r9d\n lea     rdx, [rsp+0x20]\n-mov     r8, rsi\n lea     rcx, [rsp+0x30]\n-call    0x18002bb78\n+lea     r8d, [r9+0x1]\n+call    0x18002c284\n movzx   eax, byte [rsp+0x20]\n+inc     edi\n cmp     eax, ebx\n-ja      0x18002a3a6\n-movzx   r8d, byte [rsp+0x20]\n-mov     rcx, r15\n-and     rcx, rsi\n-shr     r15, 0x1\n+ja      0x18002749e\n+cmp     edi, 0x79\n+jae     0x180027502\n+movzx   edx, byte [rsp+0x20]\n+mov     rcx, r12\n+and     ecx, 0x1\n+shr     r12, 0x1\n neg     rcx\n-add     ebx, esi\n+inc     ebx\n shr     rcx, 0x20\n-mov     eax, dword [r14+r8*4]\n-mov     dword [rdi], eax\n+mov     eax, dword [r15+rdx*4]\n+mov     dword [rsi], eax\n mov     eax, ecx\n not     eax\n and     ecx, 0x7fe000\n-and     eax, esi\n-add     rdi, 0x4\n+and     eax, 0x1\n+add     rsi, 0x4\n or      eax, ecx\n-mov     dword [r14+r8*4], eax\n+mov     dword [r15+rdx*4], eax\n cmp     ebx, 0x100\n-jb      0x18002a3a1\n-mov     byte [rsp+0x20], 0x0\n+jb      0x180027496\n+mov     byte [rsp+0x20], r14b\n+mov     edi, r14d\n+jmp     0x180027508"
+    },
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (sub_18002A06C)",
+      "similarity": 0.9187,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added iteration counter (rsi) with limit check `cmp esi, 0x1e1` to the previously unbounded sponge-byte rejection loop",
+        "Function now returns 0x8008 (SYMCRYPT_EXTERNAL_FAILURE) when the loop exceeds 0x1e1 (481) sponge bytes instead of continuing indefinitely",
+        "Added push r15 to hold the first argument (rcx) since r14 is now repurposed for the output buffer pointer"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA (FIPS 204) RejBoundedPoly routine, which rejection-samples the coefficients of a secret polynomial in [-eta, eta] by squeezing bytes from a SHAKE/Keccak sponge via SymCryptKeccakExtract (sub_18002bb78). The outer loop is bounded by the coefficient count (0x100), but out-of-range nibbles decode to a 0x80 skip marker that does not advance the count, and the unpatched version has no independent limit on how many sponge bytes are consumed. A long run of skip-producing nibbles keeps the loop reading (CWE-835 non-termination); the byte source is fresh sponge output, so there is no fixed input buffer to overread. The patched version adds `if (rsi >= 0x1e1) { rdi = 0x8008; break; }`. Called from SymCryptMlDsaExpandS (sub_180029484) during ML-DSA secret-vector expansion.",
+      "assembly_diff": "--- ci_unpatched.dll/sub_18002a06c.assembly\n+++ ci_patched.dll/sub_180027128.assembly\n@@ -1,44 +1,58 @@\n mov     qword [rsp+0x8], rbx\n-mov     qword [rsp+0x18], rsi\n push    rbp\n+push    rsi\n push    rdi\n push    r14\n+push    r15\n lea     rbp, [rsp-0x30]\n sub     rsp, 0x130\n-mov     rax, qword [rel 0x180046280]\n+mov     rax, qword [rel 0x1800482c0]\n xor     rax, rsp\n mov     qword [rbp+0x20], rax\n mov     rbx, rdx\n-mov     r14, rcx\n+mov     r15, rcx\n xor     edx, edx\n lea     rcx, [rsp+0x30]\n mov     r8d, 0xf0\n-mov     rsi, r9\n-call    0x18002c940\n+mov     r14, r9\n+xor     edi, edi\n+call    0x18002d040\n mov     edx, 0xc8\n mov     dword [rbp-0x8], 0x88\n lea     rcx, [rsp+0x30]\n mov     byte [rbp], 0x1f\n-call    0x180011800\n-xor     edi, edi\n+call    0x180011710\n+lea     r8d, [rdi+0x42]\n+mov     dword [rbp-0x4], edi\n+mov     rdx, rbx\n+mov     byte [rbp+0x1], dil\n lea     rcx, [rsp+0x30]\n-mov     rdx, rbx\n-mov     dword [rbp-0x4], edi\n-mov     byte [rbp+0x1], dil\n-lea     r8d, [rdi+0x42]\n-call    0x18002b95c\n+call    0x18002c068\n mov     byte [rsp+0x21], dil\n-lea     ebx, [rdi+0x4]\n-cmp     al, bl\n-jne     0x18002a14b\n+mov     ebx, edi\n+mov     esi, edi\n+mov     edi, 0x8008\n+xor     r9d, r9d\n+lea     rdx, [rsp+0x21]\n+lea     rcx, [rsp+0x30]\n+lea     r8d, [r9+0x1]\n+call    0x18002c284\n+mov     cl, byte [rsp+0x21]\n+mov     al, byte [r15+0x16]\n+mov     dl, cl\n+and     dl, 0xf\n+cmp     al, 0x2\n+jne     0x1800271fe\n+cmp     al, 0x4\n+jne     0x180027215\n cmp     dl, 0xf\n-jae     0x18002a14b\n+jae     0x180027215\n shr     cl, 0x4\n mov     r8b, 0x80\n cmp     al, 0x2\n-jne     0x18002a171\n+jne     0x18002723b\n cmp     dl, 0x9\n-jae     0x18002a14b\n+jae     0x180027215\n movzx   eax, dl\n imul    r8d, eax, 0xd\n shr     r8b, 0x6\n@@ -48,18 +62,18 @@\n sub     r8b, dl\n add     r8b, 0x2\n shr     cl, 0x4\n-jmp     0x18002a155\n-cmp     al, bl\n-jne     0x18002a180\n+jmp     0x18002721f\n+cmp     al, 0x4\n+jne     0x18002724d\n cmp     cl, 0xf\n-jae     0x18002a180\n-mov     r8d, ebx\n+jae     0x18002724d\n+mov     r8d, 0x4\n sub     r8b, dl\n shr     cl, 0x4\n-jmp     0x18002a175\n+jmp     0x18002723f\n mov     dl, 0x80\n cmp     cl, 0x9\n-jae     0x18002a180\n+jae     0x18002724d\n movzx   eax, cl\n imul    edx, eax, 0xd\n shr     dl, 0x6\n@@ -68,54 +82,50 @@\n add     dl, al\n sub     dl, cl\n add     dl, 0x2\n-jmp     0x18002a182\n+jmp     0x18002724f\n cmp     dl, 0x80\n-je      0x18002a1c6\n+je      0x18002729b\n+movsx   eax, r8b\n movsx   rcx, r8b\n shr     rcx, 0x20\n and     ecx, 0x7fe001\n-movsx   eax, r8b\n add     ecx, eax\n-mov     dword [rsi+rdi*4], ecx\n-inc     edi\n-mov     edx, ebx\n+mov     eax, ebx\n+inc     ebx\n+mov     dword [r14+rax*4], ecx\n+mov     edx, 0x4\n sub     dl, cl\n-jmp     0x18002a182\n+jmp     0x18002724f\n+inc     esi\n cmp     r8b, 0x80\n-je      0x18002a1a1\n-cmp     edi, 0x100\n-jb      0x18002a0eb\n-cmp     edi, 0x100\n-jae     0x18002a1d2\n-xor     r9d, r9d\n-lea     rdx, [rsp+0x21]\n-lea     rcx, [rsp+0x30]\n-lea     r8d, [r9+0x1]\n-call    0x18002bb78\n-mov     cl, byte [rsp+0x21]\n-mov     al, byte [r14+0x16]\n-mov     dl, cl\n-and     dl, 0xf\n-cmp     al, 0x2\n-jne     0x18002a137\n+je      0x180027273\n+cmp     ebx, 0x100\n+jb      0x1800271a6\n+cmp     ebx, 0x100\n+jae     0x1800272ae\n+cmp     esi, 0x1e1\n+jae     0x1800272a9\n+jmp     0x1800272ae\n mov     edx, 0xf0\n lea     rcx, [rsp+0x30]\n-call    0x180011800\n+call    0x180011710\n+mov     eax, edi\n mov     rcx, qword [rbp+0x20]\n xor     rcx, rsp\n-call    0x18002c4f0\n-lea     r11, [rsp+0x130]\n-mov     rbx, qword [r11+0x20]\n-mov     rsi, qword [r11+0x30]\n-mov     rsp, r11\n+call    0x18002cc00\n+mov     rbx, qword [rsp+0x160]\n+add     rsp, 0x130\n+pop     r15\n pop     r14\n pop     rdi\n+pop     rsi\n pop     rbp\n retn\n+movsx   eax, dl\n movsx   rcx, dl\n shr     rcx, 0x20\n and     ecx, 0x7fe001\n-movsx   eax, dl\n add     ecx, eax\n-mov     dword [rsi+rdi*4], ecx\n-inc     edi\n+mov     eax, ebx\n+inc     ebx\n+mov     dword [r14+rax*4], ecx"
+    },
+    {
+      "name": "SymCryptMlDsaExpandS (sub_180029484)",
+      "similarity": 0.7159,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Return value from SymCryptMlDsaRejBoundedPoly (sub_18002a06c / sub_180027128) is now checked — previously it was discarded (called as void)",
+        "Patched version captures the status (mov edi, eax; test eax, eax; jnz loc_1800265FA) and exits immediately if any per-polynomial sampling fails",
+        "Function now returns the actual error status instead of always returning the result of SymCryptWipeAsm cleanup (0)"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA (FIPS 204) ExpandS routine, which expands the secret vectors s1/s2 by calling SymCryptMlDsaRejBoundedPoly (sub_18002a06c) once per polynomial. In the unpatched version each call is invoked as void — its return is discarded — and the function always returns the result of SymCryptWipeAsm (sub_180011800), which is 0. If RejBoundedPoly fails (e.g. hits its sampling bound and returns 0x8008 SYMCRYPT_EXTERNAL_FAILURE), the failure is lost and expansion reports success with an incompletely sampled secret vector (CWE-252/CWE-754). The patched version captures the return: `v9 = SymCryptMlDsaRejBoundedPoly(...); if (v9) break;` and returns v9. This runs during ML-DSA key generation / import / self-test, not Authenticode PE verification.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields (sub_180002D3C)",
+      "similarity": 0.7447,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added new 7th parameter (a7); an out-of-range a7 (anything but bit 0x200) now returns 0x800e",
+        "New consistency check: `if ((a7 & 0x200) != 0) return v16; if (v21 == 2) { SymCryptFdefIntMulMixedSize(prime0, prime1, a4); if (SymCryptFdefIntIsEqual(a4, modulus) != 0) return v16; } return 32782;` — this block is absent in the unpatched version",
+        "The new check multiplies the two RSA primes and compares the product to the stored modulus"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's SymCryptRsakeyCalculatePrivateFields, which derives the RSA private CRT fields. The unpatched version never checks that the supplied primes are consistent with the modulus. When a7 does NOT have bit 0x200 set and there are exactly 2 primes (v21==2), the patched version multiplies the two primes via SymCryptFdefIntMulMixedSize (sub_1800260e0) and compares the product to the modulus via SymCryptFdefIntIsEqual (sub_180025e1c); on mismatch it falls through to return 32782 (0x800e SYMCRYPT_INVALID_ARGUMENT). Without it, an RSA key whose primes do not multiply back to its modulus is accepted (CWE-754 missing key-material validation). Called from SymCryptRsakeySetValueInternal (sub_18001da98), reached from SymCryptRsakeySetValue (sub_18000e754) / SymCryptRsaSelftest (sub_18000e7c4). Not certificate issuer verification; 0x800e is a SymCrypt error, not TRUST_E_CERT_SIGNATURE.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaSignEx (sub_180020C7C / patched sub_180021394)",
+      "similarity": 0.5245,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added main-loop iteration bound (`mov ecx, 32Eh` at 0x180021561, i.e. s * 0x32E) with check `if (v22 >= v41) goto LABEL_16;` to cap the signing rejection loop; absent in the unpatched build",
+        "Added error return checking on the SymCryptMlDsaSampleInBall (sub_18002a2e8 / patched sub_1800273e0) call result, propagating 0x8008 on overflow (mov r15d, 8008h at 0x180021807)"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA SignEx routine (patched at 0x180021394). The unpatched version has no upper iteration limit on the main signing rejection loop and ignores the SymCryptMlDsaSampleInBall status. The patched version adds a finite iteration bound and propagates the sampler error (0x8008). Same non-termination/error-propagation hardening class as Findings 1/3/4. Called from SymCryptMlDsaSelftest (sub_180022048).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (sub_1800576AC)",
+      "similarity": 0.7537,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new check `if (rax_1 != 0xc00) rbp_1 = 0;` to validate that both bit 10 and bit 11 are set in the feature flags",
+        "Added new post-evaluation logic: `if (rbp_1 && !rdi) rdx_2 &= 0xfffffbff;` — clears bit 10 when the flag check (rbp_1) is active but the dependency evaluation (rdi) fails",
+        "Changed the initial condition from only checking bit 6 to checking both (arg2 & 0xc00) and bit 6"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a WIL (Windows Implementation Library) feature-flag routine, not certificate policy. The unpatched version only checks bit 6 (`rdi_2 = arg2 >> 6 & 1`) to decide whether to evaluate feature dependencies. The patched version requires both bits 10 and 11 (`rax_1 = arg2 & 0xc00; if (rax_1 != 0xc00) rbp_1 = 0;`) before activating the dependency-evaluation path, and clears bit 10 on failure.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState (sub_180019264)",
+      "similarity": 0.748,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restructured feature-flag computation with new condition `(rbx_3 & 0xc00) != 0xc00`",
+        "Added call to `wil_details_AreDependenciesEnabled (sub_180019064)(arg1)` when the flag bits are set, which was previously a manual inline loop",
+        "New logic: `if (r14 && !rcx_6) rax_8 &= 0xfffffbff;` — clears bit 10 on dependency-check failure"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a WIL feature-flag routine, not certificate policy. The unpatched version evaluates flags using an inline loop that checks `*(rcx_7 + 0x1e)` and `*(rcx_7 + 0x1d)` directly, without the 0xc00 bit check. The patched version checks both bits 10+11 together and calls the dedicated wil_details_AreDependenciesEnabled (sub_180019064). This affects feature-flag/dependency evaluation, not signature validation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaKeyGenerateEx (sub_180020A14)",
+      "similarity": 0.8305,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added missing error checking on return value of SymCryptMlDsaExpandS (sub_18002651c / formerly sub_180029484) — now breaks/stops if expansion fails",
+        "Changed from ignoring return value to `rbx = rax_6; if (!rax_6) { ... } else { ... }` pattern"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA KeyGenerateEx routine. The unpatched version calls SymCryptMlDsaExpandS (sub_180029484) and ignores its return value, proceeding regardless of whether secret-vector expansion succeeded. The patched version captures and checks the return value, halting on failure. This compounds with the unchecked-return bug inside SymCryptMlDsaExpandS itself (which also ignores SymCryptMlDsaRejBoundedPoly returns).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaExpandA (sub_1800292E4)",
+      "similarity": 0.4969,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added error return checking on SymCryptMlDsaRejNttPoly (sub_1800272ec / formerly sub_18002a20c) calls — if any returns non-zero, immediately exits with that error",
+        "Changed from overwriting the loop variable to propagating the error return value"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA ExpandA routine, which fills the public matrix A. The unpatched version iterates calling SymCryptMlDsaRejNttPoly (sub_18002a20c) per entry, overwriting the return value into 'result' but never checking for errors — the loop continues regardless. The patched version captures the return into rdx and, if non-zero, jumps to exit with the error (CWE-252/CWE-754).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaPkDecode (sub_180029840)",
+      "similarity": 0.9432,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added error checking on the SymCryptMlDsaExpandA (sub_180026374) return value before calling SymCryptKeccakExtract (sub_18002c284) with the result as a size parameter",
+        "Patched version: `int32_t rax_5 = SymCryptMlDsaExpandA(...); if (!rax_5) SymCryptKeccakExtract(&rax_1[2], arg4 + 0x76, rax_5 + 0x40, 1);` — only proceeds to write if no error"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is SymCrypt's ML-DSA PkDecode routine. The unpatched version calls SymCryptMlDsaExpandA (sub_1800292e4) and passes its return value (potentially an error code) as a size parameter to SymCryptKeccakExtract (sub_18002bb78) without checking. If ExpandA returns an error, this could lead to an incorrect size calculation in the subsequent operation. The patched version checks the return value first.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipProcessSIPolicyLogs (sub_1800DDF24)",
+      "similarity": 0.8016,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed global variable references (data_180046948→data_180048a00, data_1800474b8→data_1800495b0, etc.) — likely due to data layout changes",
+        "Changed loop iteration from `while (i < 4)` with `i * 0xa0` offset to `while (rsi_1 < 4)` with `rsi_1 * 0x28` offset — struct field stride changed",
+        "Added new condition at end: `if (result && arg1[0x2fc] & 0x40000 && (arg1[0x26a] < 0 || arg1[0x26b])) return sub_1800656d8(...)`"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_180019100)",
+      "similarity": 0.9726,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added `result = rax_3 | 0x40000;` to set bit 18 in the result flags — this bit is now always set in the WIL feature-state result",
+        "Minor register reallocation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptFdefDecideModulusType (sub_18000E99C)",
+      "similarity": 0.9699,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor register reallocation and variable renaming — no behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SIPolicyAreCustomKernelSignersAllowed (@0x1800706C4 -> @0x1800764A8)",
+      "similarity": null,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added lock/enable gate: the decision now returns false unless the new byte cs:byte_180048F08 is set (cmp cs:byte_180048F08, r9b at 0x1800764BD). This byte has zero references in the unpatched binary and is written only by the new SIPolicySetCustomKernelSignersLockedEnabled (@0x180076558), called from a registry-backed init path (call at 0x180018EAD after ZwSetValueKey).",
+        "Added base-policy restriction: the per-policy loop now calls SIPolicyIsBasePolicy (@0x180075158, call at 0x1800764E4) and stops on any non-base policy, so supplemental policies are no longer considered. The unpatched SIPolicyAreCustomKernelSignersAllowed (@0x1800706C4) never called SIPolicyIsBasePolicy and scanned every loaded SI policy.",
+        "Delegated the +0x708 flag test to the new SIPolicyCheckCustomKernelSignersAllowed (@0x18007652C, call at 0x1800764F6), which re-checks the same lock byte. This helper has no content match in the unpatched binary.",
+        "Net effect: unpatched accepted the custom-kernel-signers enable bit at policy field +0x708 from ANY loaded policy (including supplemental) with no lock; patched requires an explicit lock/enable state plus a base policy. Strictly stricter."
+      ],
+      "security_relevant": true,
+      "security_notes": "SIPolicyAreCustomKernelSignersAllowed decides whether a Code Integrity driver-signing evaluation may accept custom (non-Microsoft) kernel signers; its result is folded into g_CiDeveloperMode bit 0xD during SI-policy init (caller at 0x18001A4D8 unpatched / 0x18001A7AC patched, plus a second patched site at 0x18006BC0C). The unpatched version (@0x1800706C4) iterates g_SiPolicyHandles[0..g_NumberOfSiPolicies] and returns true if ANY policy has the enable bit set at +0x708 (test al,0x18 / test al,4), with no lock gate and no base/supplemental distinction, so a supplemental SI policy could enable custom kernel signers. The patched version (@0x1800764A8) refuses unless the new lock byte byte_180048F08 is set and restricts the enabling policy to a base policy via SIPolicyIsBasePolicy. This is a protection-mechanism-failure hardening (CWE-693) on the kernel-mode driver-signature-enforcement trust boundary, not part of the statically-linked SymCrypt library. Not gated by any WIL/Feature_* staging flag, and the old permissive scan is not retained. Practical abuse requires the ability to load a supplemental SI policy (a privileged operation), hence Medium severity.",
+      "assembly_diff": "; UNPATCHED SIPolicyAreCustomKernelSignersAllowed @ 0x1800706C4 (scans ALL policies, no lock, no base filter)\n00000001800706CA  cmp     r9d, cs:g_NumberOfSiPolicies\n00000001800706D1  jnb     short loc_1800706FB\n00000001800706DD  mov     rax, [rax+rdx*8]\n00000001800706E1  mov     eax, [rax+708h]\n00000001800706E7  test    cl, cl\n00000001800706EB  test    al, 18h\n00000001800706EF  test    al, 4\n00000001800706F1  jnz     short loc_1800706F8\n00000001800706F3  inc     r9d\n00000001800706F6  jmp     short loc_1800706CA\n00000001800706F8  mov     r8b, 1\n; PATCHED SIPolicyAreCustomKernelSignersAllowed @ 0x1800764A8 (lock gate + base-policy filter + delegated flag test)\n00000001800764BD  cmp     cs:byte_180048F08, r9b\n00000001800764C4  jnz     short loc_1800764CA\n00000001800764C6  xor     al, al\n00000001800764C8  jmp     short loc_180076513\n00000001800764DE  mov     rdi, [r11]\n00000001800764E1  mov     rcx, rdi\n00000001800764E4  call    SIPolicyIsBasePolicy\n00000001800764E9  test    al, al\n00000001800764EB  jz      short loc_180076510\n00000001800764ED  mov     ecx, [rdi+708h]\n00000001800764F3  mov     dl, sil\n00000001800764F6  call    SIPolicyCheckCustomKernelSignersAllowed\n; NEW SIPolicyCheckCustomKernelSignersAllowed @ 0x18007652C (re-checks lock byte)\n000000018007652C  cmp     cs:byte_180048F08, 0\n0000000180076533  jz      short loc_18007654C\n0000000180076539  test    cl, 8\n; NEW SIPolicySetCustomKernelSignersLockedEnabled @ 0x180076558 (only writer of lock byte)\n0000000180076558  mov     cs:byte_180048F08, cl\n000000018007655E  retn\n; PATCHED registry-backed writer of the lock value\n0000000180018EAD  call    SIPolicySetCustomKernelSignersLockedEnabled"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaExpandS (sub_180029484)",
+      "entry_point": "ML-DSA (FIPS 204) key generation / key import / self-test inside SymCrypt (statically linked into ci.dll)",
+      "call_chain": [
+        "CiInitialize",
+        "SymCryptMlDsaSelftest (sub_180022048)",
+        "SymCryptMlDsakeySetValue (sub_1800215E0)",
+        "SymCryptMlDsaKeyGenerateEx (sub_180020A14)",
+        "SymCryptMlDsaExpandS (sub_180029484)",
+        "SymCryptMlDsaRejBoundedPoly (sub_18002A06C)"
+      ],
+      "vulnerability_class": "CWE-252 / CWE-754 - unchecked return value",
+      "description": "SymCryptMlDsaExpandS expands the ML-DSA secret vectors s1 and s2 by calling SymCryptMlDsaRejBoundedPoly (sub_18002a06c) once per polynomial. In the unpatched version the call is invoked as void — its return value is discarded — and the function always returns the result of SymCryptWipeAsm (sub_180011800), which is 0. If a per-polynomial sampling call fails (for example by hitting its sampling bound and returning 0x8008 SYMCRYPT_EXTERNAL_FAILURE), that failure is lost and expansion reports success with an incompletely sampled secret vector. This is a robustness/error-propagation defect in post-quantum key handling, not an Authenticode PE signature bypass.",
+      "trigger_conditions": "Reach the ML-DSA key-generation or key-import path in the unpatched ci.dll and cause SymCryptMlDsaRejBoundedPoly to return non-zero for one polynomial. The self-test path uses fixed vectors, so this is primarily a robustness concern rather than an attacker-controlled input path. In the unpatched build the failing status is dropped and SymCryptMlDsaExpandS returns 0.",
+      "primitive": "Error-propagation defect — a failed secret-polynomial sampling is masked, so ML-DSA key material may be finalized in an incompletely sampled state. Not a code-signing bypass.",
+      "evidence": "// UNPATCHED SymCryptMlDsaExpandS (sub_180029484) - return value IGNORED:\n    for ( ; v10 < v5; ++v10 )\n    {\n        v14 = v10;\n        SymCryptMlDsaRejBoundedPoly(a1, v13, a3, a4 + (v10 << 0xa) + 8);  // ← return discarded (void)\n    }\n    // ...\n    return SymCryptWipeAsm((__int64)v13, 0x42u);  // ← wipe cleanup, always returns 0\n\n// PATCHED SymCryptMlDsaExpandS (sub_18002651c) - return value CHECKED:\n    while (1)\n    {\n        v15 = v10;\n        v9 = SymCryptMlDsaRejBoundedPoly(a1, v14, a3, a4 + (v10 << 0xa) + 8);\n        if (v9 != 0)\n            break;  // ← stops on error\n        if (++v10 >= v5)\n            goto LABEL_4;\n    }\n    // ...\n    SymCryptWipeAsm((__int64)v14, 0x42u);\n    return v9;  // ← returns actual status",
+      "assembly": "; UNPATCHED SymCryptMlDsaExpandS @ 0x180029484\n; s1 loop - return value of SymCryptMlDsaRejBoundedPoly discarded:\n0000000180029505  call    SymCryptMlDsaRejBoundedPoly\n000000018002950A  inc     di                 ; advance index; rax (status) never read\n0000000180029510  cmp     eax, r14d\n0000000180029513  jb      short loc_1800294E9 ; loop regardless of status\n; s2 loop at loc_180029519 identical (call at 0x180029539)\n0000000180029552  call    SymCryptWipeAsm    ; cleanup; sampling status never returned\n0000000180029575  retn\n\n; PATCHED SymCryptMlDsaExpandS @ 0x18002651C\n00000001800265A7  call    SymCryptMlDsaRejBoundedPoly\n00000001800265AC  mov     edi, eax           ; capture status\n00000001800265AE  test    eax, eax\n00000001800265B0  jnz     short loc_1800265FA ; break out on error\n00000001800265B2  inc     bx\n00000001800265B8  cmp     ecx, r14d\n00000001800265BB  jb      short loc_18002658B\n0000000180026609  mov     eax, edi           ; return captured status",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!sub_180029484",
+            "address": "0x180029484",
+            "why": "Break here to observe the ML-DSA secret-vector expansion loop. Watch how the return value from SymCryptMlDsaRejBoundedPoly (called inside) is discarded. The index is in di/bx; r14d holds the s1 polynomial count and ebp the s2 count (loop bounds). The function should exit early on error but does not."
+          },
+          {
+            "symbol": "ci!sub_18002A06C",
+            "address": "0x18002A06C",
+            "why": "Per-polynomial SymCryptMlDsaRejBoundedPoly sampler. Check rax on return — non-zero (0x8008 SYMCRYPT_EXTERNAL_FAILURE) indicates a sampling failure that is silently ignored by the caller."
+          }
+        ],
+        "watch": [
+          "di/bx = current polynomial index",
+          "r14d = s1 polynomial count (*(arg1+0x15)); ebp = s2 count (*(arg1+0x14)) — loop bounds",
+          "eax after call to sub_18002a06c = status code (non-zero = failure, but ignored in unpatched)",
+          "r9 (arg4) = per-polynomial output pointer = base + (index << 0xa) + 8"
+        ],
+        "key_offsets": [
+          "0x180029484: function entry — SymCryptMlDsaExpandS",
+          "0x180029505: the call to SymCryptMlDsaRejBoundedPoly inside the s1 loop — return value discarded",
+          "0x180029539: the call to SymCryptMlDsaRejBoundedPoly inside the s2 loop — also missing error check",
+          "0x180029552: call to SymCryptWipeAsm cleanup; the sampling status is not moved into eax, so it is never returned"
+        ],
+        "trigger_setup": "1. Reach the ML-DSA key-generation / key-import path in the unpatched ci.dll. 2. Force SymCryptMlDsaRejBoundedPoly to return non-zero for one polynomial (e.g. its sampling-bound overflow). 3. Observe that the failing status is dropped by SymCryptMlDsaExpandS.",
+        "expected_observation": "In the unpatched binary: SymCryptMlDsaRejBoundedPoly returns non-zero (0x8008 SYMCRYPT_EXTERNAL_FAILURE) but SymCryptMlDsaExpandS returns 0. No error propagates. The patched build returns the error.",
+        "notes": "The struct at arg1 has key offsets: arg1+0x14 (s2 polynomial count), arg1+0x15 (s1 polynomial count). The output uses 0x400 (1<<10) byte stride per polynomial, accessed at (rdi << 0xa) + 8 + arg4. This is ML-DSA key expansion, not a certificate array."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SymCryptRsakeyCalculatePrivateFields (sub_180002D3C)",
+      "entry_point": "RSA key import / private-field computation inside SymCrypt (statically linked into ci.dll)",
+      "call_chain": [
+        "CiInitialize",
+        "SymCryptRsakeySetValue (sub_18000E754)",
+        "SymCryptRsakeySetValueInternal (sub_18001DA98)",
+        "SymCryptRsakeyCalculatePrivateFields (sub_180002D3C)"
+      ],
+      "vulnerability_class": "CWE-754 - missing validation of cryptographic key material",
+      "description": "SymCryptRsakeyCalculatePrivateFields derives the RSA private CRT fields. The unpatched version never checks that the supplied prime factors are consistent with the modulus. The patched version adds a 7th parameter (a7) and, at the end of the two-prime path, when bit 0x200 is NOT set in a7 and there are exactly 2 primes (v21 == 2), multiplies the two primes with SymCryptFdefIntMulMixedSize (sub_1800260e0) and compares the product to the stored modulus with SymCryptFdefIntIsEqual (sub_180025e1c). On match it returns the running status; otherwise it falls through to return 32782 (0x800e SYMCRYPT_INVALID_ARGUMENT). The unpatched version accepts an RSA key whose primes do not multiply back to its modulus. This is RSA key validation, not certificate issuer verification, and 0x800e is a SymCrypt error, not TRUST_E_CERT_SIGNATURE.",
+      "trigger_conditions": "Import an RSA key via SymCryptRsakeySetValueInternal with two primes that do not multiply to the supplied modulus, with the flags argument (a7) not having bit 0x200 set. The unpatched version derives private fields and returns success; the patched version returns 0x800e.",
+      "primitive": "Key-validation hardening — rejects an inconsistent RSA key (primes not matching the modulus) that the unpatched build silently accepts. Not a code-signing bypass.",
+      "evidence": "// UNPATCHED SymCryptRsakeyCalculatePrivateFields (sub_180002d3c):\n// After the private-field loops, function just returns v13.\n// NO prime/modulus consistency check.\n\n// PATCHED SymCryptRsakeyCalculatePrivateFields (sub_18000e324) - ADDED check (a7 = new 7th param):\n    if ((a7 & 0x200) != 0)  // ← skip flag\n        return v16;\n    if (v21 == 2)           // ← exactly two primes\n    {\n        SymCryptFdefIntMulMixedSize(*(a1 + 128) + 96, *(a1 + 136) + 96, a4);  // p * q\n        if (SymCryptFdefIntIsEqual(a4, *(a1 + 120) + 96) != 0)                // p*q == n ?\n            return v16;  // ok\n    }\n    return 32782;  // 0x800e SYMCRYPT_INVALID_ARGUMENT",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!sub_180002D3C",
+            "address": "0x180002D3C",
+            "why": "Break at function entry. Observe arg1 (RSA key struct), a7 (flags parameter — check bit 0x200). In the unpatched version, observe that no p*q==modulus check occurs after the private-field loops."
+          },
+          {
+            "symbol": "ci!sub_18001DA98",
+            "address": "0x18001DA98",
+            "why": "SymCryptRsakeySetValueInternal, the caller. Check what value is passed as the 7th argument (a7) — in the unpatched version this parameter does not exist, so the stack layout is different."
+          }
+        ],
+        "watch": [
+          "arg1+0x1c = number of prime factors (*(a1+28), should be 2 for the checked path)",
+          "arg1+0x18 = CRT exponent count",
+          "arg1+0x78/0x80/0x88 = modulus / prime[0] / prime[1] object pointers (integer field at +0x60)",
+          "return value = 32782 (0x800e) on consistency-check failure in patched, but the running status (0) in unpatched"
+        ],
+        "key_offsets": [
+          "0x180002D3C: function entry",
+          "0x180002E71: private-field loop — the new check is inserted after this in the patched version",
+          "0x180002F05: CRT inner loop — in the patched version the p*q==n check follows after this"
+        ],
+        "trigger_setup": "1. Import an RSA key via SymCryptRsakeySetValueInternal with two primes that do not multiply to the modulus. 2. Ensure the flags argument (a7) does not have bit 0x200 set. 3. Compute private fields. The unpatched build accepts it; the patched build returns 0x800e.",
+        "expected_observation": "Unpatched: inconsistent key accepted (returns success). Patched: SymCryptFdefIntIsEqual (sub_180025e1c) reports non-equal, function returns 32782 (0x800e SYMCRYPT_INVALID_ARGUMENT).",
+        "notes": "The new a7 parameter is at position 7 (stack-based in x64 calling convention). The check applies to 2-prime RSA keys where a7 bit 0x200 is clear. SymCryptFdefIntMulMixedSize (sub_1800260e0) multiplies the primes and SymCryptFdefIntIsEqual (sub_180025e1c) compares against the modulus."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaSampleInBall (sub_18002A2E8)",
+      "entry_point": "ML-DSA (FIPS 204) signing / challenge-polynomial sampling inside SymCrypt (statically linked into ci.dll)",
+      "call_chain": [
+        "CiInitialize",
+        "SymCryptMlDsaSelftest (sub_180022048)",
+        "SymCryptMlDsaSignEx (sub_180020C7C)",
+        "SymCryptMlDsaSampleInBall (sub_18002A2E8)"
+      ],
+      "vulnerability_class": "CWE-835 - loop with unreachable exit condition",
+      "description": "SymCryptMlDsaSampleInBall samples the ML-DSA challenge polynomial c (tau non-zero +/-1 coefficients) using rejection sampling. The inner loop squeezes one byte at a time from a SHAKE/Keccak sponge via SymCryptKeccakExtract (sub_18002bb78) and resamples while the byte exceeds the current index threshold (`while (var_148[0] > rbx_1)`). In the unpatched version this inner loop has no iteration limit. With a well-formed sponge it terminates with overwhelming probability, so the pre-patch risk is non-termination only under a pathological/corrupted sponge state, not attacker-controlled ASN.1. The patched version adds a counter limit of 0x79 (121) iterations, returning error 0x8008 (SYMCRYPT_EXTERNAL_FAILURE) if exceeded.",
+      "trigger_conditions": "Reach SymCryptMlDsaSampleInBall via ML-DSA signing (SymCryptMlDsaSignEx). The inner loop must keep rejecting, i.e. the byte squeezed from the Keccak sponge stays above rbx_1 (which starts at 0x100 - *(arg1+0x18) and increments per accepted coefficient). Because the byte source is the sponge (not external input), this requires a pathological or corrupted sponge state rather than crafted signature bytes.",
+      "primitive": "Non-termination hardening — a defensive iteration bound on an ML-DSA rejection loop; pre-patch risk is a hang only under a corrupted sponge state.",
+      "evidence": "// UNPATCHED SymCryptMlDsaSampleInBall (sub_18002a2e8) - UNBOUNDED inner loop:\n        do\n        {\n            SymCryptKeccakExtract(&var_138, &var_148, 1, 0);  // squeeze one SHAKE byte\n            // NO ITERATION COUNTER\n        } while (var_148[0] > rbx_1);  // resample while byte > threshold\n\n// PATCHED SymCryptMlDsaSampleInBall (sub_1800273e0) - BOUNDED inner loop:\n            do\n            {\n                if (rdi_1 >= 0x79)     // ← ADDED: iteration limit\n                {\n                    r14 = 0x8008;      // ← ADDED: 0x8008 SYMCRYPT_EXTERNAL_FAILURE\n                    goto label_180027512;\n                }\n                SymCryptKeccakExtract(&var_138, &var_148, 1, 0);\n                rdi_1 += 1;\n            } while (var_148[0] > rbx_1);",
+      "assembly": "; UNPATCHED SymCryptMlDsaSampleInBall @ 0x18002A2E8 - inner rejection loop:\n; No iteration counter, can loop indefinitely under a corrupted sponge\n000000018002A3A6  loc_18002A3A6:              ; inner loop head\n000000018002A3B6  call    SymCryptKeccakExtract ; squeeze 1 byte\n000000018002A3BB  movzx   eax, [rsp+160h+var_140]\n000000018002A3C0  cmp     eax, ebx            ; byte vs rbx_1 threshold\n000000018002A3C2  ja      short loc_18002A3A6 ; if > threshold, loop again (unbounded)\n\n; PATCHED SymCryptMlDsaSampleInBall @ 0x1800273E0:\n000000018002749B  mov     edi, r14d           ; init counter (r14d = 0)\n000000018002749E  loc_18002749E:\n000000018002749E  cmp     edi, 79h            ; ADDED: iteration limit (121), checked at loop head\n00000001800274A1  jnb     short loc_180027502 ; ADDED: overflow -> error path\n00000001800274B4  call    SymCryptKeccakExtract ; squeeze 1 byte\n00000001800274BE  inc     edi                 ; ADDED: advance counter\n00000001800274C0  cmp     eax, ebx\n00000001800274C2  ja      short loc_18002749E ; resample (bounded by 0x79)\n0000000180027502  mov     r14d, 8008h         ; ADDED: SYMCRYPT_EXTERNAL_FAILURE",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!sub_18002A2E8",
+            "address": "0x18002A2E8",
+            "why": "Break at function entry. This is SymCryptMlDsaSampleInBall (challenge-polynomial sampling). Watch the inner loop (head loc_18002A3A6, KeccakExtract at 0x18002A3B6, ja at 0x18002A3C2) — in the unpatched version there is no counter, so the loop can spin indefinitely if squeezed sponge bytes consistently exceed rbx_1."
+          }
+        ],
+        "watch": [
+          "ebx (rbx_1) = current index threshold, starts at 0x100 - *(rsi+0x18) and increments by 1 per accepted coefficient",
+          "byte [rsp+0x20] (var_148[0]) = squeezed sponge byte, compared against ebx — if always > ebx, non-terminating loop",
+          "rsi+0x18 = tau field from the ML-DSA parameter structure",
+          "r14 = output buffer pointer (arg4) where the challenge polynomial is written"
+        ],
+        "key_offsets": [
+          "0x18002A398: outer loop — lea rdi, [r14+rbx*4] sets up output pointer",
+          "0x18002A3A6: inner loop head (xor r9d, r9d) — the ja resample target (UNBOUNDED in unpatched)",
+          "0x18002A3B6: call to SymCryptKeccakExtract (sub_18002bb78) to squeeze the next byte",
+          "0x18002A3C2: cmp eax, ebx / ja short loc_18002A3A6 — no counter, can spin forever",
+          "In patched: 0x18002749E has cmp edi, 79h / jnb loc_180027502"
+        ],
+        "trigger_setup": "1. Reach SymCryptMlDsaSampleInBall via ML-DSA signing (SymCryptMlDsaSignEx). 2. The inner loop must keep rejecting, which requires a pathological/corrupted Keccak sponge state so the squeezed byte stays above the threshold (the sponge is the byte source, not external ASN.1). 3. Observe the non-terminating inner loop.",
+        "expected_observation": "In a debugger, the instruction pointer stays in the loop at loc_18002A3A6-0x18002A3C2, repeatedly calling SymCryptKeccakExtract at 0x18002A3B6. The call stack shows ci!SymCryptMlDsaSampleInBall called from ci!SymCryptMlDsaSignEx (sub_180020c7c). The patched build exits with 0x8008 (SYMCRYPT_EXTERNAL_FAILURE).",
+        "notes": "sub_18002bb78 is SymCryptKeccakExtract, which squeezes fresh bytes from a SHAKE/Keccak sponge (var_138) seeded during signing. The threshold ebx starts at 0x100 - tau and grows by 1 each accepted coefficient, so only early iterations can sustain rejection. The byte source is the sponge, so there is no external ASN.1 to craft."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "SymCryptMlDsaRejBoundedPoly (sub_18002A06C)",
+      "entry_point": "ML-DSA (FIPS 204) key generation / secret-coefficient sampling inside SymCrypt (statically linked into ci.dll)",
+      "call_chain": [
+        "CiInitialize",
+        "SymCryptMlDsaSelftest (sub_180022048)",
+        "SymCryptMlDsakeySetValue (sub_1800215E0)",
+        "SymCryptMlDsaKeyGenerateEx (sub_180020A14)",
+        "SymCryptMlDsaExpandS (sub_180029484)",
+        "SymCryptMlDsaRejBoundedPoly (sub_18002A06C)"
+      ],
+      "vulnerability_class": "CWE-835 - loop with unreachable exit condition",
+      "description": "SymCryptMlDsaRejBoundedPoly rejection-samples the coefficients of a secret polynomial in [-eta, eta] by squeezing bytes from a SHAKE/Keccak sponge via SymCryptKeccakExtract (sub_18002bb78) and mapping each nibble; out-of-range nibbles decode to a 0x80 skip marker that does not advance the coefficient count. The outer loop stops at 0x100 (256) coefficients, but the unpatched version has no independent limit on how many sponge bytes are consumed. A long run of skip-producing nibbles keeps the loop reading without filling the polynomial. Because the bytes come from the Keccak sponge (fresh output), there is no fixed input buffer to overread — the effect is non-termination, not an OOB read. The patched version adds a byte counter limit of 0x1e1 (481) reads.",
+      "trigger_conditions": "The sponge must produce a long run of skip-decoding nibbles: for eta selector 4 (byte [r14+0x16]==4) nibbles >= 9, for eta selector 2 (byte [r14+0x16]==2) nibbles >= 15, decode to the 0x80 skip. Because the byte source is the Keccak sponge (not external signature data), this requires a pathological/corrupted sponge state rather than crafted input.",
+      "primitive": "Non-termination hardening — a defensive iteration bound on an ML-DSA rejection loop. No OOB read (byte source is a sponge, not a bounded buffer).",
+      "evidence": "// UNPATCHED SymCryptMlDsaRejBoundedPoly (sub_18002a06c) - no sponge-byte counter:\n    do\n    {\n        SymCryptKeccakExtract(&var_118, &var_127, 1, 0);  // squeeze next SHAKE byte\n        // ... map nibbles, out-of-range decode to 0x80 skip\n        // NO COUNTER on sponge bytes read\n    } while (rdi < 0x100);  // only coefficient count is bounded\n\n// PATCHED SymCryptMlDsaRejBoundedPoly (sub_180027128) - added sponge-byte counter:\n    do\n    {\n        if (rsi >= 0x1e1)    // ← ADDED: sponge-byte counter limit\n        {\n            rdi = 0x8008;    // ← ADDED: 0x8008 SYMCRYPT_EXTERNAL_FAILURE\n            break;\n        }\n        SymCryptKeccakExtract(&var_128, &var_137, 1, 0);\n        // ... map nibbles\n        rsi += 1;            // ← ADDED: increment counter\n    } while (i < 0x100);",
+      "assembly": "; UNPATCHED SymCryptMlDsaRejBoundedPoly @ 0x18002A06C:\n; Loop squeezes sponge bytes with no byte counter\n000000018002A0EB  loc_18002A0EB:              ; main loop head\n000000018002A0FC  call    SymCryptKeccakExtract ; squeeze 1 byte\n000000018002A101  mov     cl, [rsp+140h+var_11F]\n; ... nibble decoding, 0x80 skip marker does not advance output ...\n000000018002A1A1  cmp     dl, 80h\n000000018002A1A4  jz      short loc_18002A1C6 ; skip marker\n000000018002A1CC  jb      loc_18002A0EB       ; cmp edi,100h/jb - only output count bounded, NO byte counter\n000000018002A1D2  loc_18002A1D2:              ; exit when output full (edi >= 0x100)\n\n; PATCHED SymCryptMlDsaRejBoundedPoly @ 0x180027128:\n00000001800271A6  loc_1800271A6:              ; main loop head\n00000001800271A6  cmp     esi, 1E1h          ; ADDED: sponge-byte limit (481), before squeeze\n00000001800271AC  jnb     loc_1800272A9      ; ADDED: overflow -> error path\n00000001800271C3  call    SymCryptKeccakExtract ; squeeze 1 byte\n000000018002724F  inc     esi                ; ADDED: advance sponge-byte counter\n000000018002729B  cmp     ebx, 100h\n00000001800272A1  jb      loc_1800271A6      ; loop back; re-checks esi limit at head\n00000001800272A9  mov     edi, 8008h         ; ADDED: SYMCRYPT_EXTERNAL_FAILURE",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!sub_18002A06C",
+            "address": "0x18002A06C",
+            "why": "Break at function entry. This is SymCryptMlDsaRejBoundedPoly (secret-coefficient sampling). In the unpatched version, the inner byte-reading loop at 0x18002a0eb has no limit on sponge bytes consumed. Watch edi (coefficient counter) vs how many bytes are squeezed via SymCryptKeccakExtract (sub_18002bb78)."
+          }
+        ],
+        "watch": [
+          "edi = accepted coefficient counter, bounded by 0x100",
+          "byte [r14+0x16] = eta selector (2 or 4) — determines the nibble range",
+          "byte [rsp+0x21] = current squeezed sponge byte being decoded",
+          "r14 (arg1/rcx) = Keccak/state context pointer",
+          "r9 (arg4) = output buffer for sampled coefficients (0x100 entries max)"
+        ],
+        "key_offsets": [
+          "0x18002A0EB: main loop head (xor r9d, r9d)",
+          "0x18002A0FC: call to SymCryptKeccakExtract (sub_18002bb78) to squeeze next byte",
+          "0x18002A11A: nibble decoding for eta selector 2 (imul r8d, eax, 0Dh ...)",
+          "0x18002A140: nibble decoding for eta selector 4 (mov r8d, ebx; sub r8b, dl)",
+          "0x18002A1A1: cmp dl, 80h skip check (does not advance output)",
+          "0x18002A1CC: cmp edi, 100h / jb loc_18002A0EB — loop-back, no sponge-byte counter",
+          "0x18002A1D2: exit when output full (edi >= 0x100)"
+        ],
+        "trigger_setup": "1. Requires a sponge state producing a long run of skip-decoding nibbles: for eta selector 4, nibble values >= 9; for eta selector 2, nibble values >= 15. 2. Reach the function via ML-DSA secret sampling (SymCryptMlDsaExpandS). 3. The loop will squeeze many bytes without advancing the coefficient counter.",
+        "expected_observation": "In a debugger, the instruction pointer stuck in the loop at 0x18002a0eb-0x18002a1d2, with edi not advancing (below 0x100) while SymCryptKeccakExtract is called repeatedly. No OOB read (bytes come from the sponge, not a bounded buffer). The patched build exits with 0x8008 after 0x1e1 bytes.",
+        "notes": "The nibble mapping uses ((nibble * 0xd) >> 6) * 5 - nibble + 2. For nibble >= 9 (eta selector 4) or >= 15 (eta selector 2), the result is out of range and set to 0x80 (skip marker). Bytes come from the SHAKE/Keccak sponge seeded during ML-DSA key expansion, not from a certificate field."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "SIPolicyAreCustomKernelSignersAllowed (@0x1800706C4 -> @0x1800764A8)",
+      "entry_point": "Code Integrity SI-policy initialization / driver-signing-level evaluation (SIPolicyInitSystem -> CipInitializeSiPolicy); result sets the custom-kernel-signers bit (bit 0xD) in g_CiDeveloperMode",
+      "call_chain": [
+        "SIPolicyInitSystem",
+        "CipInitializeSiPolicy",
+        "SIPolicyAreCustomKernelSignersAllowed (caller @0x18001A4D8 unpatched / @0x18001A7AC patched)"
+      ],
+      "vulnerability_class": "CWE-693 - protection mechanism failure (kernel-mode driver signature enforcement / custom kernel signers)",
+      "description": "SIPolicyAreCustomKernelSignersAllowed decides whether a Code Integrity driver-signing evaluation may accept custom (non-Microsoft) kernel signers by inspecting the enable flags at offset +0x708 of each loaded SI policy. The unpatched version (@0x1800706C4) walks the entire g_SiPolicyHandles array and returns true as soon as ANY policy has the bit set, with no lock/enable gate and no distinction between base and supplemental policies - so a supplemental SI policy could enable custom kernel signers. The patched version (@0x1800764A8) adds two restrictions: (1) it returns false unless the new byte cs:byte_180048F08 has been explicitly set (checked at 0x1800764BD, and again inside the new SIPolicyCheckCustomKernelSignersAllowed @0x18007652C), written only by the new SIPolicySetCustomKernelSignersLockedEnabled @0x180076558 from a registry-backed init path (call @0x180018EAD); and (2) it calls SIPolicyIsBasePolicy on each handle and stops on any non-base policy, so supplemental policies are excluded. The change is strictly stricter and sits on the kernel-mode driver-signature-enforcement trust boundary. It is not part of the statically-linked SymCrypt library and is not gated by any WIL/Feature_* staging flag.",
+      "trigger_conditions": "Load a supplemental SI policy that sets the custom-kernel-signers enable bit at policy field +0x708, then reach the CI SI-policy initialization / driver-signing evaluation path where SIPolicyAreCustomKernelSignersAllowed runs (unpatched caller @0x18001A4D8, result folded into g_CiDeveloperMode bit 0xD). In the unpatched build the supplemental policy alone causes the function to return true (custom kernel signers enabled); in the patched build the lock byte byte_180048F08 must be set and only a base policy is honored, so the supplemental policy has no effect. Practical abuse requires the privilege to install/load a supplemental SI policy.",
+      "primitive": "Protection-mechanism weakening on the kernel-mode driver-signature-enforcement trust boundary: pre-patch, a lower-trust supplemental SI policy could enable acceptance of custom/non-Microsoft kernel signers (custom-kernel-signers bit in g_CiDeveloperMode). Not a memory-corruption primitive.",
+      "evidence": "// UNPATCHED SIPolicyAreCustomKernelSignersAllowed @ 0x1800706C4 - any policy, no lock, no base filter:\n00000001800706CA  cmp     r9d, cs:g_NumberOfSiPolicies\n00000001800706E1  mov     eax, [rax+708h]\n00000001800706EB  test    al, 18h\n00000001800706EF  test    al, 4\n00000001800706F8  mov     r8b, 1\n\n// PATCHED SIPolicyAreCustomKernelSignersAllowed @ 0x1800764A8 - lock gate + base-policy filter:\n00000001800764BD  cmp     cs:byte_180048F08, r9b\n00000001800764C4  jnz     short loc_1800764CA\n00000001800764C6  xor     al, al\n00000001800764E4  call    SIPolicyIsBasePolicy\n00000001800764EB  jz      short loc_180076510\n00000001800764F6  call    SIPolicyCheckCustomKernelSignersAllowed",
+      "assembly": "; NEW SIPolicyCheckCustomKernelSignersAllowed @ 0x18007652C (re-checks the lock byte before the +0x708 flag test)\n000000018007652C  cmp     cs:byte_180048F08, 0\n0000000180076533  jz      short loc_18007654C\n0000000180076535  test    dl, dl\n0000000180076537  jz      short loc_18007654C\n0000000180076539  test    cl, 8\n000000018007654C  xor     al, al\n000000018007654E  retn\n; NEW SIPolicySetCustomKernelSignersLockedEnabled @ 0x180076558 (only writer of the lock byte)\n0000000180076558  mov     cs:byte_180048F08, cl\n000000018007655E  retn\n; registry-backed writer of the lock value\n0000000180018E9F  call    cs:__imp_ZwSetValueKey\n0000000180018EAD  call    SIPolicySetCustomKernelSignersLockedEnabled",
+      "debugging_aids": "byte_180048F08 has zero references in ci_unpatched.dll and three in ci_patched.dll (cmp @0x1800764BD, cmp @0x18007652C, mov @0x180076558). SIPolicyCheckCustomKernelSignersAllowed and SIPolicySetCustomKernelSignersLockedEnabled have no content match in the unpatched binary. SIPolicyIsBasePolicy already exists unpatched (@0x1800713D8); what is new is that the custom-kernel-signers decision now consults it - the unpatched SIPolicyAreCustomKernelSignersAllowed (@0x1800706C4) never called it. Callers of SIPolicyAreCustomKernelSignersAllowed: unpatched @0x18001A4D8; patched @0x18001A7AC and @0x18006BC0C."
+    }
+  ],
+  "summary": "The changed functions are all part of the statically-linked SymCrypt cryptographic library inside Windows Code Integrity (ci.dll), not the Authenticode/PE certificate-chain code. The patch hardens SymCrypt's FIPS 204 ML-DSA (post-quantum) sampling routines and the RSA private-key setup path. In SymCryptMlDsaExpandS (sub_180029484) the return value of the per-polynomial sampler SymCryptMlDsaRejBoundedPoly (sub_18002a06c) was discarded and the function always returned 0 (CWE-252/CWE-754); the patch propagates the error. SymCryptRsakeyCalculatePrivateFields (sub_180002d3c) gains an RSA key-consistency check that verifies the two prime factors multiply back to the modulus, returning 0x800e (SYMCRYPT_INVALID_ARGUMENT) on mismatch (CWE-754). Two ML-DSA rejection-sampling loops, SymCryptMlDsaSampleInBall (sub_18002a2e8) and SymCryptMlDsaRejBoundedPoly (sub_18002a06c), gain finite iteration bounds (0x79 and 0x1e1) returning 0x8008 (SYMCRYPT_EXTERNAL_FAILURE) on overflow (CWE-835); both draw bytes from a SHAKE/Keccak sponge, so the pre-patch risk is non-termination under a corrupted sponge state rather than an attacker-crafted signature, and there is no OOB read. These are robustness/hardening fixes in key-generation, key-import, and self-test crypto code; they are not a PE/driver code-signing bypass. Separately from SymCrypt, the patch also hardens the Code Integrity SI-policy custom-kernel-signers decision (Finding 5): SIPolicyAreCustomKernelSignersAllowed (@0x1800706C4 -> @0x1800764A8) previously accepted the enable bit at policy field +0x708 from any loaded SI policy, including supplemental ones, with no lock gate; the patched version requires the new lock/enable byte byte_180048F08 to be set (written by the new SIPolicySetCustomKernelSignersLockedEnabled @0x180076558 from a registry-backed init path) and restricts the enabling policy to a base policy via SIPolicyIsBasePolicy. This is a protection-mechanism-failure fix (CWE-693, medium severity) on the kernel-mode driver-signature-enforcement trust boundary, reachable during SI-policy init where the result feeds g_CiDeveloperMode bit 0xD."
+}

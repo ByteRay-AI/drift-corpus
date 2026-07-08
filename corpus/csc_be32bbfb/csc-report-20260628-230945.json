@@ -1,0 +1,98 @@
+{
+  "binaries": {
+    "title": "csc.sys - No security-relevant change: WIL feature-staging gate around a NULL check in CscDclMRxTransition (dclmrx.c) graduated to unconditional",
+    "id_unpatched": "csc_unpatched.sys",
+    "id_patched": "csc_patched.sys",
+    "overall_similarity": 0.992,
+    "matched": 1398,
+    "changed": 1,
+    "identical": 1397,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CscDclMRxTransition (0x1C005CBA4)",
+      "similarity": 0.9703,
+      "change_type": "defense_in_depth",
+      "key_changes": [
+        "REMOVED: Two calls to EvaluateCurrentState (0x1C0007440) at 0x1C005CC19 (prologue) and 0x1C005D181 (epilogue) in the unpatched binary. EvaluateCurrentState is a WIL feature-staging helper: it calls EvaluateFeature (0x1C00074EC) and returns (g_Feature_4283659579_58821281_cachedstate != 1). EvaluateFeature stores EvaluateCurrentStateFromRegistry(...)+1 into the cached state, so the value is 2 when the feature resolves to enabled and 1 when it resolves to disabled.",
+        "CHANGED (prologue guard): unpatched error-exit test is 'if ((a2-1) > 2 || EvaluateCurrentState() && v8 == 0)'. The v8==NULL check is AND-combined with the feature evaluation, so it is skipped only when EvaluateCurrentState() is false (cached-state == 1, i.e. the feature is disabled). Patched build drops the feature gate to 'if ((a2-1) > 2 || v8 == 0)', making the NULL check unconditional.",
+        "CHANGED (epilogue guard): unpatched 'if (!EvaluateCurrentState() || v8 != 0) CscFlushLViewWasPreviouslyOffline(v8);' becomes patched 'if (v8 != 0) CscFlushLViewWasPreviouslyOffline(v8);' (asm: test rdi,rdi; jz; call at 0x1C005D178). Same feature gate removed.",
+        "The pointer is v8 (register rdi), a logical-view (LView) pointer loaded as a1->Header.FilterContexts.Flink then Flink[7].Flink (asm: mov rax,[rcx+0x38]; mov rdi,[rax+0x70]). Its consumers are CscAcquireLViewLock (0x1C000BD78), CscLViewIsRootGhosted (0x1C00621B4) and CscReleaseLViewLock (0x1C000BEEC).",
+        "All other diff hunks are cosmetic: WPP trace-GUID symbol renames (WPP_9227ea88... -> WPP_9a6a71d2...), differing __LINE__ constants (0x2FB->0x2F6, 0x305->0x300) in RxpTrackReference/RxpTrackDereference, and branch/label target shifts caused by the removed call/test/jz sequences. No other behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "Defense-in-depth / WIL feature-staging graduation, not a delivered security fix. CscDclMRxTransition (0x1C005CBA4) is the transition handler in csc.sys (Windows Offline Files / Client-Side Caching mini-redirector, source base\\fs\\remotefs\\rdr\\csc\\driver\\dclmrx.c). It loads a logical-view pointer v8 = a1->Header.FilterContexts.Flink[7].Flink (asm rdi = *(*(rcx+0x38)+0x70)), which can legitimately be NULL. In the unpatched build the NULL check on v8 is AND-gated behind a WIL feature evaluation (EvaluateCurrentState, 0x1C0007440). Because EvaluateFeature encodes disabled=1 / enabled=2 and EvaluateCurrentState returns (cachedstate != 1), the check is skipped ONLY when the feature is in the disabled state. That state is set by Microsoft's feature-flighting / registry-override infrastructure, not by an attacker, and is not the default. In the default (feature-enabled) configuration the NULL check is active in BOTH builds, so there is no attacker-reachable behavioral difference. The patch removes the feature gate at both guard sites, baking the check in permanently. Even in the disabled-feature state the only possible outcome is a kernel NULL-pointer dereference bug check (local DoS); the callees read fixed small offsets (+0x30, +0x38), NULL-page mapping is blocked on modern Windows, and there is no controlled-data, info-leak, or code-execution primitive. Weakness class touched: CWE-476 (NULL pointer dereference)."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "CscDclMRxTransition (0x1C005CBA4)",
+      "entry_point": "FSCTL dispatch on the CSC driver device; transition sub-operation with a2 in {1,2,3}",
+      "call_chain": [
+        "DeviceIoControl / NtDeviceIoControlFile on CSC device (FSCTL dispatch)",
+        "DriverEntry (0x1C008C140) - registration",
+        "CscInitializeDispatchTable (0x1C008E4E0) - dispatch table setup",
+        "CscFsCtl (0x1C0049860) - CSC FSCTL router",
+        "CscDclInternalFsControl (0x1C0049A10) - internal FSCTL wrapper",
+        "CscDclMRxTransition (0x1C005CBA4) - transition handler"
+      ],
+      "vulnerability_class": "Defense-in-depth hardening: a WIL feature-staging gate around a NULL check (CWE-476 class) is graduated to unconditional. Not attacker-reachable in the default configuration.",
+      "description": "CscDclMRxTransition (0x1C005CBA4) is the transition handler in csc.sys (Windows Offline Files mini-redirector). It loads a logical-view pointer v8 = a1->Header.FilterContexts.Flink[7].Flink (asm: rax = *(rcx+0x38); rdi = *(rax+0x70)), which can be NULL. In the unpatched build the prologue guard is 'if ((a2-1) > 2 || EvaluateCurrentState() && v8 == 0)'. EvaluateCurrentState (0x1C0007440) is a WIL feature-staging helper that returns (g_Feature_4283659579_58821281_cachedstate != 1); EvaluateFeature (0x1C00074EC) stores enabled=2 / disabled=1 into the cached state. Because the v8==0 term is AND-combined with EvaluateCurrentState(), the NULL check is skipped ONLY when the feature is disabled (cached-state == 1). That is a vendor/cloud-flighting-controlled state, not the default and not attacker-controlled; with the feature enabled the NULL check is active in both builds. The patch removes the EvaluateCurrentState gate at both the prologue and a matching epilogue guard, making both v8 NULL checks unconditional. This is a feature-staging graduation (defense-in-depth), not a fix for an attacker-reachable vulnerability.",
+      "trigger_conditions": "The skip path exists only when ALL of the following hold, none of which is the default or attacker-controlled: (1) the WIL feature g_Feature_4283659579_58821281 is in the disabled state (cached-state == 1) so EvaluateCurrentState() returns 0; (2) a handle to the CSC device is obtained and the transition sub-operation is issued with a2 in {1,2,3}; (3) the logical-view pointer v8 = *(*(RX_CONTEXT+0x38)+0x70) is NULL (associated FCB/context has no logical view allocated for the object being transitioned) - the exact state producing this was not confirmed from the binaries. In the default (feature-enabled) configuration the NULL check is active in both builds and no crash occurs.",
+      "primitive": "None beyond, at most, a local kernel NULL-pointer dereference bug check (denial of service) confined to the non-default feature-disabled state. The callees read fixed small offsets (+0x30, +0x38); NULL-page mapping is blocked on modern Windows, so there is no controlled data at address 0, no info leak, and no code-execution primitive.",
+      "evidence": "// UNPATCHED -- CscDclMRxTransition (0x1C005CBA4)\nFilterContexts.Flink = a1->Header.FilterContexts.Flink;\nv8 = Flink[7].Flink;                 // logical-view pointer, can be NULL\nCscGetContexts(a1, v39);\nif ( (unsigned int)(a2 - 1) > 2 || EvaluateCurrentState() && v8 == 0 )\n{                                    // v8==0 check AND-gated behind the WIL feature evaluation\n    v9 = 0xC000000D; goto LABEL_70;  // skip path exists only when feature disabled (cachedstate==1)\n}\nCscAcquireLViewLock(v8);             // reached with v8==NULL only if feature disabled\nIsRootGhosted = CscLViewIsRootGhosted(v8);\n...\n// epilogue, same gate:\nif ( !EvaluateCurrentState() || v8 != 0 )\n    CscFlushLViewWasPreviouslyOffline(v8);\n\n// PATCHED -- feature gate removed at both sites\nif ( (unsigned int)(a2 - 1) > 2 || v8 == 0 )   // NULL check now unconditional\n{ v9 = 0xC000000D; goto LABEL_69; }\nCscAcquireLViewLock(v8);                        // v8 guaranteed non-NULL\n...\nif ( v8 != 0 )\n    CscFlushLViewWasPreviouslyOffline(v8);",
+      "assembly": "; === UNPATCHED CscDclMRxTransition (0x1C005CBA4) -- prologue guard ===\n  0x1C005CBFF: lea     ecx, [r13-1]              ; ecx = a2 - 1  (r13d = a2)\n  0x1C005CC0A: cmp     ecx, 2\n  0x1C005CC0D: jbe     loc_1C005CC19             ; a2 in {1,2,3}\n  0x1C005CC0F: mov     esi, 0C000000Dh          ; STATUS_INVALID_PARAMETER\n  0x1C005CC14: jmp     loc_1C005D174            ; error exit\n  0x1C005CC19: call    EvaluateCurrentState      ; WIL feature evaluation (0x1C0007440)\n  0x1C005CC1E: test    eax, eax                  ; eax==0 only when feature disabled (cachedstate==1)\n  0x1C005CC20: jz      loc_1C005CC27            ; feature disabled -> SKIP the NULL check\n  0x1C005CC22: test    rdi, rdi                  ; NULL check on v8, taken when feature enabled\n  0x1C005CC25: jz      loc_1C005CC0F            ; NULL -> error exit\n  0x1C005CC27: mov     rcx, rdi                  ; rdi (v8) NULL here only if feature disabled\n  0x1C005CC2A: call    CscAcquireLViewLock       ; 0x1C000BD78\n  0x1C005CC2F: mov     rcx, rdi\n  0x1C005CC32: call    CscLViewIsRootGhosted     ; 0x1C00621B4\n\n; === UNPATCHED -- epilogue guard (second gated NULL check) ===\n  0x1C005D181: call    EvaluateCurrentState\n  0x1C005D186: test    eax, eax\n  0x1C005D188: jz      loc_1C005D18F            ; feature disabled -> skip NULL check\n  0x1C005D18A: test    rdi, rdi\n  0x1C005D18D: jz      loc_1C005D197\n  0x1C005D18F: mov     rcx, rdi\n  0x1C005D192: call    CscFlushLViewWasPreviouslyOffline  ; 0x1C0061EEC\n\n; === PATCHED CscDclMRxTransition (0x1C005CBA4) -- prologue guard ===\n  0x1C005CC0D: jbe     loc_1C005CC19\n  0x1C005CC0F: mov     esi, 0C000000Dh          ; STATUS_INVALID_PARAMETER\n  0x1C005CC14: jmp     loc_1C005D16B\n  0x1C005CC19: test    rdi, rdi                  ; UNCONDITIONAL NULL check (feature gate removed)\n  0x1C005CC1C: jz      loc_1C005CC0F            ; NULL -> error exit\n  0x1C005CC1E: mov     rcx, rdi\n  0x1C005CC21: call    CscAcquireLViewLock\n\n; === PATCHED -- epilogue guard (unconditional) ===\n  0x1C005D178: test    rdi, rdi\n  0x1C005D17B: jz      loc_1C005D185\n  0x1C005D17D: mov     rcx, rdi\n  0x1C005D180: call    CscFlushLViewWasPreviouslyOffline\n\n; EvaluateCurrentState (0x1C0007440) -- WIL feature helper, calls removed by patch:\n  0x1C0007444: lea     rcx, g_Feature_4283659579_58821281_FeatureDescriptorDetails\n  0x1C000744B: call    EvaluateFeature           ; 0x1C00074EC\n  0x1C0007450: mov     rax, cs:g_Feature_4283659579_58821281_FeatureDescriptorDetails\n  0x1C0007457: mov     ecx, [rax]                ; cached state\n  0x1C000745B: cmp     ecx, 1                    ; == 1 means feature disabled\n  0x1C000745E: setnz   al                        ; return (cachedstate != 1)\n  0x1C0007465: retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition (0x1C005CBA4)",
+            "address": "0x1C005CBA4",
+            "why": "Entry to the transition handler. rcx = a1 (RX_CONTEXT/FCB), edx = a2 (sub-operation, must be 1-3). v8 (rdi) is loaded as *(*(rcx+0x38)+0x70) - the logical-view pointer that may be NULL."
+          },
+          {
+            "symbol": "csc_unpatched!EvaluateCurrentState (0x1C0007440)",
+            "address": "0x1C0007440",
+            "why": "WIL feature-state helper. Return value in eax: 0 means g_Feature_...cachedstate == 1 (feature disabled), which is the state where the v8 NULL check is skipped. With the feature enabled it returns non-zero and the check runs, matching the patched build."
+          },
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition prologue feature check (0x1C005CC19)",
+            "address": "0x1C005CC19",
+            "why": "call EvaluateCurrentState in the prologue guard. After it returns, if eax==0 (feature disabled) the jz at 0x1C005CC20 skips the test rdi,rdi NULL check."
+          },
+          {
+            "symbol": "csc_unpatched!CscDclMRxTransition rdi use site (0x1C005CC2A)",
+            "address": "0x1C005CC2A",
+            "why": "call CscAcquireLViewLock (0x1C000BD78) with rcx = rdi = v8. NULL here is reachable only when the feature is disabled and v8 == NULL."
+          }
+        ],
+        "watch": [
+          "rdi register -- holds v8, the logical-view pointer (*(*(rcx+0x38)+0x70))",
+          "eax after call to EvaluateCurrentState -- 0 means feature disabled (skip path); non-zero means NULL check active (same as patched)",
+          "edx (a2) -- must be 1, 2, or 3 so that (a2-1) <= 2",
+          "rcx (a1) -- RX_CONTEXT/FCB; *(rcx+0x38) is dereferenced to get rax, then *(rax+0x70) yields rdi (v8)",
+          "g_Feature_4283659579_58821281_cachedstate -- WIL feature cached state: 1 = disabled (skip path), 2 = enabled (check active)"
+        ],
+        "key_offsets": [
+          "0x1C005CC19: call EvaluateCurrentState -- the removed feature evaluation (prologue)",
+          "0x1C005CC1E-0x1C005CC20: test eax,eax; jz 0x1C005CC27 -- branch that skips the NULL check when the feature is disabled",
+          "0x1C005CC22: test rdi,rdi -- the gated NULL check",
+          "0x1C005CC27-0x1C005CC2A: mov rcx,rdi; call CscAcquireLViewLock -- first use of v8",
+          "0x1C005D181: call EvaluateCurrentState -- second occurrence of the removed feature gate (epilogue)",
+          "0x1C005CBA4: function entry",
+          "g_Feature_4283659579_58821281_cachedstate: WIL feature cached state; 1 = disabled -> skip path"
+        ],
+        "trigger_setup": "The behavioral difference is observable only in the non-default feature-disabled state: (1) ensure g_Feature_4283659579_58821281 resolves to disabled (cached-state == 1) so EvaluateCurrentState() returns 0; (2) open a handle to the CSC device and issue the transition FSCTL sub-operation with a2 in {1,2,3}; (3) drive the associated FCB/context so the logical-view pointer (*(RX_CONTEXT+0x38)->0x70) is NULL. In that combination the unpatched handler skips the NULL check and faults at CscAcquireLViewLock(v8). With the feature enabled, the unpatched build behaves like the patched build and returns STATUS_INVALID_PARAMETER.",
+        "expected_observation": "In the feature-disabled state only: kernel bug check (e.g. PAGE_FAULT_IN_NONPAGED_AREA / access violation) referencing address 0x0 or a small offset (+0x30, +0x38) inside CscAcquireLViewLock/CscLViewIsRootGhosted, called from CscDclMRxTransition. In the default (feature-enabled) configuration, or in the patched build, the handler returns STATUS_INVALID_PARAMETER (0xC000000D) instead.",
+        "notes": "The driver is csc.sys (Windows Offline Files / Client-Side Caching mini-redirector), source base\\fs\\remotefs\\rdr\\csc\\driver\\dclmrx.c, built on the RDBSS framework. v8 is a logical-view (LView) pointer; it is NULL when no logical view is allocated for the object being transitioned. EvaluateCurrentState (0x1C0007440) is a WIL feature-staging helper (EvaluateFeature + g_Feature_4283659579_58821281_cachedstate != 1), not a driver-active flag. The unpatched build gated the defensive NULL check behind this feature so it could be turned off via flighting; the patch graduates the check to unconditional. This is defense-in-depth / servicing churn, not a fix for an attacker-reachable vulnerability. On modern Windows the NULL page cannot be user-mapped, so even the disabled-state worst case is a local DoS."
+      }
+    }
+  ],
+  "summary": "The only functional change is in CscDclMRxTransition (0x1C005CBA4), the transition handler of csc.sys (Windows Offline Files, source dclmrx.c). In the unpatched build a NULL check on the logical-view pointer v8 is AND-gated behind a WIL feature-staging evaluation: the prologue guard is 'if ((a2-1) > 2 || EvaluateCurrentState() && v8 == 0)'. EvaluateCurrentState (0x1C0007440) returns (g_Feature_4283659579_58821281_cachedstate != 1), and EvaluateFeature (0x1C00074EC) encodes disabled=1 / enabled=2, so the NULL check is skipped only when the feature is disabled - a vendor/cloud-flighting-controlled state, not the default and not attacker-controlled. With the feature enabled the NULL check is active in both builds. The patch removes the EvaluateCurrentState gate at the prologue and a matching epilogue guard, making both v8 NULL checks unconditional. This is a WIL feature-staging graduation (defense-in-depth), not a fix for an attacker-reachable vulnerability. Its maximum theoretical impact, and only in the non-default feature-disabled state, is a local kernel NULL-pointer dereference bug check (DoS); there is no controlled-data, info-leak, or code-execution primitive. Verdict: No security-relevant change. Weakness class touched: CWE-476."
+}

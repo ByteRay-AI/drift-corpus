@@ -1,0 +1,376 @@
+{
+  "binaries": {
+    "title": "mountmgr.sys - No security-relevant change (device-characteristic gate added to remote-database reconciliation)",
+    "id_unpatched": "mountmgr_unpatched.sys",
+    "id_patched": "mountmgr_patched.sys",
+    "overall_similarity": 0.9587,
+    "matched": 156,
+    "changed": 36,
+    "identical": 120,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C00014C0",
+      "similarity": 0.599,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler-generated memset/memfill routine replaced with different optimization variant (SSE/AVX vectorization). No behavioral change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0001010",
+      "similarity": 0.771,
+      "change_type": "behavioral",
+      "key_changes": ["IRP cancel routine iteration refactored — loop structure reorganized around cancel spinlock. Control flow simplified but semantics unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrDriverReinitialization (sub_1C000F2D0 / patched sub_1C000F350)",
+      "similarity": 0.8456,
+      "change_type": "behavioral",
+      "key_changes": [
+        "A caller-side 'if (byte at 0x7c == 0)' guard around the call to ReconcileThisDatabaseWithMaster was removed; the equivalent test now lives inside the callee.",
+        "This is a driver reinitialization routine (registered via IoRegisterDriverReinitialization), not an attacker-reachable IOCTL path."
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactor only. The removable-media (0x7c) gate that previously sat at this call site was relocated into ReconcileThisDatabaseWithMaster, which now also tests the new 0x7d device-characteristic byte. Behavior is preserved; no security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015B44",
+      "similarity": 0.8458,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Device detection logic refactored — large cascaded if/else chain of device signature comparisons (var_d8/var_d0 GUID-like comparisons) reorganized into flattened || conditions.",
+        "Branch order swapped: the 'rax_8 == rbx_1' device-type path and the 'rax_8 == 0' path swapped evaluation order.",
+        "memset size changed from 0x90 to 0x8c for var_f8 (minor structural change)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000F390",
+      "similarity": 0.8469,
+      "change_type": "behavioral",
+      "key_changes": ["List iteration refactored — loop that searches for an entry with flag 0x100 restructured for clarity. Semantics unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0016760",
+      "similarity": 0.8668,
+      "change_type": "behavioral",
+      "key_changes": ["Buffer allocation retry loop refactored — control flow simplified around ExAllocatePoolWithTag + IOCTL query. Error path cleanup restructured. No semantic change to memory handling."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002DF0",
+      "similarity": 0.8678,
+      "change_type": "behavioral",
+      "key_changes": ["Worker thread dispatch loop refactored — event wait loop restructured. Global data references changed (data_1c00061d0 → data_1c0006220, data_1c00061f0 → data_1c0006250) reflecting version-specific data layout differences."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0019120",
+      "similarity": 0.8753,
+      "change_type": "cosmetic",
+      "key_changes": ["Control flow refactored with no semantic change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ReconcileThisDatabaseWithMasterWorker (sub_1C00170E0 / patched sub_1C0017130)",
+      "similarity": 0.8832,
+      "change_type": "behavioral",
+      "key_changes": [
+        "The work-item callback re-validates its volume entry under the device mutex: it acquires the mutex at Context+56 and calls MntMgrFindDevice (0x1C000E1A4), which walks the device list and returns the entry only if it is still linked, then bails if the entry is not found or its 0x7c byte is set. This re-lookup is present and identical in BOTH builds.",
+        "The only delta: the patched bail-out condition additionally tests the new 0x7d device-characteristic byte (Device == head || byte 0x7c != 0 || byte 0x7d != 0)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a UAF sink. The mutex-protected MntMgrFindDevice re-lookup that guards against a freed/unlinked entry exists unchanged in both builds. The only change is the added 0x7d test, mirroring the queue-side filter. 0x7d is a static device characteristic (Characteristics bit 0x10000) latched once in QueryDeviceInformation, not a teardown flag, so it cannot be a race guard.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00183D4",
+      "similarity": 0.8844,
+      "change_type": "behavioral",
+      "key_changes": ["Linked list removal and reinsertion logic refactored — control flow restructured but list manipulation semantics preserved. Added trap(0xd) assertion guard."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000D898",
+      "similarity": 0.8988,
+      "change_type": "behavioral",
+      "key_changes": ["Buffer allocation retry loop refactored for clarity. Error path restructured with early returns. No semantic change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00152E4",
+      "similarity": 0.908,
+      "change_type": "behavioral",
+      "key_changes": ["Volume database file creation logic refactored — IoCreateFile + sub_1c000c878/sub_1c000c8e0 fallback path restructured. Error handling consolidated. No semantic change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0014C24",
+      "similarity": 0.9129,
+      "change_type": "behavioral",
+      "key_changes": ["Large volume processing function refactored. Control flow restructured but no new security checks added or removed."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0018990",
+      "similarity": 0.9223,
+      "change_type": "cosmetic",
+      "key_changes": ["Integer overflow protection: '*arg4 + 2' computed as r14_1 in unpatched, moved to inline r14+2 in patched. Semantics identical. Loop and IOCTL dispatch structure unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00162A0",
+      "similarity": 0.9303,
+      "change_type": "behavioral",
+      "key_changes": ["Registry query and volume list building refactored — error path consolidated, cleanup loop restructured. No semantic change."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E458",
+      "similarity": 0.939,
+      "change_type": "behavioral",
+      "key_changes": ["Volume/symbolic link matching logic refactored — loop restructured with while(true) + break pattern. Semantics unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000C878",
+      "similarity": 0.9402,
+      "change_type": "behavioral",
+      "key_changes": ["Work item dispatch helper refactored — error path restructured with label consolidation. Memory handling (ExAllocatePoolWithTag/ExFreePoolWithTag) semantics unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009E90",
+      "similarity": 0.942,
+      "change_type": "behavioral",
+      "key_changes": ["Large processing function refactored — control flow restructured."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015EBC",
+      "similarity": 0.9502,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0010D18",
+      "similarity": 0.9523,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C001085C",
+      "similarity": 0.9528,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "MountMgrMountedDeviceArrival (sub_1C000F7E4 / patched relocated)",
+      "similarity": 0.9577,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Mounted-device arrival notification handler; it examines newly arrived devices and can call ReconcileThisDatabaseWithMaster.",
+        "Differences between builds are relocation noise plus the mechanical +1 field-offset shift from the inserted 0x7d byte; no added or removed check."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a mounted-device arrival notification handler, not a raw IOCTL dispatcher. It shows no logic change of its own; the only behavioral effect it inherits is that ReconcileThisDatabaseWithMaster now filters an additional device class. No security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ReconcileThisDatabaseWithMaster (sub_1C0016FBC / patched sub_1C0016FFC)",
+      "similarity": 0.9595,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added a second device-property test before queuing the reconcile work item: unpatched tests only byte 0x7c; patched tests byte 0x7c AND the new byte 0x7d, bailing if either is non-zero.",
+        "Both bytes are set once in QueryDeviceInformation from the target device object's Characteristics: 0x7c = Characteristics & 1 (FILE_REMOVABLE_MEDIA), 0x7d = BYTE2(Characteristics) & 1 (bit 0x10000). 0x7d is a new field, present only in the patched build.",
+        "Assembly: unpatched at 0x1c0016fcb tests 0x7c then allocates. Patched at 0x1c001700b tests 0x7c, at 0x1c001701b tests 0x7d, then allocates. The 0x38-byte NonPagedPoolNx 'MntA' allocation is the work-item context, not the volume entry."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix. The added 0x7d byte is a static device characteristic (Characteristics bit 0x10000) latched once when the device is examined and never mutated, so it cannot guard against a concurrent free/teardown. The change is a behavioral filter that excludes one class of device from remote-database reconciliation and from the follow-on OnlineMountedVolumes call. The work-item callback (ReconcileThisDatabaseWithMasterWorker) independently re-validates the entry under the device mutex via MntMgrFindDevice in BOTH builds, which is the actual protection against a stale entry pointer.",
+      "assembly_diff": "UNPATCHED sub_1C0016FBC entry:\n0x1c0016fcb: cmp byte [rdx+0x7c], 0x0    ; tests 0x7c (FILE_REMOVABLE_MEDIA)\n0x1c0016fcf: mov rsi, rdx\n0x1c0016fd2: mov rbx, rcx\n0x1c0016fd5: jne 0x1c00170c5               ; if 0x7c != 0, epilogue\n0x1c0016fdb: mov edx, 0x38                 ; work-item context size\n\nPATCHED sub_1C0016FFC entry:\n0x1c001700b: cmp byte [rdx+0x7c], 0x0    ; tests 0x7c\n0x1c001700f: mov rsi, rdx\n0x1c0017012: mov rbx, rcx\n0x1c0017015: jne 0x1c001710f               ; if 0x7c != 0, epilogue\n0x1c001701b: cmp byte [rdx+0x7d], 0x0    ; NEW: tests 0x7d (Characteristics bit 0x10000)\n0x1c001701f: jne 0x1c001710f               ; if 0x7d != 0, epilogue\n0x1c0017025: mov edx, 0x38                 ; work-item context size"
+    },
+    {
+      "name": "sub_1C00091D0",
+      "similarity": 0.9624,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009940",
+      "similarity": 0.9671,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0012CCC",
+      "similarity": 0.9704,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009010",
+      "similarity": 0.9716,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000A280",
+      "similarity": 0.9727,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00110C8",
+      "similarity": 0.9738,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00185C0",
+      "similarity": 0.9747,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E124",
+      "similarity": 0.9786,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames and loop restructuring only."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000DDC0",
+      "similarity": 0.9821,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames only — IoCreateSymbolicLink path unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00157D0",
+      "similarity": 0.9892,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames only."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00197C0",
+      "similarity": 0.9895,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames only."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000CA20",
+      "similarity": 0.9896,
+      "change_type": "cosmetic",
+      "key_changes": ["Variable renames only — work item callback unchanged."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0013F14",
+      "similarity": 0.9899,
+      "change_type": "behavioral",
+      "key_changes": ["Control flow refactored."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ReconcileThisDatabaseWithMaster (sub_1C0016FBC / patched sub_1C0016FFC)",
+      "entry_point": "Mounted-device arrival notification (MountMgrMountedDeviceArrival, sub_1C000F7E4) and driver reinitialization (MountMgrDriverReinitialization, sub_1C000F2D0), among other internal callers of ReconcileThisDatabaseWithMaster.",
+      "call_chain": ["Mounted-device arrival / driver reinitialization", "ReconcileThisDatabaseWithMaster (queues the reconcile work item)", "ReconcileThisDatabaseWithMasterWorker (callback; re-validates the entry under the device mutex via MntMgrFindDevice)"],
+      "vulnerability_class": "N/A — behavioral change, no demonstrable security impact",
+      "description": "The patched ReconcileThisDatabaseWithMaster adds a second device-property test before it queues the reconcile work item: the unpatched build tests only the byte at offset 0x7c (Characteristics & 1, FILE_REMOVABLE_MEDIA), while the patched build additionally tests the byte at offset 0x7d and bails if either is non-zero. Both bytes are set once, in QueryDeviceInformation (0x1C00157D0 / 0x1C00157F8), directly from the target device object's Characteristics field; 0x7d = BYTE2(Characteristics) & 1 (bit 0x10000) and is a new field in the patched build (its insertion shifted subsequent fields up by one byte). Because 0x7d is a static device characteristic latched at examination time and never mutated, it cannot function as a concurrent-teardown guard. The change is a behavioral filter that excludes one class of device from remote-database reconciliation and from the follow-on OnlineMountedVolumes call. This is NOT a use-after-free fix: the work-item callback ReconcileThisDatabaseWithMasterWorker already re-validates the entry under the device mutex (KeWaitForSingleObject at Context+56) by calling MntMgrFindDevice (0x1C000E1A4), which returns the entry only if it is still linked in the device list, and this re-validation is present and unchanged in BOTH builds.",
+      "trigger_conditions": "Not applicable. No vulnerable condition exists in either build along this path. The only observable difference is that the patched build skips the reconcile work item and OnlineMountedVolumes for devices whose target device object Characteristics have bit 0x10000 set.",
+      "primitive": "None. The change frees no memory, extends no lifetime past a free, and relaxes no bound, lock, or access check.",
+      "evidence": "UNPATCHED ReconcileThisDatabaseWithMaster @ 0x1C0016FBC:\n  if ( *(_BYTE *)(a2 + 124) == 0 ) { /* allocate 0x38-byte NonPagedPoolNx 'MntA' work-item context; queue ReconcileThisDatabaseWithMasterWorker */ }\n\nPATCHED ReconcileThisDatabaseWithMaster @ 0x1C0016FFC:\n  if ( *(_WORD *)(a2 + 124) == 0 ) { /* identical body; folds the 0x7c and new 0x7d byte tests into one 16-bit compare */ }\n\nField source, PATCHED QueryDeviceInformation @ 0x1C00157F8:\n  *(_BYTE *)(a2 + 124) = v4->Characteristics & 1;          // 0x7c (unchanged)\n  *(_BYTE *)(a2 + 125) = BYTE2(v4->Characteristics) & 1;   // 0x7d (NEW field, Characteristics bit 0x10000)\n\nCallback re-validation (present in BOTH builds), ReconcileThisDatabaseWithMasterWorker:\n  KeWaitForSingleObject((PVOID)(v1 + 56), ...);            // device mutex\n  Device = MntMgrFindDevice(v1, (_QWORD *)v2);             // returns entry only if still linked\n  if ( Device == <list head> || *(_BYTE *)(v2 + 124) != 0 [ || *(_BYTE *)(v2 + 125) != 0 in patched ] ) { release mutex; return; }",
+      "assembly": "UNPATCHED sub_1C0016FBC entry:\n0x1c0016fcb: cmp byte [rdx+0x7c], 0x0     ; tests 0x7c (FILE_REMOVABLE_MEDIA)\n0x1c0016fd5: jne 0x1c00170c5              ; if 0x7c != 0, epilogue\n0x1c0016fdb: mov edx, 0x38                ; work-item context size\n0x1c0016fe0: mov ecx, 0x200               ; NonPagedPoolNx\n0x1c0016fe5: mov r8d, 0x41746e4d          ; tag 'MntA'\n0x1c0016feb: call __imp_ExAllocatePoolWithTag\n0x1c0017085: mov [rdi+0x30], rsi          ; stores entry pointer into work-item context\n0x1c001708d: mov [rdi+0x18], rax          ; stores ReconcileThisDatabaseWithMasterWorker callback\n0x1c001709a: call QueueWorkItem\n\nPATCHED sub_1C0016FFC entry:\n0x1c001700b: cmp byte [rdx+0x7c], 0x0     ; tests 0x7c\n0x1c0017015: jne 0x1c001710f              ; if 0x7c != 0, epilogue\n0x1c001701b: cmp byte [rdx+0x7d], 0x0     ; NEW: tests 0x7d (Characteristics bit 0x10000)\n0x1c001701f: jne 0x1c001710f              ; if 0x7d != 0, epilogue\n0x1c0017025: mov edx, 0x38                ; identical allocation and queue path follows",
+      "notes": "The 0x38-byte NonPagedPoolNx 'MntA' allocation in this function is the work-item context structure, not the volume entry; only the entry's address is stored into the context. The volume entry's own pool type and size are not determinable from this function. Two unrelated changes are bundled in the same build and are not security-relevant: GlobalCreateSymbolicLink (0x1C000DDC0 / 0x1C000DE30) switched from IoCreateSymbolicLink to IoCreateSymbolicLink2, and QueryDeviceSortOrderInternal (0x1C0015B44 / 0x1C0015B78) updated its device-signature GUID comparison table."
+    }
+  ],
+  "summary": "No security-relevant change. The patched ReconcileThisDatabaseWithMaster adds a second device-property test (byte 0x7d) before queuing its remote-database reconcile work item, and the callback ReconcileThisDatabaseWithMasterWorker adds the same test to its bail-out condition. Both 0x7c and 0x7d are set once in QueryDeviceInformation directly from the target device object's Characteristics field (0x7c = FILE_REMOVABLE_MEDIA; 0x7d = bit 0x10000, a new field), so 0x7d is a static device characteristic, not a dynamic teardown flag, and cannot guard against a concurrent free. The change is a behavioral filter that excludes one class of device from database reconciliation and volume onlining. The actual protection against a stale entry pointer is the callback's mutex-protected MntMgrFindDevice re-lookup, which is present and unchanged in both builds. The earlier UAF/CWE-416/CWE-362 characterization is not supported by the binaries. Two unrelated changes are bundled: an IoCreateSymbolicLink -> IoCreateSymbolicLink2 API switch in GlobalCreateSymbolicLink, and a device-signature GUID table update in QueryDeviceSortOrderInternal; neither shows a security impact."
+}

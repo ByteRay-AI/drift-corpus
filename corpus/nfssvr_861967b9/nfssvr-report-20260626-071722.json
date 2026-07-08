@@ -1,0 +1,79 @@
+{
+  "binaries": {
+    "id_unpatched": "nfssvr_unpatched.sys",
+    "id_patched": "nfssvr_patched.sys",
+    "overall_similarity": 0.9927,
+    "matched": 1992,
+    "changed": 3,
+    "identical": 1989,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "XdrDecodeString",
+      "address": "0x1C001DFEC",
+      "similarity": 0.9395,
+      "change_type": "behavioral_non_security",
+      "key_changes": [
+        "When the XDR context is already in an error state on entry ([ctx+0x108] < 0), the unpatched version jumps to 0x1C001E091, which calls XdrDecodeOpaqueSlow (a no-op on an error stream) and then FALLS THROUGH to write a terminator byte at dest[length] via 'mov byte ptr [rdi+rsi], 0' at 0x1C001E09E",
+        "The patched version jumps to 0x1C001E0A2 (the function epilogue) on the error path, returning immediately WITHOUT calling XdrDecodeOpaqueSlow and WITHOUT writing the terminator",
+        "The only changed instruction is the branch at 0x1C001E00A: 'jl 0x1C001E091' -> 'jl 0x1C001E0A2'; the rest of the function is byte-identical"
+      ],
+      "security_relevant": false,
+      "security_notes": "The elided store is the string terminator write at dest[length]. In every caller the destination is sized length+1 and the same length value is used for both the allocation and the write index, so dest[length] is the final valid byte of the allocation, not an out-of-bounds location. The two pool callers (AddMountEntry, RemoveMountEntry) allocate ExAllocatePoolWithTag(PagedPool, length+1, 'Nfse') before calling XdrDecodeString(ctx, length, buffer). The two scratch-buffer callers only call XdrDecodeString when [ctx+0x108] >= 0, so the changed error branch is not reached from them. The change removes a redundant in-bounds write and a no-op call on the error path; it is a correctness / defense-in-depth cleanup, not a bounds fix. No out-of-bounds write, information disclosure, or use-after-free exists in either build.",
+      "assembly_diff": "UNPATCHED key control flow:\n0x1C001E00A: jl  0x1C001E091          ; error -> slow-path block, then falls into the terminator write\n0x1C001E091: mov r8, rsi\n0x1C001E094: mov edx, edi\n0x1C001E096: mov rcx, rbx\n0x1C001E099: call XdrDecodeOpaqueSlow  ; no-op on an error stream\n0x1C001E09E: mov byte ptr [rdi+rsi], 0 ; terminator write at dest[length] (in bounds: allocation is length+1)\n0x1C001E0A2: mov rbx, [rsp+28h+arg_0] ; epilogue\n0x1C001E0B1: retn\n\nPATCHED key control flow:\n0x1C001E00A: jl  0x1C001E0A2          ; error -> epilogue (skip slow-path call and terminator write)\n0x1C001E091: mov r8, rsi              ; reached only from the non-error insufficient-data path\n0x1C001E099: call XdrDecodeOpaqueSlow\n0x1C001E09E: mov byte ptr [rdi+rsi], 0 ; reached only on the non-error path\n0x1C001E0A2: mov rbx, [rsp+28h+arg_0]\n0x1C001E0B1: retn"
+    },
+    {
+      "name": "Nfs4SrvCppDecodeCompoundHeaderAndInitializeArgs",
+      "address": "0x1C00084E8",
+      "similarity": 0.9828,
+      "change_type": "behavioral_non_security",
+      "key_changes": [
+        "Same error-branch retarget as XdrDecodeString, applied to the inlined COMPOUND tag string/opaque decode: on the error path the unpatched build writes a terminator byte at tag_buf[tag_length] via 'mov [r12+rdi], r13b' at 0x1C0008A91 even when the XDR stream is in an error state",
+        "The 'js' branch at 0x1C00089FD changed target from 0x1C0008A83 to 0x1C0008A95, redirecting the error path past the XdrDecodeOpaqueSlow call and the terminator write, continuing at the padding-advance code (add [rax+0x40], 4)",
+        "Register r12 (unpatched) renamed to r15 (patched) for the tag buffer/length usage; no behavioral effect"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same redundant-write removal as XdrDecodeString, inlined into the NFSv4 COMPOUND header decoder. The tag length is rejected when it exceeds 0x400. The COMPOUND args buffer is allocated with tag 'ARGS' and size 2*(184*op_count + ((tag_length+16) & ~0xF)) + 3920, and the tag string destination is buffer+3920. The terminator write at (buffer+3920)[tag_length] with tag_length <= 0x400 is inside the allocation, so it is not out of bounds. Non-security correctness cleanup.",
+      "assembly_diff": "UNPATCHED (inlined error path):\n0x1C00089F7: mov rdi, [rsi+38h]      ; rdi = tag buffer (ARGS allocation + 3920)\n0x1C00089FB: test eax, eax           ; eax = saved XDR status\n0x1C00089FD: js  0x1C0008A83          ; error -> slow-path block, then falls into the terminator write\n0x1C0008A83: mov r8, rdi\n0x1C0008A86: mov edx, r14d\n0x1C0008A89: mov rcx, rbx\n0x1C0008A8C: call XdrDecodeOpaqueSlow  ; no-op on an error stream\n0x1C0008A91: mov [r12+rdi], r13b       ; terminator write at tag_buf[tag_length] (in bounds)\n0x1C0008A95: mov rax, [rbx+48h]        ; advance XDR pointer past padding\n0x1C0008A99: add qword ptr [rax+40h], 4\n\nPATCHED (inlined error path):\n0x1C00089FD: js  0x1C0008A95          ; error -> skip slow-path call and terminator write\n0x1C0008A95: mov rax, [rbx+48h]        ; advance XDR pointer past padding\n0x1C0008A99: add qword ptr [rax+40h], 4"
+    },
+    {
+      "name": "NlmGetClientAddressAndConnection",
+      "address": "0x1C00CB958",
+      "similarity": 0.9648,
+      "change_type": "register_allocation",
+      "key_changes": [
+        "Stack frame grew by 0x20 bytes",
+        "Register allocation shifted (including rsi -> r14), producing additional register spills and inverted branch conditions with reordered blocks",
+        "Call set unchanged (37 calls, identical targets) and comparison count unchanged (93); no behavioral or logic change",
+        "The frame growth relocates the addresses of all subsequent functions in the image; those relocations are not code changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "non_security_changes": [
+    {
+      "function": "XdrDecodeString",
+      "address": "0x1C001DFEC",
+      "entry_point": "Reached while decoding NFS request strings/opaques (MOUNT path decode via AddMountEntry / RemoveMountEntry for the standalone function; scratch-buffer callers guard on non-error status).",
+      "call_chain": [
+        "Nfs4SrvCppDecodeCompoundHeaderAndInitializeArgs (@ 0x1C00084E8) contains the inlined equivalent for the NFSv4 COMPOUND tag",
+        "XdrDecodeString (@ 0x1C001DFEC) is called from AddMountEntry, RemoveMountEntry (pool callers, length+1 allocation) and from Nfs4Svr decode paths (scratch-buffer callers, only when [ctx+0x108] >= 0)"
+      ],
+      "vulnerability_class": "None (no memory-safety defect in either build)",
+      "description": "The XDR string/opaque decoder writes a terminator byte at dest[length] after decoding. In the unpatched build this write (and a preceding XdrDecodeOpaqueSlow call that is a no-op on an error stream) also executes when the XDR context is already in an error state on entry ([ctx+0x108] < 0). The patched build retargets the error branch to the epilogue, skipping both. Because every caller sizes the destination as length+1 and uses the same length as the write index, dest[length] is the final valid byte of the allocation, so the removed write is in bounds. The scratch-buffer callers additionally only invoke the decoder when the context is not in an error state, so the changed branch is unreachable from them. This is a redundant-write / no-op-call removal on the error path, i.e. a correctness / defense-in-depth cleanup with no out-of-bounds, information-disclosure, or use-after-free impact.",
+      "direction": "Patched build is stricter (skips the write on the error path). Direction is correct, but the removed write was never out of bounds.",
+      "evidence": "Callers of XdrDecodeString allocate length+1 and pass the same length:\n  AddMountEntry / RemoveMountEntry:\n    PoolWithTag = ExAllocatePoolWithTag(PagedPool, v17 + 1, 'Nfse');\n    if (PoolWithTag != NULL) XdrDecodeString(a4, v17, PoolWithTag);  // write at PoolWithTag[v17] = last byte\n  Scratch-buffer callers:\n    if (*(int*)(ctx + 264) >= 0) {\n        Nfs4SrvCpGetScratchBuffer(a1, len + 1, &buf);\n        if (*(int*)(ctx + 264) >= 0) XdrDecodeString(ctx, len, buf);  // error branch unreachable\n    }\n\nInlined COMPOUND tag decode (Nfs4SrvCppDecodeCompoundHeaderAndInitializeArgs):\n    if (tag_length > 0x400) { error out; }\n    ARGS_buf = ExAllocatePoolWithTag(pool, 2*(184*op_count + ((tag_length+16) & ~0xF)) + 3920, 'ARGS');\n    tag_dest = ARGS_buf + 3920;\n    // terminator write at tag_dest[tag_length], tag_length <= 0x400 -> in bounds",
+      "assembly": "See changed_functions[0].assembly_diff and changed_functions[1].assembly_diff for the exact instruction-level changes at XdrDecodeString @ 0x1C001DFEC (branch at 0x1C001E00A) and the inlined variant @ 0x1C00084E8 (branch at 0x1C00089FD)."
+    }
+  ],
+  "summary": "The patch retargets the XDR-error branch in the NFS server's string/opaque decoder (standalone XdrDecodeString @ 0x1C001DFEC and the inlined copy in Nfs4SrvCppDecodeCompoundHeaderAndInitializeArgs @ 0x1C00084E8) so that a terminator write at dest[length] and a preceding no-op XdrDecodeOpaqueSlow call are skipped when the XDR context is already in an error state. In every caller the destination buffer is allocated as length+1 and the same length is used as the write index, so the removed write targets the final valid byte of the allocation and is not out of bounds; the scratch-buffer callers additionally guard the call on a non-error status. There is no out-of-bounds write, no attacker-controlled write offset outside an allocation, and no exploit primitive. The change is a redundant-write / no-op-call removal on the error path (correctness / defense-in-depth). The third changed function, NlmGetClientAddressAndConnection @ 0x1C00CB958, is compiler register-allocation and stack-frame churn (identical call set and comparison count). An independent normalized instruction-stream comparison confirms these three functions are the only ones that changed; all other differences are address relocations caused by the frame-size growth. No security-relevant change is present."
+}

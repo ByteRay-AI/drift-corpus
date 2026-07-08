@@ -1,0 +1,213 @@
+{
+  "binaries": {
+    "title": "pcw.sys (Performance Counter for Windows) - No security-relevant change: user-mode write hardening via Rtl*ToUser accessors, WIL feature-staging, and statically-linked security-library churn",
+    "id_unpatched": "pcw_unpatched.sys",
+    "id_patched": "pcw_patched.sys",
+    "overall_similarity": 0.7938,
+    "matched": 160,
+    "changed": 103,
+    "identical": 57,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "PCW_NOTIFIER::SendNotification",
+      "address_unpatched": "0x1C0008778",
+      "address_patched": "0x14000C754",
+      "similarity": 0.9509,
+      "change_type": "hardening_defense_in_depth",
+      "key_changes": [
+        "Direct store '*a6 = value' (mov [r15], rax @ 0x1C0008A3A) replaced with RtlWriteULong64ToUser(a6, value) (call @ 0x14000CA23), the standard safe user-mode write accessor",
+        "Companion store '*a8 = size' remains a direct store in both builds (a8 = &Length, a kernel stack local in the dispatcher)",
+        "Added memset of the local KEVENT before KeInitializeEvent; response-count loop increment restructured"
+      ],
+      "security_relevant": false,
+      "security_notes": "The written value is size/count metadata, not a kernel pointer: HIDWORD = notification->[0x40] (accumulated reply size), LODWORD = notification->[0x48] (responding-instance count), read at 0x1C00089F3/0x1C00089F6. The output pointer a6 is the dispatch's Address, which PcwpFastIoDeviceControl already validates with ProbeForWrite(Address, Length, 1) before any handler runs, in BOTH builds. The write executes only when size <= a7 (output length), so it stays inside the probed range. RtlWriteULong64ToUser re-validates the same destination (fallback path: ProbeForRead(dst,8,1) then *dst = value; otherwise the OS routine cached at qword_140006400). This is defense-in-depth API modernization, not the closure of an arbitrary kernel write.",
+      "assembly_diff": "UNPATCHED 0x1C0008A3A: mov [r15], rax   (r15 = a6, rax = (size<<32)|count)\nPATCHED  0x14000CA23: call RtlWriteULong64ToUser  (rcx = a6, rdx = value)"
+    },
+    {
+      "name": "PCW_NOTIFICATION::CopyToNotificationBuffer",
+      "address_unpatched": "0x1C00081A8",
+      "address_patched": "0x14000BB04",
+      "similarity": 0.8879,
+      "change_type": "hardening_defense_in_depth",
+      "key_changes": [
+        "16-byte reply-item header copy 'movups xmm0,[rdi]' (0x1C0008260) + 'movdqu [rax+rcx],xmm0' (0x1C0008263) replaced with RtlCopyToUser(dst, a2, 0x10) (call @ 0x14000BBDC)",
+        "The protected operation is the WRITE into the target process's user buffer while attached (KeStackAttachProcess); the source a2 is a kernel-stack PCW_REPLYITEM_BUFFER, not user data",
+        "Bulk payload continues through MmCopyVirtualMemory (0x1C00082E4 / 0x14000BC6C) in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "The earlier read/write direction was reversed. src (a2/rdi) is a small header built on the kernel stack by CompleteInFlightNotification (a _DWORD v20[10] local passed down through Complete), not an attacker-supplied source. dst is this->buffer_base(0x30) + this->offset(0x40), a location inside the target process's user-mode collection buffer entered under KeStackAttachProcess. RtlCopyToUser validates that destination (fallback: ProbeForRead(dst,len,1) then RtlCopyVolatileMemory). The size/alignment and capacity bounds check (new_offset > this->[0x3c] -> early return) is present unchanged in both builds. Same safe-accessor substitution as SendNotification; no unprobed read of user memory and no information-disclosure primitive is added or removed.",
+      "assembly_diff": "UNPATCHED 0x1C0008260 movups xmm0,[rdi]; 0x1C0008263 movdqu [rax+rcx],xmm0\nPATCHED  0x14000BBDC call RtlCopyToUser (dst = provider_buffer+offset, src = a2 kernel-stack header, len = 0x10)"
+    },
+    {
+      "name": "PCW_USER_REGISTRATION::SendNotificationToRegistration",
+      "address_unpatched": "0x1C00085B0",
+      "address_patched": "0x14000CA9C",
+      "similarity": 0.9828,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Decompiler renames the null-initialized rollback reference pointer from 'P' (unpatched) to 'v8' (patched); same value, same guard"
+      ],
+      "security_relevant": false,
+      "security_notes": "This function inserts a pending-notification node into a registration list; it is NOT an ACL buffer manager and contains no ACL allocation. The earlier 'ExFreePoolWithTag(nullptr) -> ExFreePoolWithTag(*arg1)' claim is a misreading. The ExFreePoolWithTag is a rollback path guarded by a non-null test (v8/P != nullptr) in both builds; on the allocation-success path that pointer is null so the free never executes, and on failure the enclosing flag guard is false. The only difference is the decompiler variable name. No leak fix and no incorrect free."
+    },
+    {
+      "name": "SepSddlSecurityDescriptorFromSDDLString",
+      "address_unpatched": "0x1C000C188",
+      "similarity": 0.9845,
+      "change_type": "library_churn",
+      "key_changes": [
+        "Zeroes the ExAllocatePoolWithTag pool buffer before population (memset added)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a statically-linked copy of the kernel SDDL-string-to-security-descriptor parser, not PCW-specific code. It changed together with a whole family of copied security/registry library routines (SeSddl*, SepSddlAddAceToAcl, SepSddlGetAclForString, SepSddlGetSidForString, SepSddlParseWideStringUlong, SeUtilSecurityInfoFromSecurityDescriptor, CmRegUtil*, Pi/PpRegState*, IoDevObj*), which is the signature of a library rebuild. The added zeroing is defense-in-depth inside library code, not a fix for an attacker-reachable pcw.sys information leak."
+    },
+    {
+      "name": "PcwpCreateAllowedDacl",
+      "address_unpatched": "0x1C000A8D4",
+      "address_patched": "0x14000EAF0",
+      "similarity": 0.7158,
+      "change_type": "refactor_no_op",
+      "key_changes": [
+        "Added a 'test rdi, rdi / jnz' guard (@ 0x14000EB89) around RtlCreateAcl, returning 0xC0000017 on the null branch",
+        "The guard tests the first argument a1 (the &unique_ptr<_ACL> container), NOT the ExAllocatePool2 result stored to [rdi]"
+      ],
+      "security_relevant": false,
+      "security_notes": "The added check does not do what a NULL-deref fix would do. rdi = a1 (the container pointer, passed as &P from PcwpCreateDefaultSecurityDescriptor), which is never null, so the new else-branch is dead code. The ExAllocatePool2 result (rax, stored to [rdi] at 0x14000EB73) is still passed to RtlCreateAcl unchecked, exactly as in the unpatched build. This routine also runs only on the security-descriptor setup path with a fixed set of SIDs (SeExports->SeLocalSystemSid etc.), not on an attacker-controlled path. No reachable NULL-deref DoS is fixed."
+    },
+    {
+      "name": "PCW_NOTIFIER::SendDisconnectNotification",
+      "address_unpatched": "0x1C0008B98",
+      "address_patched": "0x14000C5A4",
+      "similarity": 0.0,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Disconnect-delivery flag test wrapped in a Feature_550970683__private_IsEnabledDeviceUsageNoInline() gate with the old code path retained as the fallback branch",
+        "Feature-enabled reproduces the unpatched 'flag[85] == 0' delivery test; feature-disabled inverts it"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging (staged rollout with the old path retained). Not a delivered change and not security-relevant in these builds. Listed here because the report's earlier changed-function list omitted it; it is the only feature-gated behavioral difference and it is not a security fix."
+    },
+    {
+      "name": "PcwpWriteToUserBuffer",
+      "address_unpatched": "0x1C00050A8",
+      "address_patched": "0x140008F7C",
+      "similarity": 0.95,
+      "change_type": "hardening_defense_in_depth",
+      "key_changes": [
+        "memmove(dst, src, len) replaced with RtlCopyToUser(dst, src, len)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Central user-output writer used by the Collect and Enumerate paths. Same safe-accessor modernization as Findings 1 and 2; the output buffers it writes are already ProbeForWrite-validated by PcwpFastIoDeviceControl in both builds."
+    },
+    {
+      "name": "PcwpFastIoDeviceControl",
+      "address_unpatched": "0x1C0007890",
+      "address_patched": "0x140009BD0",
+      "similarity": 0.5,
+      "change_type": "hardening_defense_in_depth",
+      "key_changes": [
+        "Input copy 'memmove(&local, input, len)' replaced with RtlCopyFromUser(&local, input, len)",
+        "ProbeForWrite(Address, Length, 1) on the user output buffer is present in BOTH builds (pcw_unpatched.c:2440, pcw_patched.c:2128)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the fast-IO device-control dispatch through which all user IOCTLs to \\Device\\PcwDrv are serviced (DriverEntry sets FastIoDispatch and only MajorFunction[IRP_MJ_CREATE]). It probes the output, copies the input into a kernel-stack local, then calls handler(&local, Address, &Length). The output validation the notification handlers rely on lives here and is unchanged; only the input copy was modernized to RtlCopyFromUser."
+    },
+    {
+      "name": "AllocatedUnicodeString::Capture / PCW_SILO_NEUTRAL_COUNTERSET::FindOrCreate",
+      "similarity": 0.0,
+      "change_type": "refactor_no_op",
+      "key_changes": [
+        "Added a SafeInt-style multiply-overflow guard on the allocation size (2 * (len+1))"
+      ],
+      "security_relevant": false,
+      "security_notes": "The multiplicand derives from a 16-bit UNICODE_STRING.Length (masked to 0xFFFE, then >>1 <= 0x7FFF), so 2*(len+1) maxes at 0x10000 in a 64-bit computation and the overflow guard can never fire. Dead-code defense-in-depth bundled with the recompile, not a reachable integer-overflow fix."
+    },
+    {
+      "name": "CompleteInFlightNotification / Disconnect@PCW_USER_REGISTRATION / ~PCW_QUERY (representative)",
+      "similarity": 0.0,
+      "change_type": "refactor_no_op",
+      "key_changes": [
+        "Added 'if (ptr != nullptr)' before ExFreePoolWithTag on a just-unlinked list node"
+      ],
+      "security_relevant": false,
+      "security_notes": "In each case the freed pointer is a list node that is unconditionally dereferenced (ptr[1], *ptr, ptr[2]) immediately above the free, so it cannot be null at the free site; the added guard is a codegen no-op. The reference-count interlocked-decrement logic (…+19/+76, -1 == 1) is byte-for-byte identical in both builds. Not a double-free/UAF fix."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "RtlCopyToUser (0x140008008)",
+      "RtlWriteULong64ToUser (0x1400080B4)",
+      "RtlWriteULongToUser (0x1400080FC)",
+      "RtlWriteUCharToUser (0x14000806C)",
+      "RtlCopyFromUser (0x1400010E4)",
+      "RtlCopyVolatileMemory (and Rtl*ToUser call thunks)",
+      "wil_details_* feature-reporting routines and Feature_550970683 gate helpers"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "PCW_NOTIFIER::SendNotification",
+      "address_unpatched": "0x1C0008778",
+      "address_patched": "0x14000C754",
+      "status": "downgraded",
+      "prior_claim": "Arbitrary kernel write via missing ProbeForRead on a user-supplied output pointer (CWE-822), writing a kernel pool pointer to an attacker-chosen kernel address.",
+      "vulnerability_class": "No security-relevant change (user-mode write hardening)",
+      "description": "The unpatched build stores an 8-byte value to the caller's output pointer a6 with a direct 'mov [r15], rax' at 0x1C0008A3A; the patched build replaces that single store with 'call RtlWriteULong64ToUser' at 0x14000CA23. This is not an arbitrary kernel write for three independent reasons: (1) the value is size/count metadata, not a pointer - HIDWORD = notification->[0x40] (accumulated reply size), LODWORD = notification->[0x48] (responding-instance count), read at 0x1C00089F3/0x1C00089F6; (2) the output pointer a6 is the dispatch's Address, already validated by ProbeForWrite(Address, Length, 1) in PcwpFastIoDeviceControl before any handler runs, in BOTH builds; (3) the write executes only when size <= a7 (the caller-supplied output length), so it stays inside the probed range. RtlWriteULong64ToUser re-validates the same destination (fallback ProbeForRead(dst,8,1) then *dst=value, or the OS routine cached at qword_140006400). Note the companion store '*a8 = size' remains a direct store in both builds because a8 = &Length is a kernel stack local, confirming a6 (user) and a8 (kernel) have different provenance.",
+      "primitive": "None. A length-bounded write of non-pointer size/count metadata into an already-ProbeForWrite-validated user output buffer.",
+      "evidence": "UNPATCHED @ 0x1C0008A3A:  mov [r15], rax           ; r15 = a6, rax = (size<<32)|count\nPATCHED  @ 0x14000CA23:  call RtlWriteULong64ToUser ; rcx = a6, rdx = value\nBoth builds, dispatch: ProbeForWrite(Address, Length, 1) on the output (pcw_unpatched.c:2440, pcw_patched.c:2128).\nRtlWriteULong64ToUser @ 0x1400080B4 fallback: ProbeForRead(dst, 8, 1) then mov [dst], value."
+    },
+    {
+      "severity": "none",
+      "function": "PCW_NOTIFICATION::CopyToNotificationBuffer",
+      "address_unpatched": "0x1C00081A8",
+      "address_patched": "0x14000BB04",
+      "status": "downgraded",
+      "prior_claim": "Missing ProbeForRead on a user data source buffer enabling a cross-process kernel information disclosure (CWE-822).",
+      "vulnerability_class": "No security-relevant change (user-mode write hardening); the prior read/write direction was reversed",
+      "description": "The unpatched build copies a 16-byte reply-item header with 'movups xmm0,[rdi]' (0x1C0008260) then 'movdqu [rax+rcx],xmm0' (0x1C0008263) after KeStackAttachProcess; the patched build replaces the pair with 'call RtlCopyToUser' at 0x14000BBDC. The protected operation is the WRITE into the target process's user-mode collection buffer, not a read of an attacker source. The source a2/rdi is a PCW_REPLYITEM_BUFFER built on the kernel stack by CompleteInFlightNotification (a _DWORD v20[10] local passed down through Complete). The destination is this->buffer_base(0x30) + this->offset(0x40), inside the attached process's user buffer, which RtlCopyToUser validates. The size/alignment and capacity bounds check (new_offset > this->[0x3c] -> early return) is unchanged in both builds, and the bulk payload still goes through MmCopyVirtualMemory. No unprobed read of user memory exists in either build.",
+      "primitive": "None. A validated 16-byte header write into an attached process's user buffer, sourced from a kernel-stack structure.",
+      "evidence": "UNPATCHED @ 0x1C0008260/0x1C0008263: movups xmm0,[rdi]; movdqu [rax+rcx],xmm0\nPATCHED  @ 0x14000BBDC: call RtlCopyToUser (dst = provider_buffer+offset, src = a2 kernel-stack header, len = 0x10)\nRtlCopyToUser @ 0x140008008 fallback: ProbeForRead(dst, len, 1) then RtlCopyVolatileMemory(dst, src, len)."
+    },
+    {
+      "severity": "none",
+      "function": "SepSddlSecurityDescriptorFromSDDLString",
+      "address_unpatched": "0x1C000C188",
+      "status": "downgraded",
+      "prior_claim": "Uninitialized kernel pool memory disclosure via a security descriptor buffer not zeroed after ExAllocatePool2 (CWE-908).",
+      "vulnerability_class": "No security-relevant change (statically-linked library recompile)",
+      "description": "SepSddlSecurityDescriptorFromSDDLString is a statically-linked copy of the kernel SDDL-string-to-security-descriptor parser, not PCW-specific code. The patched build zeroes the ExAllocatePoolWithTag pool buffer before population. It changed together with a whole block of copied security/registry library routines (SeSddl*, SepSddlAddAceToAcl, SepSddlGetAclForString, SepSddlGetSidForString, SepSddlParseWideStringUlong, SeUtilSecurityInfoFromSecurityDescriptor, CmRegUtil*, Pi/PpRegState*, IoDevObj*) - the signature of a library rebuild. The added zeroing is defense-in-depth inside library code, not a fix for an attacker-reachable pcw.sys information leak.",
+      "primitive": "None.",
+      "evidence": "UNPATCHED SepSddlSecurityDescriptorFromSDDLString: ExAllocatePoolWithTag(...) used without zeroing the pool buffer.\nPATCHED equivalent: memset(pool, 0, size) added after ExAllocatePoolWithTag. Whole Se*/Sep*/CmRegUtil* family changed together."
+    },
+    {
+      "severity": "none",
+      "function": "PcwpCreateAllowedDacl",
+      "address_unpatched": "0x1C000A8D4",
+      "address_patched": "0x14000EAF0",
+      "status": "downgraded",
+      "prior_claim": "NULL pointer dereference DoS: RtlCreateAcl called on an unchecked ExAllocatePool2 result (CWE-476); patch adds 'if (!arg1) return STATUS_NO_MEMORY'.",
+      "vulnerability_class": "No security-relevant change (refactor artifact; the added guard does not test the allocation)",
+      "description": "The patched build adds a 'test rdi, rdi / jnz' guard at 0x14000EB89 that returns 0xC0000017 on the null branch, but rdi is the first argument a1 (the &unique_ptr<_ACL> container), not the ExAllocatePool2 result (rax, stored to [rdi] at 0x14000EB73). a1 is passed as &P from PcwpCreateDefaultSecurityDescriptor and is never null, so the new else-branch is dead code and RtlCreateAcl still receives the raw (possibly-null) allocation exactly as before. The routine also runs only on the security-descriptor setup path with a fixed set of SIDs, not on an attacker-controlled path. No reachable NULL-deref DoS is fixed.",
+      "primitive": "None.",
+      "evidence": "PATCHED asm: call ExAllocatePool2; mov [rdi], rax (@0x14000EB73); ... test rdi, rdi (@0x14000EB89); jnz -> RtlCreateAcl(*a1); else mov eax, 0C0000017h. The tested register rdi is a1, not the allocation result rax."
+    },
+    {
+      "severity": "none",
+      "function": "PCW_USER_REGISTRATION::SendNotificationToRegistration",
+      "address_unpatched": "0x1C00085B0",
+      "address_patched": "0x14000CA9C",
+      "status": "downgraded",
+      "prior_claim": "Incorrect ExFreePoolWithTag(nullptr, 0) leaking an old ACL buffer, corrected to ExFreePoolWithTag(*arg1, 0) (CWE-401).",
+      "vulnerability_class": "No security-relevant change (decompiler-variable noise; misattributed function)",
+      "description": "This function is SendNotificationToRegistration (it inserts a pending-notification node into a registration list), not an ACL buffer manager, and contains no ACL allocation. The ExFreePoolWithTag call is a rollback path guarded by a non-null test in both builds; on the allocation-success path the pointer is null so the free never executes, and on failure the enclosing flag guard is false. The only difference is that the decompiler names the null-initialized rollback pointer 'P' (unpatched) and 'v8' (patched) - the same value. No incorrect free and no leak fix.",
+      "primitive": "None.",
+      "evidence": "Both builds: 'if ((v4 & 1) != 0 && ptr != nullptr && _InterlockedExchangeAdd(ptr+19, -1) == 1) ExFreePoolWithTag(ptr, 0)', where ptr is null on the reachable path. Unpatched calls the variable P, patched calls it v8."
+    }
+  ],
+  "summary": "No delivered security fix could be substantiated for pcw.sys in this servicing release (KB5094128; no CVE attributed to the component). The change set is an SDK/toolchain rebuild: direct writes to user-mode output buffers are re-routed through the standard safe user-mode accessors RtlCopyToUser / RtlWriteULong64ToUser / RtlCopyFromUser (PcwpWriteToUserBuffer, PCW_NOTIFIER::SendNotification, PCW_NOTIFICATION::CopyToNotificationBuffer, and the fast-IO input copy). The earlier 'missing ProbeForRead -> arbitrary kernel write / kernel info disclosure' thesis does not hold: the user output buffer is already validated with ProbeForWrite(Address, Length, 1) in PcwpFastIoDeviceControl in BOTH builds, the value written by SendNotification is size/count metadata rather than a kernel pointer, and the CopyToNotificationBuffer change protects a WRITE into an attached process's user buffer from a kernel-stack source (the prior read/write direction was reversed). The remaining flagged items are not security fixes: the SepSddl memset is statically-linked SDDL library churn, the PcwpCreateAllowedDacl guard tests the container pointer rather than the allocation (dead branch, allocation still unchecked), and the SendNotificationToRegistration ExFreePoolWithTag is a guarded, unreachable rollback free misattributed to ACL management. An independent content-matched diff of all changed functions found no added bounds/overflow check on a reachable attacker-controlled size (two SafeInt guards are dead given 16-bit length inputs), no altered reference-count/free/completion semantics (added null-checks are no-ops on already-dereferenced pointers), and no reversed security condition. The only feature-gated behavioral difference (PCW_NOTIFIER::SendDisconnectNotification under the WIL Feature_550970683 gate) is a staged rollout with the old path retained, not a delivered security change."
+}

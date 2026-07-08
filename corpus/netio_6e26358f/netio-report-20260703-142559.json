@@ -1,0 +1,118 @@
+{
+  "binaries": {
+    "title": "netio.sys - No security-relevant change (WIL feature-staging graduation and compiler inlining)",
+    "id_unpatched": "netio_unpatched.sys",
+    "id_patched": "netio_patched.sys",
+    "overall_similarity": 0.9717,
+    "matched": 1856,
+    "changed": 56,
+    "identical": 1800,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NsiEnumerateObjectsAllParametersEx",
+      "similarity": 0.7391,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched @ 0x14002F8D0, patched @ 0x14002F5C0",
+        "Patched build inlines the out-of-line context-release chain that unpatched reaches via NsipDereferenceNmpContext (0x140030330) on its LABEL_55 release path",
+        "The inlined chain corresponds to NsipDereferenceNmpContext -> NmrClientDetachProviderComplete -> NmrpGetBindingFromHandle -> NmrpDetachProviderComplete -> NmrpDereferenceBinding, all of which exist in the unpatched build",
+        "The object-magic check (0x6c43 == 27715), the interlocked refcount operation, both KeBugCheckEx(0x125, ...) assertions, and the NmrpDereferenceBinding cleanup are present in BOTH builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The earlier claim that an unvalidated iterator (sub_1400759d0) was replaced by a validating one (sub_1400742a0) is not supported: neither address exists in either binary, and there is no object-iteration while-loop in this function. The only real difference is that the patched build inlines the reference-release chain that the unpatched build calls out-of-line. Every lifecycle assertion credited to the patch already exists unpatched: the magic-value check with KeBugCheckEx(0x125,1) in NmrpGetBindingFromHandle (0x14004BB54), and the interlocked refcount check with KeBugCheckEx(0x125,3) plus NmrpDereferenceBinding in NmrpDetachProviderComplete (0x140048C84). Direction: no check added, no check removed.",
+      "assembly_diff": "Unpatched callee NmrpGetBindingFromHandle @0x14004BB54: 0x14004BB60 mov edx,6C43h; 0x14004BB65 cmp ax,dx; 0x14004BBA5 call KeBugCheckEx. Unpatched callee NmrpDetachProviderComplete @0x140048C84: 0x140048C8D lock xadd [rcx+50h],eax; 0x140048CB1 call KeBugCheckEx; 0x140048CBE call NmrpDereferenceBinding. Patched NsiEnumerateObjectsAllParametersEx @0x14002F5C0 inlines the same: 0x14002FF29 lock xadd [r13+0],eax; 0x14002FFB8 mov ecx,6C43h; 0x14002FFC3 lock xadd [r8+4],r12d; 0x14002FFEC call KeBugCheckEx; 0x14002FFFD call NmrpDereferenceBinding."
+    },
+    {
+      "name": "DeleteFilterFromIndex",
+      "similarity": 0.8837,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched @ 0x140040F80, patched @ 0x14004C8DC",
+        "Acquisition of gLayerStatsLock and the AreAllIpv4InLayersEmpty update are gated in the unpatched build behind WIL staged features Feature_Firewall_Rules_Filters_Performance_Counters and Feature_Netsec_BugFixes_25C_Loopback_Checksum_Injection",
+        "Patched build graduates the feature to always-on: gLayerStatsLock is always taken around the statistics update (WfpAcquireFastWriteLock / WfpReleaseFastWriteLock)",
+        "The statistics counter decrement (_InterlockedDecrement) is atomic in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The gate is a WIL feature flag (Feature_Firewall_Rules_Filters_Performance_Counters__private_IsEnabledDeviceUsageNoInline), not a global data_14009b248 flag, and the helper sub_140044424 does not exist. The lock protects layer-statistics counters, not the filter object; the counter update is atomic in both builds. This is a staged-feature rollout of performance counters, not a fix for a race on shared filter data.",
+      "assembly_diff": "Unpatched DeleteFilterFromIndex @0x140040F80: 0x14004117A mov eax, Feature_Netsec_BugFixes_25C_Loopback_Checksum_Injection__private_featureState; 0x140041189 call Feature_Netsec_BugFixes_25C_Loopback_Checksum_Injection__private_IsEnabledDeviceUsageNoInline; 0x1400411B3 call Feature_Firewall_Rules_Filters_Performance_Counters__private_IsEnabledDeviceUsageNoInline; 0x1400411E0 call WfpAcquireFastWriteLock; 0x140041237 call NdisReleaseRWLock."
+    },
+    {
+      "name": "NsipValidateEnumerateObjectsAllParametersRequest",
+      "similarity": 0.5465,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched @ 0x140030390, patched @ 0x14004D590",
+        "Parameter-buffer size checks (request fields at 0x38/0x40, 0x48/0x50, 0x58/0x60 vs the module descriptor's expected sizes) are gated in the unpatched build behind WIL staged feature Feature_TCPIP_2025_Wave2_NsiVersioning",
+        "Patched build performs the same checks unconditionally (feature graduated to always-on)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The gate is the WIL feature Feature_TCPIP_2025_Wave2_NsiVersioning__private_IsEnabledDeviceUsageNoInline, not a global data_14009b200 flag or sub_14005ea18. The checks validate a new versioned request format; graduating the feature to always-on enables them. This is a staged feature rollout, not the removal of a gate on validation of an already-shipping path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140030ed0",
+      "similarity": 0.6186,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same WIL feature-staging pattern as NsipValidateEnumerateObjectsAllParametersRequest: validation gated behind a Feature_TCPIP_2025_Wave2_* staged feature in the unpatched build, made unconditional in the patched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. Feature-staging graduation, same nature as NsipValidateEnumerateObjectsAllParametersRequest.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_140013030",
+      "similarity": 0.7167,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inline RWLock/statistics code extracted to a helper function"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring only. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FeInit",
+      "similarity": 0.8833,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WFP filter-engine initialization refactored; conditional (WIL-gated) init replaced with unconditional init",
+        "Runs once during driver load"
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization function; the changes are refactoring plus feature-staging graduation applied at load time. Not reachable as an attacker primitive.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NetioLookupForwardFlow",
+      "similarity": 0.9629,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Loop iteration restructured; variable renaming. No logical impact."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NsiGetParameterEx",
+      "similarity": 0.9211,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Same WIL feature-staging pattern (gated validation made unconditional) as the other NSI request functions"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staging graduation, same nature as the other NSI functions. Not a security fix.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change was delivered by this patch. The three areas originally flagged are explained by compiler inlining and WIL feature-staging graduation, with all relevant checks present in BOTH builds. (1) NsiEnumerateObjectsAllParametersEx (unpatched 0x14002F8D0, patched 0x14002F5C0): the patched build inlines the out-of-line reference-release chain (NsipDereferenceNmpContext -> NmrClientDetachProviderComplete -> NmrpGetBindingFromHandle -> NmrpDetachProviderComplete -> NmrpDereferenceBinding). The object-magic check (0x6c43), interlocked refcount operation, both KeBugCheckEx(0x125,...) assertions, and NmrpDereferenceBinding cleanup already exist in the unpatched build inside those callees; no check was added or removed. The functions sub_1400759d0/sub_1400742a0 cited by the original draft do not exist in either binary. (2) DeleteFilterFromIndex: the layer-statistics lock is gated behind the WIL feature Feature_Firewall_Rules_Filters_Performance_Counters in the unpatched build and graduated to always-on in the patched build; the counter decrement is atomic in both. (3) NsipValidateEnumerateObjectsAllParametersRequest: buffer-size validation is gated behind the WIL feature Feature_TCPIP_2025_Wave2_NsiVersioning in the unpatched build and made unconditional in the patched build. An independent content-matched diff shows the remaining changed set is dominated by WPP/ETW tracing churn, WIL feature-staging plumbing, new staged features (audit mode, NSI versioning), and function relocation/inlining; no omitted security-relevant fix was found."
+}

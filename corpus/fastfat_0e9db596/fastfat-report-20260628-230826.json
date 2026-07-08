@@ -1,0 +1,140 @@
+{
+  "binaries": {
+    "title": "fastfat.sys (Windows FAT Filesystem Driver) - EFS Size-Arithmetic Hardening",
+    "id_unpatched": "fastfat_unpatched.sys",
+    "id_patched": "fastfat_patched.sys",
+    "overall_similarity": 0.8428,
+    "matched": 800,
+    "changed": 484,
+    "identical": 316,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EfspConstructNewPfileHeader (sub_1c0009be8) -> sub_14000a3a4",
+      "similarity": 0.9086,
+      "change_type": "hardening",
+      "key_changes": [
+        "UNPATCHED: Size computation (rax_10 = rdx_3 + (s - a); alloc_size = rax_10 + 0x20) validated with a sequence of inline sign-bit comparisons plus a final alloc_size > 0xffffffff range check and an alloc_size >= 0x20 gate",
+        "PATCHED: The additions are performed through the checked-add helper sub_14000a810 (three call sites: rdx_3 + rcx_4, result + 0x20, and DataOffset + rcx_4), which returns STATUS_INTEGER_OVERFLOW on any sign-inconsistent sum; the > 0xffffffff range check and >= 0x20 gate are retained",
+        "PATCHED: Pool allocation migrated from ExAllocatePoolWithTag(PagedPool, size, 0x6d736645) to ExAllocatePool2(POOL_FLAG_PAGED, size, 0x6d736645)",
+        "PATCHED: Sensitive key-buffer zeroing changed from memset to a manual loop"
+      ],
+      "security_relevant": false,
+      "security_notes": "CWE-190 integer-overflow hardening of a PagedPool size computation. The size inputs DataOffset (*(r12+r13+0x32)), DataLength (*(r12+r13+0x36)), the EFS stream size s, and the base offset a (var_90+8) are all read as 32-bit fields, so rax_10 = rdx_3 + (s - a) stays within roughly +/- 2^33 and cannot approach a 64-bit wrap. In the unpatched build the inline sign-bit checks together with the alloc_size > 0xffffffff and alloc_size >= 0x20 gates already bound the allocation to [0x20, 0xffffffff], which matches the amount written into the 'Efsm' block (0x20 bytes plus a 16-byte UUID). The descriptor and stream data are copied via memmove (sub_1c000e600) into a separate PFile-stream buffer returned by EfspAquirePFileStream, not into the 'Efsm' allocation. The patch reaches the same allocation size through the checked-add helper sub_14000a810 and moves to the modern ExAllocatePool2 API; both builds produce the same size for every input, so the change is defense-in-depth rather than a fix for a reachable under-allocation.",
+      "assembly_diff": "// UNPATCHED EfspConstructNewPfileHeader (sub_1c0009be8) - size validation:\n//   0x1C0009CCF mov ecx,[r12+r13+32h]   ; DataOffset (32-bit)\n//   0x1C0009CD4 mov edx,[r12+r13+36h]   ; DataLength (32-bit)\n//   0x1C0009CD9 add edx,ecx ; cmp edx,ecx ; jb overflow  (32-bit carry check)\n//   0x1C0009CE3 cmp edx,r14d ; jbe continue             (rdx_3 <= caller size)\n//   0x1C0009D06 eax=a; ecx=s; sub rcx,rax -> rcx_4 = s - a\n//   0x1C0009D11 add rax,rcx -> rax_10 = rdx_3 + rcx_4\n//   0x1C0009D1E..D30 sign-bit consistency checks\n//   0x1C0009D36 lea r14,[rax+20h] -> alloc_size\n//   0x1C0009D53 cmp r14,0xffffffff ; ja overflow\n//   0x1C0009D5C cmp r14d,20h ; jnb allocate\n//   0x1C0009D78 call ExAllocatePoolWithTag(ecx=1 PagedPool, edx=alloc_size, r8d='Efsm')\n//   'Efsm' block receives 0x20 bytes + a UUID; memmove targets the separate PFile-stream buffer.\n//\n// PATCHED sub_14000a3a4:\n//   0x14000A4E4 call sub_14000a810(rdx_3, rcx_4, &acc)      ; checked add\n//   0x14000A500 call sub_14000a810(acc, 0x20, &acc)         ; checked add + 0x20\n//   0x14000A518 cmp r15,0xffffffff ; ja overflow\n//   0x14000A521 cmp r15d,20h ; jnb allocate\n//   0x14000A53D call ExAllocatePool2(0x100 POOL_FLAG_PAGED, r15d, 'Efsm')\n//\n// sub_14000a810: r10=rcx+rdx; verify sign consistency vs 0x7FFFFFFFFFFFFFFF; return 0xC0000095 on wrap, else store sum via [r8]."
+    },
+    {
+      "name": "DplWrapProtect (sub_1c0008008) (DPL wrap encryption - AES-CBC/HMAC-SHA256)",
+      "similarity": 0.7343,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Migrates ExAllocatePoolWithTag(NonPagedPoolNx, ...) to ExAllocatePool2(0x40, ...) throughout",
+        "Replaces inline field truncation (0xffff clamps for arg7 struct fields) with helper functions sub_140009954 and sub_14000992c that perform overflow-checked size computations",
+        "Changes __builtin_memset zeroing of 32-byte key buffers to manual loop-based zeroing",
+        "Struct offsets shifted by +0x10 consistently (compiler/version difference)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Version-level API migration and compiler differences. No security-relevant logic change; the encryption routine's overflow checks were already present inline (sbb patterns) in the unpatched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FatSetupAllocationSupport (sub_1c0025258)",
+      "similarity": 0.6186,
+      "change_type": "behavioral",
+      "key_changes": [
+        "VCB struct offsets shifted by +0x10 throughout (layout change between versions)",
+        "Reorganizes overflow/bounds checks: the patched build folds a rcx < rdx_2 bound into the initial overflow check; the unpatched build checks it at a later label",
+        "Both builds check the same conditions in different code organization"
+      ],
+      "security_relevant": false,
+      "security_notes": "Structural reorganization with equivalent validation. The patched build folds a bounds check into the initial overflow check while the unpatched build checks it at a later label. Logically equivalent for all inputs.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FatDefragDirectory (sub_1c0038518)",
+      "similarity": 0.9347,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts (+0x10 for VCB fields: 0x130->0x140, 0xc0->0x190, 0x98 list head comparison changed)",
+        "Resource list traversal changed from do-while to for-loop (compiler difference)",
+        "ExAllocatePoolWithTag used in both builds (no API migration here)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct layout and compiler differences. The directory defragmentation logic is identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FatCommonWrite (sub_1c004f438)",
+      "similarity": 0.8075,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Struct offset shifts throughout (+0x10)",
+        "Call target addresses updated for helper functions",
+        "Logic flow is equivalent between both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "Common write path with offset shifts and call-target updates. No security-relevant logic change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "EfspConstructNewPfileHeader (sub_1c0009be8) -> sub_14000a3a4",
+      "entry_point": "EFS post-create data path on an EFS-enabled FAT/FAT32 volume",
+      "call_chain": [
+        "File open on an EFS-tagged file (FatEnableEfs set)",
+        "EfspPostCreateImpersonateAndGetData (0x1C0056738), call site 0x1C0056888",
+        "EfspConstructNewPfileHeader (sub_1c0009be8) - builds the EFS PFile header and computes the pool size",
+        "ExAllocatePoolWithTag(PagedPool, alloc_size, 0x6d736645) - allocation bounded to [0x20, 0xffffffff]",
+        "memmove (sub_1c000e600) - copies descriptor/stream data into the separate EfspAquirePFileStream buffer"
+      ],
+      "vulnerability_class": "CWE-190 integer-overflow hardening of a pool-size computation (defense-in-depth)",
+      "description": "EfspConstructNewPfileHeader (sub_1c0009be8) builds an EFS PFile header for a file on a FAT volume. It reads two 32-bit descriptor fields, DataOffset (*(r12+r13+0x32)) and DataLength (*(r12+r13+0x36)), forms rdx_3 = DataOffset + DataLength (with a 32-bit carry check), computes rcx_4 = s - a from two other 32-bit locals (s = EFS stream size, a = var_90+8 base offset), and forms rax_10 = rdx_3 + rcx_4. The allocation size is rax_10 + 0x20. Because all inputs are 32-bit-derived, rax_10 cannot approach a 64-bit wrap. The unpatched build validates the additions with inline sign-bit comparisons plus alloc_size > 0xffffffff and alloc_size >= 0x20 gates, which already bound the allocation to [0x20, 0xffffffff]. The 'Efsm' block receives only 0x20 bytes plus a 16-byte UUID; the larger memmove operations write into a separate PFile-stream buffer returned by EfspAquirePFileStream. The patched build performs the same additions through the checked-add helper sub_14000a810 and allocates via ExAllocatePool2(POOL_FLAG_PAGED). Both builds compute the same allocation size for every input, so this is a hardening/refactor change, not a reachable memory-corruption fix.",
+      "trigger_conditions": "1. EFS on FAT enabled (HKLM\\SYSTEM\\CurrentControlSet\\Services\\Fastfat\\FatEnableEfs = 1). 2. A FAT/FAT32 volume with an EFS-tagged file. 3. Opening the file drives EfspPostCreateImpersonateAndGetData, which calls EfspConstructNewPfileHeader and runs the size computation. Both builds validate DataOffset+DataLength carry, rdx_3 <= caller size, alloc_size <= 0xffffffff, and alloc_size >= 0x20 before allocating.",
+      "primitive": "None demonstrated. The allocation size is bounded to [0x20, 0xffffffff] in both builds and matches the 0x20 bytes plus UUID written into the 'Efsm' block; the descriptor/stream copies target a separate buffer. The change is a defense-in-depth migration to a checked-add helper and ExAllocatePool2.",
+      "evidence": "// UNPATCHED EfspConstructNewPfileHeader (sub_1c0009be8):\nrcx_4  = s - a;                    // 32-bit locals\nrax_10 = rdx_3 + rcx_4;            // rdx_3 = 32-bit DataOffset+DataLength\nif (!(rcx_4>>63) && (rax_10>>63)) rbx = STATUS_INTEGER_OVERFLOW;   // sign check #1\nelse {\n    r14 = rax_10 + 0x20;\n    if (rax_10>=0 && (rax_10>>63)!=(r14>>63)) rbx = STATUS_INTEGER_OVERFLOW; // sign check #2\n    else if (r14 > 0xffffffff) rbx = STATUS_INTEGER_OVERFLOW;               // 32-bit range check\n    else if (r14 >= 0x20)\n        P = ExAllocatePoolWithTag(PagedPool, r14, 0x6d736645);            // 0x20 bytes + UUID written into P\n}\n\n// PATCHED sub_14000a3a4:\nif (sub_14000a810(rdx_3, rcx_4, &acc) >= 0 &&\n    sub_14000a810(acc, 0x20, &acc) >= 0) {\n    if (acc > 0xffffffff) rbx = STATUS_INTEGER_OVERFLOW;\n    else if (acc >= 0x20)\n        P = ExAllocatePool2(0x100 /*POOL_FLAG_PAGED*/, acc, 0x6d736645);\n}",
+      "assembly": "// Unpatched EfspConstructNewPfileHeader (sub_1c0009be8) @ 0x1C0009BE8, size validation:\n// 0x1C0009CCF mov ecx,[r12+r13+32h]  ; DataOffset (32-bit)\n// 0x1C0009CD4 mov edx,[r12+r13+36h]  ; DataLength (32-bit)\n// 0x1C0009CD9 add edx,ecx ; 0x1C0009CDB cmp edx,ecx ; 0x1C0009CDD jb overflow  (carry check)\n// 0x1C0009D06 eax=a; ecx=s; 0x1C0009D0C sub rcx,rax -> rcx_4 = s - a\n// 0x1C0009D11 add rax,rcx -> rax_10 = rdx_3 + rcx_4\n// 0x1C0009D36 lea r14,[rax+20h] -> alloc_size\n// 0x1C0009D53 cmp r14,0xffffffff ; 0x1C0009D56 ja overflow\n// 0x1C0009D5C cmp r14d,20h ; 0x1C0009D60 jnb allocate\n// 0x1C0009D78 call ExAllocatePoolWithTag (ecx=1 PagedPool, edx=alloc_size, r8d=0x6d736645 'Efsm')\n// 0x1C0009DD0 call memmove (sub_1c000e600) into the PFile-stream buffer rsi (not the 'Efsm' block)\n//\n// Patched sub_14000a3a4 @ 0x14000A3A4:\n// 0x14000A4E4 call sub_14000a810 (checked add rdx_3 + rcx_4)\n// 0x14000A500 call sub_14000a810 (checked add + 0x20)\n// 0x14000A518 cmp r15,0xffffffff ; ja overflow\n// 0x14000A53D call ExAllocatePool2(0x100, r15d, 0x6d736645)\n// sub_14000a810 @ 0x14000A810 returns STATUS_INTEGER_OVERFLOW (0xC0000095) on any sign-inconsistent sum.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fastfat_unpatched!EfspConstructNewPfileHeader",
+            "address": "0x1C0009BE8",
+            "why": "Entry to the EFS PFile-header builder. arg1 (rcx) is the stream/context pointer; the function reads the EFS descriptor fields and computes the pool size."
+          },
+          {
+            "symbol": "fastfat_unpatched!ExAllocatePoolWithTag",
+            "address": "0x1C0009D78 call site",
+            "why": "Inspect the size: ecx = 1 (PagedPool), edx = alloc_size, r8d = 0x6d736645 ('Efsm'). alloc_size is bounded to [0x20, 0xffffffff] by the preceding checks."
+          }
+        ],
+        "watch": [
+          "rax_10 = rdx_3 + (s - a) after 0x1C0009D11 - stays within roughly +/- 2^33 (32-bit inputs)",
+          "rdx_3 = *(r12+r13+0x36) + *(r12+r13+0x32) - DataLength + DataOffset (32-bit, carry checked at 0x1C0009CDB)",
+          "r14 = rax_10 + 0x20 at 0x1C0009D36 - alloc_size; rejected at 0x1C0009D56 if > 0xffffffff",
+          "Pool tag 0x6d736645 ('Efsm') and PoolType ecx=1 at the 0x1C0009D78 call",
+          "memmove (sub_1c000e600) length at 0x1C0009DD0 targets the PFile-stream buffer rsi, not the 'Efsm' block rdi"
+        ],
+        "key_offsets": [
+          "0x1C0009CCF: read DataOffset (*(r12+r13+0x32))",
+          "0x1C0009CD4: read DataLength (*(r12+r13+0x36))",
+          "0x1C0009D06: rcx_4 = s - a; rax_10 = rdx_3 + rcx_4",
+          "0x1C0009D36: r14 = rax_10 + 0x20 (alloc_size)",
+          "0x1C0009D53: cmp r14, 0xffffffff ; ja overflow (32-bit range gate)",
+          "0x1C0009D78: ExAllocatePoolWithTag(PagedPool, alloc_size, 'Efsm')",
+          "0x1C0009DD0 / 0x1C0009E59 / 0x1C0009EBC: memmove into the PFile-stream buffer"
+        ],
+        "trigger_setup": "1. Enable EFS on FAT: HKLM\\SYSTEM\\CurrentControlSet\\Services\\Fastfat\\FatEnableEfs = 1. 2. Create a FAT32 volume (VHD or USB) with an EFS-tagged file. 3. Open the file to drive EfspPostCreateImpersonateAndGetData -> EfspConstructNewPfileHeader and the size computation. Both builds reject descriptor fields that would push the size past the 32-bit range or below 0x20.",
+        "expected_observation": "At the 0x1C0009D78 call the size in edx is a validated value in [0x20, 0xffffffff] with tag 'Efsm'. The 'Efsm' block receives 0x20 bytes plus a UUID; the memmove operations copy descriptor/stream data into the separate EfspAquirePFileStream buffer. The patched build reaches the same size through sub_14000a810 and allocates via ExAllocatePool2.",
+        "notes": "The unpatched image uses base 0x1c0000000; the patched image uses base 0x140000000 with +0x10 struct offset drift. EFS descriptor fields are at *(r12+r13+0x32) (DataOffset) and *(r12+r13+0x36) (DataLength), where r12 is the EFS context (Src) and r13 = *(r12+0x0e). Copy helper sub_1c000e600 is memmove. The checked-add helper sub_14000a810 in the patched build returns STATUS_INTEGER_OVERFLOW on any sign-inconsistent sum."
+      }
+    }
+  ],
+  "summary": "The patch hardens the pool-size arithmetic in the EFS PFile-header builder EfspConstructNewPfileHeader (sub_1c0009be8) of fastfat.sys, whose patched counterpart is sub_14000a3a4. The unpatched build validates the size computation (rax_10 = rdx_3 + (s - a); alloc_size = rax_10 + 0x20) with inline sign-bit comparisons plus alloc_size > 0xffffffff and alloc_size >= 0x20 gates. The patched build performs the same additions through the checked-add helper sub_14000a810 (returns STATUS_INTEGER_OVERFLOW on wrap) and migrates ExAllocatePoolWithTag(PagedPool) to ExAllocatePool2(POOL_FLAG_PAGED). All size inputs are 32-bit-derived, so the sum cannot approach a 64-bit wrap, and both builds bound the allocation to [0x20, 0xffffffff] - matching the 0x20 bytes plus UUID written into the 'Efsm' block, with descriptor/stream data copied via memmove into a separate PFile-stream buffer. The change is defense-in-depth (CWE-190 hardening), not a fix for a reachable under-allocation. The function is reached from EfspPostCreateImpersonateAndGetData (0x1C0056738), the EFS post-create data path."
+}

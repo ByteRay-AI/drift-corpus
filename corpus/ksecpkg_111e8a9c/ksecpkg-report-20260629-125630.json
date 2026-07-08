@@ -1,0 +1,211 @@
+{
+  "binaries": {
+    "title": "ksecpkg.sys - Missing minimum-length validation before TLS/DTLS record header reads (CWE-125) fixed",
+    "id_unpatched": "ksecpkg_unpatched.sys",
+    "id_patched": "ksecpkg_patched.sys",
+    "overall_similarity": 0.6942,
+    "matched": 458,
+    "changed": 294,
+    "identical": 164,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "Tls13DecryptHandler",
+      "address_unpatched": "0x1C000ADC4",
+      "address_patched": "0x140001680",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Adds an explicit minimum-record-length check before dereferencing fixed header byte offsets of the attacker-supplied record",
+        "New 'cmp edx,5; jb' at 0x140001723 (TLS header floor) before reading rec[1]/rec[3]/rec[4]",
+        "New 'cmp edx,0Dh; jb' at 0x140001865 (DTLS header floor, 13 bytes) before reading rec[0xB]/rec[0xC]",
+        "Unpatched had only 'cmp r8d,edx' at 0x1C000AE5E (cbBuffer >= cipher_overhead ctx[0x40]+ctx[0x44]) before those reads",
+        "edx/r8d is the record buffer length (SPBuffer cbBuffer at +4)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched build reads fixed record-header offsets (up to +0xC for DTLS) guarded only by a cipher-overhead comparison that does not guarantee the record is long enough; a truncated record can reach the reads and cause an out-of-bounds read of the input buffer. The patched build adds explicit >=5 (TLS) and >=13 (DTLS) minimum-length floors before the reads, returning STATUS_INVALID_TOKEN (0x80090318). CWE-125 out-of-bounds read; patched build is stricter.",
+      "assembly_diff": "; --- Unpatched (0x1C000AE5E) ---\ncmp     r8d, edx            ; cbBuffer >= cipher_overhead (ONLY guard)\njnb     0x1C000AE70\nmovzx   ecx, byte ptr [rdi+0Bh]  ; DTLS read, no >=13 guard (0x1C000AE8E)\nmovzx   eax, byte ptr [rdi+0Ch]\n; --- Patched (0x140001723 / 0x140001865) ---\ncmp     edx, 5              ; NEW TLS header floor\njb      0x1400018F3         ; -> 0x80090318\n...\ncmp     edx, 0Dh            ; NEW DTLS header floor (13)\njb      0x140001908         ; -> 0x80090318\nmovzx   ecx, byte ptr [r14+0Bh]  ; now guarded (0x14000186E)\nmovzx   eax, byte ptr [r14+0Ch]"
+    },
+    {
+      "name": "TlsDecryptHandler",
+      "address_unpatched": "0x1C0001770",
+      "address_patched": "0x140001980",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same minimum-record-length fix: new 'cmp edx,5' at 0x1400019FD and 'cmp edx,0Dh' at 0x140001A3A",
+        "Unpatched reads header offsets rec[0xB]/rec[0xC] (e.g. at 0x1C00051D9/0x1C00051DE) and rec[3]/rec[4] with no >=5/>=13 guard"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same CWE-125 out-of-bounds read hardening as Tls13DecryptHandler, applied to the TLS 1.0-1.2 record decrypt handler.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SslUnsealMessageStream",
+      "address_unpatched": "0x1C0001330",
+      "address_patched": "0x140001120",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same minimum-record-length fix at two record-parse sites: 'cmp r8d,5' at 0x140001234 and 0x14000154E; 'cmp r8d,0Dh' at 0x140001385 and 0x140001587",
+        "Unpatched reads header offsets rec[0xB]/rec[0xC] at 0x1C00014F0/0x1C00014F4 (and others) with no >=5/>=13 guard"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same CWE-125 out-of-bounds read hardening for the stream (TLS) unseal path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SslUnsealMessageConnection",
+      "address_unpatched": "0x1C000A6BC",
+      "address_patched": "0x140004D50",
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same minimum-record-length fix: 'cmp ecx,5' at 0x140004F8F and 'cmp ecx,0Dh' at 0x140004FDC",
+        "Unpatched reads rec[0xB]/rec[0xC] at 0x1C000A8FC/0x1C000A900 with no >=5/>=13 guard"
+      ],
+      "security_relevant": true,
+      "security_notes": "Same CWE-125 out-of-bounds read hardening for the connection unseal path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DigestKernelHTTPHelper",
+      "address_unpatched": "0x1C0006F00",
+      "address_patched": "0x14000956C",
+      "change_type": "no_security_change",
+      "key_changes": [
+        "The loop over the fixed 24-entry internal table at [arg1+0xA2] is unchanged in behavior; the loop counter edx runs 0..0x17 with a compile-time-constant bound (cmp edx,0x18), it is NOT an attacker-supplied element type",
+        "Both builds skip the identical index set {7,8,10} and copy all other indices when the entry's leading word is non-zero; unpatched via ((edx-7)&~3)==0 && edx!=9, patched via edx==8 || edx==10 || edx==7",
+        "DigestKernelGetNextSeqNumber (@0x1C0006E90) was inlined; the inlined code performs the same fast-mutex-protected increment of [ctx+0x54]",
+        "Register allocation differs (rsi/rdi roles swapped)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No behavioral change. The originally reported 'attacker-controlled element type dispatch' does not exist: edx is a fixed loop index (0..23) over an internal table, and the copy-skip predicate covers the identical value set {7,8,10} in both builds. The other differences are inlining of a helper that already used the same locking and register reallocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "strcat_s",
+      "address_unpatched": "0x1C0003480",
+      "address_patched": "0x140005768",
+      "change_type": "no_security_change",
+      "key_changes": [
+        "The copy loop is byte-for-byte identical in behavior in both builds; it writes one byte, returns success on the source NUL, otherwise decrements SizeInBytes and returns error 34 (ERANGE) at exactly zero",
+        "The patched build only removed dead instructions: 'mov rax,rdx; test rax,rax' in the destination-scan loop and 'test rdx,rdx; jnz' in the copy loop (rdx is provably 0 on the fall-through)",
+        "Every caller passes a compile-time constant size (0x3001 or 0x1001); the bound is not attacker-controlled"
+      ],
+      "security_relevant": false,
+      "security_notes": "No off-by-one in either build. The copy loop performs exactly SizeInBytes - strlen(dst) in-bounds writes and then returns ERANGE at the boundary. The originally reported 'else if (!arg2) break' one-iteration-late break does not exist; it is a misreading of the dead 'test rdx,rdx; jnz' pair that the patched build removed. The unpatched and patched decompilations are logically identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DigestCreateChalResp",
+      "address_unpatched": "0x1C00083CC",
+      "address_patched": "0x14000A980",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Digest response building reorganized",
+        "Uses fixed compile-time-constant buffers (0x3001 / 0x1001) with sprintf_s and strcat_s; buffer sizes unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security boundary change. Buffer sizes are constants and the bounded string helpers it calls are unchanged in behavior.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KerbMakeSignatureToken",
+      "address_unpatched": "0x1C00229F0",
+      "change_type": "behavioral",
+      "key_changes": [
+        "Kerberos signature-token formatting reorganized as part of the crypto refactor",
+        "Patched build adds the KerberosCryptoPolicy class family and Old-suffixed signature variants",
+        "Conditional logic restructured; no bounds or validation added or removed"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of the servicing/compiler rebuild that introduces the KerberosCryptoPolicy C++ class hierarchy. No attacker-reachable security boundary change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementOpportunityInCache",
+      "address_unpatched": "0x1C00042CC",
+      "change_type": "cosmetic",
+      "key_changes": ["WIL feature-usage telemetry; register allocation changes only", "No functional change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_IncrementUsageInCache",
+      "address_unpatched": "0x1C00043B4",
+      "change_type": "cosmetic",
+      "key_changes": ["WIL feature-usage telemetry; register allocation changes only", "No functional change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtLmInitKernelContext",
+      "address_unpatched": "0x1C001D530",
+      "change_type": "cosmetic",
+      "key_changes": ["Register renaming (rdx <-> rcx swaps)", "Allocation sizes bounded (< 0xffff) in both versions"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": ["TlsDecryptMessage (extracted record-decrypt helper present only in the patched build; carries the same >=5 / >=0xD length floors)"]
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "cwe": "CWE-125",
+      "function": "Tls13DecryptHandler / TlsDecryptHandler / SslUnsealMessageStream / SslUnsealMessageConnection",
+      "entry_point": "Schannel TLS/DTLS record decryption on an established context (SslUnsealMessage* / Tls*DecryptHandler)",
+      "call_chain": ["Inbound encrypted TLS/DTLS record", "Schannel record decrypt handler (SslUnsealMessage* / Tls*DecryptHandler)", "fixed-offset record header parse"],
+      "vulnerability_class": "Missing length validation before fixed-offset dereference of attacker-controlled input (out-of-bounds read)",
+      "description": "The Schannel record-decryption handlers read fixed byte offsets of an inbound record to obtain the version/type and declared length: offsets +1/+3/+4 for a TLS record (needs >=5 bytes) and +0xB/+0xC for a DTLS record (needs >=13 bytes). In the unpatched build the only length check before these reads is cbBuffer >= cipher_overhead (ctx[0x40]+ctx[0x44]), which does not guarantee the record contains the dereferenced header bytes. A truncated record that satisfies the overhead check but is shorter than the header reaches the reads and causes an out-of-bounds read of the input buffer. The patched build adds explicit 'cmp <recordlen>,5' and 'cmp <recordlen>,0Dh' floors before the reads at every record-parse entry point, returning STATUS_INVALID_TOKEN (0x80090318) for a too-short record. The out-of-bounds bytes feed a declared record length that is subsequently re-validated against cbBuffer, so the operation is a read (no write primitive).",
+      "trigger_conditions": "1. An established TLS or DTLS context handled by the kernel Schannel provider. 2. Send an encrypted record whose buffer length (SPBuffer cbBuffer at +4) satisfies cbBuffer >= cipher_overhead but is shorter than the header dereferenced: <5 bytes for TLS, or <13 bytes for a record whose version byte marks it DTLS (rec[1]==0xFE). 3. Reachability of a true out-of-bounds access depends on the negotiated cipher's cipher_overhead being smaller than the header length.",
+      "primitive": "Kernel out-of-bounds read (CWE-125) of a few bytes adjacent to the record buffer; realistic outcome is a read fault (DoS) or a parsing decision influenced by adjacent memory. No write primitive.",
+      "evidence": "; Unpatched Tls13DecryptHandler (0x1C000ADC4): only guard\ncmp     r8d, edx            ; 0x1C000AE5E  cbBuffer >= cipher_overhead\njnb     0x1C000AE70\nmovzx   ecx, byte ptr [rdi+0Bh]  ; 0x1C000AE8E  DTLS read, no >=13 guard\nmovzx   eax, byte ptr [rdi+0Ch]  ; 0x1C000AE92\n; Patched Tls13DecryptHandler (0x140001680): added floors\ncmp     edx, 5              ; 0x140001723  NEW TLS floor -> 0x80090318 if below\ncmp     edx, 0Dh            ; 0x140001865  NEW DTLS floor (13) -> 0x80090318 if below\nmovzx   ecx, byte ptr [r14+0Bh]  ; 0x14000186E  now guarded\nmovzx   eax, byte ptr [r14+0Ch]  ; 0x140001873\n; Same two constants added in: TlsDecryptHandler (0x1400019FD / 0x140001A3A), SslUnsealMessageStream (0x140001234,0x14000154E / 0x140001385,0x140001587), SslUnsealMessageConnection (0x140004F8F / 0x140004FDC). None present in the unpatched counterparts.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {"symbol": "ksecpkg_unpatched!Tls13DecryptHandler", "address": "0x1C000AE5E", "why": "The only pre-read length check (cbBuffer >= cipher_overhead). Inspect r8d (cbBuffer) and edx (overhead)."},
+          {"symbol": "ksecpkg_unpatched!Tls13DecryptHandler", "address": "0x1C000AE8E", "why": "Unguarded DTLS header read at rec[0xB]/rec[0xC]; reached when rec[1]==0xFE with only the overhead check upstream."},
+          {"symbol": "ksecpkg_patched!Tls13DecryptHandler", "address": "0x140001865", "why": "The new DTLS >=13 floor (cmp edx,0Dh) that gates the same reads in the patched build."}
+        ],
+        "watch": [
+          "cbBuffer = SPBuffer length field at +4 (record length)",
+          "cipher_overhead = ctx[0x40] + ctx[0x44]",
+          "record bytes rec[1] (version), rec[0xB]/rec[0xC] (DTLS length), rec[3]/rec[4] (TLS length)"
+        ],
+        "key_offsets": [
+          "0x1C000AE5E (unpatched): cmp r8d,edx - the sole length guard before header reads",
+          "0x1C000AE8E/0x1C000AE92 (unpatched): unguarded DTLS reads rec[0xB]/rec[0xC]",
+          "0x140001723 (patched): cmp edx,5 - new TLS header floor",
+          "0x140001865 (patched): cmp edx,0Dh - new DTLS header floor"
+        ],
+        "trigger_setup": "Drive an inbound TLS/DTLS record through a kernel Schannel context and supply a record shorter than the header offsets it dereferences while still satisfying cbBuffer >= cipher_overhead.",
+        "expected_observation": "Unpatched reaches movzx byte ptr [rec+0xB]/[rec+0xC] (or [rec+3]/[rec+4]) and reads past the buffer end; patched returns STATUS_INVALID_TOKEN (0x80090318) at the new cmp before the read.",
+        "notes": "Whether a truncated record can pass the overhead check while being below the header length depends on the negotiated cipher's cipher_overhead value (ctx[0x40]+ctx[0x44]), which was not established here; hence Medium severity."
+      }
+    }
+  ],
+  "downgraded_findings": [
+    {
+      "original_severity": "high",
+      "final_severity": "none",
+      "function": "DigestKernelHTTPHelper @ 0x1C0006F00 (unpatched) / 0x14000956C (patched)",
+      "original_claim": "Authentication token element-type validation bypass: unpatched range check (lea eax,[rdx-7]; test eax,0xfffffffc) let attacker-controlled element types 0x7 and 0xa reach a data-copy path, which the patch added validation for.",
+      "why_downgraded": "The loop is not driven by attacker input. edx is a fixed loop index initialized to 0 and bounded by the compile-time constant 0x18 (24), iterating an internal table at [arg1+0xA2] at 0x10-byte stride. Both builds skip the identical index set {7,8,10} and copy all other indices under the same non-zero-word condition: unpatched via ((edx-7)&~3)==0 && edx!=9, patched via explicit edx==8||edx==10||edx==7. No index is newly rejected or accepted, no validation was added or removed, and no memory-safety primitive exists. The only additional delta is inlining of DigestKernelGetNextSeqNumber (@0x1C0006E90), whose body performs the same fast-mutex-protected increment of [ctx+0x54] that the patched code now emits inline, plus register reallocation.",
+      "cwe": "None (no defect)"
+    },
+    {
+      "original_severity": "medium",
+      "final_severity": "none",
+      "function": "strcat_s @ 0x1C0003480 (unpatched) / 0x140005768 (patched)",
+      "original_claim": "Off-by-one in bounded string concatenation: unpatched 'else if (!arg2) break' fired one iteration late, writing one byte past the buffer.",
+      "why_downgraded": "There is no off-by-one in either build. The copy loop writes a byte, returns success on the source NUL, otherwise decrements the remaining size and returns error 34 (ERANGE) when it reaches 0; it performs exactly SizeInBytes - strlen(dst) in-bounds writes. The unpatched and patched decompilations are logically identical; the only instruction-level difference is removal of dead code ('mov rax,rdx; test rax,rax' and an unreachable 'test rdx,rdx; jnz' where rdx is provably 0). The claimed 'else if (!arg2) break' is a misreading of that dead pair. The size argument is a compile-time constant (0x3001/0x1001) at every call site, so it is not attacker-controlled.",
+      "cwe": "None (no defect)"
+    }
+  ],
+  "summary": "Audit result: the two changes originally flagged in this report are NOT security fixes, and the real delivered fix is elsewhere. In DigestKernelHTTPHelper (@0x1C0006F00 -> 0x14000956C) the flagged loop iterates a fixed 24-entry internal table by a compile-time-bounded index (edx, 0..0x17), not an attacker-supplied element type; both builds skip the identical index set {7,8,10} and merely re-encode the skip predicate. In strcat_s (@0x1C0003480 -> 0x140005768) both builds implement an identical, correct bounded concatenation; the only delta is removal of dead instructions, and every caller supplies a compile-time-constant size. The genuine security-relevant change is in the Schannel TLS/DTLS record-decryption handlers (Tls13DecryptHandler @0x1C000ADC4 -> 0x140001680, TlsDecryptHandler @0x1C0001770 -> 0x140001980, SslUnsealMessageStream @0x1C0001330 -> 0x140001120, SslUnsealMessageConnection @0x1C000A6BC -> 0x140004D50, plus a new extracted helper TlsDecryptMessage): the patched build adds explicit minimum-record-length floors (>=5 for a TLS header, >=13 for a DTLS header) before dereferencing fixed record-header offsets, whereas the unpatched build guarded those reads only with a cipher-overhead comparison that does not guarantee the bytes exist. This is a CWE-125 out-of-bounds read hardening; the patched build is stricter. Final verdict: real fix = missing minimum-length validation before TLS/DTLS record header reads (CWE-125, Medium); the two originally-reported findings are downgraded to No security-relevant change."
+}

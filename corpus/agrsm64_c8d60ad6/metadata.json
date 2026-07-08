@@ -1,0 +1,268 @@
+{
+  "binary": "agrsm64.sys",
+  "kb": "KB5078752",
+  "release_date": "2026-03-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-23671",
+      "title": "Windows Bluetooth RFCOM Protocol Driver Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        },
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-23672",
+      "title": "Windows Universal Disk Format File System Driver (UDFS) Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24285",
+      "title": "Win32k Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-24287",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-73",
+          "name": "External Control of File Name or Path"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24294",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25175",
+      "title": "Windows NTFS Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25176",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-25178",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-25179",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-1287",
+          "name": "Improper Validation of Specified Type of Input"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.0
+    },
+    {
+      "id": "CVE-2026-26128",
+      "title": "Windows SMB Server Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-287",
+          "name": "Improper Authentication"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-24289",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-416",
+          "name": "Use After Free"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "2.2.89.4",
+    "sha256": "c8d60ad6d136f89dc70c1fea8672b1ad659cbefbeab97613138359c0e8c38a5c",
+    "file": "agrsm64_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "73850b1971a9f582a3f0d11343ae2c6c8dbb9c7332136bf0a7ccddac55b7da46",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Generic Modem Driver (Unsupported)",
+      "FileVersion": "2.2.89.4 (WinBuild.160101.0800)",
+      "InternalName": "agrsm64.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "agrsm64.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.17763.8860"
+    }
+  },
+  "prev": {
+    "version": "2.2.89.2",
+    "sha256": "be64a40b9be997d73c0fc14d97e204c9d886eda07ec4c9391a70ce477084e5f1",
+    "kb_numbers": [
+      "KB5058922",
+      "KB5059091",
+      "KB5058392",
+      "KB5061978",
+      "KB5060531",
+      "KB5062557",
+      "KB5063877",
+      "KB5066187",
+      "KB5065428",
+      "KB5066586",
+      "KB5068791",
+      "KB5071544",
+      "KB5074975",
+      "KB5053606",
+      "KB5055518",
+      "KB5058379",
+      "KB5061768",
+      "KB5061979",
+      "KB5060533",
+      "KB5062554",
+      "KB5063709",
+      "KB5066188",
+      "KB5065429",
+      "KB5066791",
+      "KB5068781",
+      "KB5071546",
+      "KB5074976",
+      "KB5055528",
+      "KB5058919",
+      "KB5055629",
+      "KB5058405",
+      "KB5058502",
+      "KB5062170",
+      "KB5060999",
+      "KB5060826",
+      "KB5062552",
+      "KB5062663",
+      "KB5063875",
+      "KB5066189",
+      "KB5065431",
+      "KB5066793",
+      "KB5053643",
+      "KB5055612",
+      "KB5058481",
+      "KB5063159",
+      "KB5061087",
+      "KB5062649",
+      "KB5063842",
+      "KB5066198",
+      "KB5064080",
+      "KB5065790",
+      "KB5067112",
+      "KB5068865",
+      "KB5070312",
+      "KB5071417",
+      "KB5055523",
+      "KB5055627",
+      "KB5058411",
+      "KB5061977",
+      "KB5058499",
+      "KB5060842",
+      "KB5063060",
+      "KB5060829",
+      "KB5062553",
+      "KB5064489",
+      "KB5062660",
+      "KB5063878",
+      "KB5064081",
+      "KB5065426",
+      "KB5068221",
+      "KB5065789",
+      "KB5066835",
+      "KB5070773",
+      "KB5067036",
+      "KB5068861",
+      "KB5070311",
+      "KB5072033"
+    ],
+    "win_versions": [
+      "11-21H2",
+      "11-22H2",
+      "11-23H2",
+      "11-24H2",
+      "11-25H2"
+    ],
+    "file": "agrsm64_unpatched.sys",
+    "hash_match": true,
+    "expected_sha256": null,
+    "file_info": {
+      "CompanyName": "LSI Corp",
+      "FileDescription": "SoftModem Device Driver",
+      "FileVersion": "2.2.89.2",
+      "InternalName": "LSISM.sys",
+      "LegalCopyright": "Copyright \u00a9 LSI Corp 2005-2008",
+      "OriginalFilename": "LSISM.sys",
+      "ProductName": "LSI SoftModem Driver",
+      "ProductVersion": "2.2.89.2"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

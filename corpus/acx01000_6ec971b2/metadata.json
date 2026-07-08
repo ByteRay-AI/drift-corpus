@@ -1,0 +1,200 @@
+{
+  "binary": "acx01000.sys",
+  "kb": "KB5075912",
+  "release_date": "2026-02-10",
+  "relevant_cves": [],
+  "cve_attribution": "none (no component match \u2014 see cves for full KB list)",
+  "cves": [
+    {
+      "id": "CVE-2026-21248",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21247",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-20",
+          "name": "Improper Input Validation"
+        },
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        },
+        {
+          "id": "CWE-125",
+          "name": "Out-of-bounds Read"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21236",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21255",
+      "title": "Windows Hyper-V Security Feature Bypass Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Security Feature Bypass",
+      "cvss": 8.8
+    },
+    {
+      "id": "CVE-2026-21244",
+      "title": "Windows Hyper-V Remote Code Execution Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Remote Code Execution",
+      "cvss": 7.3
+    },
+    {
+      "id": "CVE-2026-21240",
+      "title": "Windows HTTP.sys Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-367",
+          "name": "Time-of-check Time-of-use (TOCTOU) Race Condition"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21239",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-122",
+          "name": "Heap-based Buffer Overflow"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21238",
+      "title": "Windows Ancillary Function Driver for WinSock Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-284",
+          "name": "Improper Access Control"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21231",
+      "title": "Windows Kernel Elevation of Privilege Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-362",
+          "name": "Concurrent Execution using Shared Resource with Improper Synchronization ('Race Condition')"
+        }
+      ],
+      "impact": "Elevation of Privilege",
+      "cvss": 7.8
+    },
+    {
+      "id": "CVE-2026-21222",
+      "title": "Windows Kernel Information Disclosure Vulnerability",
+      "cwe": [
+        {
+          "id": "CWE-532",
+          "name": "Insertion of Sensitive Information into Log File"
+        }
+      ],
+      "impact": "Information Disclosure",
+      "cvss": 5.5
+    }
+  ],
+  "naming_corrected": false,
+  "patched": {
+    "version": "10.0.19041.5789",
+    "sha256": "6ec971b217e558649eda866db01ff4a0e1341e01d99fdbb3965c2db420b39d18",
+    "file": "acx01000_patched.sys",
+    "hash_match": false,
+    "expected_sha256": "41481f2107ed41f47a472d5e5a9d933c99464ddf28073764b9f153948f6d88c8",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Audio KMDF Class Extension",
+      "FileVersion": "10.0.19041.5789 (WinBuild.160101.0800)",
+      "InternalName": "Acx01000.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "Acx01000.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.19041.5789"
+    }
+  },
+  "prev": {
+    "version": "10.0.19041.5678",
+    "sha256": "c876eef2f70b1c550a5d7d2ca7962e6796da5303c5fe8c9974bb107f0d0a3be3",
+    "kb_numbers": [
+      "KB5036979",
+      "KB5037849",
+      "KB5039299",
+      "KB5040525",
+      "KB5041582",
+      "KB5043131",
+      "KB5045594",
+      "KB5046714",
+      "KB5050081",
+      "KB5052077",
+      "KB5053643",
+      "KB5037768",
+      "KB5039211",
+      "KB5040427",
+      "KB5041580",
+      "KB5043064",
+      "KB5044273",
+      "KB5046613",
+      "KB5048652",
+      "KB5049981",
+      "KB5051974",
+      "KB5053606",
+      "KB5055518"
+    ],
+    "win_versions": [],
+    "file": "acx01000_unpatched.sys",
+    "hash_match": false,
+    "expected_sha256": "4d5ed5cacafb093d30957e0dab25fd21e2cd47478a5c840478456ca91e6ad096",
+    "file_info": {
+      "CompanyName": "Microsoft Corporation",
+      "FileDescription": "Audio KMDF Class Extension",
+      "FileVersion": "10.0.19041.5678 (WinBuild.160101.0800)",
+      "InternalName": "Acx01000.sys",
+      "LegalCopyright": "\u00a9 Microsoft Corporation. All rights reserved.",
+      "OriginalFilename": "Acx01000.sys",
+      "ProductName": "Microsoft\u00ae Windows\u00ae Operating System",
+      "ProductVersion": "10.0.19041.5678"
+    },
+    "selection_tier": 2,
+    "selection_tier_description": "same version branch (major.minor.build)"
+  }
+}

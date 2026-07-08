@@ -1,0 +1,105 @@
+{
+  "binaries": {
+    "title": "mrxsmb20.sys (SMB 2.0 Redirector) - No security-relevant change (WIL feature-staging / telemetry churn)",
+    "id_unpatched": "mrxsmb20_unpatched.sys",
+    "id_patched": "mrxsmb20_patched.sys",
+    "overall_similarity": 0.9825,
+    "matched": 519,
+    "changed": 6,
+    "identical": 513,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C003C008 (wil_UninitializeFeatureStaging) / sub_1C00157C0 (wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath)",
+      "similarity": 0.8514,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "False-positive match: two different WIL feature-staging functions paired by index coincidence. wil_UninitializeFeatureStaging tears down feature staging; wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath records a feature-usage fast-path cache entry. Not the same function."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Smb2SessionSetup_Finalize (0x1C003CD50 -> 0x1C003CC80)",
+      "similarity": 0.8984,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the call to Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage at 0x1C003D0E3. In the unpatched build this WIL feature gate, on success, guards a WPP/ETW telemetry event (checked via _tlgKeywordOn on dword_1C0034058). The patched build removes the gate and consolidates the telemetry.",
+        "ETW tracing restructured: unpatched has two conditional trace blocks (format strings unk_1C00301D7 / unk_1C003026E); patched has one.",
+        "Register/stack-frame reallocation (frame reduced from 0x530 to 0x470 bytes)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The removed function is a WIL feature-enablement gate (Feature_Servicing_EnableSMBHardeningTelemetry). It reads a cached feature-state cell and, on a miss, calls wil_details_IsEnabledFallback with a static feature descriptor. It performs no operation on SMB connection/session/crypto state and takes no attacker-controlled input. Its removal is staged-feature retirement, not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Smb2TreeConnect_Start (0x1C003E930 -> 0x1C003E700)",
+      "similarity": 0.9323,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "SMB2 tree-connect request builder. The encryption request-flag logic is IDENTICAL in both builds: when the server advertises capability ([rsi+0xB0] & 0x40) the request flag bit 0x1 is set in [rdi+0x59A], and when the server entry supports encryption ([server_entry+0x2D9] & 0x10) flag bit 0x2 is set and [rdi+0x458] is set to 1.",
+        "The only change: the unconditional call to Feature_SMBSynchronousRedirection__private_ReportDeviceUsage (unpatched at 0x1C003EA20) is replaced by an inline WIL report-once cache fast path. Patched loads the feature-state cache cell data_1C0034278, tests bit 0x10, and only on a cache miss calls wil_details_FeatureReporting_ReportUsageToService then wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath(3).",
+        "Register reallocation (rbp<->r12 swap) throughout."
+      ],
+      "security_relevant": false,
+      "security_notes": "The report's earlier claim that the unpatched build sets an encryption flag unconditionally while the patched build adds a policy check is incorrect. The encryption request-flag stores are byte-identical in both builds. data_1C0034278 is the WIL feature-state cache cell (also read by the feature IsEnabledDeviceUsage gate), not a global encryption policy flag; bit 0x10 selects the report-once telemetry fast path. This is feature-staging churn with no security relevance.",
+      "assembly_diff": "Unpatched Smb2TreeConnect_Start (0x1C003EA0C-0x1C003EA41):\n0x1C003EA0C: mov eax, [rsi+0B0h]        ; server capabilities\n0x1C003EA12: test al, 40h                ; encryption capability bit\n0x1C003EA14: jz 0x1C003EA20\n0x1C003EA16: lea eax, [rcx-1]            ; eax = 1\n0x1C003EA19: or [rdi+59Ah], ax           ; set request flag bit 0x1\n0x1C003EA20: call Feature_SMBSynchronousRedirection__private_ReportDeviceUsage  ; unconditional WIL usage report\n0x1C003EA25: mov rax, [rsi+58h]          ; server entry\n0x1C003EA2E: test byte [rax+2D9h], 10h\n0x1C003EA35: jz 0x1C003EA47\n0x1C003EA37: or [rdi+59Ah], cx           ; set request flag bit 0x2\n0x1C003EA41: mov [rdi+458h], al          ; encryption request flag = 1\n\nPatched Smb2TreeConnect_Start (0x1C003E7D9-0x1C003E841):\n0x1C003E7D9: mov eax, [rsi+0B0h]        ; server capabilities\n0x1C003E7DF: lea edx, [r8-1]            ; edx = 1\n0x1C003E7E3: test al, 40h\n0x1C003E7E5: jz 0x1C003E7EE\n0x1C003E7E7: or [rdi+59Ah], dx           ; set request flag bit 0x1  (IDENTICAL)\n0x1C003E7EE: mov ecx, [rel data_1C0034278]  ; WIL feature-state cache cell\n0x1C003E7FB: test cl, 10h                ; report-once cache bit\n0x1C003E7FE: jnz 0x1C003E82C             ; already reported -> skip\n0x1C003E817: call wil_details_FeatureReporting_ReportUsageToService\n0x1C003E821: call wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath\n0x1C003E82C: mov rax, [rsi+58h]          ; server entry\n0x1C003E830: test byte [rax+2D9h], 10h\n0x1C003E837: jz 0x1C003E848\n0x1C003E839: or [rdi+59Ah], r8w          ; set request flag bit 0x2  (IDENTICAL)\n0x1C003E841: mov byte [rdi+458h], 1      ; encryption request flag = 1  (IDENTICAL)"
+    },
+    {
+      "name": "Smb2ProcessNegotiateResponse (0x1C00051E8)",
+      "similarity": 0.9458,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed the call to Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage at 0x1C0005923. In the unpatched build, after SmbCeSetServerBufferSizes returns 0, this WIL feature gate guards a WPP/ETW telemetry event (checked via _tlgKeywordOn on dword_1C0034058). The patched build removes the gate and its telemetry block.",
+        "Core negotiate-response parsing (server buffer sizes, dialect validation, [rdi+0x2D8]/[rdi+0x2D9] capability-flag computation, crypto hash handling) is UNCHANGED between builds.",
+        "ETW event fields/format strings restructured."
+      ],
+      "security_relevant": false,
+      "security_notes": "The only behavioral difference is whether a WIL feature-gated telemetry event is emitted. The parsing and capability-flag computation are identical. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015794 (wil_details_FeatureReporting_ReportUsageToServiceDirect) -> sub_1C00156D0",
+      "similarity": 0.9765,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage notification helper refactored to reference global data structures (data_1C0034298, constant 0xA97433) instead of per-context fields. Same logic: query feature config, notify usage, return enabled state."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015668 (wil_details_FeatureReporting_ReportUsageToService) -> sub_1C00155B4",
+      "similarity": 0.9897,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage notification dispatcher: control flow restructured from an if-else chain to a cascading decrement-and-compare pattern (compiler churn). Same feature-ID-to-notification mapping. Calls the updated helper sub_1C00156D0 instead of sub_1C0015794."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "Smb2TreeConnect_Start (0x1C003E930 -> 0x1C003E700), Smb2ProcessNegotiateResponse (0x1C00051E8), Smb2SessionSetup_Finalize (0x1C003CD50 -> 0x1C003CC80)",
+      "entry_point": "SMB2 negotiate-response processing and tree-connect request building during a normal SMB2 session",
+      "call_chain": [],
+      "vulnerability_class": "No security-relevant change (WIL feature-staging / WPP-ETW telemetry churn)",
+      "description": "Investigation of the six changed functions shows the patch is a Windows feature-staging (WIL) and telemetry update, not a security fix:\n\n1. The staged feature Feature_Servicing_EnableSMBHardeningTelemetry was retired. Its enablement gate Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledDeviceUsage (unpatched 0x1C00162D8) is called from Smb2ProcessNegotiateResponse (0x1C0005923) and Smb2SessionSetup_Finalize (0x1C003D0E3); in both cases the return value gates a WPP/ETW telemetry trace. Both call sites and the feature itself are absent from the patched build. The gate body only reads a cached feature-state cell and, on a miss, calls wil_details_IsEnabledFallback with a static descriptor; it touches no SMB/crypto state and takes no attacker-controlled input.\n\n2. In Smb2TreeConnect_Start the unconditional call to Feature_SMBSynchronousRedirection__private_ReportDeviceUsage (0x1C003EA20) is replaced by an inline WIL report-once cache fast path (test data_1C0034278 & 0x10; on a miss call ReportUsageToService then TryEnableDeviceUsageFastPath).\n\n3. The WIL helpers wil_details_FeatureReporting_ReportUsageToService and wil_details_FeatureReporting_ReportUsageToServiceDirect were refactored.\n\nThe SMB2 encryption request-flag logic in Smb2TreeConnect_Start ([rdi+0x59A] bit 0x1 from server capability 0x40; bit 0x2 and [rdi+0x458]=1 from server-entry encryption support) is byte-for-byte identical in both builds. data_1C0034278 is the WIL feature-state cache cell, not a global encryption policy flag. There is no authentication bypass, no encryption downgrade, and no memory-safety defect introduced or removed.",
+      "trigger_conditions": "Not applicable. No security-relevant condition is introduced or removed. A malicious SMB server cannot influence the encryption request-flag decision differently between the two builds because that logic is identical.",
+      "primitive": "None. The changed code differs only in whether WIL feature-usage telemetry is emitted/recorded.",
+      "evidence": "Encryption request-flag logic is identical in both builds:\n\nUnpatched Smb2TreeConnect_Start (0x1C003EA0C-0x1C003EA41):\n0x1C003EA0C: mov eax, [rsi+0B0h]      ; server capabilities\n0x1C003EA12: test al, 40h\n0x1C003EA14: jz 0x1C003EA20\n0x1C003EA16: lea eax, [rcx-1]\n0x1C003EA19: or [rdi+59Ah], ax        ; set request flag bit 0x1\n0x1C003EA20: call Feature_SMBSynchronousRedirection__private_ReportDeviceUsage  ; WIL usage report\n0x1C003EA2E: test byte [rax+2D9h], 10h\n0x1C003EA37: or [rdi+59Ah], cx        ; set request flag bit 0x2\n0x1C003EA41: mov [rdi+458h], al       ; encryption request flag = 1\n\nPatched Smb2TreeConnect_Start (0x1C003E7D9-0x1C003E841):\n0x1C003E7D9: mov eax, [rsi+0B0h]      ; server capabilities\n0x1C003E7E3: test al, 40h\n0x1C003E7E5: jz 0x1C003E7EE\n0x1C003E7E7: or [rdi+59Ah], dx        ; set request flag bit 0x1  (SAME)\n0x1C003E7EE: mov ecx, [rel data_1C0034278]  ; WIL feature-state cache cell\n0x1C003E7FB: test cl, 10h             ; report-once cache bit\n0x1C003E7FE: jnz 0x1C003E82C\n0x1C003E817: call wil_details_FeatureReporting_ReportUsageToService\n0x1C003E821: call wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath\n0x1C003E830: test byte [rax+2D9h], 10h\n0x1C003E839: or [rdi+59Ah], r8w       ; set request flag bit 0x2  (SAME)\n0x1C003E841: mov byte [rdi+458h], 1   ; encryption request flag = 1  (SAME)\n\nRemoved feature gate (unpatched 0x1C00162D8), pure WIL staging:\n0x1C00162E2: mov eax, [rel data_1C0034278]  ; feature-state cache cell\n0x1C00162EC: test al, 10h\n0x1C00162EE: jz 0x1C00162F5\n0x1C00162F0: and eax, 1               ; return cached enabled bit\n0x1C00162F3: jmp 0x1C0016304\n0x1C00162F5: mov edx, 3\n0x1C00162FF: call Feature_Servicing_EnableSMBHardeningTelemetry__private_IsEnabledFallback"
+    }
+  ],
+  "summary": "The patch to mrxsmb20.sys is a Windows feature-staging (WIL) and telemetry update, not a security fix. It retires the staged feature Feature_Servicing_EnableSMBHardeningTelemetry (removing its enablement gate from Smb2ProcessNegotiateResponse and Smb2SessionSetup_Finalize, where it guarded WPP/ETW telemetry), replaces an unconditional WIL usage-report call in Smb2TreeConnect_Start with a report-once feature-state cache fast path, and refactors two WIL feature-reporting helpers. The SMB2 negotiate-response parsing and the SMB2 encryption request-flag logic are byte-identical between the two builds. data_1C0034278 is the WIL feature-state cache cell, not an encryption policy flag. No authentication bypass, encryption downgrade, or memory-safety defect is present. No CWE applies; severity is none."
+}

@@ -1,0 +1,72 @@
+{
+  "binaries": {
+    "title": "bthport.sys - No security-relevant change: feature-staged refactor of the HCI LE advertising-request coordinator teardown",
+    "id_unpatched": "bthport_unpatched.sys",
+    "id_patched": "bthport_patched.sys",
+    "overall_similarity": 0.992,
+    "matched": 2782,
+    "changed": 4,
+    "identical": 2778,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MarkingAllAdvertisingRequestAsNewEntry (0x1C0074D10) — HciLELegacyAdvertisingRequestCoordinator state-machine entry (unpatched at 0x1C0074D10, patched at 0x1C0074D60)",
+      "similarity": 0.5482,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Extracts the pre-patch inline read-clear-validate-and-decrement of the IRP cancel routine into the new helper ClearRequestCancellationRoutine (0x1C0072854), which reproduces the inline block instruction-for-instruction: atomic xchg read-and-clear at +0x68, comparison against OnAdvertisementRequestCancelThunk (0x1C00719E0) and OnPendingAdvertisementRequestCancelThunk (0x1C00718A0), and lock xadd decrement of the operation-guard reference at Event+0x18 with KeSetEvent on reaching zero",
+        "Places the helper call behind the new WIL feature-staging gate Feature_1166795066__private_IsEnabledDeviceUsage (0x1C0075A04); this flag has 0 occurrences in the unpatched image and 3 in the patched image",
+        "Retains the pre-patch behaviour in the feature-disabled (else) branch at 0x1C0074E4A, so with the flag off the patched driver behaves as the unpatched driver",
+        "The only behavioural delta in the enabled branch is that the request cancelled flag (bit 0x4) is not set when the cancel-routine field was already NULL; the coordinator spinlock, the atomic cancel-routine handoff, and the guard-reference acquire/release balance are unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix. In both builds MarkingAllAdvertisingRequestAsNewEntry walks the pending advertising-request list under the coordinator spinlock (KeAcquireSpinLockRaiseToDpc on coordinator+0x10, held across the whole walk). The IRP cancel routine OnAdvertisementRequestCancelThunk (0x1C00719E0) acquires the SAME coordinator spinlock (lea rsi,[rdi+10h]; KeAcquireSpinLockRaiseToDpc at 0x1C0071A6C) before it unlinks the request and decrements the operation-guard reference (0x1C0071AF2), so the teardown and the cancel path are serialized and cannot race. The atomic xchg on the cancel-routine field at +0x68 is the standard IoSetCancelRoutine-style handoff and is identical in both builds. The recognized-thunk guard decrement moved verbatim into ClearRequestCancellationRoutine; the guard is acquired once and released at most once per iteration in the unpatched build and in both patched branches. There is no reference-count imbalance, no dangling pointer, and no reachable memory-safety primitive. The change is a code extraction gated behind a WIL feature-staging flag with the pre-patch path retained in the else branch = staged rollout / servicing churn.",
+      "assembly_diff": "UNPATCHED 0x1C0074D10 inline teardown (real disassembly):\n0x1C0074D3A: call    __imp_KeAcquireSpinLockRaiseToDpc ; coordinator spinlock\n0x1C0074DD7: xor     eax, eax\n0x1C0074DD9: xchg    rax, [rdi-40h]            ; read-and-clear cancel routine at +0x68\n0x1C0074DDD: test    rax, rax\n0x1C0074DE0: jz      0x1C0074E33               ; NULL -> set cancelled flag\n0x1C0074DE2: lea     rcx, OnAdvertisementRequestCancelThunk (0x1C00719E0)\n0x1C0074DE9: cmp     rax, rcx\n0x1C0074DEC: jz      0x1C0074DF3\n0x1C0074DEE: cmp     rax, rdx                  ; OnPendingAdvertisementRequestCancelThunk (0x1C00718A0)\n0x1C0074DF1: jnz     0x1C0074E1B\n0x1C0074DF3: or      eax, 0FFFFFFFFh\n0x1C0074DF6: lock xadd [rbp+18h], eax         ; decrement operation-guard reference\n0x1C0074E08: call    __imp_KeSetEvent\n0x1C0074E1B: mov     rax, rdx\n0x1C0074E1E: xchg    rax, [rdi-40h]           ; re-install pending cancel thunk\n0x1C0074E22: cmp     byte ptr [rdi-64h], 0    ; byte flag at +0x44\n0x1C0074E4F: call    release_operation_guard_reference\n\nPATCHED 0x1C0074D60 (feature-gated, same work):\n0x1C0074DDF: lock inc dword ptr [rbx+18h]     ; acquire operation guard (unchanged)\n0x1C0074E0C: call    Feature_1166795066__private_IsEnabledDeviceUsage (0x1C0075A04) ; NEW gate\n0x1C0074E17: test    eax, eax\n0x1C0074E19: jz      0x1C0074E4A              ; disabled -> legacy branch (retained)\n0x1C0074E1B: call    ClearRequestCancellationRoutine (0x1C0072854) ; enabled branch\n0x1C0074E20: test    al, al\n0x1C0074E22: jz      0x1C0074E80\n0x1C0074E2B: xchg    rax, [rdi+68h]           ; re-install pending cancel thunk\n0x1C0074E4A: call    ClearRequestCancellationRoutine (0x1C0072854) ; legacy branch\n0x1C0074E4F: test    al, al\n0x1C0074E51: jz      0x1C0074E6F              ; not recognized -> set cancelled flag\n0x1C0074E88: call    release_operation_guard_reference\n\nClearRequestCancellationRoutine (0x1C0072854) reproduces the inline block:\n0x1C0072854: sub     rsp, 28h\n0x1C007285A: xchg    rax, [rdx+68h]           ; atomic read-and-clear\n0x1C007285E: test    rax, rax\n0x1C0072861: jz      0x1C00728A2              ; NULL -> return 0\n0x1C0072863: lea     rdx, OnAdvertisementRequestCancelThunk (0x1C00719E0)\n0x1C007286D: jz      0x1C007287B\n0x1C007286F: lea     rdx, OnPendingAdvertisementRequestCancelThunk (0x1C00718A0)\n0x1C0072879: jnz     0x1C00728A0              ; unrecognized non-NULL -> return 1, no decrement\n0x1C007287B: add     rcx, 0F0h                ; Event\n0x1C0072885: lock xadd [rcx+18h], eax         ; decrement guard reference (recognized thunk only)\n0x1C0072894: call    __imp_KeSetEvent\n0x1C00728A0: mov     al, 1                    ; return 1 (non-NULL cancel routine)\n0x1C00728A6: retn\n\nCancel routine shares the coordinator spinlock (refutes any race):\nOnAdvertisementRequestCancelThunk (0x1C00719E0):\n0x1C00719F5: call    __imp_IoReleaseCancelSpinLock\n0x1C0071A6F: call    __imp_KeAcquireSpinLockRaiseToDpc ; SAME lock (coordinator+0x10) the teardown holds\n0x1C0071AF2: lock xadd [rcx+18h], eax          ; operation-guard decrement, serialized"
+    },
+    {
+      "name": "MarkingAllAdvertisingRequestAsNewEntry (0x1C0079990) — HciLEExtendedAdvertisingRequestCoordinator state-machine entry (unpatched at 0x1C0079990, patched relocated to 0x1C0079AB0)",
+      "similarity": 0.6965,
+      "change_type": "feature_staged_refactor",
+      "key_changes": [
+        "Same feature-staging change as the Legacy entry, applied to the Extended coordinator's copy of the generated state entry",
+        "The Extended coordinator already factored the teardown into ClearRequestCancellationRoutine (unpatched 0x1C0076D38, relocated to 0x1C0076E58); the only change is the added Feature_1166795066__private_IsEnabledDeviceUsage (0x1C0075A04) gate at 0x1C0079B64 splitting the existing helper call into an enabled branch (0x1C0079B73) and a retained legacy branch (0x1C0079BA2)",
+        "Helper logic and the recognized cancel thunks are unchanged; the coordinator spinlock and guard-reference accounting are unchanged"
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a security fix, for the same reasons as the Legacy entry. The Extended teardown runs under the coordinator spinlock and the Extended cancel routine acquires the same lock before manipulating the request and the operation-guard reference. The patch only adds the WIL feature-staging gate around an already-existing helper, retaining the pre-patch behaviour in the else branch. No behavioural change to locking or reference-count balance.",
+      "assembly_diff": "UNPATCHED 0x1C0079990 teardown block:\n0x1C0079A46: call    ClearRequestCancellationRoutine (0x1C0076D38) ; no feature gate\n0x1C0079A4F: lea     rax, OnPendingAdvertisementRequestCancelThunk\n0x1C0079A56: xchg    rax, [rsi+68h]           ; re-install pending cancel thunk\n\nPATCHED 0x1C0079AB0 equivalent:\n0x1C0079B64: call    Feature_1166795066__private_IsEnabledDeviceUsage (0x1C0075A04) ; NEW gate\n0x1C0079B71: jz      0x1C0079BA2              ; disabled -> legacy branch (retained)\n0x1C0079B73: call    ClearRequestCancellationRoutine (0x1C0076E58) ; enabled branch\n0x1C0079BA2: call    ClearRequestCancellationRoutine (0x1C0076E58) ; legacy branch\n\nClearRequestCancellationRoutine unchanged in logic (unpatched 0x1C0076D38 relocated to patched 0x1C0076E58): atomic read-and-clear at +0x68, thunk comparison, guard-reference decrement for a recognized thunk."
+    },
+    {
+      "name": "wil_details_IsEnabledFallback (0x1C00F1474) / wil_details_IsEnabledFallback (0x1C0075954) — WIL feature-staging fallback",
+      "similarity": 0.9493,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Modified signature to receive a feature-state data pointer as a parameter instead of referencing a hardcoded global",
+        "Register allocation changes to carry the new parameter; supports the new feature-staging flag"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging plumbing supporting Feature_1166795066__private_IsEnabledDeviceUsage. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Feature_2327586105__private_IsEnabledFallback (0x1C00F1510) / Feature_2327586105__private_IsEnabledFallback (0x1C00F15D4) — WIL feature-staging fallback wrapper",
+      "similarity": 0.6483,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Updated to thread the new feature-state pointer as the third parameter to wil_details_IsEnabledFallback",
+        "Trivial wrapper change to accommodate the new parameter"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging plumbing. Not security-relevant.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change. The patch refactors the HCI LE advertising-request coordinator teardown state entry MarkingAllAdvertisingRequestAsNewEntry for both the Legacy coordinator (0x1C0074D10, patched 0x1C0074D60) and the Extended coordinator (0x1C0079990, patched relocated 0x1C0079AB0), and threads two WIL feature-staging fallback helpers. The reworked teardown is placed behind a new WIL feature-staging flag, Feature_1166795066__private_IsEnabledDeviceUsage (0x1C0075A04; 0 occurrences in the unpatched image, 3 in the patched), with the pre-patch behaviour retained in the feature-disabled (else) branch. For the Legacy coordinator the change extracts the pre-patch inline read-clear-validate-and-decrement of the IRP cancel routine into a new helper, ClearRequestCancellationRoutine (0x1C0072854), that reproduces the inline block instruction-for-instruction (atomic xchg at +0x68, comparison against OnAdvertisementRequestCancelThunk 0x1C00719E0 and OnPendingAdvertisementRequestCancelThunk 0x1C00718A0, and lock xadd decrement of the operation-guard reference at Event+0x18). For the Extended coordinator the helper already existed (0x1C0076D38 relocated to 0x1C0076E58) and only the gate was added. The originally reported race / reference-count imbalance / use-after-free is not supported: the teardown holds the coordinator spinlock (coordinator+0x10) across the whole list walk, and the IRP cancel routine OnAdvertisementRequestCancelThunk (0x1C00719E0) acquires the SAME lock (0x1C0071A6C) before it unlinks the request and decrements the guard reference (0x1C0071AF2), so the two paths are serialized. The atomic cancel-routine handoff is the standard IoSetCancelRoutine idiom and is identical in both builds, and the guard-reference acquire/release balance is unchanged. This is staged-rollout / servicing churn, not a memory-safety fix; no CWE applies and no exploit primitive is demonstrable."
+}

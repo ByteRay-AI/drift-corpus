@@ -1,0 +1,286 @@
+{
+  "binaries": {
+    "title": "fsdepends.sys - Cross-branch recompilation diff; no security-relevant change in DependentFSCheckFileHandle",
+    "id_unpatched": "fsdepends_unpatched.sys",
+    "id_patched": "fsdepends_patched.sys",
+    "overall_similarity": 0.9577,
+    "matched": 87,
+    "changed": 19,
+    "identical": 68,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DependentFSCheckFileHandle",
+      "similarity": 0.9844,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "Dependency-pointer validation is present in BOTH builds: after loading a dependency entry pointer (mov rdx, [rcx+rax*8+0x10]), both builds execute 'cmp rdx, [rsp+130h+Context]; jnz <skip>' before updating the match counter. Unpatched at 0x1C0008808-0x1C0008812, patched at 0x1C0008827-0x1C0008831. There is no missing-validation gap between the builds.",
+        "Output-buffer-size checks against 0x28 and 0x10 on IoStatusBlock.Information are equivalent in both builds; both bail out to the STATUS_BUFFER_TOO_SMALL (0xC00000C3) error/trace return path when the size is too small. The only difference is code generation: cmovb+js (client branch) vs jnb+fall-through (server branch).",
+        "Remaining differences are register allocation, instruction selection, and relocated jump/data targets caused by recompilation across two Windows servicing branches (19041 vs 20348)."
+      ],
+      "security_relevant": false,
+      "security_notes": "DependentFSCheckFileHandle is an exported function of fsdepends.sys that determines whether a file handle / FILE_OBJECT on a virtual storage volume (VHD, cloud-file placeholder) has file-system dependencies. It queries object name, file and volume information, RtlIsCloudFilesPlaceholder, acquires the driver dependency table under an ERESOURCE, obtains the filter instance context, builds a dependency list via DepFSGenerateDependencyList, then walks the list releasing volume/dependency context references. In the final walk, each entry's stored context pointer is compared against the acquired instance context (cmp rdx, [Context]; jnz) before the match count is updated, and this validation exists identically in both builds. The output-buffer-size checks also exist in both builds. No use-after-free, authorization-context confusion, or missing check is introduced or removed by this diff.",
+      "assembly_diff": "UNPATCHED dependency walk (0x1C00087F4):\n  movzx   edx, word ptr [rcx+rax*8+8]\n  test    r15b, dl\n  jz      loc_1C0008823\n  mov     rdx, [rcx+rax*8+10h]        ; load entry context pointer\n  cmp     rdx, [rsp+130h+Context]     ; validate against acquired instance context\n  jnz     loc_1C0008819               ; skip count update if not matching\n  movzx   esi, word ptr [rcx+rax*8+0Ah]\n\nPATCHED dependency walk (0x1C0008813):\n  movzx   edx, word ptr [rcx+rax*8+8]\n  test    r15b, dl\n  jz      loc_1C0008842\n  mov     rdx, [rcx+rax*8+10h]        ; load entry context pointer\n  cmp     rdx, [rsp+130h+Context]     ; validate against acquired instance context\n  jnz     loc_1C0008838               ; skip count update if not matching\n  movzx   esi, word ptr [rcx+rax*8+0Ah]\n\nBuffer size check UNPATCHED (0x1C000838C): cmp [rsp+130h+IoStatusBlock.Information], 0x28 ; cmovb ebx,eax ; js loc_1C000892F (WPP trace + STATUS_BUFFER_TOO_SMALL return).\nBuffer size check PATCHED (0x1C0008384): cmp [rsp+130h+IoStatusBlock.Information], 0x28 ; jnb loc_1C00083C7 ; else mov ebx,0xC00000C3 fall into trace/return. Semantically equivalent."
+    },
+    {
+      "name": "DepFSPostVolumeMount (sub_1C0001810)",
+      "similarity": 0.9921,
+      "change_type": "behavioral",
+      "key_changes": [
+        "IRQL read changed from direct control-register read (mov rax, cr8 at 0x1C0001A0E) to the exported helper call KeGetCurrentIrql. The IRQL is used to decide whether to run dependency enumeration synchronously or queue it as a work item.",
+        "Lock resource and event-object data addresses relocated (data layout shift)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Correctness/portability code-generation change. Both instruction sequences obtain the current IRQL; no validation or trust boundary changes.",
+      "assembly_diff": "UNPATCHED 0x1C0001A0E: mov rax, cr8\nPATCHED  0x1C0001A0E: call cs:__imp_KeGetCurrentIrql"
+    },
+    {
+      "name": "DepFSRegisterFilters (sub_1C000D1A8)",
+      "similarity": 0.9911,
+      "change_type": "behavioral",
+      "key_changes": [
+        "FLT_REGISTRATION.Flags value differs between builds (feature/compat flag).",
+        "FLT_REGISTRATION callback pointers and telemetry data addresses relocated (recompilation)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Registration flag/feature difference and data-address relocation. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSGenerateDependencyList (sub_1C000DDD0)",
+      "similarity": 0.8897,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Control-flow layout of the dependency-enumeration loop differs.",
+        "Error propagation path reorganized.",
+        "Underlying allocation, FltGet*, and refcount operations unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation restructuring of the same logic; no added or removed security check. Function is at 0x1C000DDD0 in the unpatched build and relocated to 0x1C000DD50 in the patched build.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memset (sub_1C0002180)",
+      "similarity": 0.599,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Library memset re-vectorized with a different SIMD block-size strategy."
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler-intrinsic memset; optimization-strategy change only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_SF_qddZ (sub_1C00015CC)",
+      "similarity": 0.807,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WPP software-trace helper; argument-marshalling order differs."
+      ],
+      "security_relevant": false,
+      "security_notes": "Trace helper reorganization only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSForEachDependency (sub_1C000B7D0)",
+      "similarity": 0.8744,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation-failure error path reorganized.",
+        "Call targets relocated (recompilation)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Control-flow reorganization; same operations.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSCheckDependencies",
+      "similarity": 0.9339,
+      "change_type": "behavioral_cross_branch_divergence",
+      "key_changes": [
+        "Different implementations between branches. Unpatched (client, 0x1C000E7C8) is a thin ExAllocatePoolWithTag/DepFSSendIoctl retry wrapper returning the IOCTL status. Patched (server, 0x1C000E6E4) takes additional arguments and, after the query IOCTL succeeds and reports at least 0x38 bytes (if (v18 >= 0x38)), iterates the returned dependency entries.",
+        "In the patched loop, for each non-NULL entry whose signature word equals 0x3030 (if (v11 != 0 && *(_WORD *)v11 == 12336)) it calls DepFSIncrementActiveMountCount, checks the entry's in-use fields, then in a second pass calls DepFSDecrementActiveMountCount (only on failure) and DependentFSDereferenceDependency under the same NULL guard. The unpatched build has none of this bookkeeping."
+      ],
+      "security_relevant": false,
+      "security_notes": "Active-mount-count bookkeeping present only in the server branch, not a delivered security fix. No shared code path gains or loses a validation check, and every per-entry pointer dereferenced in the patched loop is NULL-checked in the build that contains it.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSInstanceSetup (sub_1C000ED80)",
+      "similarity": 0.9485,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Minor restructuring and data-address relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation artifacts.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSInstanceQueryTeardown (sub_1C000FE20)",
+      "similarity": 0.9493,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Error path reorganized; lock resource address relocated."
+      ],
+      "security_relevant": false,
+      "security_notes": "Control-flow reorganization and data relocation.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreVolumeMount (sub_1C000B330)",
+      "similarity": 0.9514,
+      "change_type": "behavioral",
+      "key_changes": [
+        "FltAllocateGenericWorkItem hoisted earlier; error path reorganized."
+      ],
+      "security_relevant": false,
+      "security_notes": "Same operations in reorganized order.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSHandleQueryDependentVolume (sub_1C000BA18)",
+      "similarity": 0.9834,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Data-address relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation artifacts only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSBugCheckNotEnoughSpace (sub_1C0001188)",
+      "similarity": 0.9864,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Variable-initialization order and buffer handling reorganized."
+      ],
+      "security_relevant": false,
+      "security_notes": "Initialization reorganization; no security impact.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreCreate (sub_1C0007010)",
+      "similarity": 0.9885,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation (r9 to r8) and data/call-target relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Register allocation and address relocation only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSRegisterFilters (sub_1C000D1A8)",
+      "similarity": 0.9911,
+      "change_type": "behavioral",
+      "key_changes": [
+        "FLT_REGISTRATION.Flags value differs; callback pointers relocated."
+      ],
+      "security_relevant": false,
+      "security_notes": "Flag/feature difference and recompilation artifacts.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSCheckSmbLoopback (sub_1C0008E18)",
+      "similarity": 0.9917,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Field-init order and data-address relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation artifacts only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSDismountDependencyList (sub_1C000A5B0)",
+      "similarity": 0.9917,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Data-address and lock-variable relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation artifacts only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreShutdown (sub_1C000AC10)",
+      "similarity": 0.9919,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Call-target relocation."
+      ],
+      "security_relevant": false,
+      "security_notes": "Recompilation artifacts only.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPostVolumeMount (sub_1C0001810)",
+      "similarity": 0.9921,
+      "change_type": "behavioral",
+      "key_changes": [
+        "IRQL read changed from mov rax, cr8 to call KeGetCurrentIrql.",
+        "Lock resource and event-object data addresses relocated."
+      ],
+      "security_relevant": false,
+      "security_notes": "IRQL read method change; correctness/portability, not security.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "DependentFSCheckFileHandle",
+      "entry_point": "Exported kernel function (0x1C0008070) reachable via file open/create operations on virtual storage volumes (VHD, cloud-file placeholders) routed through the filter stack",
+      "call_chain": ["User-mode file operation on VHD/cloud file", "Filter stack pre/post-operation path", "DependentFSCheckFileHandle (exported)", "Dependency-list walk with per-entry context validation"],
+      "vulnerability_class": "None identified in this diff (cross-branch recompilation)",
+      "description": "DependentFSCheckFileHandle determines whether a file handle / FILE_OBJECT on a virtual storage volume has file-system dependencies. Both builds perform the same per-entry context-pointer validation in the dependency-list walk (mov rdx, [rcx+rax*8+0x10]; cmp rdx, [rsp+130h+Context]; jnz skip) before updating the match counter, and both enforce the same output-buffer-size checks against 0x28 and 0x10 on IoStatusBlock.Information, bailing to the STATUS_BUFFER_TOO_SMALL error path when the size is too small. The observed differences between the two binaries are recompilation and code-generation artifacts (instruction selection such as cmovb+js vs jnb+fall-through, register allocation, and relocated jump/data targets) arising from the two builds belonging to different Windows servicing branches (client 19041 vs server 20348). No missing pointer validation, use-after-free, or authorization-context confusion is introduced or removed.",
+      "trigger_conditions": "Not applicable. No reachable vulnerability is introduced or removed by this diff. The dependency-pointer validation and output-buffer-size checks are present in both builds.",
+      "primitive": "None.",
+      "evidence": "Dependency walk present identically in both builds.\n\nUNPATCHED (0x1C0008808):\n  mov     rdx, [rcx+rax*8+10h]\n  cmp     rdx, [rsp+130h+Context]\n  jnz     loc_1C0008819\n\nPATCHED (0x1C0008827):\n  mov     rdx, [rcx+rax*8+10h]\n  cmp     rdx, [rsp+130h+Context]\n  jnz     loc_1C0008838\n\nBuffer-size check UNPATCHED (0x1C000838C): cmp [rsp+130h+IoStatusBlock.Information], 0x28 ; cmovb ebx,eax ; js loc_1C000892F (WPP trace + STATUS_BUFFER_TOO_SMALL return).\nBuffer-size check PATCHED (0x1C0008384): cmp [rsp+130h+IoStatusBlock.Information], 0x28 ; jnb loc_1C00083C7 ; else mov ebx,0xC00000C3 into trace/return.",
+      "assembly": "Dependency-list walk, both builds:\n  cmp     [rcx+4], esi\n  jbe     <end of walk>\n  mov     eax, ebx\n  add     rax, rax\n  movzx   edx, word ptr [rcx+rax*8+8]     ; entry flags\n  test    r15b, dl\n  jz      <else branch: test dl,2 / DereferenceDependencyContext>\n  mov     rdx, [rcx+rax*8+10h]            ; entry context pointer\n  cmp     rdx, [rsp+130h+Context]         ; validate against acquired instance context\n  jnz     <skip match-count update>\n  movzx   esi, word ptr [rcx+rax*8+0Ah]   ; match count updated only on equality\n  mov     rcx, rdx\n  call    DereferenceVolumeContext\n\nIRQL read helper change in DepFSPostVolumeMount (sub_1C0001810):\n  UNPATCHED 0x1C0001A0E: mov rax, cr8\n  PATCHED  0x1C0001A0E: call cs:__imp_KeGetCurrentIrql",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fsdepends!DependentFSCheckFileHandle",
+            "address": "0x1C0008070",
+            "why": "Function entry. Arguments: rcx = file handle, rdx = FILE_OBJECT*, r8d = flags, r9 = pointer to a mode word, [rsp+0x28] = optional out int*. Present in both builds."
+          },
+          {
+            "symbol": "fsdepends!DependentFSCheckFileHandle dependency walk",
+            "address": "0x1C0008808 (unpatched) / 0x1C0008827 (patched)",
+            "why": "Instruction 'mov rdx, [rcx+rax*8+0x10]' followed by 'cmp rdx, [rsp+130h+Context]; jnz'. The per-entry context validation is present in both builds; compare rdx to [rsp+130h+Context] to observe the match/skip decision."
+          },
+          {
+            "symbol": "fsdepends!DepFSPostVolumeMount",
+            "address": "0x1C0001A0E",
+            "why": "IRQL read: 'mov rax, cr8' in the client-branch build vs 'call KeGetCurrentIrql' in the server-branch build."
+          }
+        ],
+        "watch": [
+          "[rsp+130h+Context] = acquired filter instance context (from FltGetInstanceContext); each dependency entry's pointer is compared to it in both builds",
+          "[rsp+130h+IoStatusBlock.Information] = queried size, compared against 0x28 (40) and 0x10 (16) in both builds",
+          "rcx+rax*8+0x10 = dependency entry context pointer; rcx+rax*8+0x08 = entry flags word; rcx+0x4 = entry count",
+          "dl register = flag byte for current dependency entry"
+        ],
+        "key_offsets": [
+          "0x1C0008070 = DependentFSCheckFileHandle entry (exported, present in both builds)",
+          "0x1C0008808 (unpatched) / 0x1C0008827 (patched) = 'mov rdx, [rcx+rax*8+0x10]; cmp rdx, [rsp+130h+Context]; jnz' validation present in both builds",
+          "0x1C000838C (unpatched, cmovb) / 0x1C0008384 (patched, jnb) = output-buffer-size check against 0x28; equivalent bail-out in both builds",
+          "0x1C0001A0E = IRQL read: 'mov rax, cr8' (unpatched) vs 'call KeGetCurrentIrql' (patched) in DepFSPostVolumeMount"
+        ],
+        "trigger_setup": "Not applicable; no vulnerability is introduced or removed. To exercise the path for study, mount a VHD or interact with a cloud-file placeholder and perform file open/create operations that route through fsdepends.sys; the dependency walk validates each entry's context pointer against the acquired instance context in both builds.",
+        "expected_observation": "In both builds, when the dependency-walk breakpoint hits, rdx (loaded from [rcx+rax*8+0x10]) is compared to [rsp+130h+Context] and the match count is updated only on equality; the reference is released via DereferenceVolumeContext regardless. There is no code path in either build that uses a non-matching or stale entry pointer to update the match count.",
+        "notes": "Dependency-list entry stride is 0x10 bytes: flags word at offset +0x08, context pointer at offset +0x10, entry count at [base+0x04]. The context-pointer validation and the output-buffer-size checks are present in both binaries. The differences across all 19 changed functions are recompilation and code-generation artifacts between two Windows servicing branches (client 10.0.19041.7417 vs server 10.0.20348.5256), plus the DepFSPostVolumeMount IRQL-read helper change. No CVE is attributed to fsdepends.sys in the associated update metadata."
+      }
+    }
+  ],
+  "summary": "This diff pairs a client-branch build of fsdepends.sys (10.0.19041.7417) against a server-branch build (10.0.20348.5256). No security-relevant behavioral change is present. DependentFSCheckFileHandle (exported, 0x1C0008070) performs the same per-entry context-pointer validation in its dependency-list walk (mov rdx, [rcx+rax*8+0x10]; cmp rdx, [rsp+130h+Context]; jnz) and the same output-buffer-size checks (against 0x28 and 0x10 on IoStatusBlock.Information) in both builds; the differences are instruction selection (cmovb+js vs jnb), register allocation, and relocated targets. The one substantive instruction change, in DepFSPostVolumeMount (sub_1C0001810), swaps a direct CR8 read for a KeGetCurrentIrql call, a correctness/portability difference. The remaining changed functions differ only by recompilation artifacts. No use-after-free, missing validation, or authorization-context confusion is introduced or removed."
+}

@@ -1,0 +1,367 @@
+{
+  "binaries": {
+    "title": "ci.dll (Windows Code Integrity) - No security-relevant change: defensive termination hardening (iteration caps + error propagation) added to statically-linked SymCrypt ML-DSA rejection samplers; the loop-driving bytes are SHAKE sponge output and the thresholds are compile-time constants, so the guarded non-termination is not attacker-reachable",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9574,
+    "matched": 2564,
+    "changed": 83,
+    "identical": 2481,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SymCryptMlDsaRejBoundedPoly (sub_18002a00c)",
+      "similarity": 0.9187,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added iteration counter (esi, capped at 0x1e1=481) to the rejection loop that squeezes bytes from a SHAKE/Keccak state via SymCryptKeccakExtract (sub_18002bb18); unpatched version has no such cap, allowing unbounded looping when every decoded eta candidate is rejected",
+        "Added error return value 0x8008 when the iteration limit is exceeded; unpatched version never returns an error from this function",
+        "Patched function relocated to sub_180027128"
+      ],
+      "security_relevant": false,
+      "security_notes": "Defensive hardening, not attacker-reachable. SymCryptMlDsaRejBoundedPoly fills a 256-coefficient polynomial (edi < 0x100) bounded by eta (2 or 4, a per-parameter-set constant read from [rcx+0x16]). Each pass squeezes 1 byte from a SHAKE (Keccak) sponge via SymCryptKeccakExtract and decodes up to two eta-bounded candidates; an out-of-range candidate is marked with sentinel 0x80 and discarded without advancing edi. The unpatched build's only guard is the outer bound at 0x18002a166 (cmp edi,0x100; jb 0x18002a08b). The patch (sub_180027128) adds counter esi capped at 481 (cmp esi,0x1e1 at 0x1800271a6; inc esi at 0x18002724f) and returns 0x8008 at 0x1800272a9. The theoretical non-termination (CWE-835 class) the cap guards is not reachable: the rejection test is applied to SHAKE sponge output, not to raw attacker bytes, and eta is a compile-time constant, so no attacker-supplied seed can force sustained rejection without defeating Keccak. No out-of-bounds read (the source is an internal sponge, not an external buffer). Classified as defense-in-depth robustness hardening of the statically-linked SymCrypt library.",
+      "assembly_diff": "UNPATCHED SymCryptMlDsaRejBoundedPoly loop body at 0x18002a08b (1-byte SHAKE squeeze, no iteration cap):\n0x18002a08b: xor r9d, r9d\n0x18002a08e: lea rdx, [rsp+var_11F]\n0x18002a093: lea rcx, [rsp+var_110]        ; Keccak (SHAKE) state\n0x18002a098: lea r8d, [r9+1]               ; squeeze 1 byte\n0x18002a09c: call SymCryptKeccakExtract\n; ... decode two eta-bounded candidates; 0x80 == rejected ...\n0x18002a166: cmp edi, 0x100\n0x18002a16c: jb 0x18002a08b                 ; only outer bound, no iteration cap\n\nPATCHED SymCryptMlDsaRejBoundedPoly (sub_180027128) adds:\n0x1800271a6: cmp esi, 0x1e1                 ; NEW: iteration count >= 481?\n0x1800271ac: jnb 0x1800272a9               ; NEW: jump to error path\n0x18002724f: inc esi                        ; NEW: always increment counter\n0x1800272a9: mov edi, 0x8008               ; NEW: return error"
+    },
+    {
+      "name": "SymCryptMlDsaRejNttPoly (sub_18002a1ac)",
+      "similarity": 0.8148,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added iteration counter (r14d, capped at 0x12a=298) to the uniform-NTT rejection loop that squeezes 3 bytes per pass from the SHAKE state; unpatched has no iteration limit",
+        "Added error return 0x8008 when the limit is exceeded",
+        "Unpatched loop can spin forever: the jnb at 0x18002a252 loops back to 0x18002a22e without decrementing the remaining-coefficient counter rbx (which starts at 0x100) whenever the 23-bit value is >= q (0x7fe001)",
+        "Patched function relocated to sub_1800272ec"
+      ],
+      "security_relevant": false,
+      "security_notes": "Defensive hardening, not attacker-reachable. SymCryptMlDsaRejNttPoly samples a uniform NTT-domain polynomial. Each pass squeezes 3 bytes from the SHAKE state via SymCryptKeccakExtract (sub_18002bb18), masks the top byte to 23 bits, and compares the value to 0x7fe001 (= 8380417 = q, the ML-DSA prime modulus, a compile-time constant). If the value is >= q the sample is rejected and the loop repeats without decrementing rbx. The patch (sub_1800272ec) adds counter r14d capped at 298 (cmp r14d,0x12a at 0x180027369; inc r14d at 0x18002738d) and returns 0x8008 at 0x1800273ad. The guarded non-termination (CWE-835 class) is not reachable: the compared value is SHAKE sponge output and q is fixed, so no attacker-supplied seed can force sustained rejection. No out-of-bounds read. Defense-in-depth hardening of statically-linked SymCrypt.",
+      "assembly_diff": "UNPATCHED SymCryptMlDsaRejNttPoly q-rejection loop at 0x18002a22e:\n0x18002a229: mov ebx, 0x100                 ; remaining coefficients\n0x18002a22e: xor r9d, r9d\n0x18002a231: lea rdx, [rsp+var_110]\n0x18002a236: lea rcx, [rsp+var_100]         ; Keccak (SHAKE) state\n0x18002a23b: lea r8d, [r9+3]                ; squeeze 3 bytes\n0x18002a23f: call SymCryptKeccakExtract\n0x18002a244: and byte [rsp+var_110+2], 0x7f ; mask top byte -> 23-bit value\n0x18002a249: mov eax, dword [rsp+var_110]\n0x18002a24d: cmp eax, 0x7fe001              ; >= q (8380417)?\n0x18002a252: jnb 0x18002a22e                ; reject: loop back WITHOUT decrementing rbx\n0x18002a254: mov dword [rdi], eax\n0x18002a256: add rdi, 0x4\n0x18002a25a: sub rbx, 0x1\n0x18002a25e: jnz 0x18002a22e\n\nPATCHED SymCryptMlDsaRejNttPoly (sub_1800272ec) adds:\n0x180027369: cmp r14d, 0x12a               ; NEW: iteration count >= 298?\n0x18002738d: inc r14d                       ; NEW: increment counter\n0x1800273ad: mov edi, 0x8008               ; NEW: return error"
+    },
+    {
+      "name": "SymCryptMlDsaSampleInBall (sub_18002a288)",
+      "similarity": 0.7630,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added iteration counter (edi, capped at 0x79=121) to the inner rejection loop that squeezes single bytes from the SHAKE state; unpatched has no such limit",
+        "Added error return 0x8008 when the limit is exceeded",
+        "Patched function relocated to sub_1800273e0"
+      ],
+      "security_relevant": false,
+      "security_notes": "Defensive hardening, not attacker-reachable. SymCryptMlDsaSampleInBall samples the challenge polynomial c. The inner loop at 0x18002a346 squeezes one byte per pass via SymCryptKeccakExtract and rejects it while it exceeds the running index ebx (cmp eax,ebx; ja 0x18002a346); the threshold derives from tau at [rsi+0x18], a parameter-set constant. The patch (sub_1800273e0) adds counter edi capped at 121 (cmp edi,0x79 at 0x18002749e; inc edi at 0x1800274be) and returns 0x8008 (mov r14d,0x8008 at 0x180027502). The guarded non-termination (CWE-835 class) is not reachable: the sampled byte is SHAKE sponge output and tau is fixed. No out-of-bounds read. Defense-in-depth hardening of statically-linked SymCrypt.",
+      "assembly_diff": "UNPATCHED SymCryptMlDsaSampleInBall inner loop at 0x18002a346 (1-byte squeeze, no iteration cap):\n0x18002a346: xor r9d, r9d\n0x18002a349: lea rdx, [rsp+var_140]\n0x18002a34e: mov r8, rsi                    ; squeeze 1 byte\n0x18002a351: lea rcx, [rsp+var_130]         ; Keccak (SHAKE) state\n0x18002a356: call SymCryptKeccakExtract\n0x18002a35b: movzx eax, [rsp+var_140]\n0x18002a360: cmp eax, ebx\n0x18002a362: ja 0x18002a346                 ; reject and retry, no iteration cap\n\nPATCHED SymCryptMlDsaSampleInBall (sub_1800273e0) adds:\n0x18002749e: cmp edi, 0x79                  ; NEW: iteration count >= 121?\n0x180027502: mov r14d, 0x8008              ; NEW: return error"
+    },
+    {
+      "name": "SymCryptMlDsaExpandS (sub_180029424)",
+      "similarity": 0.7159,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version now checks the return value from SymCryptMlDsaRejBoundedPoly (patched sub_180027128) and stops on error",
+        "Unpatched version ignores the return value and continues sampling the next polynomial regardless",
+        "Patched function relocated to sub_18002651c"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaExpandS samples the secret vectors s1/s2 by calling SymCryptMlDsaRejBoundedPoly per polynomial. The unpatched function discards the sampler return value, so an error inside the sampler cannot stop the operation. The patched version propagates the error upward.",
+      "assembly_diff": "UNPATCHED: calls SymCryptMlDsaRejBoundedPoly per polynomial; return value ignored, loop continues.\nPATCHED (sub_18002651c): rc = SymCryptMlDsaRejBoundedPoly(...); if (rc) propagate/return rc."
+    },
+    {
+      "name": "SymCryptMlDsaExpandA (sub_180029284)",
+      "similarity": 0.4969,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version checks the return value from SymCryptMlDsaRejNttPoly (patched sub_1800272ec) and exits early on error",
+        "Unpatched version ignores the return value and continues expanding the matrix",
+        "Patched function relocated to sub_180026374"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaExpandA expands the public matrix A by calling SymCryptMlDsaRejNttPoly per element. Same pattern as ExpandS: the unpatched caller ignores errors from the sampler, allowing the operation to continue after a failed sample. The patched version checks and propagates the error.",
+      "assembly_diff": "UNPATCHED: calls SymCryptMlDsaRejNttPoly per element; return value ignored.\nPATCHED (sub_180026374): rc = SymCryptMlDsaRejNttPoly(...); if (rc) return rc."
+    },
+    {
+      "name": "SymCryptMlDsaKeyGenerateEx (sub_1800209b4)",
+      "similarity": 0.8305,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version propagates errors from the ExpandS/ExpandA chain (patched SymCryptMlDsaExpandS sub_18002651c)",
+        "Unpatched version ignores the return value of SymCryptMlDsaExpandS/ExpandA",
+        "Patched function relocated to sub_180021118"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaKeyGenerateEx drives ML-DSA key generation and invokes the secret/matrix expansion helpers that reach the rejection samplers. The unpatched version ignores errors from that chain; the patched version propagates them.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaVerifyEx (sub_180021108)",
+      "similarity": 0.9432,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version propagates the error from SymCryptMlDsaSampleInBall (patched sub_1800273e0) - checks the return and stops on error",
+        "Unpatched version ignores the return value of SymCryptMlDsaSampleInBall",
+        "Patched function relocated to sub_180021890"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaVerifyEx performs ML-DSA signature verification and reaches SymCryptMlDsaSampleInBall (challenge sampling) and matrix expansion via SymCryptMlDsaExpandA -> SymCryptMlDsaRejNttPoly. The unpatched version ignores the sampler error return; the patched version propagates it.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsaSignEx (sub_180020c1c)",
+      "similarity": 0.5245,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds an overall cap on the signing rejection loop: max = *(uint8_t*)(rdi+0x15) * 0x32e (k rows * 814), returning 0x8008 if exceeded",
+        "Patched version checks the return values of the sub-samplers and stops on error",
+        "Added a null-pointer guard before the SymCryptMlDsaSigEncode (sub_1800275d4) helper call",
+        "Patched function relocated to sub_180021394"
+      ],
+      "security_relevant": false,
+      "security_notes": "SymCryptMlDsaSignEx drives ML-DSA signing, which repeatedly samples until an acceptable signature is found and also drives SymCryptMlDsaSampleInBall. The unpatched version has no overall cap on the signing rejection loop and ignores sub-function errors. The patched version adds an overall iteration cap (k * 0x32e), returns 0x8008 (mov r15d,0x8008 at 0x180021807), and guards the SigEncode call.",
+      "assembly_diff": "PATCHED (sub_180021394) adds an overall signing-loop cap:\n0x180021561: mov ecx, 0x32e                 ; per-row iteration budget (814)\n; overall bound = k (*(rdi+0x15)) * 0x32e\n0x180021807: mov r15d, 0x8008              ; NEW: overall circuit breaker error\n; plus a null-pointer guard before SymCryptMlDsaSigEncode (sub_1800275d4)"
+    },
+    {
+      "name": "SymCryptMd5AppendBlocks (sub_18000c340)",
+      "similarity": 0.9825,
+      "change_type": "behavioral",
+      "key_changes": [
+        "MD5 block compression - minor structural/offset changes",
+        "Large function (~697 instructions)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipInitialize (sub_180056ccc)",
+      "similarity": 0.9568,
+      "change_type": "behavioral",
+      "key_changes": [
+        "CI init context struct grew from 0x108 to 0x110 (8 bytes added)",
+        "Magic value unchanged at 0xa000012",
+        "Added new callback pointer at offset 0x100 (CiIsTrustedLaunchPolicyEnabled, sub_180070880 in patched)",
+        "Updated all callback function pointers to patched equivalents"
+      ],
+      "security_relevant": false,
+      "security_notes": "CI initialization function that sets up the callback dispatch table. The struct-size change and new callback (CiIsTrustedLaunchPolicyEnabled) suggest an additional verification capability was added.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState (sub_180019264)",
+      "similarity": 0.7480,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state evaluator - new logic for 0xc00 flag bits",
+        "Added new check via wil_details_AreDependenciesEnabled (sub_180019064) for specific flag conditions",
+        "Clears 0x400 bit conditionally"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-state evaluation logic change. Not directly exploitable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_EvaluateFeatureDependencies_ReevaluateCachedFeatureEnabledState (sub_1800576ac)",
+      "similarity": 0.7537,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL dependency re-evaluation - mirrors the 0xc00 flag combination logic",
+        "Added clearing of 0x400 bit when certain conditions not met"
+      ],
+      "security_relevant": false,
+      "security_notes": "Related to wil_details_GetCurrentFeatureEnabledState - WIL dependency re-evaluation logic.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipCheckLicensing (sub_1800568dc)",
+      "similarity": 0.9575,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Licensing check - flag bitmask changed from 0x8 to 0x10",
+        "Added call to CipUpdateCustomKernelSignerEnabledState (sub_180018de8)",
+        "Registry value offset changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "Licensing/policy check handling for CI. Not directly security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SbpParseSignatureDatabase (sub_18000beb8)",
+      "similarity": 0.2465,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Major refactor extracting the parse loop into helper SbpParseSignatureDatabaseFromBuffer (sub_18001dc20)",
+        "Core parsing logic moved to the helper in the patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactor - parsing logic extracted to a helper function. No behavioral security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipProcessSIPolicyLogs (sub_1800dde74)",
+      "similarity": 0.8016,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added Feature_1713320249__private_IsEnabledDeviceUsageNoInline (sub_180018ed8) pre-check before entering the SI policy log path",
+        "Changed loop bound handling (loop variable reorganized), i<4",
+        "Structural reorganization of the SI policy log processing"
+      ],
+      "security_relevant": false,
+      "security_notes": "SI policy log processing changes gated by a new feature pre-check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SymCryptMlDsakeyInitialize (sub_18002b32c)",
+      "similarity": 0.6953,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "ML-DSA key-init - register reallocation only (rsi->rdi, rcx_2->rdx_1)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Pure register allocation change - same logic, different registers.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SIPolicyAreCustomKernelSignersAllowed (sub_1800706c4)",
+      "similarity": 0.1707,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Completely rewritten iteration logic but functionally equivalent - iterates policy objects checking flags"
+      ],
+      "security_relevant": false,
+      "security_notes": "Rewritten but functionally equivalent policy-flag iteration. Low similarity is due to structural rewrite, not behavioral change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "SymCryptMlDsaRejBoundedPoly (sub_18002a00c)",
+      "entry_point": "ML-DSA key generation / signing inside Windows Code Integrity (via SymCryptMlDsaExpandS)",
+      "call_chain": [
+        "Windows Code Integrity performs an ML-DSA operation (key import/generation or signing)",
+        "SymCryptMlDsaKeyGenerateEx (sub_1800209b4) / SymCryptMlDsaSignEx (sub_180020c1c)",
+        "SymCryptMlDsaExpandS (sub_180029424) samples the secret vectors s1/s2",
+        "SymCryptMlDsaRejBoundedPoly (sub_18002a00c) - rejection loop (defensively capped in patched build; not attacker-reachable)"
+      ],
+      "vulnerability_class": "Defensive termination hardening (guards a theoretical unbounded-loop condition, CWE-835 class) - not attacker-reachable, no security-relevant impact",
+      "description": "Defensive hardening, not a reachable vulnerability. SymCryptMlDsaRejBoundedPoly fills a 256-coefficient eta-bounded polynomial (edi < 0x100). Each pass squeezes one byte from a SHAKE (Keccak) sponge via SymCryptKeccakExtract (sub_18002bb18) and decodes up to two eta-bounded candidates (eta 2 or 4, a per-parameter-set constant read from [rcx+0x16]); an out-of-range candidate is marked with sentinel 0x80 and discarded without advancing edi. In the unpatched build the only guard is the outer bound at 0x18002a166 (cmp edi,0x100; jb 0x18002a08b). The patched function (sub_180027128) adds an iteration counter (esi, capped at 0x1e1=481, checked at 0x1800271a6, incremented at 0x18002724f) and returns error 0x8008 (mov edi,0x8008 at 0x1800272a9). The unbounded-loop condition this guards (CWE-835 class) is not attacker-reachable: the rejection decision is made on SHAKE sponge output, a cryptographic pseudorandom stream, not on raw attacker bytes, and eta is a compile-time constant. Forcing 481 consecutive rejections would require a seed whose SHAKE output has that structure, which is equivalent to defeating Keccak - infeasible for any attacker input. There is no out-of-bounds read (the source is an internal sponge, not an external buffer). Classified as defense-in-depth robustness hardening of the statically-linked SymCrypt library; no security-relevant change.",
+      "trigger_conditions": "The samplers are reached during normal ML-DSA operations (SymCryptMlDsaKeyGenerateEx -> SymCryptMlDsaExpandS -> SymCryptMlDsaRejBoundedPoly). Although the SHAKE seed derives from ML-DSA key material, the accept/reject test operates on the SHAKE squeeze output, not the seed bytes directly, and the eta bound is a fixed constant. No attacker-controlled quantity can force the loop past its 481-iteration cap without breaking Keccak's pseudorandomness, so the guarded non-termination has no realizable trigger. There is no reachable denial of service.",
+      "primitive": "None reachable. The guarded condition is a theoretical non-terminating rejection loop (CWE-835 class), but the loop-driving bytes are SHAKE sponge output and the bound is a compile-time constant, so it cannot be produced by attacker input. No out-of-bounds read (internal sponge, not an external buffer), no write primitive, no info-leak, no code execution.",
+      "evidence": "UNPATCHED SymCryptMlDsaRejBoundedPoly (sub_18002a00c) rejection loop:\n```c\nint edi = 0;                              // coefficient index\nwhile (edi < 0x100) {                      // outer bound: 256 coefficients\n    uint8_t b;\n    SymCryptKeccakExtract(&st, &b, 1, 0); // squeeze 1 byte from SHAKE\n    // decode two eta-bounded candidates; out-of-range marked 0x80 (rejected)\n    if (cand0 != 0x80) poly_out[edi++] = coeff0;\n    if (cand1 != 0x80 && edi < 0x100) poly_out[edi++] = coeff1;\n    // NO ITERATION CAP: if every byte rejects, edi never advances\n}\nreturn 0;                                  // never returns error\n```\n\nPATCHED SymCryptMlDsaRejBoundedPoly (sub_180027128) adds:\n```c\nint esi = 0;                              // NEW iteration counter\nwhile (edi < 0x100) {\n    if (esi >= 0x1e1) return 0x8008;      // NEW: 481-iteration circuit breaker\n    ...\n    esi++;                                // NEW: always incremented\n}\n```",
+      "assembly": "; UNPATCHED SymCryptMlDsaRejBoundedPoly (sub_18002a00c) - rejection loop body (1-byte SHAKE squeeze)\n0x18002a08b: xor     r9d, r9d\n0x18002a08e: lea     rdx, [rsp+var_11F]      ; &output byte\n0x18002a093: lea     rcx, [rsp+var_110]      ; Keccak (SHAKE) state\n0x18002a098: lea     r8d, [r9+1]             ; squeeze 1 byte\n0x18002a09c: call    SymCryptKeccakExtract\n; ... decode two eta-bounded candidates; 0x80 == rejected ...\n0x18002a166: cmp     edi, 0x100              ; coefficients filled? (the ONLY guard)\n0x18002a16c: jb      0x18002a08b             ; loop back - NO iteration cap\n\n; PATCHED SymCryptMlDsaRejBoundedPoly (sub_180027128) adds:\n0x1800271a6: cmp     esi, 0x1e1             ; NEW: iteration count >= 481?\n0x1800271ac: jnb     0x1800272a9            ; NEW: jump to error path\n0x18002724f: inc     esi                    ; NEW: always increment counter\n0x1800272a9: mov     edi, 0x8008            ; NEW: STATUS error code",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptMlDsaRejBoundedPoly",
+            "address": "0x18002a00c",
+            "why": "Break at the start of the eta-bounded sampler. rcx=arg1 (ML-DSA key/params; [rcx+0x16] selects eta 2 or 4), rdx=SHAKE seed buffer, r9=output polynomial buffer (0x100 coefficients, 0x400 bytes). Watch the loop iterations."
+          },
+          {
+            "symbol": "ci!SymCryptMlDsaRejBoundedPoly+0x7f",
+            "address": "0x18002a08b",
+            "why": "Break at the rejection loop body where a byte is squeezed from SHAKE. If edi never advances across many hits, the sampler is rejecting every byte."
+          },
+          {
+            "symbol": "ci!SymCryptKeccakExtract",
+            "address": "0x18002bb18",
+            "why": "Break at the SHAKE squeeze. rcx=Keccak (SHAKE) state, r8=byte count (1 in RejBoundedPoly/SampleInBall, 3 in RejNttPoly). This squeezes from an internal sponge; it never runs out of output and does not read an external buffer."
+          }
+        ],
+        "watch": [
+          "edi = output coefficient index; should reach 0x100 to exit normally; if stuck at the same value, the rejection loop is not making progress",
+          "byte [r14+0x16] = eta selector (2 or 4), determines the candidate decode path",
+          "esi (patched only) = iteration counter, capped at 0x1e1 (481)"
+        ],
+        "key_offsets": [
+          "0x18002a08b = rejection loop body (1-byte SHAKE squeeze)",
+          "0x18002a166 = cmp edi, 0x100 - the ONLY bound check",
+          "0x18002a16c = jb 0x18002a08b - loop-back, no iteration cap",
+          "0x18002a13c = mov [rsi+rdi*4], ecx - store accepted coefficient",
+          "0x18002a09c = call SymCryptKeccakExtract - 1-byte SHAKE squeeze"
+        ],
+        "trigger_setup": "1) Trigger an ML-DSA key import (SymCryptMlDsakeySetValue, sub_180021580) or generation (SymCryptMlDsaKeyGenerateEx, sub_1800209b4).\n2) This drives SymCryptMlDsaExpandS -> SymCryptMlDsaRejBoundedPoly.\n3) Break at 0x18002a00c to confirm the sampler is reached.\n4) Note: forcing sustained rejection against a correct Keccak is not practically achievable by tampering with the seed, so this is best characterized as a guaranteed-termination hardening.",
+        "expected_observation": "On the unpatched build, if a sampler cannot accept, the thread spins in the rejection loop with edi stuck at a fixed value and repeated calls to SymCryptKeccakExtract. There is no bugcheck from an out-of-bounds read - the SHAKE squeeze keeps generating fresh pseudorandom output. On the patched build the operation returns error 0x8008 once the 481-iteration cap is hit.",
+        "notes": "The same pattern exists in three sibling samplers: SymCryptMlDsaRejBoundedPoly (sub_18002a00c, cap 0x1e1=481), SymCryptMlDsaRejNttPoly (sub_18002a1ac, cap 0x12a=298), and SymCryptMlDsaSampleInBall (sub_18002a288, cap 0x79=121). All read from a SHAKE (Keccak) squeeze via SymCryptKeccakExtract (sub_18002bb18). The callers (SymCryptMlDsaExpandS sub_180029424, SymCryptMlDsaExpandA sub_180029284, SymCryptMlDsaKeyGenerateEx sub_1800209b4, SymCryptMlDsaVerifyEx sub_180021108, SymCryptMlDsaSignEx sub_180020c1c) were also patched to propagate the error return instead of ignoring it. The base address of ci.dll differs at runtime due to ASLR - use 'lm ci' in WinDbg to get the base and add the offsets."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "SymCryptMlDsaRejNttPoly (sub_18002a1ac)",
+      "entry_point": "ML-DSA matrix expansion inside Windows Code Integrity (via SymCryptMlDsaExpandA)",
+      "call_chain": [
+        "Windows Code Integrity performs an ML-DSA operation (verification or key handling)",
+        "SymCryptMlDsaKeyGenerateEx (sub_1800209b4) / SymCryptMlDsaVerifyEx (sub_180021108)",
+        "SymCryptMlDsaExpandA (sub_180029284) expands the public matrix A",
+        "SymCryptMlDsaRejNttPoly (sub_18002a1ac) - rejection loop (defensively capped in patched build; not attacker-reachable)"
+      ],
+      "vulnerability_class": "Defensive termination hardening (guards a theoretical unbounded-loop condition, CWE-835 class) - not attacker-reachable, no security-relevant impact",
+      "description": "Defensive hardening, not a reachable vulnerability. Sibling to SymCryptMlDsaRejBoundedPoly. SymCryptMlDsaRejNttPoly samples a uniform NTT-domain polynomial. The loop at 0x18002a22e squeezes 3 bytes from the SHAKE state via SymCryptKeccakExtract, masks the top byte to a 23-bit value, and compares it to 0x7fe001 (= 8380417 = q, the ML-DSA prime modulus, a compile-time constant). If the value is >= q the branch at 0x18002a252 (jnb 0x18002a22e) rejects the sample and loops back without decrementing the remaining-coefficient counter rbx (which starts at 0x100). The patched function (sub_1800272ec) adds an iteration counter (r14d) capped at 0x12a (298, checked at 0x180027369, incremented at 0x18002738d) and returns 0x8008 at 0x1800273ad. The unbounded-loop condition (CWE-835 class) is not attacker-reachable: the compared value is SHAKE sponge output and q is fixed, so no attacker-supplied seed can force sustained rejection without defeating Keccak. No out-of-bounds read. Defense-in-depth hardening of statically-linked SymCrypt.",
+      "trigger_conditions": "Reached during ML-DSA matrix expansion (SymCryptMlDsaExpandA -> SymCryptMlDsaRejNttPoly) in verification and key handling. Although the SHAKE seed derives from the public matrix seed (rho), the >= q test operates on SHAKE squeeze output and q is a fixed constant, so forcing every 3-byte value to be >= q for 298 iterations is not achievable by any attacker input. No reachable denial of service.",
+      "primitive": "None reachable. Theoretical non-terminating rejection loop (CWE-835 class) guarded by the patch; the compared bytes are SHAKE sponge output and the threshold is a compile-time constant, so it cannot be triggered. No out-of-bounds read - the byte source is a SHAKE squeeze, not adjacent memory.",
+      "evidence": "UNPATCHED SymCryptMlDsaRejNttPoly (sub_18002a1ac) q-rejection loop:\n```c\nint rbx = 0x100;                          // remaining coefficients\nwhile (true) {\n    SymCryptKeccakExtract(&st, buf, 3, 0);// squeeze 3 bytes from SHAKE\n    uint32_t v = buf & 0x7fffff;          // 23-bit value (top byte masked)\n    if (v >= 0x7fe001) continue;          // >= q: loop back WITHOUT decrementing rbx\n    *out++ = v;\n    if (--rbx == 0) break;\n}\n```\n\nPATCHED SymCryptMlDsaRejNttPoly (sub_1800272ec) adds: cmp r14d, 0x12a; jnb error; inc r14d; and error return 0x8008.",
+      "assembly": "; UNPATCHED SymCryptMlDsaRejNttPoly (sub_18002a1ac) q-rejection loop\n0x18002a229: mov     ebx, 0x100             ; remaining coefficients\n0x18002a22e: xor     r9d, r9d\n0x18002a231: lea     rdx, [rsp+var_110]     ; &output value\n0x18002a236: lea     rcx, [rsp+var_100]     ; Keccak (SHAKE) state\n0x18002a23b: lea     r8d, [r9+3]            ; squeeze 3 bytes\n0x18002a23f: call    SymCryptKeccakExtract\n0x18002a244: and     byte [rsp+var_110+2], 0x7f ; mask top byte -> 23-bit value\n0x18002a249: mov     eax, dword [rsp+var_110]\n0x18002a24d: cmp     eax, 0x7fe001          ; >= q (8380417)?\n0x18002a252: jnb     0x18002a22e            ; reject: loop back WITHOUT decrementing rbx\n0x18002a254: mov     dword [rdi], eax       ; store accepted coefficient\n0x18002a256: add     rdi, 0x4\n0x18002a25a: sub     rbx, 0x1               ; decrement only on accept\n0x18002a25e: jnz     0x18002a22e\n\n; PATCHED SymCryptMlDsaRejNttPoly (sub_1800272ec) adds:\n0x180027369: cmp     r14d, 0x12a           ; NEW: iteration count >= 298?\n0x18002738d: inc     r14d                   ; NEW: increment counter\n0x1800273ad: mov     edi, 0x8008            ; NEW: error return",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptMlDsaRejNttPoly+0x82",
+            "address": "0x18002a22e",
+            "why": "Break at the q-rejection loop body. rdi=current coefficient write pointer (advances by 4 on accept), rbx=remaining coefficients (starts at 0x100, decrements on accept). If rbx never decrements, the rejection loop is stuck."
+          }
+        ],
+        "watch": [
+          "rbx = remaining coefficient count, starts at 0x100; if stuck, the reject-and-retry path is looping",
+          "eax after the cmp at 0x18002a24d: if consistently >= 0x7fe001, every 3-byte sample is being rejected"
+        ],
+        "key_offsets": [
+          "0x18002a22e = q-rejection loop body (3-byte SHAKE squeeze)",
+          "0x18002a24d = cmp eax, 0x7fe001 - q (= 8380417) rejection threshold",
+          "0x18002a252 = jnb 0x18002a22e - reject-and-retry, loops back without decrementing rbx",
+          "0x18002a25a = sub rbx, 1 - decrement remaining (only on accept)"
+        ],
+        "trigger_setup": "Reach SymCryptMlDsaExpandA via an ML-DSA verify/keygen (SymCryptMlDsaVerifyEx sub_180021108 or SymCryptMlDsaKeyGenerateEx sub_1800209b4). Break at 0x18002a1ac to confirm the sampler is reached. The 298-iteration cap is not reachable by attacker input: the compared value is SHAKE sponge output and q is a fixed constant.",
+        "expected_observation": "On the unpatched build the thread spins in the loop with rdi/rbx not advancing and the candidate consistently >= 0x7fe001. There is no bugcheck - the SHAKE squeeze keeps generating output. On the patched build the operation returns 0x8008 once the 298-iteration cap is hit.",
+        "notes": "Sibling to the RejBoundedPoly finding. Same root cause: a rejection loop with no independent iteration cap reading from a SHAKE (Keccak) squeeze."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "SymCryptMlDsaSampleInBall (sub_18002a288)",
+      "entry_point": "ML-DSA challenge sampling inside Windows Code Integrity (via SymCryptMlDsaVerifyEx / SymCryptMlDsaSignEx)",
+      "call_chain": [
+        "Windows Code Integrity performs an ML-DSA verify or sign operation",
+        "SymCryptMlDsaVerifyEx (sub_180021108) / SymCryptMlDsaSignEx (sub_180020c1c)",
+        "SymCryptMlDsaSampleInBall (sub_18002a288) - rejection loop (defensively capped in patched build; not attacker-reachable)"
+      ],
+      "vulnerability_class": "Defensive termination hardening (guards a theoretical unbounded-loop condition, CWE-835 class) - not attacker-reachable, no security-relevant impact",
+      "description": "Defensive hardening, not a reachable vulnerability. Third sibling sampler. SymCryptMlDsaSampleInBall samples the challenge polynomial c. The inner loop at 0x18002a346 squeezes a single byte per pass from the SHAKE state via SymCryptKeccakExtract and rejects it while it exceeds the running index ebx (cmp eax,ebx; ja 0x18002a346); the threshold derives from tau at [rsi+0x18], a parameter-set constant. The patched function (sub_1800273e0) adds an iteration counter (edi) capped at 0x79 (121, checked at 0x18002749e, incremented at 0x1800274be) and returns 0x8008 (mov r14d,0x8008 at 0x180027502). The unbounded-loop condition (CWE-835 class) is not attacker-reachable: the sampled byte is SHAKE sponge output and tau is fixed. No out-of-bounds read. Defense-in-depth hardening of statically-linked SymCrypt.",
+      "trigger_conditions": "Reached during challenge sampling via SymCryptMlDsaVerifyEx (sub_180021108) or SymCryptMlDsaSignEx (sub_180020c1c). Although the SHAKE seed derives from the challenge hash (c-tilde), the rejection test operates on SHAKE squeeze output and tau is a fixed constant, so forcing every sampled byte above the running threshold for 121 iterations is not achievable by any attacker input. No reachable denial of service.",
+      "primitive": "None reachable. Theoretical non-terminating rejection loop (CWE-835 class) guarded by the patch; the sampled bytes are SHAKE sponge output and the threshold is a compile-time constant, so it cannot be triggered. No out-of-bounds read.",
+      "evidence": "UNPATCHED SymCryptMlDsaSampleInBall (sub_18002a288) inner loop:\n```c\ndo {\n    SymCryptKeccakExtract(&st, &b, 1, 0);  // squeeze 1 byte from SHAKE\n} while (b > ebx);                          // loop while byte exceeds running index; no iteration cap\n```\n\nPATCHED SymCryptMlDsaSampleInBall (sub_1800273e0) adds:\n```c\ndo {\n    if (edi >= 0x79) { status = 0x8008; goto error; }  // NEW: 121-iteration cap\n    SymCryptKeccakExtract(&st, &b, 1, 0);\n    edi++;\n} while (b > ebx);\n```",
+      "assembly": "; UNPATCHED SymCryptMlDsaSampleInBall (sub_18002a288) inner loop (1-byte SHAKE squeeze, no cap)\n0x18002a346: xor     r9d, r9d\n0x18002a349: lea     rdx, [rsp+var_140]\n0x18002a34e: mov     r8, rsi                ; squeeze 1 byte\n0x18002a351: lea     rcx, [rsp+var_130]     ; Keccak (SHAKE) state\n0x18002a356: call    SymCryptKeccakExtract\n0x18002a35b: movzx   eax, [rsp+var_140]\n0x18002a360: cmp     eax, ebx\n0x18002a362: ja      0x18002a346            ; reject and retry, no iteration cap\n\n; PATCHED SymCryptMlDsaSampleInBall (sub_1800273e0) adds:\n0x18002749e: cmp     edi, 0x79             ; NEW: iteration count >= 121?\n0x180027502: mov     r14d, 0x8008          ; NEW: error return",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptMlDsaSampleInBall",
+            "address": "0x18002a288",
+            "why": "Break at function entry. rcx=arg1 (ML-DSA key/params; [rcx+0x18] = tau), rdx=seed, r8/r9=buffers. Monitor the inner do-while sampling loop at 0x18002a346."
+          }
+        ],
+        "watch": [
+          "byte at [rsp+var_140] = index byte squeezed from SHAKE; if always > ebx, the inner loop is not making progress",
+          "ebx = running index/threshold that increments on accept",
+          "edi (patched only) = iteration counter, capped at 0x79 (121)"
+        ],
+        "key_offsets": [
+          "0x18002a346 = inner rejection loop body (1-byte SHAKE squeeze)",
+          "0x18002a360 = cmp eax, ebx - reject when byte exceeds running index",
+          "0x18002a362 = ja 0x18002a346 - reject-and-retry, no iteration cap"
+        ],
+        "trigger_setup": "Reach SymCryptMlDsaSampleInBall via an ML-DSA verify (SymCryptMlDsaVerifyEx sub_180021108) or sign (SymCryptMlDsaSignEx sub_180020c1c). Break at 0x18002a288 to confirm. The 121-iteration cap is not reachable by attacker input: the sampled byte is SHAKE sponge output and tau is a fixed constant.",
+        "expected_observation": "On the unpatched build the thread spins in the inner loop with the squeezed byte consistently exceeding ebx. On the patched build the operation returns 0x8008 once the 121-iteration cap is hit.",
+        "notes": "Third sibling in the same ML-DSA rejection-sampling path. Same class of bug (rejection loop with no independent iteration cap reading from a SHAKE squeeze)."
+      }
+    }
+  ],
+  "summary": "No security-relevant change. The patch adds hard iteration limits and an error return (0x8008) to the statically-linked SymCrypt ML-DSA (FIPS 204 / 'Dilithium') rejection-sampling routines in ci.dll (Windows Code Integrity), and updates their callers to propagate that error. The added counters, caps, and error code were verified at exact addresses in both builds and are genuine. Three sibling samplers - SymCryptMlDsaRejBoundedPoly (sub_18002a00c -> sub_180027128, cap 481), SymCryptMlDsaRejNttPoly (sub_18002a1ac -> sub_1800272ec, cap 298), and SymCryptMlDsaSampleInBall (sub_18002a288 -> sub_1800273e0, cap 121) - each read bytes from a SHAKE (Keccak) squeeze via SymCryptKeccakExtract (sub_18002bb18) and discard out-of-range samples; the unpatched code lacks an independent iteration counter. However this is not a reachable security fix. The accept/reject decision is made on SHAKE sponge output (a cryptographic pseudorandom stream), not on raw attacker bytes, and every threshold is a compile-time / parameter-set constant (eta 2/4, q 0x7fe001, tau). Forcing hundreds of consecutive rejections to reach a cap would require defeating Keccak's pseudorandomness and is not achievable by any attacker-supplied seed. There is no out-of-bounds read (the source is an internal sponge, not an external buffer), no denial of service, and no memory-corruption primitive. The caller updates (SymCryptMlDsaExpandS sub_180029424, SymCryptMlDsaExpandA sub_180029284, SymCryptMlDsaKeyGenerateEx sub_1800209b4, SymCryptMlDsaVerifyEx sub_180021108, SymCryptMlDsaSignEx sub_180020c1c) simply propagate the new defensive error. The change is defense-in-depth robustness hardening of the SymCrypt library, classified as no security-relevant change."
+}

@@ -1,0 +1,221 @@
+{
+  "binaries": {
+    "title": "http.sys - No security-relevant change (performance-counter buffer zeroing moved into callee) & KIR feature-flag cleanup",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9806,
+    "matched": 4342,
+    "changed": 133,
+    "identical": 4209,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlpPcwCopyGlobalCounters (sub_140149B64)",
+      "similarity": 0.9747,
+      "change_type": "hardening",
+      "key_changes": [
+        "Unpatched clears only the first 8 bytes of the 0x28-byte output buffer (*(_QWORD *)a2 = 0), then reads the buffer's fields at +0x08, +0x0C, +0x10, +0x14 as 32-bit accumulator start values before writing them",
+        "Unpatched also accumulates 64-bit values into +0x18 and +0x20 with += (this path is gated by UxKirHttpTlsHandshakePerfCounter)",
+        "Patched zeroes the entire 0x28-byte struct up front via a 16-byte store at +0x00, a 16-byte store at +0x10, and an 8-byte store at +0x20",
+        "Patched initializes all six accumulators (v4,v5,v6,v7,v8,v10) to 0 before the accumulation loop",
+        "The single caller UlpPcwCollectInstances (sub_14008CFCC) fully zeroes the 40-byte buffer before the call in BOTH builds: memset(v24,0,32) clears +0x00..+0x1F and v25=0 clears +0x20..+0x27; identical in the patched caller (v22[4]+v23)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The unpatched routine zeroes only 8 bytes of the 0x28-byte output buffer in-function and reads the fields at +0x08/+0x0C/+0x10/+0x14 and accumulates into +0x18/+0x20 before writing them. However, the function's only caller, UlpPcwCollectInstances (sub_14008CFCC), fully initializes the 40-byte stack buffer before every call in both builds (memset of the leading 32 bytes plus an explicit = 0 of the trailing 8-byte field), so those reads return zero, not stack residue, and no uninitialized data is folded into the result. The returned counter totals are identical in both builds. The patch merely moves the zeroing from the caller into the callee (defense in depth). Not CWE-908 / CWE-200 in practice; no information exposure.",
+      "assembly_diff": "// Caller UlpPcwCollectInstances (both builds): v25=0; memset(v24,0,sizeof(v24)); => whole 40-byte buffer zero before the call.\n// Unpatched callee: *(_QWORD *)a2 = 0; then v4=*(a2+8); v6=*(a2+12); v8=*(a2+16); v10=*(a2+20); reads of caller-zeroed fields;\n// *(_QWORD *)(a2+24) += *(_QWORD *)(v12+24); *(_QWORD *)(a2+32) += *(_DWORD **)(v12+32);\n// Patched callee (UlpPcwCopyGlobalCounters @ 0x1401478FC):\n// *(_OWORD *)a2 = 0; *(_OWORD *)(a2+16) = 0; *(_QWORD *)(a2+32) = 0; all accumulators = 0."
+    },
+    {
+      "name": "UxSslValidateErrorHeaders (sub_14008AEB8)",
+      "similarity": 0.8058,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Function validates the header list of an SSL/TLS error response: hash-table name lookup, rejection of the ':status' pseudo-header, and control-character scans of name and value bytes",
+        "Unpatched duplicates the per-header body into two identical branches gated by the KIR global UxKirHttpBugFix25Q1; the patched build removes the rolled-back branch and keeps a single unified path",
+        "The name-pointer NULL / zero-length guard (if (v8 == nullptr || <name-len> == 0) break;) is present on every per-header path in BOTH builds",
+        "The one length-guarded read of the name's first byte (<name-len> != 0 && **name == ':') is byte-for-byte identical in both builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The header name-pointer NULL and zero-length checks exist in both builds before the name bytes are scanned, and the single length-guarded read of name[0] is identical in both builds. The only structural difference is the removal of the UxKirHttpBugFix25Q1 Known-Issue-Rollback duplicate branch. No pointer validation was added or removed and no NULL dereference is fixed here.",
+      "assembly_diff": "// Both builds, per header: if (v8 == nullptr || <name-len> == 0) break; before scanning the name.\n// Length-guarded read identical: if (<name-len> != 0 && **name == 0x3a) break;\n// Patched header: UxSslValidateErrorHeaders @ 0x140088AE8; UxKirHttpBugFix25Q1 branch removed."
+    },
+    {
+      "name": "HkAddPairToTable (sub_140032640)",
+      "similarity": 0.8017,
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Fixed node header grown from 0x48 to 0x50 bytes (one extra 8-byte field); the hash-chain node moves from offset +0x20 to +0x28 and copied data moves from offset 0x48 to 0x50",
+        "Allocation grows in lockstep: name_len + value_len + 0x48 becomes name_len + value_len + 0x50, so copied data still fits the allocation exactly in both builds",
+        "Wrap-around checks on every size addition are functionally equivalent; unpatched combines them into one compound if(), patched splits them into sequential early-returns",
+        "New KIR flag UxKirHkPerformanceImprovements selects the name-hash insertion helper HkAddPairToNameHash (sub_14006EE90) vs HkAddPairToNameHashOld (sub_14014AEEC)"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. In both builds the fixed header plus the two copied strings exactly fill the allocation (header + name_len + value_len), and the integer wrap-around checks are equivalent. The header simply grew by 8 bytes to hold an added field, with the allocation size increased to match. There is no undersized allocation and no pool overflow. The change is a KIR feature-staging update (UxKirHkPerformanceImprovements) that also swaps the name-hash insertion routine.",
+      "assembly_diff": "// Unpatched: v16 = name_len+value_len+0x48; memset(v17,0,v16); memmove(v18+0x48, name, name_len); chain node at v18+0x20.\n// Patched (HkAddPairToTable @ 0x140052D40): v16 = name_len+value_len+0x50; memmove(v18+0x50, name, name_len); chain node at v18+0x28."
+    },
+    {
+      "name": "UlConnectionCleanupWorker (sub_1400583B0)",
+      "similarity": 0.864,
+      "change_type": "behavioral",
+      "key_changes": [
+        "KIR-gated branches consolidated to a single path",
+        "A conditional tracing call is replaced with a hardcoded null argument, disabling that log path",
+        "Silo/process cleanup logic reorganized but functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlSetPreSendState (sub_140085920) / UlSetSendCompleteState (sub_14005C6A0)",
+      "similarity": 0.8231,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Duplicate KIR-gated send-response paths removed",
+        "Connection-counter increment logic simplified",
+        "Performance-counter node tracking restructured"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpIsFastForwardingAllowed (sub_14011ED58)",
+      "similarity": 0.7107,
+      "change_type": "behavioral",
+      "key_changes": [
+        "State/condition logic restructured to a goto-based flow with an intermediate cond variable",
+        "A helper call is added on one path in the patched build"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlCopyChannelBindConfigFromPropertyInfo (sub_1400DB58C)",
+      "similarity": 0.7241,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Channel-binding / credential property copy paths refactored",
+        "A KIR-gated branch consolidated in the patched build",
+        "Allocation-size bounds checks reorganized (<= 0x40) without changing the effective limit"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState (sub_1400C26DC) / wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_1400C2578)",
+      "similarity": 0.748,
+      "change_type": "library",
+      "key_changes": [
+        "Windows Implementation Library (WIL) feature-state cache helpers",
+        "Bitmask/state computation reorganized from inline loop to a helper call, producing equivalent state values"
+      ],
+      "security_relevant": false,
+      "security_notes": "WIL feature-staging infrastructure, not application security logic.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UcpCreateClientConfiguration (sub_140162D0C)",
+      "similarity": 0.7247,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Object-attribute flag 0x200000 application changed from a KIR-gated conditional to an unconditional set with an inverse !(arg1 & 0x100) guard",
+        "This changes when the 0x200000 attribute flag is applied during client-configuration object creation"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UlpHttpIdealBacklogFastForwarderNotification (sub_140056804)",
+      "similarity": 0.7085,
+      "change_type": "behavioral",
+      "key_changes": [
+        "KIR-gated dispatch/IRQL path selection consolidated",
+        "Work-item helper targets updated",
+        "Silo attach/detach cleanup refactored"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "UlpPcwCopyGlobalCounters (sub_140149B64)",
+      "entry_point": "Performance counter query (PerfMon / typeperf / PCW query for the HTTP Server API global counter set)",
+      "call_chain": ["PerfMon / performance-counter enumeration", "UlpPcwCollectInstances (sub_14008CFCC) counter type 0", "UlpPcwCopyGlobalCounters (sub_140149B64) aggregate copy", "counter totals returned as _PCW_DATA to user mode (identical in both builds)"],
+      "vulnerability_class": "None (defense-in-depth hardening; the caller already fully initializes the buffer)",
+      "description": "UlpPcwCopyGlobalCounters (sub_140149B64) copies aggregated global HTTP counters into a 40-byte (0x28) output buffer. The unpatched version zeroes only the first 8 bytes in-function (*(_QWORD *)a2 = 0), then reads the buffer's fields at +0x08, +0x0C, +0x10, +0x14 as 32-bit accumulator start values and accumulates 64-bit values into +0x18 and +0x20 (gated by UxKirHttpTlsHandshakePerfCounter) before writing them. In isolation that reads not-yet-written output fields, but the function has exactly one caller, UlpPcwCollectInstances (sub_14008CFCC), which fully zeroes the 40-byte stack buffer before every call in BOTH builds: memset(v24, 0, sizeof(v24)) clears +0x00..+0x1F and v25 = 0 clears +0x20..+0x27 (identical in the patched caller, v22[4]+v23). Therefore the unpatched reads return zero, not stack residue, no uninitialized data is folded into the result, and the returned counter totals are identical in both builds. The patched version zeroes the whole 0x28-byte structure up front (16-byte store at +0x00, 16-byte store at +0x10, 8-byte store at +0x20) and starts every accumulator from zero. This is a defense-in-depth hardening that moves the zeroing from the caller into the callee, with no observable behavior change.",
+      "trigger_conditions": "Not applicable. Querying HTTP Server API global performance counters via PerfMon, typeperf, or the PCW query path returns identical totals in both builds because the caller fully zeroes the buffer before the call in both builds.",
+      "primitive": "None. No uninitialized data reaches the result; the sole caller fully initializes the 40-byte buffer in both builds. The change is defense in depth only.",
+      "evidence": "// CALLER UlpPcwCollectInstances (sub_14008CFCC), both builds:\n// _QWORD v24[4]; __int64 v25;    // contiguous 40-byte buffer\nv25 = 0;                          // clears +0x20..+0x27\nmemset(v24, 0, sizeof(v24));      // clears +0x00..+0x1F => whole buffer zero\nUlpPcwCopyGlobalCounters(a1, v24);\n\n// UNPATCHED callee UlpPcwCopyGlobalCounters (sub_140149B64):\n*(_QWORD *)a2 = 0;                 // clears only bytes 0..7 in-function\nv4  = *(_DWORD *)(a2 + 8);         // reads a caller-zeroed field\nv6  = *(_DWORD *)(a2 + 12);        // caller-zeroed\nv8  = *(_DWORD *)(a2 + 16);        // caller-zeroed\nv10 = *(_DWORD *)(a2 + 20);        // caller-zeroed\n*(_QWORD *)(a2 + 24) += *(_QWORD *)(v12 + 24);   // += onto caller-zeroed field\n*(_QWORD *)(a2 + 32) += *(_DWORD **)(v12 + 32);   // += onto caller-zeroed field\n\n// PATCHED callee UlpPcwCopyGlobalCounters (@ 0x1401478FC):\n*(_OWORD *)a2 = 0;                 // zero bytes 0..15\n*(_OWORD *)(a2 + 16) = 0;          // zero bytes 16..31\n*(_QWORD *)(a2 + 32) = 0;          // zero bytes 32..39 (full 0x28)\nv4 = v5 = v6 = v7 = v8 = v10 = 0;  // all accumulators start at zero in-function",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlpPcwCopyGlobalCounters",
+            "address": "0x140149B64",
+            "why": "Break at the global-counter copy routine. In both builds, on entry all 0x28 bytes of the output buffer (rdx) are already zero because the caller UlpPcwCollectInstances zeroes the whole 40-byte buffer before the call; the unpatched in-function clear of only +0x00..+0x07 is therefore redundant, not a leak."
+          }
+        ],
+        "watch": [
+          "arg2 (rdx) = output statistics buffer (0x28 / 40 bytes) supplied by UlpPcwCollectInstances, fully zeroed by the caller before the call in both builds",
+          "arg2+0x08, +0x0C, +0x10, +0x14: fields read as 32-bit accumulator start values in the unpatched build (read as zero because the caller zeroed them)",
+          "arg2+0x18, +0x20: 64-bit fields accumulated with += (gated by UxKirHttpTlsHandshakePerfCounter), also caller-zeroed",
+          "UxKirHttpTlsHandshakePerfCounter: KIR flag controlling whether +0x18 and +0x20 are accumulated"
+        ],
+        "key_offsets": [
+          "*(_QWORD *)a2 = 0 clears only bytes 0..7 in-function in the unpatched build (the caller already zeroed the rest)",
+          "loads from a2+8 / a2+0xc / a2+0x10 / a2+0x14 read caller-zeroed memory, not stack residue",
+          "patched build zeroes 0x00, 0x10, 0x20 stores covering the full 0x28 struct in-function"
+        ],
+        "trigger_setup": "Query HTTP Server API global performance counters while the server handles requests: 'typeperf \"\\HTTP Service\\Total Requests\" -sc 1' or use PCW enumeration APIs. Totals are identical across builds under identical load.",
+        "expected_observation": "Global counter totals are identical in the unpatched and patched builds because the caller fully zeroes the buffer before the call in both builds. Only the location of the zeroing differs (caller-only vs caller-and-callee).",
+        "notes": "This function is invoked from UlpPcwCollectInstances (sub_14008CFCC) for counter type 0, which zeroes the 0x28-byte stack buffer, fills it, and forwards it as _PCW_DATA (length 40) to the performance-counter consumer."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "UxSslValidateErrorHeaders (sub_14008AEB8)",
+      "entry_point": "SSL/TLS error-response header validation, reached from UxpSslValidateExtendedPropertiesHelper (sub_14008AD98)",
+      "call_chain": ["SSL/TLS error-response construction", "UxpSslValidateExtendedPropertiesHelper (sub_14008AD98)", "UxSslValidateErrorHeaders (sub_14008AEB8) header list validation"],
+      "vulnerability_class": "None (feature-flag consolidation)",
+      "description": "UxSslValidateErrorHeaders (sub_14008AEB8) validates the header list of an SSL/TLS error response. For each header it looks up the name in a hash table (UxFindHeaderNameHashEntry), breaks on the ':status' pseudo-header, and scans the name and value bytes for disallowed control characters using bit-test masks (0x2401 for value bytes, 0x400000000002401 for name bytes). In the unpatched build the per-header body is duplicated into two identical branches gated by the Known-Issue-Rollback global UxKirHttpBugFix25Q1; both branches perform the same name-pointer NULL and zero-length guard (if (v8 == nullptr || <name-len> == 0) break;) before scanning the name. The patched build removes the rolled-back branch and keeps the single unified path. The NULL/zero-length check is present in both builds, and the one length-guarded read of the name's first byte (<name-len> != 0 && **name == ':') is byte-for-byte identical in both builds. No pointer validation is added or removed and no NULL dereference is fixed; this is a feature-staging cleanup.",
+      "trigger_conditions": "Not applicable. The change is a Known-Issue-Rollback branch consolidation with no behavioral difference in header validation.",
+      "primitive": "None.",
+      "evidence": "// Both builds, per header, before scanning name bytes:\n//   if ( v8 == nullptr || <name-len> == 0 ) break;   // NULL / zero-length guard present\n// Length-guarded read of name[0] identical in both builds:\n//   if ( <name-len> != 0 && **(_BYTE **)(entry + 8) == 0x3a ) break;\n// Unpatched wraps the per-header body in duplicate UxKirHttpBugFix25Q1 branches;\n// patched (UxSslValidateErrorHeaders @ 0x140088AE8) keeps one unified path.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UxSslValidateErrorHeaders",
+            "address": "0x14008AEB8",
+            "why": "Break at SSL error-header validation to observe that the name-pointer NULL/zero-length guard runs on every per-header path in both builds before the name bytes are read."
+          }
+        ],
+        "watch": [
+          "a1 = pointer to the SSL error header list; *(a1) status word, *(a1+2) header count, *(a1+8) entries array (stride 0x18)",
+          "per entry: name pointer at +0x08, name length at +0x00, value pointer at +0x10, value length at +0x02",
+          "UxKirHttpBugFix25Q1: KIR flag selecting the (identical) duplicate branch in the unpatched build"
+        ],
+        "key_offsets": [
+          "length-guarded read of name[0] (== 0x3a) present identically in both builds",
+          "NULL/zero-length guard (name == nullptr || name-len == 0) present on every per-header path in both builds"
+        ],
+        "trigger_setup": "Not applicable; no exploitable condition.",
+        "expected_observation": "Header validation behaves identically in both builds; only the redundant UxKirHttpBugFix25Q1 branch is removed.",
+        "notes": "UxKir* globals are per-feature Known-Issue-Rollback switches; UxKirHttpBugFix25Q1 gates this specific consolidation."
+      }
+    }
+  ],
+  "summary": "This http.sys diff contains no security-relevant behavior change. The most substantive change is in the global performance-counter copy routine UlpPcwCopyGlobalCounters (sub_140149B64): the patched build zeroes the entire 0x28-byte output structure in-function and starts every accumulator from zero, while the unpatched build clears only the first 8 bytes in-function and reads the remaining output fields (+0x08/+0x0C/+0x10/+0x14 and +0x18/+0x20) before writing them. This is defense in depth, not a fix: the function's single caller UlpPcwCollectInstances (sub_14008CFCC) fully zeroes the 40-byte stack buffer before every call in BOTH builds (memset of the leading 32 bytes plus an explicit = 0 of the trailing 8-byte field), so the unpatched reads return zero rather than stack residue and the returned counter totals are identical in both builds. There is no information exposure (not CWE-908 / CWE-200 in practice). The remaining changed functions, including UxSslValidateErrorHeaders (sub_14008AEB8) and HkAddPairToTable (sub_140032640), are Known-Issue-Rollback (UxKir*) feature-flag consolidations: the SSL error-header validator keeps its name-pointer NULL check in both builds and merely drops a duplicate UxKirHttpBugFix25Q1 branch, and the header-pair insert grows its fixed node header 0x48->0x50 with the allocation growing in lockstep (no undersized allocation). The two wil_details_* functions are Windows Implementation Library feature-state helpers."
+}

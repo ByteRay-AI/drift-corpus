@@ -1,0 +1,225 @@
+{
+  "binaries": {
+    "id_unpatched": "datascrn_unpatched.sys",
+    "id_patched": "datascrn_patched.sys",
+    "overall_similarity": 0.9019,
+    "matched": 232,
+    "changed": 197,
+    "identical": 35,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SrmAppendPath",
+      "similarity": 0.7673,
+      "change_type": "refactor",
+      "key_changes": [
+        "Combined-length guard (v3 = a1->Length + a2->Length; if v3 > 0xFFFE return STATUS_NAME_TOO_LONG) moved from the callers into the callee; the unpatched build already performs this check at every call site before calling",
+        "Function signature changed from 3 args (UNICODE_STRING*, UNICODE_STRING*, int32_t a3) to 2 args (UNICODE_STRING*, UNICODE_STRING*) — a3 was the caller-computed combined length, now computed inside the function",
+        "Allocation API modernized from ExAllocatePoolWithTag(PagedPool,...) to ExAllocatePool2(POOL_FLAG_PAGED,...); same PagedPool, same tag 0x706D7253 ('Srmp')",
+        "Copy logic identical: two memmove calls write a1->Length then a2->Length bytes into a buffer sized (combined + 0x1FF) & 0xFFFFFE00 capped at 0xFFFE"
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. Unpatched SrmAppendPath (@ 0x1C001DE10) takes a3 (r8d) as the round-up size and copies exactly a1->Length + a2->Length bytes into a buffer of (a3 + 0x1FF) & 0xFFFFFE00 (capped 0xFFFE). All four unpatched call sites (0x1C001CF8F, 0x1C001CFD9, 0x1C001E06F, 0x1C001E0B5) compute a3 = a1->Length + a2->Length via a 32-bit add of two zero-extended USHORTs (movzx r8d,word / movzx eax,word / add r8d,eax) and reject a3 > 0xFFFE (cmp r8d,0FFFEh; ja) BEFORE calling. So a3 always equals the real combined length, no 16-bit USHORT wrap is possible, and the allocation is always >= the bytes copied: the two memmove calls never overflow. The patched build (@ 0x14001E88C) performs the identical combined-length computation and > 0xFFFE rejection inside the function, drops the a3 parameter, and swaps ExAllocatePoolWithTag for ExAllocatePool2. This is guard relocation (caller -> callee) plus allocation-API modernization, not a vulnerability fix; there is no reachable overflow in either build.",
+      "assembly_diff": "; UNPATCHED SrmAppendPath @ 0x1C001DE10 (copy path)\n00000001C001DE24  mov     edi, r8d              ; edi = a3 (caller-supplied combined length)\n00000001C001DE39  cmp     eax, 0C0000023h       ; STATUS_BUFFER_TOO_SMALL?\n00000001C001DE44  add     edi, 1FFh\n00000001C001DE4F  and     edi, 0FFFFFE00h        ; size = (a3 + 0x1FF) & ~0x1FF\n00000001C001DE62  cmova   edi, eax              ; cap at 0xFFFE\n00000001C001DE67  call    ExAllocatePoolWithTag ; PagedPool, size, 'Srmp'\n00000001C001DE8D  call    memmove               ; a1->Length bytes\n00000001C001DEA0  call    memmove               ; a2->Length bytes (dest = base + a1->Length)\n; every caller checks first, e.g. @ 0x1C001CF6A:\n;   movzx r8d,word[a1.Length]; movzx eax,word[a2.Length]; add r8d,eax; cmp r8d,0FFFEh; ja <reject>\n\n; PATCHED SrmAppendPath @ 0x14001E88C (guard now in callee)\n000000014001E8A0  movzx   esi, word ptr [rcx]   ; a1->Length\n000000014001E8A8  movzx   eax, word ptr [rdx]   ; a2->Length\n000000014001E8AE  add     esi, eax              ; combined (32-bit)\n000000014001E8B3  cmp     esi, ebp              ; ebp = 0xFFFE\n000000014001E8B7  mov     eax, 0C0000106h       ; STATUS_NAME_TOO_LONG on >\n000000014001E8F2  call    ExAllocatePool2       ; POOL_FLAG_PAGED, size, 'Srmp'"
+    },
+    {
+      "name": "SrmCanInsertPrefixTreePath",
+      "similarity": 0.6931,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Both builds have the same 5-argument (variadic) signature; no argument was added",
+        "Both builds compute Source.Length = a2->Length - <remaining>.Length (the processed prefix) and pass &Source to DataScreenCheckPrefixTreeNodeTxStatusCallback — the path segment validated is identical",
+        "Difference is control-flow restructuring only: patched folds the node-type test into a single combined condition (v10 == 2 || v10 == 3 || (v10 == 1 && *(entry+0x40) != 0)); unpatched uses separate branches with goto-based control flow",
+        "Register/stack allocation and decompiler variable naming differ"
+      ],
+      "security_relevant": false,
+      "security_notes": "No behavioral security change between the two builds. In BOTH unpatched (@ 0x1C001D4E8) and patched (@ 0x14001E974) the callback receives &Source where Source.Length = a2->Length - remaining.Length, i.e. the already-processed path prefix. Unpatched: Source = *a2; then Source.Length = a2->Length - v15.Length; DataScreenCheckPrefixTreeNodeTxStatusCallback(&Source, a5, &v17). Patched: Source = *a2; then Source.Length = a2->Length - v12.Length; DataScreenCheckPrefixTreeNodeTxStatusCallback(&Source, v16, va). The sole differences are control-flow flattening and register/stack reallocation. This is a codegen change, not a fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenValidatePatternsInFileGroupInformation",
+      "similarity": 0.654,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched uses bitmask-based character validation (bt instruction with mask 0x200000000801) for path separator checking; patched uses explicit cmp comparisons for each forbidden char (0x2f /, 0x3a :, 0x5c \\, 0x7c |)",
+        "Control flow restructured: unpatched uses linear error checks (rdx_2 < 0, rcx_3 > 0xffffffff, rcx_3 - 2 > 0x206); patched uses nested if-structure with additional rcx_2 (NUL-found) guard before processing",
+        "Both versions validate the same set of forbidden characters; character checking is functionally equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "Despite low similarity, the character validation logic is functionally equivalent between versions. The unpatched bitmask 0x200000000801 correctly maps bits 0 (0x2f /), 11 (0x3a :), 45 (0x5c \\) with pipe 0x7c checked separately — matching the patched explicit comparisons. The differences are compiler/codegen-related (branch structure, register allocation), not behavioral security changes.",
+      "assembly_diff": "mov     rax, rsp\nmov     qword [rax+0x8], rbx\nmov     qword [rax+0x10], rbp\nmov     qword [rax+0x18], rsi\nmov     qword [rax+0x20], rdi\npush    r12\npush    r14\npush    r15\nsub     rsp, 0x30\nmov     esi, dword [rcx+0x10]\nxor     r15d, r15d\nmov     dword [rdx], r15d\nmov     r14, r8\nmov     dword [r8], r15d\nmov     rdi, rdx\nmov     r11, rcx\nmov     r9d, r15d\nmov     ebx, 0xffffffff\nmov     rbp, 0x200000000801\nmov     r12d, 0xc000000d\ntest    esi, esi\nje      0x1c00153e9\n; ... loop body ...\nmovzx   ebx, word [r10]\nlea     eax, [rbx-0x2f]\ncmp     ax, 0x2d\nja      0x1c00153b3\nmov     r12, 0x200000000801\nmovzx   eax, ax\nbt      r12, rax\nmov     r12d, 0xc000000d\njb      0x1c0015441\ncmp     bx, 0x7c\nje      0x1c0015441\n; ... advance ...\ninc     dword [rdi]\nadd     r9d, 0x2\nadd     r9d, ecx\ncmp     r9d, esi\njb      0x1c00152dd"
+    },
+    {
+      "name": "DataScreenCreateStreamContext",
+      "similarity": 0.4821,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched uses custom SLIST cache (ExpInterlockedPopEntrySList) with dynamic function pointers resolved via globals for ERESOURCE allocation; patched uses FltAllocateContext + ExAllocateFromNPagedLookasideList",
+        "Patched version uses memset for context initialization; unpatched uses memset on pre-allocated FltContext"
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactoring from custom SLIST-based object cache to standard FltAllocateContext/ExAllocateFromNPagedLookasideList APIs. Part of systematic SLIST-to-LookasideList migration across the driver.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenAllocateUnicodeString",
+      "similarity": 0.7085,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced ExpInterlockedPopEntrySList + dynamic function pointer allocators with ExAllocateFromPagedLookasideList",
+        "Replaced ExAllocatePoolWithTag with ExAllocatePool2 for large allocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of systematic SLIST-to-LookasideList refactoring. The SLIST version relied on runtime-resolved function pointers for allocation; standard lookaside lists handle depth management internally. No security-relevant behavior change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenFreeUnicodeString",
+      "similarity": 0.641,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced ExpInterlockedPushEntrySList with ExQueryDepthSList depth-check-then-push pattern with ExFreeToPagedLookasideList",
+        "Eliminated dynamic function pointer free path (data_1c00071f8(rbx))"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of systematic SLIST-to-LookasideList refactoring: custom SLIST push-with-depth-check free path replaced by ExFreeToPagedLookasideList. No security-relevant behavior change identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenFreeDirectoryEntry",
+      "similarity": 0.8009,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced SLIST push with depth-check for ERESOURCE free with ExFreeToNPagedLookasideList"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of SLIST-to-LookasideList refactoring for ERESOURCE objects.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenQueryDecisionGlobal",
+      "similarity": 0.8129,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced SLIST-based list entry allocation (ExpInterlockedPopEntrySList + dynamic function pointer) with standard lookaside list allocation",
+        "Replaced SLIST push-with-depth-check free pattern with ExFreeToPagedLookasideList"
+      ],
+      "security_relevant": false,
+      "security_notes": "Part of systematic SLIST-to-LookasideList refactoring. The prefix tree walk and file group membership test logic is unchanged.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenValidateFileRecord",
+      "similarity": 0.947,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Stack layout reorganization, variable renaming, register reallocation",
+        "Added OBJECT_ATTRIBUTES struct initialization on stack"
+      ],
+      "security_relevant": false,
+      "security_notes": "Decompiler/register allocation differences. Core file record validation logic (volume GUID construction, file creation, EA buffer handling) is functionally identical.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DataScreenAsyncMetadataValidation",
+      "similarity": 0.9437,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation (r12/r13 swap, Resource/Context_8 renaming)",
+        "WPP trace flag check style change (TEST_BITD vs & mask)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Core metadata validation logic (CcMapData-based record scanning, record type 0x20/0x30 dispatch, transaction status checks) is functionally identical. Changes are decompiler/register artifacts.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "SrmAppendPath",
+      "entry_point": "FSRM prefix-tree path construction (SrmInvokeCallbackOnTree / SrmCommitPrefixTreeTransaction) reachable from file-group / file-screen configuration and file I/O on a monitored volume",
+      "call_chain": ["FSRM data-screening operation", "prefix-tree path construction", "SrmInvokeCallbackOnTree / SrmCommitPrefixTreeTransaction", "SrmAppendPath"],
+      "vulnerability_class": "No security-relevant change (refactor: guard relocation + allocation-API modernization)",
+      "description": "No reachable vulnerability exists in either build. The unpatched SrmAppendPath (@ 0x1C001DE10) takes a3 (r8d) as the round-up size and, on STATUS_BUFFER_TOO_SMALL from RtlAppendUnicodeStringToString, allocates (a3 + 0x1FF) & 0xFFFFFE00 (capped 0xFFFE) and copies a1->Length then a2->Length bytes. All four unpatched call sites (0x1C001CF8F, 0x1C001CFD9, 0x1C001E06F, 0x1C001E0B5) compute a3 = a1->Length + a2->Length via a 32-bit add of two zero-extended USHORTs (movzx r8d,word; movzx eax,word; add r8d,eax) and reject a3 > 0xFFFE (cmp r8d,0FFFEh; ja) before the call. So a3 always equals the true combined length, no 16-bit USHORT wrap can occur, and the allocation is always >= the bytes copied; the two memmove calls never overflow. The patched SrmAppendPath (@ 0x14001E88C) performs the identical combined-length computation and > 0xFFFE rejection (STATUS_NAME_TOO_LONG) inside the function, drops the a3 parameter (3 args -> 2), and replaces ExAllocatePoolWithTag(PagedPool,...) with ExAllocatePool2(POOL_FLAG_PAGED,...). The copy logic and allocation size are equivalent. This is guard relocation (caller -> callee) plus allocation-API modernization, not a vulnerability fix.",
+      "trigger_conditions": "Not applicable. There is no reachable out-of-bounds write in either build: the combined-length guard (a1->Length + a2->Length > 0xFFFE) is enforced on every reachable path (in the callers for the unpatched build, in the callee for the patched build), and the two copies never exceed the allocation.",
+      "primitive": "None. The copy sizes and allocation size are equivalent across builds and are always consistent; there is no attacker-controlled out-of-bounds write and no pool-corruption primitive.",
+      "evidence": "UNPATCHED SrmAppendPath @ 0x1C001DE10:\n  __int64 SrmAppendPath(_UNICODE_STRING *a1, const UNICODE_STRING *a2, int a3) {\n    if (RtlAppendUnicodeStringToString(a1, a2) == 0xC0000023) {   // STATUS_BUFFER_TOO_SMALL\n      unsigned int v6 = (a3 + 0x1FF) & 0xFFFFFE00;\n      if (v6 > 0xFFFE) v6 = 0xFFFE;\n      p = ExAllocatePoolWithTag(PagedPool, v6, 0x706D7253);      // tag 'Srmp'\n      memmove(p, a1->Buffer, a1->Length);\n      memmove((char*)p + a1->Length, a2->Buffer, a2->Length);\n      ... a1->Length += a2->Length; a1->MaximumLength = v6; a1->Buffer = p;\n    }\n    return 0;\n  }\n  // Every caller passes a3 = a1->Length + a2->Length and rejects a3 > 0xFFFE first.\n\nPATCHED SrmAppendPath @ 0x14001E88C:\n  __int64 SrmAppendPath(_UNICODE_STRING *a1, const UNICODE_STRING *a2) {\n    unsigned int v3 = a2->Length + a1->Length;\n    if (v3 > 0xFFFE) return 0xC0000106;                          // STATUS_NAME_TOO_LONG\n    if (RtlAppendUnicodeStringToString(a1, a2) == 0xC0000023) {\n      unsigned int v6 = (v3 + 0x1FF) & 0xFFFFFE00;\n      if (v6 > 0xFFFE) v6 = 0xFFFE;\n      p = ExAllocatePool2(POOL_FLAG_PAGED, v6, 0x706D7253);\n      memmove(p, a1->Buffer, a1->Length);\n      memmove((char*)p + a1->Length, a2->Buffer, a2->Length);\n      ...\n    }\n    return 0;\n  }",
+      "assembly": "; UNPATCHED SrmAppendPath @ 0x1C001DE10\n00000001C001DE24  mov     edi, r8d              ; edi = a3 (caller-supplied combined length)\n00000001C001DE39  cmp     eax, 0C0000023h       ; STATUS_BUFFER_TOO_SMALL?\n00000001C001DE44  add     edi, 1FFh\n00000001C001DE4F  and     edi, 0FFFFFE00h        ; size = (a3 + 0x1FF) & ~0x1FF\n00000001C001DE62  cmova   edi, eax              ; cap at 0xFFFE\n00000001C001DE67  call    ExAllocatePoolWithTag ; PagedPool, size, 'Srmp'\n00000001C001DE8D  call    memmove               ; a1->Length bytes\n00000001C001DEA0  call    memmove               ; a2->Length bytes\n; unpatched caller guard @ 0x1C001CF6A:\n;   movzx r8d,word[a1.Length]; movzx eax,word[a2.Length]; add r8d,eax; cmp r8d,0FFFEh; ja <reject>\n\n; PATCHED SrmAppendPath @ 0x14001E88C (guard now in callee)\n000000014001E8A0  movzx   esi, word ptr [rcx]   ; a1->Length\n000000014001E8A8  movzx   eax, word ptr [rdx]   ; a2->Length\n000000014001E8AE  add     esi, eax              ; combined (32-bit)\n000000014001E8B3  cmp     esi, ebp              ; ebp = 0xFFFE\n000000014001E8B7  mov     eax, 0C0000106h       ; STATUS_NAME_TOO_LONG on >\n000000014001E8F2  call    ExAllocatePool2       ; POOL_FLAG_PAGED, size, 'Srmp'",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "datascrn!SrmAppendPath",
+            "address": "0x1c001de10",
+            "why": "Unpatched entry. Confirm r8d (a3) == [rcx].Length + [rdx].Length (the caller already computed and range-checked it), and that the allocation size (a3 + 0x1FF) & ~0x1FF (capped 0xFFFE) is >= the two copy sizes. The two memmove calls never exceed the allocation."
+          },
+          {
+            "symbol": "datascrn!SrmAppendPath",
+            "address": "0x14001e88c",
+            "why": "Patched entry. Confirm the callee computes combined = [rcx].Length + [rdx].Length and returns 0xC0000106 (STATUS_NAME_TOO_LONG) when combined > 0xFFFE, then sizes the allocation from combined. Same copy logic as unpatched."
+          }
+        ],
+        "watch": [
+          "rcx = a1 (UNICODE_STRING*): [rcx] = Length, [rcx+2] = MaxLength, [rcx+8] = Buffer",
+          "rdx = a2 (UNICODE_STRING*): [rdx] = Length, [rdx+8] = Buffer",
+          "unpatched r8 = a3: verify it equals [rcx]+[rdx] (the caller-computed combined length)",
+          "allocation size (edi unpatched / esi patched): (combined + 0x1FF) & ~0x1FF, capped 0xFFFE, always >= [rcx]+[rdx]"
+        ],
+        "key_offsets": [
+          "0x1c001de10: unpatched entry (mov edi, r8d -> a3)",
+          "0x1c001de44: (a3 + 0x1FF) & 0xFFFFFE00 allocation-size calc",
+          "0x1c001de67: call ExAllocatePoolWithTag (PagedPool, size, 'Srmp')",
+          "0x1c001de8d / 0x1c001dea0: the two memmove calls (a1->Length, then a2->Length)",
+          "0x14001e88c: patched entry; 0x14001e8ae add esi,eax (combined); 0x14001e8b3 cmp esi,0FFFEh (guard now in callee)"
+        ],
+        "trigger_setup": "Not applicable. No reachable overflow to trigger; both builds guard combined length > 0xFFFE on every reachable path.",
+        "expected_observation": "In both builds the allocation size (a3/combined rounded up to 512, capped 0xFFFE) is >= a1->Length + a2->Length, so neither memmove writes past the pool allocation. No pool corruption occurs.",
+        "notes": "The pool tag for SrmAppendPath allocations is 0x706D7253 = ASCII 'Srmp' (bytes 53 72 6D 70 in memory), identical in both builds. Use !poolfind 0x706D7253 to locate allocations. The signature changed in the patched build (a3 removed) because the combined-length computation and guard moved from the callers into the callee."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "SrmCanInsertPrefixTreePath",
+      "entry_point": "Prefix tree operations triggered by file I/O on monitored volumes",
+      "call_chain": ["File I/O on monitored volume", "DataScreenPreCreate / DataScreenPostSetInfo", "DataScreenGetDirectoryEntry", "SrmCanInsertPrefixTreePath"],
+      "vulnerability_class": "No behavioral change (cosmetic/control-flow restructuring)",
+      "description": "No security-relevant difference exists between the two builds of SrmCanInsertPrefixTreePath. In BOTH unpatched (@ 0x1C001D4E8) and patched (@ 0x14001E974) the loop sets Source.Length = a2->Length - <remaining>.Length (asm: sub dx, word[var_20]; mov [Source.Length], dx) and passes &Source — the already-processed path prefix — to DataScreenCheckPrefixTreeNodeTxStatusCallback. The path segment validated is identical in both. The only differences are control-flow flattening (patched combines the node-type test into a single condition) and register/stack reallocation, which is a codegen artifact.",
+      "trigger_conditions": "Not applicable — no behavioral change to trigger.",
+      "primitive": "None — no security primitive; behavior is identical across builds.",
+      "evidence": "UNPATCHED: 0x1C001D5A4 sub dx, word ptr [rbp+var_20]; 0x1C001D5A8 mov [rbp+Source.Length], dx; call site 0x1C001D572 lea rcx,[rbp+Source]; 0x1C001D576 call DataScreenCheckPrefixTreeNodeTxStatusCallback\nPATCHED: 0x14001EA41 mov [rbp+Source.Length], dx (after sub dx, remaining); call site 0x14001EA14 lea rcx,[rbp+Source]; 0x14001EA18 call DataScreenCheckPrefixTreeNodeTxStatusCallback\nSource.Length = a2->Length - remaining.Length (the already-processed prefix) in BOTH builds.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "datascrn!SrmCanInsertPrefixTreePath",
+            "address": "0x1c001d4e8",
+            "why": "Break at function entry to inspect the path being validated (arg2). Both builds pass the processed prefix (&Source) to the callback."
+          },
+          {
+            "symbol": "datascrn!DataScreenCheckPrefixTreeNodeTxStatusCallback",
+            "address": "0x1c001465c",
+            "why": "Break here to inspect the path argument. It is the processed prefix in both unpatched and patched builds."
+          }
+        ],
+        "watch": [
+          "rcx (1st arg to DataScreenCheckPrefixTreeNodeTxStatusCallback): the PROCESSED prefix (&Source) in both builds",
+          "The path components as they are dissected by SrmDissectName"
+        ],
+        "key_offsets": [
+          "0x1c001d4e8: Function entry",
+          "0x1c001d542: SrmFindPrefixTreeEntry call",
+          "0x1c001d576: DataScreenCheckPrefixTreeNodeTxStatusCallback invocation (&Source = processed prefix)"
+        ],
+        "trigger_setup": "Not applicable — behavior is identical across builds.",
+        "expected_observation": "The path string passed to DataScreenCheckPrefixTreeNodeTxStatusCallback is the processed prefix (path up to the dissected component) in both unpatched and patched builds.",
+        "notes": "Not a security fix. The similarity drop is due to control-flow flattening and register/stack reallocation, not a logic change."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was found between the two builds of datascrn.sys (Windows FSRM Data Screening minifilter). The most conspicuous change is in SrmAppendPath, and it is a refactor rather than a fix: the combined-length guard (a1->Length + a2->Length > 0xFFFE) is moved from the callers into the callee, and the allocation is modernized from ExAllocatePoolWithTag(PagedPool,...) to ExAllocatePool2(POOL_FLAG_PAGED,...). In the unpatched build (@ 0x1C001DE10) the third argument a3 is the round-up size, and all four call sites (0x1C001CF8F, 0x1C001CFD9, 0x1C001E06F, 0x1C001E0B5) compute a3 = a1->Length + a2->Length with a 32-bit add of two zero-extended USHORTs and reject a3 > 0xFFFE before calling. So a3 always equals the true combined length, no 16-bit wrap can occur, and the allocation (a3 rounded up to 512, capped 0xFFFE) is always >= the bytes the two memmove calls write. The patched build (@ 0x14001E88C) performs the identical computation and > 0xFFFE rejection inside the function and drops a3. There is no reachable pool overflow in either build, so the earlier CWE-190/CWE-122 high-severity claim is not supported. SrmCanInsertPrefixTreePath shows no behavioral change: both builds pass the already-processed path prefix (&Source, Source.Length = a2->Length - remaining.Length) to DataScreenCheckPrefixTreeNodeTxStatusCallback, and the low similarity is control-flow restructuring only. Additionally, a systematic refactoring replaces custom SLIST-based object caching (runtime-resolved function pointers, SLIST depth checks) with standard kernel LookasideList APIs across ~10 functions with no observed behavior change. The pool tag 0x706D7253 ('Srmp') is unchanged across builds."
+}

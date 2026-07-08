@@ -1,0 +1,242 @@
+{
+  "binaries": {
+    "title": "http.sys - Defense-in-depth user-mode read hardening in legacy send/capture paths (CWE-822), gated by Known-Issue-Rollback UxKirNewUma",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9267,
+    "matched": 3905,
+    "changed": 199,
+    "identical": 3706,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlGenerateTrailers (sub_14009DE00)",
+      "patched_name": "UlGenerateTrailers (sub_14009EEA0)",
+      "similarity": 0.4798,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Replaces direct/double dereference of user-mode trailer descriptor fields with single safe captures: RtlReadUShortFromUser (sub_1401BD11C) for lengths, RtlReadULong64FromUser (sub_1401BD0A4) for pointers",
+        "Adds descriptor array base alignment check ((base & 7) != 0 -> STATUS_DATATYPE_MISALIGNMENT)",
+        "In the UxKirNewUma path, copies strings with the combined probe-and-copy helper UxTryProbeAndCopyAnsiStringFromMode (sub_1400E5D34), whose negative return aborts the loop; the retained else branch still uses UlProbeAnsiStringOld + memmove (sub_14014E300)",
+        "New read path selected by default via the UxKirNewUma Known-Issue-Rollback flag (new in the patched build); the pre-existing direct-read path is kept as the else branch and runs when the flag is off (it also retains its own internal UxKirHttpReadingTrailersFromUm sub-gate)",
+        "IoIs32bitProcess handling, the 0x2710 entry-count cap, the string-data probe, and the write bounds check (if len > remaining) are present in both builds"
+      ],
+      "security_relevant": true,
+      "security_notes": "UlGenerateTrailers serializes an array of trailer name/value descriptors supplied by the caller of the HTTP Server API (array base at *(a2+16), count at a2+8, rejected at/above 0x2710). In the unpatched build each descriptor length is read by dereferencing the pointer directly, and the name length is loaded twice (v18 then v33). The string data is probed with UlProbeAnsiString before the copy, and the copy into the kernel destination is bounded in both builds by 'if (len > remaining) break', so no out-of-bounds write or attacker-sized copy is reachable; the double name-length read is two adjacent loads with a negligible race window. On the 64-bit path the whole array is probed once (UlProbeForRead); the 32-bit / already-captured path reads it directly in both the unpatched build and the new patched path, because for that caller the descriptor is kernel-captured. The patched build adds, under UxKirNewUma, an alternative path that reads each field once via RtlReadUShortFromUser / RtlReadULong64FromUser, validates array-base alignment, and copies strings via UxTryProbeAndCopyAnsiStringFromMode. This is defense-in-depth user-mode-read hardening gated by a Known-Issue-Rollback; the old direct-read path is retained in the patched binary.",
+      "assembly_diff": "Unpatched UlGenerateTrailers (sub_14009DE00) per-entry read:\n// 32-bit caller path takes the array base without a probe\nif (IoIs32bitProcess(Irp) != 0) v15 = v28;            // NOT probed\nelse UlProbeForRead(v28, 24 * count, 8, a3);\nwhile (v16 < count) {\n    v17 = (uint16*)(v15 + 24LL * v16);\n    v18 = *v17;      // fetch name length\n    v33 = *v17;      // second fetch of same field (double fetch)\n    v19 = *(QWORD*)(entry + 8);   // fetch name pointer directly\n    UlProbeAnsiString(v19, (uint16)v18, a3);\n    if ((uint)v18 > remaining) break;   // bounds the write\n    memmove(dst, src, v18);\n}\n\nPatched UlGenerateTrailers (sub_14009EEA0), gated by UxKirNewUma:\nif ((base & 7) != 0) { status = STATUS_DATATYPE_MISALIGNMENT; goto out; }\nfor (i = 0; i < count; ++i) {\n    len = fromUser ? RtlReadUShortFromUser(base + 24LL*i) : *(WORD*)(base + 24LL*i);\n    ptr = fromUser ? RtlReadULong64FromUser(entry + 8) : *(void**)(entry + 8);\n    if (len > remaining) break;\n    status = UxTryProbeAndCopyAnsiStringFromMode(dst, ptr);\n    if (status < 0) break;\n}"
+    },
+    {
+      "name": "UlFastSendHttpResponseOld (sub_1400CC828)",
+      "patched_name": "UlFastSendHttpResponseOld (sub_1400CEC3C)",
+      "similarity": 0.9482,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Under UxKirNewUma, copies the caller-supplied 7-byte Transfer-Encoding header value into a local kernel buffer via RtlCopyFromUser / RtlCopyVolatileMemory (plus UlProbeAlignmentAnsiStringOld) before comparing",
+        "_strnicmp(..., \"chunked\", 7) now runs against the local copy instead of directly against the user pointer",
+        "The case-insensitive \"chunked\" comparison itself exists in both builds",
+        "MDL construction (ByteCount, Size, ByteOffset, IoBuildPartialMdl) and its length bounds check (if len > remaining break) are byte-for-byte identical between builds"
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the legacy fast response-send routine. The only behavioral change is that, under UxKirNewUma, it captures the caller's Transfer-Encoding header value into a local buffer before running the case-insensitive 'chunked' comparison, rather than comparing directly against user memory. The MDL size/offset arithmetic and its bounds check are unchanged between the two builds; this function does not modify any MDL length calculation.",
+      "assembly_diff": "Patched (sub_1400CEC3C) transfer-encoding capture:\nif (*(WORD*)(v50 + 96) == 7) {\n    if (UxKirNewUma != 0) {\n        UlProbeAlignmentAnsiStringOld(v58, 7);\n        if (a12 != 0) RtlCopyFromUser(Str1, v57, 7);\n        else RtlCopyVolatileMemory(Str1, v57, 7);\n        v59 = _strnicmp(Str1, \"chunked\", 7) == 0;   // compare local copy\n    } else {\n        UlProbeAnsiStringOld(v58, 7, a12);\n        v59 = _strnicmp((const char*)v57, \"chunked\", 7) == 0;  // compare user ptr\n    }\n}"
+    },
+    {
+      "name": "UlCaptureChannelBindConfigOld (sub_140121DD0)",
+      "patched_name": "UlCaptureChannelBindConfigOld (sub_14012E9C4)",
+      "similarity": 0.3853,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Reads channel-binding config header and each service-name entry through RtlReadULongFromUser / RtlReadULong64FromUser / RtlCopyVolatileMemory instead of direct user-pointer dereferences",
+        "Adds alignment validation via UxProbeAlignment (sub_1400A8874)",
+        "Marshals 32-bit entry pointers through ReadPtr32FromMode (sub_1400C9060)",
+        "Probe helper relocated: unpatched UlProbeForRead (sub_140062CB0) / patched UlProbeForRead (sub_140061FE0); UlProbeAnsiString (sub_1400640F0) / UlProbeAnsiStringOld (sub_1400D0B64)",
+        "New read path gated by UxKirNewUma; the IoIs32bitProcess 4-byte vs 8-byte stride handling already exists in both builds",
+        "Address note: 0x140121DD0 in the patched binary is reused by an unrelated ETW helper (McTemplateK0pq_EtwWriteTransfer); this function is matched by symbol at 0x14012E9C4"
+      ],
+      "security_relevant": true,
+      "security_notes": "UlCaptureChannelBindConfigOld captures a channel-binding configuration supplied by the user-mode caller: an array of up to 0x40 service-name/channel-binding entry pointers copied into a service-name container. In the unpatched build the header fields and entries are read by dereferencing user pointers directly after a ProbeForRead. The patched build reads each scalar once through RtlReadULongFromUser / RtlReadULong64FromUser (or RtlCopyVolatileMemory), validates alignment with UxProbeAlignment, and marshals 32-bit pointers via ReadPtr32FromMode. The 32-bit vs 64-bit caller handling (IoIs32bitProcess, 4-byte vs 8-byte stride) is present in both builds; the patch hardens the per-field reads, it does not add WOW64 stride selection.",
+      "assembly_diff": "Patched (sub_14012E9C4) header capture under UxKirNewUma:\nif (a3 != 0) DWORD2(v37) = RtlReadULongFromUser((char*)a2 + 4);\nelse RtlCopyVolatileMemory((char*)&v37 + 8, (char*)a2 + 4, 4);\nULong64FromUser = a3 ? RtlReadULong64FromUser(a2 + 1) : a2[1];\nULongFromUser  = a3 ? RtlReadULongFromUser(a2 + 2) : *((DWORD*)a2 + 4);\n...\nv8 = UxProbeAlignment(ULong64FromUser, 8LL * ULongFromUser, 8);\nfor (i = 0; i < ULongFromUser; ++i) {\n    if (IoIs32bitProcess(Irp)) v16 = RtlReadULongFromUser((uint*)(base + 4*i));\n    ...\n}"
+    },
+    {
+      "name": "UlpSendResponseOrEntityBodyFastIo (sub_14004A5B0)",
+      "patched_name": "UlpSendResponseOrEntityBodyFastIo (sub_140068890)",
+      "similarity": 0.9834,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Fast-IO response-send routine; adds UxKirNewUma-gated branch points consistent with the wider user-mode-access rollout",
+        "Existing checks preserved: count limit (*s_1[8] > 0xa), status code validation (0xc8/0xce), trailer limits",
+        "No standalone new vulnerability fixed here"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxSslGetCertInfo (sub_1400751F0)",
+      "patched_name": "UxSslGetCertInfo (sub_14007DF20)",
+      "similarity": 0.3794,
+      "change_type": "behavioral",
+      "key_changes": [
+        "SSL certificate-info retrieval routine restructured as part of the build-wide change",
+        "Data copies remain memmove; sub_14014E300 and the relocated sub_14015E3C0 are both memmove, so no memcpy-to-bounds-checked substitution occurs here"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UxpSslCopyTransportIndicationsToHandshakeBuffer (sub_14005F380)",
+      "patched_name": "UxpSslCopyTransportIndicationsToHandshakeBuffer (sub_14005E880)",
+      "similarity": 0.5883,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "SSL handshake transport-indication buffer copy; variable-allocation churn",
+        "Buffer-management (memmove) structure preserved"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "scope": "local",
+      "function": "UlGenerateTrailers (sub_14009DE00 unpatched @ 0x14009DE00; patched @ 0x14009EEA0)",
+      "entry_point": "Local caller of the HTTP Server API sends an HTTP response with trailers (HttpSendHttpResponse / HttpSendResponseEntityBody with a trailer array), whose descriptors are read in kernel mode",
+      "call_chain": [
+        "HTTP Server API send response with trailers -> http.sys send IRP -> UlpSendResponseOrEntityBodyFastIo (sub_14004A5B0) -> UlFastSendHttpResponseOld (sub_1400CC828) -> UlGenerateTrailers (sub_14009DE00)"
+      ],
+      "vulnerability_class": "Unsafe direct user-mode pointer dereference, including a double read of a length field (CWE-822, with a CWE-367 double-fetch aspect)",
+      "description": "UlGenerateTrailers walks an array of trailer name/value descriptors supplied by the caller (base at *(a2+16), count at a2+8, rejected at/above 0x2710). In the unpatched build each descriptor length is dereferenced directly: the name length is loaded into v18 and then a second time into v33, and the name/value pointers are read directly. The string data is probed with UlProbeAnsiString before the copy, and the copy into the kernel destination is bounded in both builds by 'if (len > remaining) break', so no out-of-bounds write or attacker-sized copy is reachable; the double name-length read is two adjacent loads with a negligible race window. On the 64-bit path the whole array is probed once with UlProbeForRead; on the 32-bit / already-captured path it is read directly in both the unpatched build and the new patched path, because for that caller the descriptor is a kernel-side capture. The patched build adds, under UxKirNewUma, an alternative path that reads each field once via RtlReadUShortFromUser (sub_1401BD11C) and RtlReadULong64FromUser (sub_1401BD0A4), rejects a misaligned array base with STATUS_DATATYPE_MISALIGNMENT (0xC000000D), and copies strings with UxTryProbeAndCopyAnsiStringFromMode (sub_1400E5D34). The pre-existing direct-read path is retained as the else branch and runs when UxKirNewUma is off, so this is a Known-Issue-Rollback-gated defense-in-depth hardening change, not the removal of an exploitable code path.",
+      "trigger_conditions": "From a local process, send an HTTP response with a trailer array through the HTTP Server API so the per-entry length/pointer fields are read. The observable difference is only whether each field is read directly (unpatched, or patched with UxKirNewUma off) or once through the safe-capture intrinsics with an alignment check (patched, flag on).",
+      "primitive": "None demonstrable in the binaries. The string pointers are probed and the copy is length-bounded in both builds, so this path yields no out-of-bounds write and no attacker-sized copy; the double read of the name length is two adjacent loads with a negligible race window. The change is defense-in-depth user-mode-read hardening.",
+      "evidence": "UNPATCHED UlGenerateTrailers (sub_14009DE00):\nif (IoIs32bitProcess(Irp) != 0) v15 = v28;   // array base NOT probed on 32-bit path\nelse UlProbeForRead(v28, 24 * count, 8, a3);\nwhile (v16 < count) {\n    v17 = (uint16*)(v15 + 24LL * v16);\n    v18 = *v17;                     // name length fetch #1\n    v33 = *v17;                     // name length fetch #2 (double fetch)\n    v19 = *(QWORD*)(entry + 8);      // name pointer, direct user deref\n    UlProbeAnsiString(v19, (uint16)v18, a3);\n    if ((uint)v18 > remaining) { break; }   // bounds the write only\n    memmove(dst, src, v18);\n    // value read/copied by the same direct-read + memmove pattern\n    UlSetParsedHeader(a6, ...);\n}\n\nPATCHED UlGenerateTrailers (sub_14009EEA0), gated by UxKirNewUma:\nif ((base & 7) != 0) { status = 0xC000000D; goto out; }   // alignment\nfor (i = 0; i < count; ++i) {\n    len = fromUser ? RtlReadUShortFromUser(base + 24LL*i) : *(WORD*)(base + 24LL*i);\n    ptr = fromUser ? RtlReadULong64FromUser(entry + 8) : *(void**)(entry + 8);\n    if (len > remaining) break;\n    status = UxTryProbeAndCopyAnsiStringFromMode(dst, ptr);\n    if (status < 0) break;\n}",
+      "assembly": "UNPATCHED sub_14009DE00: per-entry name length read from *v17 (twice) and name pointer from *(entry+8), validated with UlProbeAnsiString (sub_1400640F0), write bounded by cmp against the remaining-size counter, bytes moved with memmove (sub_14014E300); array not probed on the IoIs32bitProcess path.\nPATCHED sub_14009EEA0: fields read once via RtlReadUShortFromUser (sub_1401BD11C) / RtlReadULong64FromUser (sub_1401BD0A4), base alignment checked, string copied by UxTryProbeAndCopyAnsiStringFromMode (sub_1400E5D34) with negative-return abort; UlSetParsedHeader (sub_14005BCC0) still called per entry.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlGenerateTrailers (trailer serializer)",
+            "address": "0x14009DE00",
+            "why": "Function entry. arg1 (rcx) = IRP, arg2 = trailer descriptor object (*(a2+16) = array base, *(a2+8) = count), arg4 (r9) = destination kernel buffer, arg5 = remaining-size counter. Watch the per-entry length/pointer reads and whether the array is probed."
+          },
+          {
+            "symbol": "http!memmove (sub_14014E300)",
+            "address": "0x14014E300",
+            "why": "Break on each copy to inspect the source pointer (user memory) and length that were read from the descriptor; confirm the source lies within the caller's mapped region."
+          },
+          {
+            "symbol": "http!UlSetParsedHeader (sub_14005BCC0)",
+            "address": "0x14005BCC0",
+            "why": "Called after each name/value copy to register the serialized trailer."
+          }
+        ],
+        "watch": [
+          "Per-entry name length (loaded twice on the unpatched path, into v18 and v33) - two adjacent reads of the same field",
+          "Per-entry name/value pointers - probed with UlProbeAnsiString before the copy in both builds",
+          "arg5 remaining-size counter - decremented only by validated lengths, so it does not underflow",
+          "Entry count at a2+8 - capped below 0x2710 (10000) in both builds",
+          "IoIs32bitProcess result - on the 32-bit path the unpatched array is not probed"
+        ],
+        "key_offsets": [
+          "IoIs32bitProcess branch selecting whether the descriptor array is probed",
+          "Name length loaded from *v17 (read twice) and name pointer from *(entry+8)",
+          "cmp of per-entry length against the remaining-size counter (bounds the write in both builds)",
+          "call memmove (sub_14014E300) for name and for value copies",
+          "In the patched build: RtlReadUShortFromUser / RtlReadULong64FromUser captures and UxTryProbeAndCopyAnsiStringFromMode copy"
+        ],
+        "trigger_setup": "Local HTTP Server API program: HttpInitialize, HttpCreateHttpHandle, receive a request, then HttpSendHttpResponse / HttpSendResponseEntityBody with a crafted trailer array. Point trailer name/value pointers at page-boundary-adjacent buffers, or mutate the length fields from a second thread, to exercise the unsafe read on the unpatched build.",
+        "expected_observation": "On the unpatched build (or patched with UxKirNewUma off) the name length is loaded twice and the fields are read directly. On the patched build with the flag enabled the fields are read once through the safe-capture intrinsics and a misaligned array base is rejected with STATUS_DATATYPE_MISALIGNMENT. The string data is probed and the copy is length-bounded in both builds.",
+        "notes": "The change is gated by the UxKirNewUma Known-Issue-Rollback flag (present 280 times in the patched build, absent in the unpatched build); a system with the flag disabled retains the unpatched behavior, which is also retained as the else branch in the patched binary. The write-side bounds check, the string-data probe, and the IoIs32bitProcess 32-bit/64-bit handling exist in both builds; the change is defense-in-depth safe single-capture reads, alignment validation, and probe-and-copy on the read side, not the removal of an exploitable condition."
+      }
+    },
+    {
+      "severity": "low",
+      "scope": "local",
+      "function": "UlCaptureChannelBindConfigOld (sub_140121DD0 unpatched @ 0x140121DD0; patched @ 0x14012E9C4)",
+      "entry_point": "Local caller of the HTTP Server API supplies a channel-binding configuration through the corresponding IOCTL",
+      "call_chain": [
+        "HTTP Server API channel-binding config IOCTL -> http.sys IOCTL dispatch -> UlCaptureChannelBindConfigOld (sub_140121DD0)"
+      ],
+      "vulnerability_class": "Unsafe direct user-mode pointer dereference (CWE-822)",
+      "description": "UlCaptureChannelBindConfigOld captures a channel-binding configuration supplied by the caller: an array of up to 0x40 service-name/channel-binding entry pointers (count rejected above 0x40 with -1073741811 in both builds). In the unpatched build the header fields and each entry are read by dereferencing pointers directly (*a2, a2[1], the 32-bit a2[2]/a2[3] or the 64-bit *((QWORD*)a2+1)/a2[4], then the per-entry pointers). The patched build, under UxKirNewUma, reads each scalar once through RtlReadULongFromUser (sub_1401BD0E0) / RtlReadULong64FromUser (sub_1401BD0A4) or RtlCopyVolatileMemory, validates alignment with UxProbeAlignment (sub_1400A8874), and marshals 32-bit entry pointers through ReadPtr32FromMode (sub_1400C9060). The IoIs32bitProcess 32-bit vs 64-bit stride handling (4-byte vs 8-byte pointers, 4*count vs 8*count probe length) and the 0x40 count cap are already present in both builds; the patch routes the per-field reads through the safe-capture intrinsics, it does not add stride selection. This is the same UxKirNewUma defense-in-depth hardening as the trailer path. In the patched binary the address 0x140121DD0 is reused by an unrelated ETW template helper (McTemplateK0pq_EtwWriteTransfer), so this function is matched by symbol at 0x14012E9C4.",
+      "trigger_conditions": "From a local process, call the HTTP Server API to submit a channel-binding configuration IOCTL so the header and per-entry pointers are read; the observable difference is whether they are read directly (unpatched) or once through the safe-capture intrinsics with an alignment check (patched, UxKirNewUma on).",
+      "primitive": "None demonstrable in the binaries. The entry count is capped at 0x40 in both builds and the reads are probed; the change routes the per-field reads through the safe-capture intrinsics (defense-in-depth), it does not close a demonstrated out-of-bounds condition.",
+      "evidence": "PATCHED UlCaptureChannelBindConfigOld (sub_14012E9C4), gated by UxKirNewUma:\nif (a3 != 0) DWORD2(v37) = RtlReadULongFromUser((char*)a2 + 4);\nelse RtlCopyVolatileMemory((char*)&v37 + 8, (char*)a2 + 4, 4);\nULong64FromUser = a3 ? RtlReadULong64FromUser(a2 + 1) : a2[1];\nULongFromUser  = a3 ? RtlReadULongFromUser(a2 + 2) : *((DWORD*)a2 + 4);\nif (ULongFromUser > 0x40) { status = STATUS_INVALID_PARAMETER; goto out; }\nstatus = UxProbeAlignment(ULong64FromUser, 8LL * ULongFromUser, 8);\nfor (i = 0; i < ULongFromUser; ++i) {\n    if (IoIs32bitProcess(Irp)) v16 = RtlReadULongFromUser((uint*)(base + 4*i));\n    ...\n}\n\nUNPATCHED UlCaptureChannelBindConfigOld (sub_140121DD0) reads the same fields with direct user dereferences (*a2, a2[1], *((DWORD*)a2+4), *v15, *v17) after UlProbeForRead, and already branches on IoIs32bitProcess for 4-byte vs 8-byte strides.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlCaptureChannelBindConfigOld (channel-binding config capture)",
+            "address": "0x140121DD0 (unpatched); 0x14012E9C4 (patched)",
+            "why": "Entry point. Inspect the config header fields and the per-entry pointer reads. On the unpatched build these are direct user dereferences; on the patched build they route through RtlRead*FromUser and UxProbeAlignment."
+          },
+          {
+            "symbol": "http!UlProbeForRead (unpatched sub_140062CB0 / patched sub_140061FE0)",
+            "address": "0x140062CB0 (unpatched)",
+            "why": "Validates the entry array. On the unpatched path the subsequent field reads still dereference user pointers directly after the probe."
+          }
+        ],
+        "watch": [
+          "Config header fields at a2 (count, service-name array pointer) - read directly on the unpatched path",
+          "Per-entry pointers read at base + 4*i (32-bit) or base + 8*i (64-bit)",
+          "Entry count - rejected above 0x40 in both builds",
+          "IoIs32bitProcess result - selects 4-byte vs 8-byte stride in both builds"
+        ],
+        "key_offsets": [
+          "IoIs32bitProcess branch near function entry (present in both builds)",
+          "Header field reads (*a2, a2[1], *((DWORD*)a2+4)) on the unpatched path",
+          "Per-entry pointer read (*v15 / *v17) on the unpatched path",
+          "Patched: RtlReadULongFromUser / RtlReadULong64FromUser captures, UxProbeAlignment alignment check, ReadPtr32FromMode 32-bit marshaling"
+        ],
+        "trigger_setup": "From a local HTTP Server API caller, submit a channel-binding configuration IOCTL with a crafted service-name entry array (entry pointers near page boundaries, or a count/length arrangement that makes a direct entry dereference read out of bounds).",
+        "expected_observation": "On the unpatched build the header and per-entry pointers are read directly after ProbeForRead. On the patched build (UxKirNewUma on) the same fields are read as single safe captures with alignment validation. The 0x40 count cap and the stride handling are present in both builds.",
+        "notes": "The change is gated by UxKirNewUma. The 32-bit/64-bit stride handling is not new; it exists in both builds. The patched function lives at 0x14012E9C4 because 0x140121DD0 is reused by an unrelated ETW helper in the patched binary."
+      }
+    },
+    {
+      "severity": "low",
+      "scope": "local",
+      "function": "UlFastSendHttpResponseOld (sub_1400CC828 unpatched @ 0x1400CC828; patched @ 0x1400CEC3C)",
+      "entry_point": "Local HTTP Server API caller sends a response through the legacy fast-send path",
+      "call_chain": [
+        "HTTP Server API send response -> http.sys send IRP -> UlpSendResponseOrEntityBodyFastIo (sub_14004A5B0) -> UlFastSendHttpResponseOld (sub_1400CC828)"
+      ],
+      "vulnerability_class": "Unsafe user-mode read before string comparison (CWE-822)",
+      "description": "UlFastSendHttpResponseOld inspects the caller-supplied Transfer-Encoding header value to decide whether the response is chunked. In the unpatched build it runs _strnicmp(user_ptr, \"chunked\", 7) directly against the user-mode string after an ANSI-string probe. The patched build, under UxKirNewUma, first copies the 7 bytes into a local kernel buffer via RtlCopyFromUser / RtlCopyVolatileMemory (with UlProbeAlignmentAnsiStringOld) and compares the local copy. The case-insensitive 'chunked' comparison already exists in both builds. The MDL construction in this function (ByteCount, Size, ByteOffset, IoBuildPartialMdl) and its length bounds check (if len > remaining break) are identical between the two builds; this function makes no MDL size-calculation change.",
+      "trigger_conditions": "Local HTTP Server API caller sends a response with a Transfer-Encoding header value; the observable difference is whether the 7-byte value is compared directly against user memory (unpatched, or patched with UxKirNewUma off) or copied into a local buffer first (patched, flag on).",
+      "primitive": "None demonstrable in the binaries. The 7-byte value is probed with UlProbeAnsiString before the direct comparison in the unpatched build; the patched build copies it locally first under UxKirNewUma. This is defense-in-depth, and the old direct-compare path is retained as the else branch.",
+      "evidence": "PATCHED (sub_1400CEC3C):\nif (*(WORD*)(v50 + 96) == 7) {\n    if (UxKirNewUma != 0) {\n        UlProbeAlignmentAnsiStringOld(v58, 7);\n        if (a12 != 0) RtlCopyFromUser(Str1, v57, 7);\n        else RtlCopyVolatileMemory(Str1, v57, 7);\n        v59 = _strnicmp(Str1, \"chunked\", 7) == 0;   // local copy\n    } else {\n        UlProbeAnsiStringOld(v58, 7, a12);\n        v59 = _strnicmp((const char*)v57, \"chunked\", 7) == 0;  // user ptr\n    }\n}\n\nUNPATCHED (sub_1400CC828): _strnicmp(v53, \"chunked\", 7) run directly on the probed user pointer. The MDL ByteCount/Size/ByteOffset computation and the 'if (len > remaining) break' check match the patched build exactly.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlFastSendHttpResponseOld (legacy fast response send)",
+            "address": "0x1400CC828 (unpatched); 0x1400CEC3C (patched)",
+            "why": "Break at the Transfer-Encoding inspection. On the unpatched build _strnicmp runs against the user pointer; on the patched build the value is copied locally first."
+          }
+        ],
+        "watch": [
+          "Transfer-Encoding header value pointer at *(v50 + 104) and length field at v50 + 96",
+          "MDL ByteCount / Size / ByteOffset writes - identical in both builds",
+          "The 'if (len > remaining) break' bounds check in the MDL loop - present in both builds"
+        ],
+        "key_offsets": [
+          "_strnicmp(..., \"chunked\", 7) comparison site",
+          "Patched RtlCopyFromUser / RtlCopyVolatileMemory of the 7-byte header value",
+          "IoBuildPartialMdl call and ByteCount computation (unchanged between builds)"
+        ],
+        "trigger_setup": "Local HTTP Server API caller sends a response with a Transfer-Encoding header value pointer placed near a page boundary.",
+        "expected_observation": "On the unpatched build the direct comparison may read slightly past the mapped value; on the patched build the value is copied locally before comparison.",
+        "notes": "This function's only change is the user-mode-safe capture of the Transfer-Encoding value before comparison, part of the UxKirNewUma rollout. The MDL logic is unchanged, so no MDL integer-overflow condition is fixed here."
+      }
+    }
+  ],
+  "summary": "The patch is a user-mode-access (UMA) hardening rollout in the legacy 'Old' HTTP send and capture paths of http.sys, gated by a new Known-Issue-Rollback feature flag, UxKirNewUma (present 280 times in the patched build, absent in the unpatched build). The safe-capture helpers it introduces (RtlReadUShortFromUser / RtlReadULongFromUser / RtlReadULong64FromUser, RtlCopyFromUser / RtlCopyVolatileMemory, UxProbeAlignment, ReadPtr32FromMode, UxTryProbeAndCopyAnsiStringFromMode) do not appear at all in the unpatched build. In UlGenerateTrailers (sub_14009DE00 unpatched; sub_14009EEA0 patched) the unpatched build dereferences trailer-descriptor length fields directly and loads the name length twice, but the string data is probed (UlProbeAnsiString) and the copy into the kernel buffer is length-bounded in both builds, so no out-of-bounds write or attacker-sized copy is reachable and the double name-length read is two adjacent loads with a negligible race window. The direct read on the 32-bit / already-captured caller path is present in both the unpatched build and the new patched path, so it is not an unprobed-OOB bug. The patched build adds, under UxKirNewUma, a path that reads each field once, validates array-base alignment, and copies strings via UxTryProbeAndCopyAnsiStringFromMode, while retaining the old direct-read path as the else branch. The same defense-in-depth pattern is applied to UlCaptureChannelBindConfigOld (sub_140121DD0 -> sub_14012E9C4; RtlReadULongFromUser / RtlReadULong64FromUser, UxProbeAlignment, ReadPtr32FromMode) and to UlFastSendHttpResponseOld (sub_1400CC828 -> sub_1400CEC3C), which copies the caller's Transfer-Encoding header locally before the case-insensitive 'chunked' comparison; its MDL size arithmetic is unchanged. Across these functions the IoIs32bitProcess 32-bit/64-bit stride handling, the string-data probes, and the write-side length checks already exist in both builds. Because the whole change is a Known-Issue-Rollback-gated defense-in-depth hardening of user-mode reads and the pre-existing code is retained in the patched binary, the honest classification is Low severity and local, not a discrete exploitable high-severity vulnerability."
+}

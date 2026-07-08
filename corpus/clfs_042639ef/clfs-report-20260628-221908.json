@@ -1,0 +1,140 @@
+{
+  "binaries": {
+    "title": "clfs.sys - No security-relevant change: WIL-staged large-sector device alignment rollout in CClfsRequest::ReserveAndAppendLog and CClfsRequest::WriteRestart",
+    "id_unpatched": "clfs_unpatched.sys",
+    "id_patched": "clfs_patched.sys",
+    "overall_similarity": 0.9912,
+    "matched": 1261,
+    "changed": 2,
+    "identical": 1259,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "CClfsRequest::ReserveAndAppendLog (0x1C0057144)",
+      "similarity": 0.9514,
+      "change_type": "non_security",
+      "key_changes": [
+        "Removed conditional call to Feature_2227659065__private_IsEnabledDeviceUsage (WIL feature gate at 0x1C000D9C4, flag check at 0x1C00578E9) that gated whether the device sector size was queried",
+        "Removed the 512-byte round-up used on the feature-off path: r8d = (size + 0x1FF) & 0xFFFFFE00 (lea r8d,[rbx+1FFh]; and r8d,0FFFFFE00h at 0x1C005790F/0x1C0057916)",
+        "Patched build always calls GetAlignedBufferSize (0x1C0028CBC) to obtain the device-sector-aligned length before the MDL allocation",
+        "ClfsProbeAndAllocateMdl relocated 0x1C0011420 -> 0x1C00113E0 (same routine, code-layout shift), no behavioral change"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched code selects the MDL/transfer length by a WIL feature check. Feature_2227659065__private_IsEnabledDeviceUsage (0x1C000D9C4) tests bit 0x10 of Feature_2227659065__private_featureState and otherwise consults the WIL fallback (IsEnabledFallback, default 3). When the feature is off (the pre-rollout default), the code rounds the input size up to 512 bytes; when on, it calls GetAlignedBufferSize (0x1C0028CBC) to round up to the real device sector size. The patch removes the gate and always queries. This is a staged rollout of large-sector (>512-byte / 4Kn) device alignment support, not a memory-safety fix. GetAlignedBufferSize rounds the length UP, so the unpatched default produces a SMALLER length; the MDL is built over an already-allocated restart-area buffer ([[this+30h]+70h]) and sizes the disk transfer. A smaller MDL locks and transfers fewer bytes and cannot overrun the buffer or adjacent pool. The storage stack transfers exactly the MDL/IRP length; on large-sector media a sub-sector-aligned transfer is rejected or bounce-buffered by the storage driver, which is a functional-correctness concern, not memory corruption. No out-of-bounds read/write and no pool-overflow primitive is demonstrable. Dispatched via CClfsRequest::Dispatch case 0x8007A827.",
+      "assembly_diff": "UNPATCHED alignment region (0x1C0057144):\n0x1C00578E9: call    Feature_2227659065__private_IsEnabledDeviceUsage\n0x1C00578EE: mov     [rsp+268h+Length], eax\n0x1C00578F5: mov     ecx, edi\n0x1C00578F7: test    eax, eax\n0x1C00578F9: setnz   cl\n0x1C00578FC: test    ecx, ecx\n0x1C00578FE: jz      loc_1C005790F        ; feature off -> 512-byte round-up\n0x1C0057900: mov     edx, ebx              ; size (feature-on path)\n0x1C0057902: mov     rcx, rsi\n0x1C0057905: call    GetAlignedBufferSize  ; 0x1C0028CBC device-sector-aligned length\n0x1C005790A: mov     r8d, eax\n0x1C005790D: jmp     loc_1C005791D\n0x1C005790F: lea     r8d, [rbx+1FFh]       ; 512-byte round-up (feature-off path)\n0x1C0057916: and     r8d, 0FFFFFE00h\n0x1C005791D: lea     rax, [rsp+268h+Mdl]\n0x1C0057925: mov     rdx, [rsi+30h]\n0x1C005792E: mov     rdx, [rdx+70h]        ; existing restart-area buffer\n0x1C0057939: call    ClfsProbeAndAllocateMdl\n\nPATCHED equivalent:\n0x1C0057908: mov     edx, ebx\n0x1C005790A: mov     rcx, r14\n0x1C005790D: call    GetAlignedBufferSize  ; unconditional device-sector-aligned length\n0x1C0057912: mov     r8d, eax\n0x1C0057931: call    ClfsProbeAndAllocateMdl"
+    },
+    {
+      "name": "CClfsRequest::WriteRestart (0x1C0058B6C -> 0x1C0058B5C)",
+      "similarity": 0.9559,
+      "change_type": "non_security",
+      "key_changes": [
+        "Removed conditional call to Feature_2227659065__private_IsEnabledDeviceUsage (WIL feature gate at 0x1C000D9C4, flag check at 0x1C0058CB8) that gated whether the device sector size was queried",
+        "Removed the dual-path logic where GetAlignedBufferSize (0x1C0028CBC) was called only when the feature was on; otherwise the raw length [rsi+108h] was used unaligned",
+        "Patched build always calls GetAlignedBufferSize (0x1C0028CBC)(this, [this+108h]) then ClfsProbeAndAllocateMdl (0x1C00113E0)",
+        "Stack frame reduced from 0xE0 to 0xD0 (conditional-path locals removed)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Same WIL feature-gate removal as CClfsRequest::ReserveAndAppendLog, in the WriteRestart handler (IOCTL 0x8007281F). Unpatched at 0x1C0058CB8 calls the gate; when off (default) it takes jz 0x1C0058CFF and uses the raw length [rsi+108h] for the MDL; when on it first calls GetAlignedBufferSize. The patch always calls GetAlignedBufferSize. As in the sibling function, GetAlignedBufferSize rounds the length UP to the device sector size, so the patched path produces a length greater than or equal to the raw unpatched value. The larger length is required for valid whole-sector I/O on large-sector media; the smaller unpatched length truncates the transfer. Neither direction overruns the buffer, so no out-of-bounds read/write or pool-overflow primitive exists. This is a functional-correctness / compatibility change, not a security fix."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "CClfsRequest::ReserveAndAppendLog (0x1C0057144)",
+      "entry_point": "CLFS IOCTL 0x8007A827 via ClfsDispatchIoRequest (0x1C00345A0) -> CClfsRequest::Dispatch (0x1C00347C4) case 0x8007A827",
+      "call_chain": [
+        "CClfsDriver::LogIoDispatch (0x1C0034550) - IRP dispatch callback",
+        "ClfsDispatchIoRequest (0x1C00345A0) - IRP major-function dispatch",
+        "CClfsRequest::Dispatch (0x1C00347C4) - function-code switch; case 0x8007A827 (cmp at 0x1C0034B5B) -> call ?ReserveAndAppendLog@CClfsRequest@@AEAAJXZ at 0x1C0034BC5",
+        "CClfsRequest::ReserveAndAppendLog (0x1C0057144) - MDL length selection changed"
+      ],
+      "vulnerability_class": "No security-relevant change (WIL-staged device-sector-size alignment rollout)",
+      "description": "In the unpatched CClfsRequest::ReserveAndAppendLog handler (0x1C0057144), the length used for the MDL built over the restart-area buffer is selected by a WIL feature check. At 0x1C00578E9 the code calls Feature_2227659065__private_IsEnabledDeviceUsage (0x1C000D9C4), which tests bit 0x10 of Feature_2227659065__private_featureState and otherwise consults the WIL fallback. When the feature is off (the pre-rollout default) the code rounds the input size up to 512 bytes (lea r8d,[rbx+1FFh]; and r8d,0FFFFFE00h at 0x1C005790F). When on, it calls GetAlignedBufferSize (0x1C0028CBC) to round up to the real device sector size. The patch removes the gate and always calls GetAlignedBufferSize. This is a staged rollout of large-sector (>512-byte / 4Kn) device alignment support. It is not a memory-safety fix: GetAlignedBufferSize rounds UP, so the unpatched default produces a smaller length; the MDL is built over an already-allocated buffer ([[this+30h]+70h]) and sizes the disk transfer; a smaller MDL transfers fewer bytes and cannot overrun the buffer or adjacent pool. The storage stack transfers exactly the MDL/IRP length and does not overrun the caller's buffer. No out-of-bounds access or pool-corruption primitive is demonstrable.",
+      "trigger_conditions": "Difference between builds appears only when: 1) the CLFS log's backing device reports a physical sector size > 512 bytes (4Kn / Advanced Format / certain virtual disks) - on 512-byte-sector devices GetAlignedBufferSize returns the same 512-aligned value as the unpatched default, so both builds behave identically; and 2) the WIL feature Feature_2227659065 selects the non-device path (pre-rollout default). Under those conditions the only observable difference is the aligned length passed to ClfsProbeAndAllocateMdl / MmProbeAndLockPages / MmMapLockedPagesSpecifyCache. This is a functional-correctness difference for large-sector media, not a memory-safety trigger.",
+      "primitive": "None. The changed value sizes an MDL over a pre-existing buffer and the corresponding disk transfer. The device-aligned length (patched) is >= the 512-byte-aligned length (unpatched default); the smaller unpatched length locks and transfers fewer bytes. No out-of-bounds read/write, information disclosure, or pool overflow is established from the two builds.",
+      "evidence": "UNPATCHED (0x1C0057144 @ 0x1C00578E9):\n    flag = Feature_2227659065__private_IsEnabledDeviceUsage();  // bit 0x10 of featureState, else WIL fallback\n    if (flag == 0)                                              // feature off (default)\n        r8 = (size + 0x1FF) & 0xFFFFFE00;                        // 512-byte round-up\n    else\n        r8 = GetAlignedBufferSize(this, size);                  // device-sector-aligned\n    status = ClfsProbeAndAllocateMdl(AccessMode, buffer, r8, ...);\n\nPATCHED (0x1C0057144 @ 0x1C005790D):\n    r8 = GetAlignedBufferSize(this, size);                      // always device-sector-aligned\n    status = ClfsProbeAndAllocateMdl(AccessMode, buffer, r8, ...);\n\nGetAlignedBufferSize (0x1C0028CBC, byte-identical in both builds) queries the device geometry via a guarded indirect call (*(*this_dev + 0xF0))() and rounds up:\n    if (status < 0 || sector <= 0x200)\n        return (size + 0x1FF) & ~0x1FF;   // fallback: 512-byte alignment\n    else\n        return (size + sector - 1) & ~(sector - 1);  // device-sector alignment (>= 512-byte result)",
+      "assembly": "CClfsRequest::ReserveAndAppendLog (unpatched) @ 0x1C0057144\nAlignment region:\n0x1C00578E9: call    Feature_2227659065__private_IsEnabledDeviceUsage\n0x1C00578EE: mov     [rsp+268h+Length], eax\n0x1C00578F5: mov     ecx, edi\n0x1C00578F7: test    eax, eax\n0x1C00578F9: setnz   cl\n0x1C00578FC: test    ecx, ecx\n0x1C00578FE: jz      loc_1C005790F        ; feature off -> 512-byte round-up\n0x1C0057900: mov     edx, ebx              ; size (feature-on path)\n0x1C0057902: mov     rcx, rsi\n0x1C0057905: call    GetAlignedBufferSize  ; 0x1C0028CBC\n0x1C005790A: mov     r8d, eax\n0x1C005790D: jmp     loc_1C005791D\n0x1C005790F: lea     r8d, [rbx+1FFh]       ; 512-byte round-up (feature-off path)\n0x1C0057916: and     r8d, 0FFFFFE00h\n0x1C005791D: lea     rax, [rsp+268h+Mdl]\n0x1C0057925: mov     rdx, [rsi+30h]\n0x1C005792E: mov     rdx, [rdx+70h]        ; existing restart-area buffer\n0x1C0057939: call    ClfsProbeAndAllocateMdl\nClfsProbeAndAllocateMdl (0x1C0011420) internals:\n  0x1C001144E: ProbeForWrite(buffer, length, 8)\n  0x1C0011480: IoAllocateMdl(buffer, length, 0, 1, NULL)\nLater:\n0x1C0057A36: MmProbeAndLockPages (length-sized MDL)\n0x1C0057A6F: MmMapLockedPagesSpecifyCache",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "clfs_unpatched!CClfsRequest::ReserveAndAppendLog",
+            "address": "0x1C00578E9",
+            "why": "Call to Feature_2227659065__private_IsEnabledDeviceUsage. EAX == 0 selects the 512-byte round-up branch at 0x1C005790F. Confirms which alignment path runs; not a defect."
+          },
+          {
+            "symbol": "clfs_unpatched!ClfsProbeAndAllocateMdl call",
+            "address": "0x1C0057939",
+            "why": "R8D is the aligned length handed to the MDL wrapper. On a >512-byte-sector device it is 512-aligned on the unpatched default path and device-sector-aligned on the patched build. Confirms the alignment difference."
+          }
+        ],
+        "watch": [
+          "EAX of Feature_2227659065__private_IsEnabledDeviceUsage at 0x1C00578E9 - selects the alignment path",
+          "R8D at 0x1C0057939 (unpatched) / 0x1C0057931 (patched) - the aligned length passed to ClfsProbeAndAllocateMdl",
+          "MDL->ByteCount at MmProbeAndLockPages - reflects the chosen aligned length (not a corruption indicator)"
+        ],
+        "key_offsets": [
+          "0x1C00578E9: call Feature_2227659065__private_IsEnabledDeviceUsage - WIL feature gate (REMOVED in patch)",
+          "0x1C005790F: lea r8d,[rbx+1FFh] - 512-byte round-up, feature-off path (REMOVED in patch)",
+          "0x1C0057916: and r8d,0FFFFFE00h - 512-byte mask (REMOVED in patch)",
+          "0x1C0057905: call GetAlignedBufferSize (0x1C0028CBC) - device-sector query (unconditional in patch)",
+          "0x1C0057939: call ClfsProbeAndAllocateMdl - MDL wrapper using the aligned length"
+        ],
+        "trigger_setup": "Open a CLFS log whose container resides on a device reporting >512-byte physical sectors (verify with 'fsutil fsinfo ntfsinfo X:' BytesPerPhysicalSector), and drive the ReserveAndAppendLog path (IOCTL 0x8007A827). Compare the R8D length at the ClfsProbeAndAllocateMdl call between the two builds: 512-aligned on the unpatched default, device-sector-aligned on the patched build.",
+        "expected_observation": "The MDL/transfer length differs between builds on large-sector media (512-aligned vs device-sector-aligned). This is the functional difference the feature rollout delivers. No bugcheck, pool corruption, or out-of-bounds access is produced or expected from this change.",
+        "notes": "Feature_2227659065__private_IsEnabledDeviceUsage (0x1C000D9C4) is standard WIL feature-staging code (reads featureState, tests bit 0x10, else IsEnabledFallback with default 3). In the patched build the same slot at 0x1C000D9C4 is renumbered to Feature_3017759032__private_IsEnabledDeviceUsage - ordinary WIL feature-database churn. GetAlignedBufferSize (0x1C0028CBC) is byte-identical between builds and has a safe 512-byte fallback. The change makes the device-sector query unconditional; it is a large-sector-media compatibility rollout, not a security fix."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "CClfsRequest::WriteRestart (0x1C0058B6C -> 0x1C0058B5C)",
+      "entry_point": "CLFS IOCTL 0x8007281F via ClfsDispatchIoRequest (0x1C00345A0) -> CClfsRequest::Dispatch (0x1C00347C4) case 0x8007281F",
+      "call_chain": [
+        "CClfsDriver::LogIoDispatch (0x1C0034550) - IRP dispatch callback",
+        "ClfsDispatchIoRequest (0x1C00345A0) - IRP major-function dispatch",
+        "CClfsRequest::Dispatch (0x1C00347C4) - function-code switch; case 0x8007281F (cmp at 0x1C0034A1C) -> call ?WriteRestart@CClfsRequest@@AEAAJXZ at 0x1C0034AB1",
+        "CClfsRequest::WriteRestart (0x1C0058B6C) - MDL length selection changed"
+      ],
+      "vulnerability_class": "No security-relevant change (WIL-staged device-sector-size alignment rollout)",
+      "description": "Same WIL feature-gate removal as CClfsRequest::ReserveAndAppendLog, in the WriteRestart handler (IOCTL 0x8007281F). At 0x1C0058CB8 the unpatched code calls Feature_2227659065__private_IsEnabledDeviceUsage; when off (default) it takes jz 0x1C0058CFF and uses the raw length [rsi+108h] for the MDL; when on it first calls GetAlignedBufferSize (0x1C0028CBC). The patch always calls GetAlignedBufferSize then ClfsProbeAndAllocateMdl (0x1C00113E0). GetAlignedBufferSize rounds the length UP to the device sector size, so the patched path produces a length >= the raw unpatched value; the larger length is required for valid whole-sector I/O on large-sector media, and the smaller unpatched length truncates the transfer. Neither direction overruns the buffer, so no out-of-bounds access or pool-overflow primitive exists. This is a functional-correctness / compatibility change, not a security fix.",
+      "trigger_conditions": "Difference appears only when the CLFS log's backing device reports a physical sector size > 512 bytes and the WIL feature Feature_2227659065 selects the non-device path (default). The observable difference is the aligned length passed to ClfsProbeAndAllocateMdl. No memory-safety effect is demonstrable.",
+      "primitive": "None. The changed value sizes an MDL over a pre-existing buffer and the corresponding restart-area disk transfer. The patched device-aligned length is >= the raw unpatched length; the smaller unpatched length truncates the transfer. No out-of-bounds read/write or pool overflow is established.",
+      "evidence": "UNPATCHED (0x1C0058B6C @ 0x1C0058CB8):\n0x1C0058CB8: call    Feature_2227659065__private_IsEnabledDeviceUsage\n0x1C0058CC4: mov     ecx, r14d\n0x1C0058CC7: test    eax, eax\n0x1C0058CC9: setnz   cl\n0x1C0058CCC: mov     r8d, [rsi+108h]      ; raw length\n0x1C0058CD3: test    ecx, ecx\n0x1C0058CD5: jz      0x1C0058CFF          ; feature off -> use raw length, skip query\n0x1C0058CD7: mov     rbx, [rsi+30h]       ; feature-on path\n0x1C0058CDB: mov     edx, r8d\n0x1C0058CDE: mov     rcx, rsi\n0x1C0058CE1: call    GetAlignedBufferSize ; 0x1C0028CBC device-sector-aligned\n0x1C0058CE6: mov     r8d, eax\n0x1C0058CFF: mov     rax, [rsi+30h]       ; feature-off path: r8d = raw [rsi+108h]\n0x1C0058D10: mov     rdx, [rax+70h]       ; existing buffer\n0x1C0058D17: call    ClfsProbeAndAllocateMdl\n\nPATCHED (0x1C0058B5C):\n0x1C0058CA5: mov     edx, [rsi+108h]\n0x1C0058CAB: mov     rcx, rsi\n0x1C0058CAE: call    GetAlignedBufferSize ; unconditional device-sector-aligned length\n0x1C0058CB3: mov     r8d, eax\n0x1C0058CCA: call    ClfsProbeAndAllocateMdl",
+      "assembly": "CClfsRequest::WriteRestart (unpatched) @ 0x1C0058B6C\nAlignment region:\n0x1C0058CB8: call    Feature_2227659065__private_IsEnabledDeviceUsage  ; WIL gate (REMOVED in patch)\n0x1C0058CBD: mov     [rsp+118h+arg_10], eax\n0x1C0058CC4: mov     ecx, r14d\n0x1C0058CC7: test    eax, eax\n0x1C0058CC9: setnz   cl\n0x1C0058CCC: mov     r8d, [rsi+108h]      ; raw length\n0x1C0058CD3: test    ecx, ecx\n0x1C0058CD5: jz      0x1C0058CFF          ; feature off -> use raw length\n0x1C0058CD7: mov     rbx, [rsi+30h]\n0x1C0058CDB: mov     edx, r8d\n0x1C0058CDE: mov     rcx, rsi\n0x1C0058CE1: call    GetAlignedBufferSize\n0x1C0058CE6: mov     r8d, eax\n0x1C0058CFF: mov     rax, [rsi+30h]\n0x1C0058D10: mov     rdx, [rax+70h]\n0x1C0058D17: call    ClfsProbeAndAllocateMdl",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "clfs_unpatched!CClfsRequest::WriteRestart",
+            "address": "0x1C0058CB8",
+            "why": "Call to Feature_2227659065__private_IsEnabledDeviceUsage. EAX == 0 takes the jz 0x1C0058CFF branch that uses the raw [rsi+108h] length. Confirms which alignment path runs."
+          },
+          {
+            "symbol": "clfs_unpatched!ClfsProbeAndAllocateMdl call",
+            "address": "0x1C0058D17",
+            "why": "R8D is the length handed to the MDL wrapper: raw [rsi+108h] on the unpatched default path, device-sector-aligned on the patched build (0x1C0058CCA)."
+          }
+        ],
+        "watch": [
+          "EAX of Feature_2227659065__private_IsEnabledDeviceUsage at 0x1C0058CB8 - selects the alignment path",
+          "R8D at 0x1C0058D17 (unpatched) / 0x1C0058CCA (patched) - the length passed to ClfsProbeAndAllocateMdl",
+          "Dword at [rsi+108h] - the raw restart-area length used unaligned on the feature-off path"
+        ],
+        "key_offsets": [
+          "0x1C0058CB8: call Feature_2227659065__private_IsEnabledDeviceUsage - WIL feature gate (REMOVED in patch)",
+          "0x1C0058CD5: jz 0x1C0058CFF - feature-off branch using raw length (REMOVED in patch)",
+          "0x1C0058CE1: call GetAlignedBufferSize (0x1C0028CBC) - device-sector query (unconditional in patch)",
+          "0x1C0058D17: call ClfsProbeAndAllocateMdl - MDL wrapper"
+        ],
+        "trigger_setup": "Open a CLFS log on a device reporting >512-byte physical sectors, write a restart area, then drive the WriteRestart path (IOCTL 0x8007281F). Compare the R8D length at the ClfsProbeAndAllocateMdl call: raw [rsi+108h] on the unpatched default, device-sector-aligned on the patched build.",
+        "expected_observation": "On large-sector media the MDL/transfer length differs between builds (raw vs device-sector-aligned). No bugcheck, pool corruption, or out-of-bounds access results from the change.",
+        "notes": "Counterpart of the CClfsRequest::ReserveAndAppendLog change; same root: a WIL feature gate (Feature_2227659065__private_IsEnabledDeviceUsage) selecting whether the device sector size is queried. The patch makes the query unconditional. RSI holds the CClfsRequest context. This is large-sector-media alignment support, not a security fix."
+      }
+    }
+  ],
+  "summary": "The CLFS driver patch removes a WIL feature gate in the CClfsRequest::ReserveAndAppendLog (0x1C0057144, IOCTL 0x8007A827) and CClfsRequest::WriteRestart (0x1C0058B6C -> 0x1C0058B5C, IOCTL 0x8007281F) handlers so that CClfsRequest::GetAlignedBufferSize (0x1C0028CBC), which queries the backing device's real sector size, is always called before the restart-area MDL is built. In the unpatched build this query was gated behind Feature_2227659065__private_IsEnabledDeviceUsage (0x1C000D9C4, testing bit 0x10 of Feature_2227659065__private_featureState); when off (the default) the code used a smaller, non-device-derived length (a 512-byte round-up in ReserveAndAppendLog, the raw [rsi+108h] value in WriteRestart). This is a staged rollout of large-sector (>512-byte / 4Kn) device alignment support delivered through WIL feature staging. It is not a memory-safety fix: GetAlignedBufferSize rounds the length UP, so the unpatched default produces a smaller length; the MDL is built over a pre-existing buffer and sizes the disk transfer, so a smaller length truncates I/O rather than overrunning the buffer or adjacent pool. No out-of-bounds read/write, information disclosure, or kernel pool-overflow primitive is demonstrable from the two builds. The earlier CWE-787 / CWE-125 HIGH classification is withdrawn; severity is none."
+}

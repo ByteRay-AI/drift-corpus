@@ -1,0 +1,112 @@
+{
+  "binaries": {
+    "title": "netio.sys - No security-relevant change in NsiEnumerateObjectsAllParametersEx / NsiGetParameterEx (NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds)",
+    "id_unpatched": "netio_unpatched.sys",
+    "id_patched": "netio_patched.sys",
+    "overall_similarity": 0.6138,
+    "matched": 1582,
+    "changed": 1250,
+    "identical": 332,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NsiEnumerateObjectsAllParametersEx",
+      "similarity": 0.8544,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "The per-entry size accumulation is 32-bit in BOTH builds (unpatched r14d additions at 0x1C00156FE/0x1C0015714/0x1C001572A; patched ecx additions at 0x14002FA2D/0x14002FA3A/0x14002FA45). The pattern was not changed.",
+        "The summed field widths come from the NSI module provider's registration descriptor (provider_table + index*0x68), i.e. fixed kernel-provided constants, not user-mode caller input.",
+        "The entry count is clamped to the request's element count in BOTH builds (unpatched: if v106[11] <= v25 then v25 = v106[11]; patched: if v100[7] > v33 then v34 = *(a1+104)). The clamp was not added by the patch.",
+        "Direction note: the unpatched build has an explicit 64-bit product guard (if (product > 0xFFFFFFFF) return STATUS_INTEGER_OVERFLOW at 0x1C0015752/0x1C0015755). The patched build REMOVES this guard and performs the multiply in 32 bits (imul ecx,r12d at 0x14002FA4C). This is a harmless refactor given the trusted inputs, but it is the opposite of adding overflow protection.",
+        "Direct ExAllocatePool3 (0x1C0015784) was replaced by the new NsipAllocateLowPriority wrapper (0x14002F490), a low-page-priority ExAllocatePool3 wrapper with no size validation. Copies use memmove in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "No delivered security change. The 32-bit size accumulation is present and unchanged in both builds, and the values summed are NSI provider-registration constants that a user-mode caller cannot control. In practice the sum of a few small provider-defined widths times a clamped count does not wrap. The patch refactored allocation into NsipAllocateLowPriority and dropped the pre-existing 64-bit product guard; it did not widen the arithmetic or add a clamp.",
+      "assembly_diff": "Unpatched 0x1C00153F0: mov eax,[rsi]; add eax,4; mov r14d,eax; add r14d,[rsi+4]; add r14d,[rsi+0Ch]; add r14d,[rsi+8] (all 32-bit); imul rax,rcx (64-bit); mov ecx,0FFFFFFFFh; cmp rax,rcx; ja 0x1C0037677 (STATUS_INTEGER_OVERFLOW=0xC0000095); call ExAllocatePool3 at 0x1C0015784. Patched 0x14002F5C0: mov ecx,[rsi]; add ecx,4; add ecx,[var_168]; add ecx,edi; add ecx,r15d (all 32-bit); imul ecx,r12d (32-bit); call NsipAllocateLowPriority at 0x14002FA50 (no 0xFFFFFFFF guard). Copy loop uses memmove in both."
+    },
+    {
+      "name": "NsiGetParameterEx",
+      "similarity": 0.8544,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "The size check *(a1+0x48) + *(a1+0x4C) is computed with a 64-bit add of two zero-extended 32-bit fields and compared against 0xFFFFFFFF in BOTH builds; the sum of two 32-bit values cannot wrap a 64-bit register, so the check is effective in both.",
+        "Only the branch sense differs (unpatched 'ja' to error at 0x1C0016251; patched 'jbe' to success at 0x14002E929) due to basic-block ordering; there is no semantic change.",
+        "Allocation routed through NsipAllocateLowPriority instead of direct ExAllocatePool3; WPP trace-record and register churn account for the size difference."
+      ],
+      "security_relevant": false,
+      "security_notes": "No delivered security change. The reported '32-bit overflow' does not exist: the size addition is 64-bit (add rcx,rax over two zero-extended 32-bit loads) and the 0xFFFFFFFF comparison is effective in both builds. No validation was added or removed.",
+      "assembly_diff": "Unpatched 0x1C001623C: mov eax,[rdi+48h]; mov ecx,[rdi+4Ch]; add rcx,rax; mov eax,0FFFFFFFFh; cmp rcx,rax; ja 0x1C00381ED. Patched 0x14002E918: mov eax,[rdi+48h]; mov ecx,[rdi+4Ch]; add rcx,rax; mov eax,0FFFFFFFFh; cmp rcx,rax; jbe 0x14002E95A. Identical check, inverted branch."
+    },
+    {
+      "name": "NsiAllocateAndGetTable",
+      "similarity": 0.7686,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version replaces four direct ExAllocatePool3 calls with the NsipAllocateLowPriority wrapper.",
+        "The existing 0xFFFFFFFF size check is retained; retry logic for STATUS_BUFFER_OVERFLOW (0x105) is unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "Allocator refactor (ExAllocatePool3 -> NsipAllocateLowPriority). Not a security change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FwppCopyStreamDataToBuffer",
+      "similarity": 0.6447,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Stream-data copy path refactored as part of the WFP stream-inspection servicing update."
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral refactor within the stream-inspection update; no delivered memory-safety fix identified.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FeAcquireWritableLayerDataPointer",
+      "similarity": 0.7261,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Per-processor SLIST allocation refactored to lookaside-list helpers.",
+        "Different lock acquisition patterns and trace records."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WfpStreamInspectReceive",
+      "similarity": 0.7018,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Stream-inspection context allocation refactored (per-processor SLIST -> lookaside list).",
+        "NBL chain dereference inlined in patched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "NsiEnumerateObjectsAllParametersEx",
+      "entry_point": "NSI enumeration via NtDeviceIoControlFile to \\Device\\NSI",
+      "call_chain": [],
+      "vulnerability_class": "none (originally reported as integer overflow leading to pool buffer overflow; not substantiated)",
+      "description": "No security-relevant change. The unpatched and patched NsiEnumerateObjectsAllParametersEx both accumulate the per-entry record size in a 32-bit register from NSI module-provider descriptor field widths (*v32, v32[1], v32[2], v32[3]). These widths are provider-registration constants, not user-controlled input, and a medium-integrity user cannot register an NSI provider. The 32-bit accumulation is identical in both builds; the entry count is clamped in both builds. The only differences are: (1) the unpatched build has an explicit 64-bit product guard (if (v34 > 0xFFFFFFFF) return STATUS_INTEGER_OVERFLOW) that the patched build removes while performing the multiply in 32 bits, and (2) allocation was moved from direct ExAllocatePool3 to the NsipAllocateLowPriority wrapper. Neither constitutes a delivered security fix, and the arithmetic direction is opposite to the originally-claimed 'hardening'. NsipAllocateLowPriority (0x14002F490) performs no size validation. The per-entry copies use memmove.",
+      "trigger_conditions": "Not applicable. The size arithmetic reads provider-registration constants that the caller cannot control, and the accumulation is unchanged between builds.",
+      "primitive": "None. No attacker-controlled pool overflow is present.",
+      "evidence": "UNPATCHED (netio_unpatched.c, NsiEnumerateObjectsAllParametersEx @ 0x1C00153F0):\nSize = *v24;\nv30 = Size + 4;                       // 32-bit\nif ( v27 != 0 ) v30 += v24[1];\nif ( v29 != 0 ) v30 += v24[3];\nif ( v28 != 0 ) v30 += v24[2];\nv34 = v25 * (unsigned __int64)v30;    // 64-bit product\nif ( v34 > 0xFFFFFFFF ) { v9 = 0xC0000095; goto LABEL_61; }  // guard PRESENT\nPool3 = ExAllocatePool3(64, (unsigned int)v34, 'NsIr', v103, 1);\n\nPATCHED (netio_patched.c, NsiEnumerateObjectsAllParametersEx @ 0x14002F5C0):\nSize = *v32;\nv38 = Size + 4;                       // STILL 32-bit\nif ( v36 != 0 ) v38 += v78;\nif ( v37 != 0 ) v38 += v26;\nif ( v39 != 0 ) v38 += v28;\nLowPriority = (char *)NsipAllocateLowPriority(v34 * v38);  // 32-bit product, NO 0xFFFFFFFF guard",
+      "assembly": "Unpatched @ 0x1C00153F0: 0x1C00156C7 mov eax,[rsi]; 0x1C00156D1 add eax,4; 0x1C00156D8 mov r14d,eax; 0x1C00156FE mov r8d,[rsi+4]; 0x1C0015702 add r14d,r8d; 0x1C0015714 mov r8d,[rsi+0Ch]; 0x1C0015718 add r14d,r8d; 0x1C001572A mov r8d,[rsi+8]; 0x1C001572E add r14d,r8d; 0x1C0015745 imul rax,rcx; 0x1C001574D mov ecx,0FFFFFFFFh; 0x1C0015752 cmp rax,rcx; 0x1C0015755 ja 0x1C0037677; 0x1C0015784 call ExAllocatePool3. Patched @ 0x14002F5C0: 0x14002FA0B mov ecx,[rsi]; 0x14002FA11 add ecx,4; 0x14002FA2D add ecx,[var_168]; 0x14002FA3A add ecx,edi; 0x14002FA45 add ecx,r15d; 0x14002FA4C imul ecx,r12d; 0x14002FA50 call NsipAllocateLowPriority.",
+      "debugging_aids": {
+        "notes": "The NSI provider descriptor field widths are populated by kernel NMR provider registration, not by the user-mode request. There is no attacker-reachable overflow. The 32-bit accumulation exists in both builds and was not the subject of a fix."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was delivered in the NSI enumeration/parameter path. In NsiEnumerateObjectsAllParametersEx the per-entry size is accumulated in a 32-bit register in BOTH builds from NSI provider-registration constants (not user-controlled), and the entry count is clamped in both builds; the patch merely routed allocation through the new NsipAllocateLowPriority wrapper and dropped a pre-existing 64-bit product guard while doing the multiply in 32 bits (opposite of the originally-claimed hardening). In NsiGetParameterEx the size check is a 64-bit add compared against 0xFFFFFFFF and is identical and effective in both builds. The binary's substantive delta is a servicing update (WFP firewall audit mode, feature-staging gates, DNS settings RPC, stream-inspection functions), none of which is a memory-safety fix to the NSI path. An independent enumeration of changed functions found no omitted security-relevant fix."
+}

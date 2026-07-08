@@ -1,0 +1,66 @@
+{
+  "binaries": {
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9906,
+    "matched": 1061,
+    "changed": 3,
+    "identical": 1058,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "verdict": "No security-relevant change. The patch adds a new WIL feature gate (Feature_84197691__private_IsEnabledDeviceUsage) to three functions. In SmbCeCompleteSrvCallConstructionPhase2 the gate selects at runtime between the pre-existing CAS-based VctReferenceEndpointSafe (feature on) and the original unconditional-lock-xadd VctReferenceEndpoint (feature off, retained). VctReferenceEndpointSafe is not new; it exists and is used in the unpatched build. This is staged feature rollout plus telemetry, not a delivered security fix, and no exploitable primitive is demonstrable from the two builds.",
+  "changed_functions": [
+    {
+      "name": "SmbCeCompleteSrvCallConstructionPhase2",
+      "similarity": 0.5024,
+      "unpatched_addr": "0x1C0006070",
+      "patched_addr": "0x1C0011E10",
+      "change_type": "feature_staging",
+      "key_changes": [
+        "Patched function is wrapped in a new WIL feature gate Feature_84197691__private_IsEnabledDeviceUsage (call at 0x1C0011E60, and again at 0x1C0012038 / 0x1C0012107 / 0x1C0012152).",
+        "Feature ENABLED path (0x1C0011E71..0x1C0011ED3): SmbCeAcquireSpinLock, SmbCeGetFirstVcEndpoint, then VctReferenceEndpointSafe at call site 0x1C0011EAA with 'test al,al' return check; on failure sets STATUS_CONNECTION_DISCONNECTED (0xC000020C) and releases the lock without using the endpoint.",
+        "Feature DISABLED path (0x1C0012044..0x1C0012090) is RETAINED and runs the original logic: SmbCeGetFirstVcEndpoint then the unconditional-lock-xadd VctReferenceEndpoint at call site 0x1C001207E, return value not used.",
+        "VctReferenceEndpointSafe is not introduced by the patch: it exists in the unpatched build at 0x1C0016354 (patched 0x1C00168E4) with 9 callers unpatched / 10 patched. The unconditional VctReferenceEndpoint (unpatched 0x1C000F710, patched 0x1C000EE90) still has 6 callers in both builds; none were removed.",
+        "Patched build also switches the gated blocks to SmbCeAcquireSpinLock/SmbCeReleaseSpinLock wrappers, duplicates the binding-teardown block, and adds a feature-gated telemetry call SmbCeErrorInd at 0x1C00122E2."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a delivered security fix. The original unconditional-increment path (VctReferenceEndpoint, lock xadd at 0x1C000F722 in the helper) is retained and reachable when Feature_84197691 is disabled; the safe CAS helper it optionally routes through already exists in the unpatched build. The default enablement of the feature is not encoded in the driver image. Whether the unpatched unconditional path is a genuinely reachable use-after-free is not established by these builds and is not asserted; the endpoint is fetched and referenced under the connection spinlock at [connection+0x784]. No controllable free, pool reclaim, or read/write/control-flow primitive is demonstrable. Prior claims of a specific pool tag, async-teardown race window, KASLR/SMEP/HVCI/CFG interaction, or privilege escalation are unsupported and removed.",
+      "assembly_diff": "UNPATCHED VctReferenceEndpoint (0x1C000F710) - unconditional increment:\n0x1C000F71D: mov ebx, 1\n0x1C000F722: lock xadd [rcx+8], ebx    ; unconditional refcount increment, no zero-check\n0x1C000F72B: lea r8, \"Ref %d->%d\"\n0x1C000F76B: mov eax, ebx              ; returns new refcount\n\nVctReferenceEndpointSafe (present in BOTH builds; unpatched 0x1C0016354, patched 0x1C00168E4):\n0x1C00168F3: mov ebx, [rcx+8]          ; read refcount\n0x1C00168F9: test ebx, ebx\n0x1C00168FB: jz  0x1C0016964           ; refcount==0 -> return false (al=0)\n0x1C00168FD: lea edx, [rbx+1]\n0x1C0016900: mov eax, ebx\n0x1C0016902: lock cmpxchg [rcx+8], edx ; conditional atomic increment\n0x1C0016907: jnz retry\n0x1C0016951: mov al, 1                 ; return true\n0x1C0016964: xor al, al                ; return false\n\nUNPATCHED SmbCeCompleteSrvCallConstructionPhase2 (0x1C0006070) - single path:\n0x1C0006126: call ExAcquireSpinLockExclusive  ; [connection+0x784]\n0x1C0006141: call SmbCeGetFirstVcEndpoint\n0x1C0006155: call VctReferenceEndpoint         ; unconditional, return not used\n0x1C000615A: and qword [r14+0x148], 0\n\nPATCHED SmbCeCompleteSrvCallConstructionPhase2 (0x1C0011E10) - feature-gated, both paths present:\n0x1C0011E60: call Feature_84197691__private_IsEnabledDeviceUsage\n0x1C0011E6C: jz  0x1C0011EE2                    ; feature OFF -> skip safe block\n; feature ON:\n0x1C0011E7C: call SmbCeGetFirstVcEndpoint\n0x1C0011EAA: call VctReferenceEndpointSafe\n0x1C0011EB5: test al, al\n0x1C0011EB7: jnz  proceed                       ; failure -> 0xC000020C, release, drop endpoint\n; feature OFF (retained original):\n0x1C0012038: call Feature_84197691__private_IsEnabledDeviceUsage\n0x1C001203F: jnz  0x1C0012099                   ; feature ON -> skip old block\n0x1C0012050: call SmbCeGetFirstVcEndpoint\n0x1C001207E: call VctReferenceEndpoint          ; unconditional path retained\n0x1C0012083: and [rbx+0x148], r12"
+    },
+    {
+      "name": "GetDialectInfoFromNegotiateResponse",
+      "similarity": 0.9453,
+      "change_type": "feature_gated_telemetry",
+      "key_changes": [
+        "Adds Feature_84197691__private_IsEnabledDeviceUsage-gated telemetry writes on the error/unsupported-dialect branches (records a status code plus a source-line constant into a local structure) and reorders some ETW/trace emission.",
+        "Dialect-detection and size-validation logic is unchanged.",
+        "WPP trace GUID reference reflects the new build."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SmbCeUpdateTransportDispatchVectors",
+      "similarity": 0.9845,
+      "change_type": "sync_flag_and_register_allocation",
+      "key_changes": [
+        "Inside the spinlock the patched version now sets byte [connection+0x782]=1 at 0x1C0035A54 before the conditional store and clears it to 0 afterward; the unpatched version only cleared it to 0. The +0x782 byte is an in-progress marker on the connection object.",
+        "Registers holding the connection object and the argument were reshuffled (rsi/rdi/rbx), changing the final store from [rdi+0x150] to [rsi+0x150]."
+      ],
+      "security_relevant": false,
+      "security_notes": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "Feature_84197691__private_IsEnabledDeviceUsage",
+      "Feature_84197691__private_IsEnabledFallback",
+      "SmbCeGetFirstBindingObject"
+    ]
+  },
+  "security_findings": [],
+  "summary": "The mrxsmb.sys patch introduces a new WIL feature gate, Feature_84197691__private_IsEnabledDeviceUsage, into three functions. In SmbCeCompleteSrvCallConstructionPhase2 (server-call construction completion) the gate selects at runtime between the pre-existing CAS-based reference helper VctReferenceEndpointSafe (feature on, with a checked return that yields STATUS_CONNECTION_DISCONNECTED on failure) and the original unconditional-lock-xadd VctReferenceEndpoint (feature off, fully retained). VctReferenceEndpointSafe is NOT new: it exists in the unpatched build at 0x1C0016354 and is already used at nine call sites; the unconditional VctReferenceEndpoint still has 6 callers in both builds. The other two changed functions add feature-gated telemetry (GetDialectInfoFromNegotiateResponse) and a synchronization in-progress flag write (SmbCeUpdateTransportDispatchVectors). This is staged feature rollout plus telemetry, not a delivered security fix. No use-after-free primitive, controllable free, pool-spray reclaim, or privilege-escalation chain is demonstrable from the two builds; such claims are unsupported and are not made. An independent content-based diff confirms only these three functions changed in logic; all other differences are relocation artifacts."
+}

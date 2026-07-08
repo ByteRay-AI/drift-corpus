@@ -1,0 +1,271 @@
+{
+  "binaries": {
+    "title": "mountmgr.sys - No security-relevant change (new device-characteristic field at volume-entry offset 0x7D and associated reconcile gate)",
+    "id_unpatched": "mountmgr_unpatched.sys",
+    "id_patched": "mountmgr_patched.sys",
+    "overall_similarity": 0.9587,
+    "matched": 156,
+    "changed": 36,
+    "identical": 120,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 4
+  },
+  "changed_functions": [
+    {
+      "name": "QueryDeviceInformation",
+      "address_unpatched": "0x1C00157D0",
+      "address_patched": "0x1C00157F8",
+      "similarity": 0.9,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds a new one-byte field at volume-entry offset 0x7D, set from BYTE2(DeviceObject->Characteristics) & 1 (Characteristics bit 0x10000, documented FILE_CHARACTERISTIC_CSV). Offset 0x7C continues to be set from Characteristics & 1 (FILE_REMOVABLE_MEDIA) in both builds.",
+        "Inserting the byte at 0x7D shifts subsequent fields by one: the virtual-disk nesting marker moves from 0x7D/0x7E to 0x7E/0x7F, the IOCTL-0x560038 result flag from 0x7E to 0x7F, and the boolean state read from 0x80 to 0x81."
+      ],
+      "security_relevant": false,
+      "security_notes": "The new 0x7D byte is a static per-device characteristic, computed once here from DEVICE_OBJECT.Characteristics. It is not a work-in-progress or lock flag.",
+      "assembly_diff": "Patched:\n  0x1C00158C5  mov cl, [rdi+34h]      ; DEVICE_OBJECT.Characteristics low byte\n  0x1C00158C8  and cl, 1\n  0x1C00158CB  mov [rbx+7Ch], cl      ; 0x7C = Characteristics & 1 (removable media)\n  0x1C00158CE  mov al, [rdi+36h]      ; Characteristics byte 2\n  0x1C00158D1  and al, 1\n  0x1C00158D3  mov [rbx+7Dh], al      ; 0x7D = Characteristics & 0x10000 (NEW)\nUnpatched had no characteristic write at 0x7D; 0x7D was part of the 0x0101 nesting marker (mov word ptr [rbx+7Dh], 101h @ 0x1C0015915), which moves to 0x7E/0x7F in the patched build (0x1C0015948)."
+    },
+    {
+      "name": "ReconcileThisDatabaseWithMaster",
+      "address_unpatched": "0x1C0016FBC",
+      "address_patched": "0x1C0016FFC",
+      "similarity": 0.9595,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds a second entry guard: after the existing `cmp byte [rdx+7Ch],0 / jnz`, the patched build adds `cmp byte [rdx+7Dh],0 / jnz` before allocating and queueing the reconcile work item. The decompiler renders both byte checks as a single word compare `*(_WORD*)(a2+124) == 0`.",
+        "No 'mark pending' write is added: the queue routine only reads 0x7C and 0x7D; it never writes 0x7D before IoQueueWorkItem."
+      ],
+      "security_relevant": false,
+      "security_notes": "This routine allocates a 0x38-byte NonPagedPoolNx descriptor tagged 'MntA', attaches callback ReconcileThisDatabaseWithMasterWorker, and queues it. The added 0x7D check simply excludes an additional class of volume (those with the new characteristic set) from being queued. It is not a concurrency guard: 0x7D is a static device characteristic, not a per-request state toggled around the queue call.",
+      "assembly_diff": "Unpatched (0x1C0016FBC):\n  0x1C0016FCB  cmp byte ptr [rdx+7Ch], 0\n  0x1C0016FD5  jnz loc_1C00170C5\n  0x1C0016FDB  mov edx, 38h\n  0x1C0016FE0  mov ecx, 200h\n  0x1C0016FE5  mov r8d, 41746E4Dh\n  0x1C0016FEB  call ExAllocatePoolWithTag\nPatched (0x1C0016FFC) adds between the 0x7C check and the allocation:\n  0x1C001701B  cmp byte ptr [rdx+7Dh], 0\n  0x1C001701F  jnz loc_1C001710F"
+    },
+    {
+      "name": "ReconcileThisDatabaseWithMasterWorker",
+      "address_unpatched": "0x1C00170E0",
+      "address_patched": "0x1C0017130",
+      "similarity": 0.8832,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adds `cmp [r15+7Dh],al / jnz` to the early-exit guard, immediately after the existing `cmp [r15+7Ch],al` check. This executes after the device-extension mutex is already held (KeWaitForSingleObject) and after MntMgrFindDevice confirms the entry is in the list.",
+        "Field-offset ripple from the inserted byte: the 0x0101 init that read at 0x82 in the unpatched build reads at 0x83 in the patched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the async work-item callback that walks the mount-point list, unlinks nodes, frees them with ExFreePoolWithTag, and opens file handles. The mutex acquisition and the list-unlink/free teardown are identical in both builds. The only change is the extra 0x7D early-exit, which decides whether the entry is processed; it does not alter synchronization or free ordering. The list teardown is a single-free cleanup (mov [rax],rcx / mov [rcx+8],rax @ 0x1C0017327/0x1C001732C, then ExFreePoolWithTag @ 0x1C0017334) under the held mutex, present identically in both builds.",
+      "assembly_diff": "Unpatched (0x1C00170E0):\n  0x1C0017200  call KeWaitForSingleObject\n  0x1C0017216  call MntMgrFindDevice\n  0x1C001721E  jz  loc_1C00183B3\n  0x1C0017226  cmp [r15+7Ch], al\n  0x1C001722A  jnz loc_1C00183B3\nPatched (0x1C0017130):\n  0x1C001724E  call KeWaitForSingleObject\n  0x1C0017264  call MntMgrFindDevice\n  0x1C001726C  jz  loc_1C00183D0\n  0x1C0017274  cmp [r15+7Ch], al\n  0x1C0017278  jnz loc_1C00183D0\n  0x1C001727E  cmp [r15+7Dh], al   ; ADDED\n  0x1C0017282  jnz loc_1C00183D0"
+    },
+    {
+      "name": "MountMgrDriverReinitialization",
+      "address_unpatched": "0x1C000F2D0",
+      "address_patched": "0x1C000F350",
+      "similarity": 0.8456,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removes the local `cmp [rbx+7Ch]` filter that previously guarded the ReconcileThisDatabaseWithMaster call; the patched build calls it unconditionally in the loop.",
+        "This is a refactor: the 0x7C guard now lives inside ReconcileThisDatabaseWithMaster (and was extended there with the new 0x7D check), so the caller no longer needs its own filter."
+      ],
+      "security_relevant": false,
+      "security_notes": "Net eligibility is unchanged for the 0x7C case (the guard just moved one call level deeper) and additionally excludes 0x7D-flagged volumes. No locking or lifetime change.",
+      "assembly_diff": "Unpatched (0x1C000F2D0):\n  0x1C000F343  cmp [rbx+7Ch], r14b\n  0x1C000F347  jnz short loc_1C000F354\n  0x1C000F34F  call ReconcileThisDatabaseWithMaster\nPatched (0x1C000F350):\n  0x1C000F3C8  call ReconcileThisDatabaseWithMaster   ; unconditional"
+    },
+    {
+      "name": "MountMgrMountedDeviceArrival",
+      "address_unpatched": "0x1C000F7E4",
+      "address_patched": "0x1C000F854",
+      "similarity": 0.9577,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Volume-entry field read shifts from offset 0x80 to 0x81 due to the inserted 0x7D byte.",
+        "Local initialization size differs as a consequence of the structure-layout adjustment."
+      ],
+      "security_relevant": false,
+      "security_notes": "IOCTL_MOUNTMGR_VOLUME_ARRIVAL_NOTIFICATION handler. No input-length or authorization check was added or removed; the only change is the field-offset ripple from the inserted byte.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "GlobalCreateSymbolicLink",
+      "address_unpatched": "0x1C000DDC0",
+      "address_patched": "0x1C000DE30",
+      "similarity": 0.85,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Switches symbolic-link creation from IoCreateSymbolicLink(name, target) to IoCreateSymbolicLink2(name, params), where params = { dword Flags = 1, UNICODE_STRING Target }.",
+        "The second-parameter type change ripples as cast-only, logic-identical diffs into callers (DriverEntry, MountMgrCreatePointWorker, MountMgrCreatePointWorkerLegacy, RedirectSavedLink, and the mounted-device-arrival call sites).",
+        "Error handling, WPP trace ids, and buffer cleanup are otherwise identical between builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "API modernization affecting every symbolic link mountmgr creates (the \\Device\\MountPointManager link, drive-letter links, volume names, mount points, redirected saved links). IoCreateSymbolicLink2 is the newer flags-taking variant; the flag value 1 is passed for every link. The flag's precise security semantics are not documented and are not determinable from the binary, so no vulnerability class or CWE can be justified from the diff. Plausibly a defense-in-depth / namespace-hardening modernization, but the binary provides no demonstrable memory-safety, access-control, or reachability change.",
+      "assembly_diff": "Unpatched (0x1C000DDC0):\n  0x1C000DE0F  call IoCreateSymbolicLink   ; (name, target)\nPatched (0x1C000DE30):\n  0x1C000DE85  movups xmm0, [rdi]           ; target UNICODE_STRING\n  0x1C000DE88  lea rdx, [rsp+var_28]        ; params struct\n  0x1C000DE8D  mov dword [rsp+var_28], 1    ; params.Flags = 1\n  0x1C000DE95  lea rcx, [rsp+P]             ; symbolic link name\n  0x1C000DE9A  movdqu [rsp+var_28+8], xmm0  ; params.Target\n  0x1C000DEA0  call IoCreateSymbolicLink2"
+    },
+    {
+      "name": "sub_1C00152E4",
+      "similarity": 0.908,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Disposition byte read shifts from offset 0x85 to 0x86 (field-offset ripple only)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00110C8",
+      "similarity": 0.9738,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Byte read shifts from offset 0x80 to 0x81 (field-offset ripple).",
+        "Loop restructured from for to while (cosmetic)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ProcessSuggestedDriveLetters",
+      "address_unpatched": "0x1C00156D0",
+      "address_patched": "0x1C00156EC",
+      "similarity": 0.9,
+      "change_type": "behavioral",
+      "key_changes": ["Field-offset ripple from the inserted 0x7D byte."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00014C0",
+      "similarity": 0.599,
+      "change_type": "cosmetic",
+      "key_changes": ["memset implementation replaced with a different SIMD/memset variant (compiler rebuild)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0001010",
+      "similarity": 0.771,
+      "change_type": "cosmetic",
+      "key_changes": ["IRP_MJ_CLEANUP cancel routine restructured with different register allocation, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000F390",
+      "similarity": 0.8469,
+      "change_type": "cosmetic",
+      "key_changes": ["Loop restructured from for to while, logically equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0019120",
+      "similarity": 0.8753,
+      "change_type": "cosmetic",
+      "key_changes": ["Loop restructured from for to while, logically equivalent"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00183D4",
+      "similarity": 0.8844,
+      "change_type": "cosmetic",
+      "key_changes": ["Loop restructure and register reallocation, logically equivalent linked-list removal"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0016760",
+      "similarity": 0.8668,
+      "change_type": "cosmetic",
+      "key_changes": ["Buffer reallocation loop restructured, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002DF0",
+      "similarity": 0.8678,
+      "change_type": "cosmetic",
+      "key_changes": ["Event-wait loop restructured, global-variable address drift, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000D898",
+      "similarity": 0.8988,
+      "change_type": "cosmetic",
+      "key_changes": ["Buffer reallocation loop restructured with earlier error return, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0014C24",
+      "similarity": 0.9129,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation and variable-name changes, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E458",
+      "similarity": 0.939,
+      "change_type": "cosmetic",
+      "key_changes": ["Loop restructured from for to while, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00162A0",
+      "similarity": 0.9303,
+      "change_type": "cosmetic",
+      "key_changes": ["Register reallocation and loop restructure, equivalent logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00091D0",
+      "similarity": 0.9624,
+      "change_type": "cosmetic",
+      "key_changes": ["IOCTL dispatch function: register reallocation and initialization-order changes. No new input validation was added."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "__cpu_features_init",
+      "_guard_xfg_dispatch_icall_nop",
+      "__memset_query",
+      "__memset_repmovs"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "QueryDeviceInformation, ReconcileThisDatabaseWithMaster, ReconcileThisDatabaseWithMasterWorker, MountMgrDriverReinitialization",
+      "entry_point": "IOCTL device-control dispatcher (sub_1C0009010), MountMgrMountedDeviceArrival, and MountMgrDriverReinitialization reach the reconcile work item, but none of these paths changed input validation or authorization in this patch.",
+      "call_chain": [
+        "QueryDeviceInformation sets volume-entry byte 0x7C = Characteristics & 1 and (new) 0x7D = Characteristics & 0x10000",
+        "MountMgrDriverReinitialization iterates volume entries and calls ReconcileThisDatabaseWithMaster",
+        "ReconcileThisDatabaseWithMaster now skips entries where 0x7C or 0x7D is set, otherwise queues ReconcileThisDatabaseWithMasterWorker",
+        "ReconcileThisDatabaseWithMasterWorker also skips entries where 0x7C or 0x7D is set, under the already-held device mutex"
+      ],
+      "vulnerability_class": "None (behavioral/functional change)",
+      "description": "The patch adds a new one-byte field to the volume-entry structure at offset 0x7D, populated in QueryDeviceInformation from a DEVICE_OBJECT characteristic bit (BYTE2(Characteristics) & 1, i.e. Characteristics & 0x10000, documented FILE_CHARACTERISTIC_CSV). The database-reconcile path (ReconcileThisDatabaseWithMaster and its worker ReconcileThisDatabaseWithMasterWorker) now skips a volume entry when this new byte is set, in addition to the existing 0x7C removable-media byte. MountMgrDriverReinitialization drops its local 0x7C filter because that guard now lives inside ReconcileThisDatabaseWithMaster. Inserting the byte shifts several later structure fields by one (0x7D/0x7E nesting marker to 0x7E/0x7F, 0x7E flag to 0x7F, 0x80 state to 0x81, 0x85 disposition to 0x86), producing a +1 offset ripple across multiple functions. This is a behavioral change that excludes an additional class of volume from the reconcile/auto-online path. It is not a memory-safety fix: the 0x7D byte is a static device characteristic (written once in QueryDeviceInformation, never toggled around IoQueueWorkItem), the device-extension mutex acquisition is identical in both builds, and the mount-point list teardown (single ExFreePoolWithTag under the held mutex) is unchanged. No race condition, use-after-free, or double-free is introduced or removed.",
+      "trigger_conditions": "Not applicable. No exploitable condition is introduced or fixed by this patch.",
+      "primitive": "None.",
+      "evidence": "QueryDeviceInformation (patched, decompiled):\n  v8 = v4->Characteristics & 1;\n  *(_BYTE *)(a2 + 124) = v8;                          // 0x7C\n  *(_BYTE *)(a2 + 125) = BYTE2(v4->Characteristics) & 1;  // 0x7D  NEW (Characteristics & 0x10000)\n\nQueryDeviceInformation (unpatched, decompiled):\n  *(_BYTE *)(a2 + 124) = v4->Characteristics & 1;    // 0x7C\n  // no characteristic write at 0x7D; 0x7D was one byte of *(_WORD*)(a2+125)=257 (nesting marker)\n\nReconcileThisDatabaseWithMaster (patched, decompiled):\n  if ( *(_WORD *)(a2 + 124) == 0 )   // both 0x7C and 0x7D must be zero (unpatched checked only the 0x7C byte)\n  {\n      PoolWithTag = ExAllocatePoolWithTag((POOL_TYPE)512, 0x38u, 0x41746E4Du);\n      ...\n      QueueWorkItem(...);   // no write to 0x7D before or after queueing\n  }\n\nReconcileThisDatabaseWithMasterWorker (patched assembly) adds `cmp [r15+7Dh],al / jnz` after the existing `cmp [r15+7Ch],al` check, inside the region already protected by KeWaitForSingleObject on the device mutex.",
+      "notes": "The originally proposed 'WorkPending flag / double-queue race / double-free / use-after-free' finding is not supported by the binaries. 0x7D is not a work-in-progress flag (it is a static device characteristic), 0x7C is not an 'Offline' flag set after the callback starts (it is set from Characteristics & 1 during device-information query), there is no locking or free-ordering change, and the report-cited free addresses 0x1C001732F/0x1C001733C are not instruction boundaries (the actual single free is ExFreePoolWithTag @ 0x1C0017334, identical in both builds). Separately, GlobalCreateSymbolicLink was modernized from IoCreateSymbolicLink to IoCreateSymbolicLink2 (flags=1); this affects the symlink-creation primitive for all mountmgr links but the binary does not substantiate it as a security fix (flag semantics not determinable). No ProbeForRead/Write, IoCreateDeviceSecure, or SDDL/security-descriptor calls exist in either build; the IOCTL dispatch code set is unchanged."
+    }
+  ],
+  "summary": "No security-relevant change. The Mount Manager patch adds a new one-byte field at volume-entry offset 0x7D, set in QueryDeviceInformation from a DEVICE_OBJECT characteristic bit (Characteristics & 0x10000, FILE_CHARACTERISTIC_CSV). The database-reconcile path (ReconcileThisDatabaseWithMaster and its work-item worker) now skips volume entries whose 0x7C (removable media) or new 0x7D characteristic byte is set, and MountMgrDriverReinitialization folds its former 0x7C filter into the callee. The inserted byte shifts several later structure fields by one, producing a +1 offset ripple seen across multiple functions. Separately, GlobalCreateSymbolicLink was modernized from IoCreateSymbolicLink to IoCreateSymbolicLink2 (flags=1) for all mountmgr-created symbolic links; this is an API modernization whose security effect is not determinable from the binary and is not substantiated as a fix. The remaining changed functions are compiler/codegen churn, and four CRT/compiler helper functions are newly present from the rebuild. The changes alter which volumes are reconciled/auto-onlined and the symlink-creation API (behavioral/correctness adjustments), not memory safety: the device mutex, allocation, and list-teardown free sequence are identical in both builds. There is no race condition, use-after-free, or double-free introduced or fixed."
+}

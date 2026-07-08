@@ -1,0 +1,220 @@
+{
+  "binaries": {
+    "title": "ci.dll (Windows Code Integrity) - No security-relevant change (WIL feature-staging, staged catalog-policy enforcement, signature-database parser refactor)",
+    "id_unpatched": "ci_unpatched.dll",
+    "id_patched": "ci_patched.dll",
+    "overall_similarity": 0.9627,
+    "matched": 2499,
+    "changed": 81,
+    "identical": 2418,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wil_details_GetCurrentFeatureEnabledState (sub_180019190)",
+      "similarity": 0.5265,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function at exact address 0x180019190 is wil_details_GetCurrentFeatureEnabledState (Windows Implementation Library feature-staging evaluation); patched counterpart is the same symbol at 0x1800192B8",
+        "Unpatched version walks a WIL feature dependency list at arg1+0x20, re-evaluating each cached feature entry via wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_18001901c); bytes 0x1d/0x1e/0x1f are WIL feature-property/state bytes, not certificate fields",
+        "Patched version adds a (state & 0xc00) != 0xc00 feature-flag gate and calls wil_details_AreDependenciesEnabled (sub_180018fcc)",
+        "This is a feature-flag evaluation change, not an Authenticode signature-verification path"
+      ],
+      "security_relevant": false,
+      "security_notes": "The function at exact address 0x180019190 is wil_details_GetCurrentFeatureEnabledState, part of the WIL feature-staging framework. It queries staging config via wil_RtlStagingConfig_QueryFeatureState (sub_18005448c) and walks a WIL feature dependency list at arg1+0x20, re-evaluating cached entries through wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_18001901c). The 0x1d/0x1e/0x1f bytes are WIL feature-property/state bytes, not parsed certificate flags. The patched same-symbol function at 0x1800192B8 adds a (state & 0xc00) != 0xc00 gate and a wil_details_AreDependenciesEnabled (sub_180018fcc) call. This is not a signature-verification path and carries no signature-bypass primitive.",
+      "assembly_diff": "sub_180019190 (unpatched):\nmov qword [rsp+0x18], rbp\npush rdi\nsub rsp, 0x40\nmov al, byte [rcx+0x1c]\nxor r8d, r8d\nsub al, 0x2\nmov r9, rdx\nmov edx, dword [rcx+0x18]\ncmp al, 0x1\nmov rdi, rcx\nxorps xmm0, xmm0\nsetbe r8b\nlea rcx, [rsp+0x20]\nxor eax, eax\nmov dword [r9], 0x1\nmov qword [rsp+0x30], rax\nmovups xmmword [rsp+0x20], xmm0\ncall 0x18005448c\nand qword [rsp+0x50], 0x0\nmov ecx, dword [rsp+0x30]\nneg ecx\nmov ecx, dword [rsp+0x34]\nsbb eax, eax\nand eax, dword [rsp+0x20]\nand eax, 0x3\nmov edx, eax\nshl edx, 0x7\nor edx, r8d\nmov r8d, 0x40\nxor ecx, ecx\nmov eax, edx\ncmp dword [rsp+0x20], 0x2\ncmove ecx, r8d\nor eax, ecx\nmov al, byte [rdi+0x1f]\nneg al\nsbb ecx, ecx\nand ecx, r8d\nmov eax, ecx\nor eax, edx\njmp 0x180019234\nmov rax, qword [rsp+0x50]\nmov rbx, qword [rsp+0x60]\nadd rsp, 0x40\npop rdi\nretn\n; --- per-entry validation loop (UNPATCHED - removed in patch) ---\nmov rdi, qword [rdi+0x20]\ntest rdi, rdi\nje 0x1800192d8\nor edx, ecx\nmov dword [rsp+0x50], eax\nmov ebx, edx\nshr ebx, 0x6\nand ebx, 0x1\nxor ebx, edx\nmov dword [rsp+0x50], ebx\ntest r8b, dl\nje 0x1800192d8\nmov dword [rsp+0x50], ebx\ncmp byte [rcx+0x1e], 0x0\njne 0x1800192b2\ntest bl, 0x1\nje 0x1800192c4\ncmp byte [rcx+0x1d], 0x0\njne 0x1800192b2\nxor eax, eax\ncmp byte [rcx+0x1f], 0x0\nje 0x1800192c4\nand qword [rsp+0x58], 0x0\nmov r9, qword [rcx]\nmov eax, dword [r9]\nmov dword [rsp+0x58], eax\ntest al, 0x2\nje 0x18001928d\nmov rcx, qword [rdi]\ntest rcx, rcx\nje 0x1800192d8\nmov eax, 0x1\njmp 0x1800192c6\nmov rdx, qword [rsp+0x58]\nmov r8, rcx\nmov rcx, r9\ncall 0x18001901c\nmov rax, qword [rsp+0x58]\njmp 0x18001929d\nand ebx, 0xfffffffe\nor ebx, eax\nadd rdi, 0x8\nmov dword [rsp+0x50], ebx\ntest bl, 0x1\njne 0x18001925e\nand eax, ebx\nmov ecx, 0x0\ntest al, 0x1\nmov eax, ebx\nsetne cl\nand eax, 0xfffffffe\nmov ebx, ecx\njmp 0x1800192c9"
+    },
+    {
+      "name": "SymCryptRsakeyCalculatePrivateFields (sub_180002D0C)",
+      "similarity": 0.701,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Function at exact address 0x180002D0C is SymCryptRsakeyCalculatePrivateFields, a statically-linked SymCrypt routine computing RSA CRT private-key parameters; it opens with call SymCryptFdefSizeofIntFromDigits",
+        "The same function exists in the patched binary at 0x18000E1E4 (same symbol); the apparent diff is a build relocation plus register-allocation churn",
+        "No arg7 bitmask, no i != 2 signature-count check, and no dual-signature logic are present",
+        "Helpers cited as signature comparison are SymCrypt big-integer primitives: sub_1800256dc = SymCryptFdefIntMulMixedSize, sub_180025418 = SymCryptFdefIntIsEqual, sub_180025934 = SymCryptFdefRawSubUint32, sub_180028404/sub_180025354 = SymCryptFdefIntCopyMixedSize"
+      ],
+      "security_relevant": false,
+      "security_notes": "The function at exact address 0x180002D0C is SymCryptRsakeyCalculatePrivateFields, a statically-linked SymCrypt RSA CRT private-field computation operating entirely on big-integer objects. The same routine is present in the patched binary at 0x18000E1E4; the reported diff is a relocation with register-allocation differences, not a semantic verification change. There is no dual-signature cross-validation here and no signature-bypass primitive.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CiEvaluatePolicyInfoForCatalog (0x1800E0384 -> 0x1800E4C58)",
+      "similarity": 0.8057,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Function at exact address 0x1800E0384 is CiEvaluatePolicyInfoForCatalog; patched counterpart is the same symbol at 0x1800E4C58",
+        "Patched adds a new branch (0x1800E4D9D-0x1800E4E4D) gated behind Feature_TrustedLaunchSysAppsOSCatalog__private_IsEnabledDeviceUsageNoInline AND *(rsi+0xa98) & 0x40000",
+        "That branch derives a package family name from the catalog full name at rsi+0xc18 via KappxDerivePackageFamilyNameFromFullName, allocates a buffer with ExAllocatePool2, and compares against the string at rdi+0x28 with RtlEqualUnicodeString, returning STATUS_INVALID_IMAGE_HASH (0xC0000428) on mismatch or when *(rdi+0x30) is NULL",
+        "When the feature gate is off or the 0x40000 flag is clear, control falls through to the pre-existing KappxValidateCatalogForTrustedLaunch path (0x1800E4E6C-0x1800E4E90), the same validation the unpatched build performs",
+        "The 0xC00/0xC08/0xBF8 -> 0xC20/0xC28/0xC18 offset moves appear in that retained old path and reflect a validation-context structure that grew by 0x20 bytes between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a staged rollout of a new enforcement path for the TrustedLaunch system-apps OS-catalog scenario, not the repair of a demonstrable bypass. The new package-family-name RtlEqualUnicodeString check runs only when Feature_TrustedLaunchSysAppsOSCatalog__private_IsEnabledDeviceUsageNoInline is enabled AND *(rsi+0xa98) & 0x40000 is set; otherwise the pre-existing KappxValidateCatalogForTrustedLaunch validation is retained. The offset changes are a struct-layout move, not a stronger reference. No attacker-reachable path is shown in which the unpatched build validates a catalog it should reject, so this carries no policy-bypass primitive.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipFindFileHash (sub_1800D9CDC)",
+      "similarity": 0.9142,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version threads sub_1800196ec() (VBS/capability check) into the signature verification dispatch loop",
+        "New branching: when sub_180019b18() returns true, additional policy verification paths are enabled (policy string array at var_b8/var_c8/var_c0)",
+        "Patched version adds handling for *(arg1+0xc20) and *(arg1+0xc28) fields (new verification context fields)",
+        "KeStackAttachProcess/KeUnstackDetachProcess paths gated by sub_1800196ec() in patched version"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the main signature verification dispatcher. Changes are primarily about extending the verification framework with VBS-related policy enforcement rather than fixing a specific vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "SbpParseSignatureDatabase (0x18000BDDC) -> SbpParseSignatureDatabaseFromBuffer (0x18001E1DC)",
+      "similarity": 0.1828,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched: signature-database blob parsed inline by SbpParseSignatureDatabase @ 0x18000BDDC; patched: that function (relocated to 0x18000E0FC) is a thin wrapper calling a new helper SbpParseSignatureDatabaseFromBuffer @ 0x18001E1DC that holds the parse logic",
+        "The diff engine mispaired the new helper against the unpatched I_MapFileHashes (0x180088580) (true patched I_MapFileHashes is at 0x1800DB5F0), producing the low 0.1828 similarity",
+        "Patched adds a third entry category and computes the allocation size with RtlULongLongMult checked multiplies plus compare-with-addend guards (0x18001E269-0x18001E2DD) before SbeAlloc",
+        "Direction: the unpatched allocation (count1 + count2) * 0x10 + Size (0x18000BE49-0x18000BE54) uses 32-bit counts (r14d/r15d) and a 32-bit Size, so the 64-bit product cannot wrap",
+        "The per-entry bounds checks (cmp rax,0x1c; jb; entry_end = cur + *(cur+0x10); cmp entry_end,cur; jb; cmp entry_end,end; ja; cmp ecx,0x1c; jb) are present verbatim in BOTH builds (unpatched 0x18000BE93-0x18000BEAD, patched 0x18001E368-0x18001E38E)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a refactor of the signature-database parser plus defense-in-depth arithmetic hardening, not a vulnerability fix. The parse logic moved from the inline SbpParseSignatureDatabase (0x18000BDDC) into a new helper SbpParseSignatureDatabaseFromBuffer (0x18001E1DC), which adds a third entry category and RtlULongLongMult checked multiplies. The unpatched size arithmetic uses 32-bit counts and a 32-bit length, so (count1 + count2) * 0x10 + Size cannot overflow a 64-bit total, and the per-entry bounds checks are identical in both builds. No undersized-allocation or out-of-bounds-write primitive is reachable in the unpatched parser. The 0.1828 similarity reflects the diff engine mispairing the new helper with I_MapFileHashes (0x180088580).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipMinCryptToAuthRoot2 (sub_180054C04)",
+      "similarity": 0.7953,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version adds new output parameter (arg5) for certificate verification status codes",
+        "New calls to sub_180018df8() gate EKU validation paths",
+        "Patched version distinguishes between different verification failure modes (status codes 0x1b, 4, etc.)",
+        "New sub_1800d2b90 (cert policy validation) replaces unpatched sub_1800cf570 with extended logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Certificate EKU (Extended Key Usage) validation function. Changes are about enhanced reporting and VBS-gated policy enforcement, not a direct vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipValidateEndpointSecPolicyFile (sub_180058470)",
+      "similarity": 0.8031,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version gates the file-reading path (ZwOpenFile, ObReferenceObjectByHandle, ZwReadFile) behind sub_180018df8() check",
+        "New alternate path when sub_180018df8() is true: uses sub_1800599a0 instead of direct file I/O",
+        "Object cleanup (ObfDereferenceObject, ZwClose) also gated behind sub_180018df8()",
+        "Different parsing functions called: sub_1800755f4/sub_1800723fc/sub_18007249c (patched) vs sub_180071704/sub_18006e57c/sub_18006e61c (unpatched)"
+      ],
+      "security_relevant": false,
+      "security_notes": "PE signature file reading and parsing function. Changes are about VBS-aware file access path selection.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CipShouldRevalidateForPolicyChange (sub_1800675E4)",
+      "similarity": 0.5609,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Address validation function: checks if an address falls within the valid system/user range",
+        "Patched version uses data_180045368 instead of data_180043370 as the range boundary",
+        "Patched version simplifies the conditional logic for address range checking"
+      ],
+      "security_relevant": false,
+      "security_notes": "Helper function for address range validation. Changes are cosmetic - different global variable for the range boundary due to build differences.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "wil_details_GetCurrentFeatureEnabledState (sub_180019190)",
+      "entry_point": "Windows Implementation Library feature-enabled-state evaluation",
+      "call_chain": [
+        "WIL feature-staging query",
+        "wil_details_GetCurrentFeatureEnabledState (sub_180019190)"
+      ],
+      "vulnerability_class": "Not security-relevant (feature-flag gating / build behavior)",
+      "description": "The function at exact address 0x180019190 is wil_details_GetCurrentFeatureEnabledState, part of the WIL feature-staging framework. It queries staging config via wil_RtlStagingConfig_QueryFeatureState (sub_18005448c) and walks a WIL feature dependency list at arg1+0x20, re-evaluating each cached feature entry through wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_18001901c). The bytes at 0x1d/0x1e/0x1f are WIL feature-property/state bytes, not parsed certificate fields, and arg1+0x20 is not an Authenticode certificate chain. The patched same-symbol function at 0x1800192B8 adds a (state & 0xc00) != 0xc00 feature-flag gate and calls wil_details_AreDependenciesEnabled (sub_180018fcc). This is a feature-flag evaluation change, not a signature-verification fix.",
+      "trigger_conditions": "None. This function is WIL feature-enabled-state evaluation and does not process attacker-supplied Authenticode data; the 0x1d/0x1e/0x1f bytes are internal WIL feature-property/state bytes.",
+      "primitive": "None - not a signature-verification path and provides no bypass primitive",
+      "evidence": "wil_details_GetCurrentFeatureEnabledState @ 0x180019190 walks a WIL feature dependency list (*(arg1+0x20)):\n// For each dependency entry:\nif ((mask & 1) && *(e+0x1f) && *(e+0x1d)==0 && *(e+0x1e)==0) {\n    if (*(unsigned int*)e & 2)\n        r = *(unsigned int*)e;   // reuse cached feature state\n    else\n        r = wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState(...); // sub_18001901c\n}\n\nPatched same symbol @ 0x1800192B8:\nif ((state & 0xc00) == 0xc00) r14 = 1;   // feature-flag gate\nif (*(arg1+0x20)) wil_details_AreDependenciesEnabled(arg1); // sub_180018fcc\n// This is WIL feature-staging logic, not signature verification.",
+      "assembly": "wil_details_GetCurrentFeatureEnabledState (unpatched) - feature dependency walk:\nmov rdi, qword [rdi+0x20]    ; Load feature dependency list\ntest rdi, rdi\nje 0x1800192d8                ; Skip if none\n; --- Per-entry dependency loop ---\ncmp byte [rcx+0x1e], 0x0\njne 0x1800192b2               ; WIL feature-property byte 0x1e\ntest bl, 0x1\nje 0x1800192c4                ; state mask bit 0 clear -> skip\ncmp byte [rcx+0x1d], 0x0\njne 0x1800192b2               ; WIL feature-property byte 0x1d\nxor eax, eax\ncmp byte [rcx+0x1f], 0x0\nje 0x1800192c4                ; WIL feature-property byte 0x1f\nmov r9, qword [rcx]           ; dependency entry pointer\nmov eax, dword [r9]           ; cached-state DWORD\nmov dword [rsp+0x58], eax\ntest al, 0x2                  ; bit 1 of cached-state DWORD\nje 0x18001928d                ; if clear, recompute\nmov rcx, qword [rdi]          ; reuse cached state\ntest rcx, rcx\nje 0x1800192d8\nmov eax, 0x1                  ; enabled-state result for entry\njmp 0x1800192c6\n; --- Recompute path ---\nmov rdx, qword [rsp+0x58]\nmov r8, rcx\nmov rcx, r9\ncall 0x18001901c             ; wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState\nmov rax, qword [rsp+0x58]\njmp 0x18001929d\n; --- Patched (0x1800192B8) adds ---\n; mov edx, 0xc00\n; and eax, edx\n; cmp eax, edx ; (state & 0xc00) != 0xc00 gate\n; jne 0x180019371\n; call sub_180018fcc ; wil_details_AreDependenciesEnabled",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!wil_details_GetCurrentFeatureEnabledState",
+            "address": "0x180019190",
+            "why": "Function entry. RCX = arg1, RDX = arg2 (result out). At arg1+0x20 is the WIL feature dependency list head."
+          },
+          {
+            "symbol": "ci!wil_details_GetCurrentFeatureEnabledState+0x8e",
+            "address": "0x18001921E",
+            "why": "Start of the feature dependency loop. RDI holds the current dependency entry pointer. RDI+0x1d/0x1e/0x1f are WIL feature-property/state bytes."
+          },
+          {
+            "symbol": "ci!wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+            "address": "0x18001901C",
+            "why": "Cached feature-state recompute helper (sub_18001901c). Called when the cached-state DWORD bit 1 is clear."
+          }
+        ],
+        "watch": [
+          "RDI at 0x18001925e = current WIL feature dependency entry pointer (list at *(RCX+0x20))",
+          "BL (low byte of RBX) = running WIL feature-state mask",
+          "[RCX+0x20] = WIL feature dependency list head",
+          "[entry+0x1d], [entry+0x1e], [entry+0x1f] = WIL feature-property/state bytes",
+          "[entry+0] cached-state DWORD: bit 1 (0x2) selects reuse of cached state vs recompute via sub_18001901c"
+        ],
+        "key_offsets": [
+          "0x18001925e: Start of WIL feature dependency loop",
+          "0x180019272: WIL feature-property byte checks (0x1d/0x1e/0x1f)",
+          "0x180019286: reuse cached feature state (eax=1)",
+          "0x18001928d: recompute call to wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState (sub_18001901c)",
+          "0x1800192c9: end of per-entry processing, feature-state mask updated"
+        ],
+        "trigger_setup": "None. This is WIL feature-staging evaluation with no attacker-supplied input; there is no PoC. To confirm the identity, break at 0x180019190 and observe the call to wil_RtlStagingConfig_QueryFeatureState (sub_18005448c).",
+        "expected_observation": "The unpatched and patched (0x1800192B8) versions differ by the (state & 0xc00) != 0xc00 feature-flag gate and the wil_details_AreDependenciesEnabled (sub_180018fcc) call. No signature-verification verdict is produced by this function.",
+        "notes": "The function at exact address 0x180019190 is wil_details_GetCurrentFeatureEnabledState, part of the WIL feature-staging framework. arg1+0x20 is a WIL feature dependency list, not a certificate chain, and the 0x1d-0x1f bytes are WIL feature-property/state bytes. The patched same-symbol function at 0x1800192B8 adds the (state & 0xc00) gate and the wil_details_AreDependenciesEnabled call."
+      }
+    },
+    {
+      "severity": "informational",
+      "function": "SymCryptRsakeyCalculatePrivateFields (sub_180002D0C)",
+      "entry_point": "SymCrypt RSA CRT private-field computation (statically linked)",
+      "call_chain": [
+        "SymCrypt RSA key derivation",
+        "SymCryptRsakeyCalculatePrivateFields (sub_180002D0C)"
+      ],
+      "vulnerability_class": "Not security-relevant (statically-linked crypto-library relocation)",
+      "description": "The function at exact address 0x180002D0C is SymCryptRsakeyCalculatePrivateFields, a statically-linked SymCrypt routine that computes RSA private-key CRT parameters. It opens with call SymCryptFdefSizeofIntFromDigits and operates entirely on SymCrypt big-integer objects. The same function exists in the patched binary at 0x18000E1E4 (same symbol); the reported diff is a build relocation plus register-allocation churn, not a semantic verification change. There is no arg7 bitmask, no i != 2 signature-count check, and no dual-signature logic. The helpers cited as signature comparison are SymCrypt big-integer primitives: sub_1800256dc = SymCryptFdefIntMulMixedSize, sub_180025418 = SymCryptFdefIntIsEqual, sub_180025934 = SymCryptFdefRawSubUint32, and sub_180028404/sub_180025354 = SymCryptFdefIntCopyMixedSize.",
+      "trigger_conditions": "None. This is SymCrypt RSA big-integer math with no attacker-controlled signature input; it plays no role in the signature-verification verdict.",
+      "primitive": "None - relocated SymCrypt math, not a signature-verification path",
+      "evidence": "SymCryptRsakeyCalculatePrivateFields @ 0x180002D0C (unpatched) / @ 0x18000E1E4 (patched):\ncall SymCryptFdefSizeofIntFromDigits\n// ... SymCrypt big-integer operations on RSA CRT parameters ...\n// helpers: SymCryptFdefIntMulMixedSize (sub_1800256dc),\n//          SymCryptFdefIntIsEqual (sub_180025418),\n//          SymCryptFdefRawSubUint32 (sub_180025934),\n//          SymCryptFdefIntCopyMixedSize (sub_180028404 / sub_180025354)\n// Same routine in both builds; the diff is a relocation, not a verification change.",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ci!SymCryptRsakeyCalculatePrivateFields",
+            "address": "0x180002D0C",
+            "why": "Function entry (patched counterpart at 0x18000E1E4). Opens with call SymCryptFdefSizeofIntFromDigits; operates on SymCrypt big-integer objects."
+          }
+        ],
+        "watch": [
+          "This is SymCrypt RSA CRT math; there are no signature-count fields. Offsets 0x180002D81/0x180002E3C/0x180002FB3/0x180002FC5 are internal branches of the big-integer computation."
+        ],
+        "key_offsets": [
+          "0x180002D0C: entry (unpatched); patched twin at 0x18000E1E4",
+          "0x180002D58: call SymCryptFdefSizeofIntFromDigits"
+        ],
+        "trigger_setup": "None. Statically-linked SymCrypt math with no attacker-supplied input; there is no PoC.",
+        "expected_observation": "Identical semantics across both builds; the difference is only the function's relocated address.",
+        "notes": "sub_180002D0C and its patched twin 0x18000E1E4 are the same SymCrypt routine, SymCryptRsakeyCalculatePrivateFields. The helper functions are SymCrypt big-integer primitives, not signature comparisons."
+      }
+    }
+  ],
+  "summary": "This is a patch for ci.dll (Windows Code Integrity) with no delivered security-relevant change. The four changed functions examined resolve as follows. (1) CiEvaluatePolicyInfoForCatalog (0x1800E0384 -> 0x1800E4C58) adds a new package-family-name RtlEqualUnicodeString check gated behind Feature_TrustedLaunchSysAppsOSCatalog__private_IsEnabledDeviceUsageNoInline AND *(rsi+0xa98) & 0x40000; when that gate is off the pre-existing KappxValidateCatalogForTrustedLaunch path is retained, so this is a staged rollout of new enforcement, not a fix to a demonstrable bypass, and the 0xC00/0xC08/0xBF8 -> 0xC20/0xC28/0xC18 offset moves are a validation-context struct-layout change. (2) SbpParseSignatureDatabase (0x18000BDDC) was refactored so its buffer parsing moved into a new helper SbpParseSignatureDatabaseFromBuffer (0x18001E1DC), which adds a third entry category and RtlULongLongMult checked multiplies; the unpatched allocation (count1 + count2) * 0x10 + Size uses 32-bit counts and cannot wrap a 64-bit total, and the per-entry bounds checks are identical in both builds, so the added guards are defense-in-depth. (3) 0x180019190 is wil_details_GetCurrentFeatureEnabledState (WIL feature-staging evaluation, patched at 0x1800192B8) and (4) 0x180002D0C is SymCryptRsakeyCalculatePrivateFields (statically-linked SymCrypt RSA math relocated to 0x18000E1E4); neither is an Authenticode signature-verification path. The diff engine mispaired the unpatched I_MapFileHashes (0x180088580, true patched counterpart 0x1800DB5F0) with the new SbpParseSignatureDatabaseFromBuffer helper."
+}

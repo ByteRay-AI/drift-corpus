@@ -1,0 +1,245 @@
+{
+  "binaries": {
+    "title": "fsdepends.sys (Dependent File System minifilter driver) - Recompilation diff; no security-relevant code change",
+    "id_unpatched": "fsdepends_unpatched.sys",
+    "id_patched": "fsdepends_patched.sys",
+    "overall_similarity": 0.9577,
+    "matched": 87,
+    "changed": 19,
+    "identical": 68,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "memset (sub_1C0002180)",
+      "similarity": 0.599,
+      "change_type": "register_allocation",
+      "key_changes": ["Compiler-reoptimized memset implementation (SSE2/AVX path differences)", "No semantic change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WPP_SF_qddZ (sub_1C00015CC)",
+      "similarity": 0.807,
+      "change_type": "register_allocation",
+      "key_changes": ["ETW/WPP message helper - register reassignment for the NULL string path", "No semantic change"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSForEachDependency (sub_1C000B7D0)",
+      "similarity": 0.8744,
+      "change_type": "behavioral",
+      "key_changes": ["Enumeration/retry loop recompiled: register renames and relocation of the WPP trace-enabled check (test al,1; cmp byte [rcx+29h],2; call WPP_SF_D)", "DepFSSendIoctl call target relocated (sub_1c000e9f4 -> sub_1c000e918, same routine at a different address)", "Logic preserved"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSGenerateDependencyList (sub_1C000DDD0)",
+      "similarity": 0.8897,
+      "change_type": "cosmetic",
+      "key_changes": ["Dependency-list builder - register renames and reordering of WPP and DereferenceVolumeContext blocks", "arg_28 & 0x8000 test and all lock/pool operations present in both builds"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DependentFSRegister (sub_1C000C510)",
+      "similarity": 0.8998,
+      "change_type": "cosmetic",
+      "key_changes": ["Frame base rsp->rbp relocation and register renames", "ZwQueryInformationFile and ObQueryNameString logic preserved", "Pool allocation size cap (0x10000) preserved"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSCheckDependencies (sub_1C000E7C8)",
+      "similarity": 0.9339,
+      "change_type": "cosmetic",
+      "key_changes": ["Dependency-check loop - register renames and WPP trace-check relocation", "cmp [rbx], magic and cmp dword [rbx+60h], 0 checks present in both builds"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSInstanceSetup (sub_1C000ED80)",
+      "similarity": 0.9485,
+      "change_type": "cosmetic",
+      "key_changes": ["InstanceSetupCallback - compiler restructuring of identical logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSInstanceQueryTeardown (sub_1C000FE20)",
+      "similarity": 0.9493,
+      "change_type": "cosmetic",
+      "key_changes": ["InstanceQueryTeardownCallback - compiler restructuring of lock/teardown logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreVolumeMount (sub_1C000B330)",
+      "similarity": 0.9514,
+      "change_type": "cosmetic",
+      "key_changes": ["FltGetDeviceObject/FltGetDiskDeviceObject handling - compiler restructuring of error paths"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DriverEntry (sub_1C0012008)",
+      "similarity": 0.968,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler restructuring"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSHandleQueryDependentVolume (sub_1C000BA18)",
+      "similarity": 0.9834,
+      "change_type": "register_allocation",
+      "key_changes": ["Dependent-volume name build/compare routine recompiled with register reallocation (r8<->rdx, edx<->ecx, r11<->r8) and instruction reordering around the string setups", "The full set of test/cmp/jz guards is identical in both builds (31 test instructions each, identical sorted set); no null guard is added or removed"],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. Both builds contain the same pointer-comparison and null-test guards; the differences are register allocation and instruction scheduling only. Patched address is 0x1C000B9F8 (unpatched 0x1C000BA18); the ~0x20 shift is upstream codegen relocation.",
+      "assembly_diff": "unpatched: mov edx,20h / mov ecx,r15d / mov r8,[rax] / cmp r8,rax / imul rcx,rdx\npatched:   mov ecx,20h / mov r8d,r15d / mov rdx,[rax] / cmp rdx,rax / imul rcx,r8\nOnly register names and ordering differ; no guard instruction added."
+    },
+    {
+      "name": "DependentFSCheckFileHandle",
+      "similarity": 0.9844,
+      "change_type": "cosmetic",
+      "key_changes": ["Idiom swaps only: STATUS_FILE_SYSTEM_LIMITATION status set via cmovb in one build and via a jnb conditional branch + mov ebx,0xC00000C3 in the other (same value, same condition)", "A 0x800 (bit 11) flag test emitted as mov edx,0x800; test edx,reg in one build and as bt reg,0Bh in the other", "Reordering of mov edx,0x15/0x16, mov r9d,ebx, the FsInformation & 0x10000000 test, and relocation of a WPP trace block", "The dependency-processing loop is opcode-identical in both builds"],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The dependency loop reads each entry's flags at *(P+idx*0x10+8) and the pointer at +0x10. The first branch (test r15b,dl) compares the loaded pointer against the saved Context at [rsp+130h+Context] before calling DereferenceVolumeContext (sub_1C000DB9C); the second branch (test dl,2) calls DereferenceDependencyContext (sub_1C000DBF0). Both branches, including the context comparison, are present and unchanged in both the unpatched and patched binaries. The 0.9844 similarity is fully accounted for by the cmovb<->branch and test<->bt codegen idiom swaps plus instruction reordering.",
+      "assembly_diff": "Dependency loop (identical in both builds; unpatched 0x1C0008803-0x1C0008838, patched 0x1C0008822-0x1C0008857):\n  test    r15b, dl\n  jz      <second>\n  mov     rdx, [rcx+rax*8+0x10]\n  cmp     rdx, [rsp+Context]        ; present in BOTH builds\n  jnz     <skip>\n  movzx   esi, word ptr [rcx+rax*8+0xa]\n  mov     rcx, rdx\n  call    DereferenceVolumeContext  ; sub_1C000DB9C\n<second>:\n  test    dl, 2\n  jz      <next>\n  mov     rcx, [rcx+rax*8+0x10]\n  xor     r8d, r8d\n  mov     dl, r15b\n  call    DereferenceDependencyContext ; sub_1C000DBF0\n\nCodegen-only deltas elsewhere in the function:\n  unpatched: mov eax,0C00000C3h / cmovb ebx,eax        patched: jnb <skip> / mov ebx,0C00000C3h\n  unpatched: mov edx,800h / test edx,r12d / test edx,eax  patched: bt r12d,0Bh / bt eax,0Bh"
+    },
+    {
+      "name": "DepFSBugCheckNotEnoughSpace (sub_1C0001188)",
+      "similarity": 0.9864,
+      "change_type": "cosmetic",
+      "key_changes": ["OBJECT_ATTRIBUTES field ordering (compiler restructuring)"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreCreate (sub_1C0007010)",
+      "similarity": 0.9885,
+      "change_type": "cosmetic",
+      "key_changes": ["Pre-create callback - register rename (r9->r8), KeGetCurrentIrql replaces direct CR8 read", "SeAccessCheck logic preserved"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSRegisterFilters (sub_1C000D1A8)",
+      "similarity": 0.9911,
+      "change_type": "behavioral",
+      "key_changes": ["FLT_REGISTRATION.Flags set from 0 to 8 (FLTFL_REGISTRATION_SUPPORT_WCOS)", "Struct header write splits from one 8-byte store (Flags=0) into a 4-byte store plus mov dword [Registration+4], 8", "Feature-enablement flag, not a security fix"],
+      "security_relevant": false,
+      "security_notes": "Enables Windows Container OS (WCOS) volume support for the minifilter. No memory-safety impact.",
+      "assembly_diff": "unpatched: mov qword ptr [Registration], 2030070h   ; Size/Version at +0, Flags(+4)=0\npatched:   mov dword ptr [Registration], 2030070h\n           mov dword ptr [Registration+4], 8         ; Flags = FLTFL_REGISTRATION_SUPPORT_WCOS"
+    },
+    {
+      "name": "DepFSCheckSmbLoopback (sub_1C0008E18)",
+      "similarity": 0.9917,
+      "change_type": "cosmetic",
+      "key_changes": ["Compiler restructuring of volume query logic"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSDismountDependencyList (sub_1C000A5B0)",
+      "similarity": 0.9917,
+      "change_type": "cosmetic",
+      "key_changes": ["Dependency cleanup function - register renames, lock address shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPreShutdown (sub_1C000AC10)",
+      "similarity": 0.9919,
+      "change_type": "cosmetic",
+      "key_changes": ["Teardown/shutdown handler - register renames, lock address shifts only"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DepFSPostVolumeMount (sub_1C0001810)",
+      "similarity": 0.9921,
+      "change_type": "cosmetic",
+      "key_changes": ["Work item completion routine - KeGetCurrentIrql() replaces direct control-register read, register renames"],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "DependentFSCheckFileHandle",
+      "entry_point": "IRP_MJ_CREATE pre-operation callback (DepFSPreCreate, sub_1C0007010) on a filtered volume",
+      "call_chain": ["IRP_MJ_CREATE (DepFSPreCreate, sub_1C0007010)", "ReferenceVolumeContext (sub_1C000DB08 / sub_1C000DA88)", "DependentFSCheckFileHandle", "DepFSGenerateDependencyList (sub_1C000DDD0)", "dependency loop at 0x1C0008803 (unpatched) / 0x1C0008822 (patched)"],
+      "vulnerability_class": "none - no security-relevant change",
+      "description": "DependentFSCheckFileHandle enumerates a pool-allocated dependency array from DepFSGenerateDependencyList (sub_1C000DDD0). For each entry it reads the flags at *(P+idx*0x10+8) and the pointer at +0x10. The first branch (test r15b, dl) compares that pointer against the saved Context at [rsp+130h+Context] and only on a match calls DereferenceVolumeContext (sub_1C000DBF0's sibling sub_1C000DB9C); the second branch (test dl, 2) calls DereferenceDependencyContext (sub_1C000DBF0). Both branches, including the context comparison in the first branch, are present and byte-for-byte identical in the unpatched and patched builds. The patch adds no comparison, status assignment, or bail-out to either branch. The function's differences between builds are compiler codegen: a cmovb-vs-conditional-branch idiom for setting STATUS_FILE_SYSTEM_LIMITATION (0xC00000C3), a test-with-mask-vs-bt idiom for a bit-11 (0x800) test, and instruction reordering. This function makes no security-relevant change.",
+      "trigger_conditions": "Not applicable - the dependency-processing loop is identical in both builds.",
+      "primitive": "None - no reachable primitive is introduced or removed by this patch.",
+      "evidence": "Dependency loop, identical in both builds (unpatched 0x1C0008803-0x1C0008838, patched 0x1C0008822-0x1C0008857):\n  test r15b, dl\n  jz   <second>\n  mov  rdx, [rcx+rax*8+0x10]\n  cmp  rdx, [rsp+Context]        ; present in BOTH\n  jnz  <skip>\n  mov  rcx, rdx\n  call DereferenceVolumeContext ; sub_1C000DB9C\n<second>:\n  test dl, 2\n  jz   <next>\n  mov  rcx, [rcx+rax*8+0x10]\n  xor  r8d, r8d\n  mov  dl, r15b\n  call DereferenceDependencyContext ; sub_1C000DBF0",
+      "assembly": "Codegen-only deltas in the function (dependency loop unchanged):\n  unpatched: mov eax,0C00000C3h ; cmovb ebx,eax          patched: jnb <skip> ; mov ebx,0C00000C3h\n  unpatched: mov edx,800h ; test edx,r12d ; test edx,eax  patched: bt r12d,0Bh ; bt eax,0Bh",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fsdepends_unpatched!DependentFSCheckFileHandle+0x793",
+            "address": "0x1c0008803",
+            "why": "Top of the dependency-processing branches. rcx = dependency array base, [rsp+130h+Context] = saved Context. Confirms the first branch compares *(entry+0x10) against Context in both builds and the second branch (test dl,2 at 0x1c0008823) does not add a comparison in either build."
+          }
+        ],
+        "watch": ["dl = entry flags byte", "rdx after mov at 0x1c0008808 = loaded pointer, compared to [rsp+130h+Context]", "[rsp+130h+Context] = saved Context from FltGetInstanceContext"],
+        "key_offsets": ["0x1c0008803: test r15b, dl - first branch (validated DereferenceVolumeContext)", "0x1c0008823: test dl, 2 - second branch (DereferenceDependencyContext)", "0x1c00087a3: call DepFSGenerateDependencyList (sub_1C000DDD0)"],
+        "trigger_setup": "N/A - no behavioral difference between builds in this function.",
+        "expected_observation": "Stepping the dependency loop in both builds executes the identical instruction sequence; the patch changes only codegen idioms elsewhere in the function.",
+        "notes": "fsdepends.sys is a Windows file system minifilter managing file dependencies. Dependency-array entries carry a flags byte at +0x8 and a context pointer at +0x10; the first flag branch validates the pointer against the instance Context before dereferencing, in both builds."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "DepFSHandleQueryDependentVolume (sub_1C000BA18)",
+      "entry_point": "Dependent-volume name query path within the minifilter",
+      "call_chain": ["DepFSHandleQueryDependentVolume (sub_1C000BA18, unpatched 0x1C000BA18 / patched 0x1C000B9F8)"],
+      "vulnerability_class": "none - no security-relevant change",
+      "description": "DepFSHandleQueryDependentVolume builds a dependent-volume name string and compares it against context state. Both builds contain the identical set of test/cmp/jz guards (31 test instructions each, an identical sorted set). No null-pointer guard and no test reg,reg / je pair is added or removed. Every difference between builds is register reallocation (r8<->rdx, edx<->ecx, r11<->r8) and instruction reordering around the two string setups. This function makes no security-relevant change.",
+      "trigger_conditions": "Not applicable - the guard set is identical in both builds.",
+      "primitive": "None.",
+      "evidence": "unpatched: mov edx,20h / mov ecx,r15d / mov r8,[rax] / cmp r8,rax / imul rcx,rdx\npatched:   mov ecx,20h / mov r8d,r15d / mov rdx,[rax] / cmp rdx,rax / imul rcx,r8\nIdentical count and set of test/cmp/jz instructions in both function bodies; differences are register names and ordering.",
+      "assembly": "No guard instruction (test/je pair) is added on either side. The context-pointer compare (cmp rdx, Context+8 ; jnz) present in the unpatched build is also present in the patched build, only with a different register.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "fsdepends_unpatched!DepFSHandleQueryDependentVolume",
+            "address": "0x1c000ba18",
+            "why": "Entry of the routine. Compare the guard sequence against the patched build at 0x1c000b9f8; the two are semantically identical."
+          }
+        ],
+        "watch": ["*(rdi+0x10) = context pointer used to build the name string", "Context+8 = value compared against the built pointer in both builds"],
+        "key_offsets": ["Patched relocation: 0x1C000BA18 (unpatched) -> 0x1C000B9F8 (patched), ~0x20 upstream codegen shift"],
+        "trigger_setup": "N/A - no behavioral difference between builds.",
+        "expected_observation": "Both builds execute the same guarded path; only register assignments differ.",
+        "notes": "The ~0x20 address shift is caused by upstream code-size changes, not by any edit to this function's logic."
+      }
+    }
+  ],
+  "summary": "The patch to fsdepends.sys is a recompilation with no security-relevant code change. DependentFSCheckFileHandle's dependency-processing loop, including its context-pointer comparison before DereferenceVolumeContext (sub_1C000DB9C), is opcode-identical in both builds; the second branch calling DereferenceDependencyContext (sub_1C000DBF0) is unchanged; the function's 0.9844 similarity comes from cmovb<->branch and test<->bt codegen idiom swaps and instruction reordering. DepFSHandleQueryDependentVolume (sub_1C000BA18, relocated to 0x1C000B9F8 in the patched build) has an identical set of guard instructions in both builds and differs only by register allocation. The one intentional behavioral change is DepFSRegisterFilters (sub_1C000D1A8) setting FLT_REGISTRATION.Flags from 0 to 8 (FLTFL_REGISTRATION_SUPPORT_WCOS), a feature-enablement flag with no memory-safety impact. The remaining changed functions differ only by register allocation, instruction scheduling, and WPP/ETW trace-block placement."
+}

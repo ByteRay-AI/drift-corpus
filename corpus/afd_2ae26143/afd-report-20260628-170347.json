@@ -1,0 +1,207 @@
+{
+  "binaries": {
+    "title": "afd.sys - Missing output-buffer bounds check on accepted-connection transport-address copy in AfdSanAcceptCore",
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9806,
+    "matched": 1228,
+    "changed": 6,
+    "identical": 1222,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdSanAcceptCore @ 0x1C007C0CC",
+      "similarity": 0.8249,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added a length floor before the transport-address copies: 'cmp dword [rbx+0x10], 0Ch; jb bail' (require output-buffer length >= 12), gated behind Feature_97988921__private_IsEnabledDeviceUsage",
+        "Added a size clamp on the user-transport copy: 'mov eax, [rbx+0x10]; cmp eax, r12d; cmovb r12d, eax' (clamp copy size to output-buffer length)",
+        "Added an overflow-safe clamp on the kernel-transport copy: 'mov ecx, [rbx+0x10]; sub rcx, r13; cmp rcx, rax; jnb .. ; movzx r12d, word [rbx+0x10]; sub r12w, r13w' (clamp to length - 2)",
+        "Added a minimum-size gate and clamp on the ancillary copy: 'cmp eax, 6; jb bail' plus 'cmovnb'/'cmovge' clamps",
+        "Copy primitive unchanged: every copy is memmove in both builds (memmove is at 0x1C000A400 in the unpatched image and 0x1C000A380 in the patched image only because the module relocated; it is the same function)"
+      ],
+      "security_relevant": true,
+      "security_notes": "AfdSanAcceptCore is the AFD SAN accept IRP completion routine. It copies the accepted connection's transport-address data into the caller's MDL-mapped output buffer (destination base *(IRP+8); output-buffer length and write offsets in the descriptor at *(IRP+0xB8)). The copy lengths come from the connection transport-address words at +0x14 and +0x18. In the unpatched build the output-buffer length at *( *(IRP+0xB8) + 0x10 ) is compared only to zero ('mov edx, [rbx+0x10]; test edx, edx; jz'), with no upper bound, so the memmove copies can write past the end of the MDL-mapped kernel allocation. The patch adds a length floor (>= 0xC), size clamps on both transport-address copies, and a minimum-size gate on the ancillary copy, all behind Feature_97988921__private_IsEnabledDeviceUsage. With the feature disabled the ancillary path falls back to the original unbounded copies.",
+      "assembly_diff": "UNPATCHED - only a zero-check, then unbounded copies:\n  0x1C007C3A8: mov     edx, [rbx+10h]           ; output-buffer length (rbx = *(IRP+0xB8))\n  0x1C007C3AB: test    edx, edx\n  0x1C007C3AD: jz      0x1C007C56B               ; skip copies only when length == 0\n  0x1C007C464: call    memmove                    ; transport-address copy, kernel variant (size = *(+0x14) + 2)\n  0x1C007C4C6: call    memmove                    ; transport-address copy, user variant (size = *(+0x14) + 8)\n  0x1C007C529: call    memmove                    ; ancillary copy, kernel variant (size = *(+0x18) + 2)\n  0x1C007C55E: call    memmove                    ; ancillary copy, user variant (size = *(+0x18) + 4)\n\nPATCHED - length floor + clamps behind the feature flag:\n  0x1C007C3B8: cmp     [rbx+10h], esi            ; length vs 0\n  0x1C007C3BB: jbe     0x1C007C6A5\n  0x1C007C3C1: call    Feature_97988921__private_IsEnabledDeviceUsage\n  0x1C007C3CA: cmp     dword ptr [rbx+10h], 0Ch  ; NEW: require length >= 12\n  0x1C007C3CE: jb      0x1C007C6A5\n  0x1C007C4CD: cmp     eax, r12d\n  0x1C007C4D0: cmovb   r12d, eax                 ; NEW: clamp user-transport size to length\n  0x1C007C411: sub     rcx, r13                  ; NEW: kernel-transport clamp to length - 2\n  0x1C007C41B: jnb     0x1C007C426\n  0x1C007C422: sub     r12w, r13w\n  0x1C007C530: cmp     eax, 6                    ; NEW: ancillary minimum-size gate\n  0x1C007C533: jb      0x1C007C6A5\n  0x1C007C5AD: cmovnb  dx, r13w                  ; NEW: ancillary clamp (kernel variant)\n  0x1C007C5FC: cmovge  dx, r13w                  ; NEW: ancillary clamp (user variant)\n  0x1C007C50E: call    memmove                    ; same primitive, now with clamped size"
+    },
+    {
+      "name": "AfdSanConnectHandler @ 0x1C007D410 -> 0x1C007D550",
+      "similarity": 0.2334,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Sibling SAN handler carrying the same unbounded peer-address copy pattern; matched by content across the relocation 0x1C007D410 -> 0x1C007D550",
+        "Added a feature-gated clamp on the peer-address copies: bounds '*(u16)Src + 2' / '*(u16)Src + 4' to the destination capacity '(u16)Parameters.Read.ByteOffset.LowPart - 2' / '- 8'",
+        "Added a '>= 6' minimum-size guard before the clamped copies; with Feature_97988921__private_IsEnabledDeviceUsage disabled the code falls back to the old unbounded memmove"
+      ],
+      "security_relevant": true,
+      "security_notes": "AfdSanConnectHandler is a SAN connect handler (not the caller of AfdSanAcceptCore) that copies the peer/local address into the accept output MDL. The unpatched build copies '*(u16*)Src + 2' / '*(u16*)Src + 4' bytes without an upper bound. The patched build clamps the copy length to the destination capacity (from Parameters.Read.ByteOffset.LowPart) and adds a minimum-size guard, gated behind Feature_97988921__private_IsEnabledDeviceUsage. The following items are NOT part of this patch: the '< 0x14 || > 0xFFFFFFF3' bound, the ExAllocatePoolWithQuotaTag(size + 0xc) allocation, the '< 0x20' / IoIs32bitProcess 8-vs-0x10 output-size checks, and the input-length bounds check are present identically in both builds. There is no STATUS_ACCESS_DENIED (0xC0000022) path in either build of this function.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdBind @ 0x1C0038DB0",
+      "similarity": 0.2706,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Raw-socket security region gated behind Feature_3299291449__private_IsEnabledDeviceUsage() (at 0x1C0009C00), with a new 'Irp->RequestorMode == 0' branch",
+        "When the feature is enabled, a non-raw user-mode bind passes 0x101 instead of 0x100 as the 7th argument to AfdTdiCreateAO; kernel-mode binds keep 0x100. With the feature disabled the function behaves as before",
+        "The STATUS_ACCESS_DENIED (0xC0000022) raw-socket check ('AfdDisableRawSecurity == 0 && *(byte)(obj+3) == 0') is unchanged and fires identically for user and kernel callers"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the AFD bind handler. The only real change is a feature-gated (Feature_3299291449__private_IsEnabledDeviceUsage) tweak that distinguishes user-mode vs kernel-mode callers via a new RequestorMode check and selects a different AfdTdiCreateAO flag (0x101 vs 0x100). It does not add or remove an authorization gate: the raw-socket access-denied check is preserved. All previously reported data/global/completion-routine deltas (data_1c002a7d8 -> data_1c002a7f8, sub_1c006c660 -> sub_1c006c640, sub_1c003e844 -> sub_1c003e804, sub_1c003e748 -> sub_1c003e708, data_1c002a640 -> data_1c002a660, sub_1c003b9b4 -> sub_1c003b974, sub_1c003f37c -> sub_1c003f33c, data_1c00204c0 -> data_1c00205b8) are relocation artifacts: each resolves to the same named symbol in both builds (AfdGlobalData, AfdRestartBindGetAddress, AfdTdiCreateAO, AfdIsAddressInUse, AfdPriorityBoost, AfdGetTransportInfo, AfdTdiSetEventHandlers, and the per-build WPP trace-GUID global). Not a memory-safety fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferEnd @ 0x1C005F9A0",
+      "similarity": 0.0,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unbind race-protection lock made unconditional: in the unpatched build 'call Feature_831225147__private_IsEnabledDeviceUsage; test eax, eax; jz loc_1C005FB29' skips AfdPreventUnbind (0x1C005FAB2) when the feature flag is off; the patch removes the feature call and calls AfdPreventUnbind (0x1C005FAA5) unconditionally",
+        "AfdReallowUnbind likewise made unconditional: unpatched gates it behind a second Feature_831225147 call (0x1C005FADA) and the r15b flag; patched calls AfdReallowUnbind (0x1C005FB8E) whenever the lock was taken (r14b), with no feature check",
+        "The gate function Feature_831225147__private_IsEnabledDeviceUsage (and Feature_831225147__private_IsEnabledFallback) no longer exists anywhere in afd_patched.sys; symbol-set diff confirms the gate is deleted, not disabled",
+        "The protected sequence is IofCallDriver (0x1C005FB85 unpatched / 0x1C005FB2E patched) + KeWaitForSingleObject (0x1C005FBAD / 0x1C005FB56) on the connection's device/file object, run only for BTHMS_RFCOMM-backed sockets (RtlEqualUnicodeString(L\"\\Device\\BTHMS_RFCOMM\"))"
+      ],
+      "security_relevant": true,
+      "security_notes": "See security finding: race condition / use-after-free from missing unbind synchronization (CWE-362 -> CWE-416). In the unpatched build the AfdPreventUnbind/AfdReallowUnbind lock that protects the connection from a concurrent AfdUnbind during the IofCallDriver+KeWaitForSingleObject transfer is taken only when Feature_831225147__private_IsEnabledDeviceUsage is enabled; with the flag off the transfer runs unprotected. The patch deletes the gate and makes the lock mandatory.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdSocketTransferBegin @ 0x1C005FBF0 -> 0x1C005FBE0",
+      "similarity": 0.879,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same fix as AfdSocketTransferEnd: unpatched gates AfdPreventUnbind (0x1C005FD02) / AfdReallowUnbind (0x1C005FD3B) behind Feature_831225147__private_IsEnabledDeviceUsage (0x1C005FCC2, 0x1C005FD2A) around IofCallDriver (0x1C005FDD5) + KeWaitForSingleObject (0x1C005FDFD)",
+        "Patched build removes the feature calls and calls AfdPreventUnbind (0x1C005FCE5) unconditionally; the Feature_831225147 gate functions are absent from afd_patched.sys",
+        "Not merely register allocation / relocation as previously triaged"
+      ],
+      "security_relevant": true,
+      "security_notes": "Second location of the same unbind-synchronization fix (CWE-362 -> CWE-416). See the AfdSocketTransferEnd security finding.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "AfdGetInformation @ 0x1C00397E0 -> 0x1C00397F0",
+      "similarity": 0.1886,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Deliver-status handler (the [rbx+2] value 3/4 path that issues AfdIssueDeviceControl on the connection FileObject *(rbx+0x18)) had its AfdPreventUnbind (0x1C0039C09) / AfdReallowUnbind (0x1C0039C72) pair gated behind Feature_51867961__private_IsEnabledDeviceUsage (0x1C0039BC6); when the flag is off, 'jz loc_1C0039C79' issues AfdIssueDeviceControl (0x1C0039C9D) with no unbind lock",
+        "Patch removes the feature call and calls AfdPreventUnbind (0x1C0039C0C) unconditionally, with AfdReallowUnbind (0x1C0039C75) after AfdIssueDeviceControl (0x1C0039C5B)",
+        "Feature_51867961__private_IsEnabledDeviceUsage / _IsEnabledFallback no longer exist in afd_patched.sys (symbol-set diff)",
+        "The low similarity is this logic change plus switch-table reorganization, not purely relocation as previously triaged"
+      ],
+      "security_relevant": true,
+      "security_notes": "Third location of the same unbind-synchronization fix (CWE-362 -> CWE-416). Reachable via IOCTL_AFD_GET_INFORMATION (AFD_GET_INFO deliver-status) from a user-mode socket handle, for BTHMS_RFCOMM-backed sockets. See the AfdSocketTransferEnd security finding.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "AfdSanAcceptCore @ 0x1C007C0CC",
+      "entry_point": "AFD SAN accept IRP completion (reached from AfdRestartAccept -> AfdServiceSuperAccept -> AfdSanAcceptCore, and directly from AfdAccept / AfdServiceWaitForListen)",
+      "call_chain": [
+        "AfdRestartAccept (0x1C004D0B0) - accept-event completion processing",
+        "AfdServiceSuperAccept (0x1C004D208) - processes accepted connections and calls AfdSanAcceptCore",
+        "AfdSanAcceptCore (0x1C007C0CC) - copies the connection transport address into the caller's MDL-mapped output buffer",
+        "Also called directly by AfdAccept (0x1C004D270) and AfdServiceWaitForListen (0x1C004DAC8)"
+      ],
+      "vulnerability_class": "kernel out-of-bounds write / buffer copy without checking size of input (CWE-120)",
+      "description": "AfdSanAcceptCore copies the accepted connection's transport-address data into the caller's MDL-mapped accept output buffer. The destination base is the mapped buffer at *(IRP+8); the output-buffer length and write offsets are in the descriptor at *(IRP+0xB8) (call it rbx), where *(rbx+0x10) is the output-buffer length. The copy lengths are read from the connection transport-address words at +0x14 (address length) and +0x18 (ancillary length) and used directly as memmove sizes plus a small constant. In the unpatched build the output-buffer length is compared only to zero ('mov edx, [rbx+0x10]; test edx, edx; jz'), so a transport address larger than the output buffer causes the memmove to write past the end of the kernel pool allocation. The function performs two logical copies (transport-address copy and ancillary copy), each in a user-transport and a kernel-transport variant selected by the flag at *(connection+0xAC). The identical unbounded pattern also exists in AfdSanConnectHandler and receives the identical clamp fix.",
+      "trigger_conditions": "The out-of-bounds write occurs when a transport address whose length field exceeds the caller's output-buffer length is copied by AfdSanAcceptCore (or AfdSanConnectHandler), in the unpatched build or in the patched build with Feature_97988921__private_IsEnabledDeviceUsage disabled. Preconditions visible in the code: (1) the accept output buffer is caller-supplied and MDL-mapped, with length *( *(IRP+0xB8) + 0x10 ); a small output buffer makes the overflow easier. (2) The transport-address length words at +0x14 / +0x18 of the connection data must exceed that length. (3) The ancillary copy additionally requires *( *(IRP+0xB8) + 0x18 ) != 0 (unpatched gate). Whether a remote peer can directly control the length words end-to-end is not established by these functions in isolation; the words are read from the connection/transport-address structure AFD has already populated.",
+      "primitive": "Relative kernel write past the end of the MDL-mapped accept output allocation, with length driven by the 16-bit transport-address length words and content taken from the transport-address bytes. This is a kernel pool overflow; leveraging it for privilege escalation requires standard pool grooming plus defeat of pool/kernel mitigations (pool cookie, safe unlinking, SMEP/SMAP, CFG, HVCI/VBS). The exploitation methodology is generic and not derived from these binaries.",
+      "evidence": "UNPATCHED decompilation of the copy region (only a zero-check):\n\nv23 = v15[4];                              // output-buffer length: *( *(IRP+0xB8) + 0x10 )\nif ( v23 != 0 )                            // ONLY a zero check -- no upper bound\n{\n    v24 = *(_WORD *)(v16 + 20);            // address length word at +0x14\n    if ( *(_BYTE *)(v8 + 172) != 0 )       // transport flag at +0xAC (kernel-transport variant)\n        memmove(&v30[v29 + v28], (const void *)(v40 + 22), (unsigned __int16)(v24 + 2));\n    else                                   // user-transport variant\n        memmove(&v31[v15[2] + v15[6]], (const void *)(v16 + 16), v24 + 8LL);\n    if ( v15[6] != 0 )                     // ancillary copy, gated only by *(rbx+0x18) != 0\n    {\n        v32 = v40 + *(unsigned __int16 *)(v40 + 20);\n        if ( *(_BYTE *)(v8 + 172) != 0 )\n            memmove(v35, (const void *)(v32 + 26), *(unsigned __int16 *)(v32 + 24) + 2LL);\n        else\n            memmove(v35 + 8, (const void *)(v32 + 24), *(unsigned __int16 *)(v32 + 24) + 4LL);\n    }\n}\n\nPATCHED decompilation (length floor + clamps, feature-gated):\n\nif ( v16[4] != 0\n     && ((unsigned int)Feature_97988921__private_IsEnabledDeviceUsage() == 0 || v16[4] >= 0xCu) )  // NEW length floor\n{\n    LODWORD(v66) = *(unsigned __int16 *)(v17 + 20);\n    v24 = (_DWORD)v66 + 8;\n    if ( *(_BYTE *)(v8 + 172) != 0 )\n    {\n        v25 = (_WORD)v66 + 2;\n        if ( Feature_97988921__private_IsEnabledDeviceUsage() != 0\n             && (unsigned __int64)(unsigned int)v16[4] - 2 < v25 )\n            v25 = *((_WORD *)v16 + 8) - 2;             // NEW: clamp to length - 2\n        memmove(&v30[v28 + v29], (const void *)(v61 + 22), v25);\n    }\n    else\n    {\n        if ( Feature_97988921__private_IsEnabledDeviceUsage() != 0 && v16[4] < v24 )\n            v24 = v16[4];                             // NEW: clamp to length\n        memmove(&v33[v16[2] + v16[6]], (const void *)(v61 + 16), v24);\n    }\n    if ( Feature_97988921__private_IsEnabledDeviceUsage() != 0 ) {\n        if ( v16[6] >= 6 ) { /* clamp v46/v52 to remaining space, then memmove */ }   // NEW min-size gate\n    } else if ( v16[6] != 0 ) {\n        memmove(v56, (const void *)(v53 + 26), *(unsigned __int16 *)(v53 + 24) + 2LL);   // feature-off fallback (unbounded)\n        memmove(v56 + 8, (const void *)(v53 + 24), *(unsigned __int16 *)(v53 + 24) + 4LL);\n    }\n}",
+      "assembly": "VULNERABLE FUNCTION: AfdSanAcceptCore @ 0x1C007C0CC (afd_unpatched.sys)\n\n=== UNPATCHED (unbounded copies) ===\n  0x1C007C3A8: mov     edx, [rbx+10h]           ; output-buffer length (rbx = *(IRP+0xB8))\n  0x1C007C3AB: test    edx, edx\n  0x1C007C3AD: jz      0x1C007C56B               ; skip copies only when length == 0\n  0x1C007C3B3: movzx   r8d, word ptr [r10+14h]   ; copy length from connection data +0x14\n  0x1C007C446: movzx   r8d, word ptr [rsp+0A8h+Object]\n  0x1C007C454: add     rdx, 16h                  ; Src = connection data + 0x16\n  0x1C007C464: call    memmove                    ; transport-address copy, kernel variant (unbounded)\n  0x1C007C4B2: add     r8, 8                     ; size = *(+0x14) + 8\n  0x1C007C4B6: lea     rdx, [r10+10h]            ; Src = connection data + 0x10\n  0x1C007C4C6: call    memmove                    ; transport-address copy, user variant (unbounded)\n  0x1C007C4CB: cmp     [rbx+18h], edi\n  0x1C007C4CE: jbe     0x1C007C56B               ; ancillary copy gated by *(rbx+0x18) != 0\n  0x1C007C512: movzx   r8d, word ptr [r12+18h]\n  0x1C007C51E: add     r8, r13                   ; + 2 (kernel variant)\n  0x1C007C529: call    memmove                    ; ancillary copy (unbounded)\n  0x1C007C551: add     r8, 4                     ; + 4 (user variant)\n  0x1C007C55E: call    memmove                    ; ancillary copy (unbounded)\n\n=== PATCHED (length floor + clamps, feature-gated) ===\n  0x1C007C3B8: cmp     [rbx+10h], esi            ; esi = 0\n  0x1C007C3BB: jbe     0x1C007C6A5               ; bail if length == 0\n  0x1C007C3C1: call    Feature_97988921__private_IsEnabledDeviceUsage\n  0x1C007C3CA: cmp     dword ptr [rbx+10h], 0Ch  ; NEW: require length >= 12\n  0x1C007C3CE: jb      0x1C007C6A5\n  0x1C007C4CA: mov     eax, [rbx+10h]\n  0x1C007C4CD: cmp     eax, r12d\n  0x1C007C4D0: cmovb   r12d, eax                 ; NEW: clamp user-transport size to length\n  0x1C007C50E: call    memmove\n  0x1C007C411: sub     rcx, r13                  ; NEW: kernel-transport clamp to length - 2\n  0x1C007C418: cmp     rcx, rax\n  0x1C007C41B: jnb     0x1C007C426\n  0x1C007C422: sub     r12w, r13w\n  0x1C007C4A9: call    memmove\n  0x1C007C530: cmp     eax, 6                    ; NEW: ancillary minimum-size gate\n  0x1C007C533: jb      0x1C007C6A5\n  0x1C007C5AD: cmovnb  dx, r13w                  ; NEW: ancillary clamp (kernel variant)\n  0x1C007C5C2: call    memmove\n  0x1C007C5FC: cmovge  dx, r13w                  ; NEW: ancillary clamp (user variant)\n  0x1C007C60D: call    memmove\n  0x1C007C66E: call    memmove                    ; feature-off fallback (unbounded, == unpatched)\n  0x1C007C6A0: call    memmove                    ; feature-off fallback (unbounded, == unpatched)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore",
+            "address": "0x1C007C0CC",
+            "why": "Function entry. rcx = arg1 (IRP), rdx = arg2 (file-object pointer), r8 = arg3 (IRP-context entry). After the prologue, rbx is loaded from *(IRP+0xB8); *(rbx+0x10) is the output-buffer length."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanAcceptCore+0x2DC",
+            "address": "0x1C007C3A8",
+            "why": "The 'mov edx, [rbx+0x10]' that loads the output-buffer length. In the unpatched build only a 'test edx, edx; jz' follows, with no upper bound before the copies."
+          },
+          {
+            "symbol": "afd_unpatched!memmove",
+            "address": "0x1C000A400",
+            "why": "The copy primitive (same function in both builds; at 0x1C000A380 in the patched image). r8 = size, rdx = source, rcx = destination. r8 greater than the output-buffer length at *(rbx+0x10) is the overflow condition."
+          },
+          {
+            "symbol": "afd_unpatched!AfdSanConnectHandler",
+            "address": "0x1C007D410",
+            "why": "Sibling SAN handler carrying the same unbounded peer-address copy (patched at 0x1C007D550). Not the caller of AfdSanAcceptCore."
+          }
+        ],
+        "watch": [
+          "rbx+0x10 (dword): output-buffer length; the value the patch newly clamps copy sizes against (only zero-checked in unpatched)",
+          "connection data +0x14 (word): transport-address length used as the first copy size",
+          "connection data +0x18 (word): ancillary length used as the second copy size",
+          "connection +0xAC (byte): transport flag selecting the user- vs kernel-transport copy variant",
+          "r8 at the memmove callsites: the actual copy length -- compare against *(rbx+0x10) to detect overflow"
+        ],
+        "key_offsets": [
+          "0x1C007C3A8: 'mov edx, [rbx+0x10]' -- loads the output-buffer length; only zero-checked in unpatched (the missing upper bound the patch adds)",
+          "0x1C007C464 / 0x1C007C4C6: 'call memmove' -- transport-address copy (kernel / user variant), unbounded in unpatched",
+          "0x1C007C529 / 0x1C007C55E: 'call memmove' -- ancillary copy (kernel / user variant), unbounded in unpatched",
+          "PATCHED 0x1C007C3CA: 'cmp dword [rbx+0x10], 0Ch' -- ADDED length floor",
+          "PATCHED 0x1C007C4D0: 'cmovb r12d, eax' -- ADDED size clamp"
+        ],
+        "trigger_setup": "The overflow requires a transport address whose length field (connection data +0x14 or +0x18) exceeds the caller's output-buffer length (*( *(IRP+0xB8) + 0x10 )), reached through the AFD SAN accept path, in the unpatched build or with Feature_97988921__private_IsEnabledDeviceUsage disabled. The output buffer is caller-supplied and MDL-mapped; a small buffer maximizes the overflow. Whether the transport-address length words can be driven to arbitrary magnitude end-to-end depends on the transport stack that populated the connection structure and is not established by this function alone.",
+        "expected_observation": "At the memmove callsite, r8 (copy size) exceeds the output-buffer length at *(rbx+0x10). After the call, kernel pool memory following the MDL-mapped buffer is overwritten with transport-address bytes. This typically manifests as a following pool operation bugchecking: 0x19 (BAD_POOL_HEADER), 0xC2 (BAD_POOL_CALLER), or 0x50 (PAGE_FAULT_IN_NONPAGED_AREA) if the write crosses the allocation boundary; with grooming the corruption can be silent.",
+        "notes": "afd.sys is the kernel component of Winsock. The fix adds bounds clamping in AfdSanAcceptCore and in the sibling AfdSanConnectHandler, gated behind Feature_97988921__private_IsEnabledDeviceUsage; with the feature disabled the patched code falls back to the original unbounded copies. The copy primitive is memmove in both builds (its address moved 0x1C000A400 -> 0x1C000A380 only because the module relocated). Use 'lm afd' in WinDbg for the load base and add the function-relative offsets."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "AfdSocketTransferEnd @ 0x1C005F9A0",
+      "entry_point": "AFD socket-transfer / information-query processing for BTHMS_RFCOMM-backed sockets, reached through AFD IOCTL dispatch from a user-mode socket handle (AfdGetInformation via IOCTL_AFD_GET_INFORMATION / AFD_GET_INFO deliver-status)",
+      "call_chain": [
+        "AfdSocketTransferEnd (0x1C005F9A0) - self-gates on RtlEqualUnicodeString(L\"\\Device\\BTHMS_RFCOMM\"), then IofCallDriver + KeWaitForSingleObject on the connection device/file object",
+        "AfdSocketTransferBegin (0x1C005FBF0 -> 0x1C005FBE0) - same mechanism, same transport gate",
+        "AfdGetInformation (0x1C00397E0 -> 0x1C00397F0) - deliver-status path issues AfdIssueDeviceControl on the connection FileObject *(rbx+0x18)"
+      ],
+      "vulnerability_class": "kernel race condition from missing synchronization, leading to use-after-free (CWE-362, leading to CWE-416)",
+      "description": "AfdSocketTransferBegin, AfdSocketTransferEnd, and the deliver-status path of AfdGetInformation forward an IRP to the underlying transport (IofCallDriver + KeWaitForSingleObject, or AfdIssueDeviceControl) on a BTHMS_RFCOMM connection's device/file object. They are supposed to hold the unbind lock AfdPreventUnbind across that I/O and release it with AfdReallowUnbind, so a concurrent AfdUnbind cannot free the connection while the I/O is outstanding. In the unpatched build the lock is taken only when a private feature flag is enabled: AfdSocketTransferBegin/End gate it behind Feature_831225147__private_IsEnabledDeviceUsage and AfdGetInformation gates it behind Feature_51867961__private_IsEnabledDeviceUsage. When the flag is off, the code jumps past AfdPreventUnbind straight into the transfer and skips AfdReallowUnbind, leaving a race window in which a concurrent AfdUnbind can free/tear down the connection object that this path is dereferencing and waiting on (use-after-free). The patch deletes the feature gates entirely - Feature_831225147__private_IsEnabledDeviceUsage/_IsEnabledFallback and Feature_51867961__private_IsEnabledDeviceUsage/_IsEnabledFallback are absent from afd_patched.sys (symbol-set diff) - and calls AfdPreventUnbind/AfdReallowUnbind unconditionally, making the protection mandatory. This is not feature-staging with the old path retained: the gate and its unprotected fallback are both removed.",
+      "trigger_conditions": "Applies to sockets backed by the Bluetooth RFCOMM transport (RtlEqualUnicodeString(L\"\\Device\\BTHMS_RFCOMM\") must succeed). In the unpatched build (or the patched build before the gate was removed, i.e. with the feature flag off) the transfer/deliver-status I/O runs with no unbind lock. A concurrent AfdUnbind on the same endpoint, issued from user mode, must win the race and free the connection's device/file object while IofCallDriver/KeWaitForSingleObject (or AfdIssueDeviceControl) is operating on it.",
+      "primitive": "A use-after-free of the AFD connection's device/file object during an outstanding transport I/O, produced by racing a concurrent unbind against an unprotected transfer. The end-to-end IOCTL dispatch was not traced through the full dispatch table and exploitation requires winning the unbind race; leveraging the freed object into control flow is standard kernel-UAF methodology not derived from these binaries.",
+      "evidence": "UNPATCHED AfdSocketTransferEnd - unbind lock gated behind the feature flag:\n  0x1C005FA72: call    Feature_831225147__private_IsEnabledDeviceUsage\n  0x1C005FA77: test    eax, eax\n  0x1C005FA79: jz      loc_1C005FB29             ; feature OFF -> skip AfdPreventUnbind\n  0x1C005FAB2: call    AfdPreventUnbind          ; feature-ON path only\n  0x1C005FAC2: mov     r15b, 1\n  0x1C005FB29: test    rdi, rdi                  ; feature-OFF path, no lock held\n  0x1C005FB78: lock inc dword ptr [rbx+0E8h]\n  0x1C005FB85: call    cs:__imp_IofCallDriver\n  0x1C005FBAD: call    cs:__imp_KeWaitForSingleObject\n  0x1C005FADA: call    Feature_831225147__private_IsEnabledDeviceUsage\n  0x1C005FAEB: call    AfdReallowUnbind          ; gated by feature + r15b\n\nPATCHED AfdSocketTransferEnd - lock unconditional, no feature call:\n  0x1C005FA72: movzx   eax, word ptr [rbx]        ; feature call removed\n  0x1C005FAA5: call    AfdPreventUnbind          ; UNCONDITIONAL\n  0x1C005FAB8: mov     r14b, 1\n  0x1C005FB2E: call    cs:__imp_IofCallDriver\n  0x1C005FB56: call    cs:__imp_KeWaitForSingleObject\n  0x1C005FB86: test    r14b, r14b\n  0x1C005FB8E: call    AfdReallowUnbind          ; UNCONDITIONAL\n\nUNPATCHED AfdGetInformation deliver-status path:\n  0x1C0039BC6: call    Feature_51867961__private_IsEnabledDeviceUsage\n  0x1C0039BCD: jz      loc_1C0039C79             ; feature OFF -> jump past AfdPreventUnbind\n  0x1C0039C09: call    AfdPreventUnbind\n  0x1C0039C58: call    AfdIssueDeviceControl\n  0x1C0039C72: call    AfdReallowUnbind\n  0x1C0039C9D: call    AfdIssueDeviceControl      ; feature-OFF path, no lock\n\nPATCHED AfdGetInformation deliver-status path:\n  0x1C0039C0C: call    AfdPreventUnbind          ; UNCONDITIONAL\n  0x1C0039C5B: call    AfdIssueDeviceControl\n  0x1C0039C75: call    AfdReallowUnbind\n\nAfdSocketTransferBegin carries the identical change: unpatched gates AfdPreventUnbind (0x1C005FD02) / AfdReallowUnbind (0x1C005FD3B) behind Feature_831225147__private_IsEnabledDeviceUsage (0x1C005FCC2, 0x1C005FD2A) around IofCallDriver (0x1C005FDD5) / KeWaitForSingleObject (0x1C005FDFD); patched calls AfdPreventUnbind (0x1C005FCE5) unconditionally.",
+      "assembly": "See the 'evidence' field for the address-anchored unpatched-vs-patched instruction sequences in AfdSocketTransferEnd (0x1C005F9A0), AfdSocketTransferBegin (0x1C005FBF0 -> 0x1C005FBE0), and AfdGetInformation (0x1C00397E0 -> 0x1C00397F0). Gate functions Feature_831225147__private_IsEnabledDeviceUsage / _IsEnabledFallback and Feature_51867961__private_IsEnabledDeviceUsage / _IsEnabledFallback are present in afd_unpatched.sys and absent from afd_patched.sys.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "afd_unpatched!AfdSocketTransferEnd",
+            "address": "0x1C005F9A0",
+            "why": "rbx = connection object (from *(rdx+0x30) then +0x18). The unbind lock AfdPreventUnbind should be held across the IofCallDriver/KeWaitForSingleObject that follow; in the unpatched build it is only taken when Feature_831225147__private_IsEnabledDeviceUsage returns nonzero."
+          },
+          {
+            "symbol": "afd_unpatched!AfdPreventUnbind",
+            "address": "0x1C005FAB2",
+            "why": "The unbind lock. In the unpatched build this callsite is reached only on the feature-ON path (after 'jz loc_1C005FB29' at 0x1C005FA79 falls through). On the feature-OFF path the code reaches IofCallDriver (0x1C005FB85) without it."
+          }
+        ],
+        "watch": [
+          "rbx (connection object): freed by a concurrent AfdUnbind if the lock is not held",
+          "rdi (device object) / connection file object: the targets of IofCallDriver + KeWaitForSingleObject that must survive the outstanding I/O",
+          "eax after Feature_831225147__private_IsEnabledDeviceUsage (0x1C005FA72): zero selects the unprotected path in the unpatched build"
+        ],
+        "key_offsets": [
+          "0x1C005FA79: 'jz loc_1C005FB29' -- unpatched feature-OFF branch that skips AfdPreventUnbind",
+          "0x1C005FAB2: 'call AfdPreventUnbind' -- unpatched, feature-ON only",
+          "PATCHED 0x1C005FAA5: 'call AfdPreventUnbind' -- now unconditional",
+          "0x1C005FB85 / PATCHED 0x1C005FB2E: 'call IofCallDriver' -- the protected I/O",
+          "0x1C0039BCD: 'jz loc_1C0039C79' -- unpatched AfdGetInformation feature-OFF branch that skips the lock"
+        ],
+        "trigger_setup": "Open a BTHMS_RFCOMM-backed AFD socket, drive it into AfdSocketTransferBegin/End or the AfdGetInformation deliver-status query (IOCTL_AFD_GET_INFORMATION), and concurrently issue an AfdUnbind on the same endpoint. In the unpatched build (feature flag off) the transfer runs without AfdPreventUnbind, so the unbind can free the connection mid-transfer.",
+        "expected_observation": "With the lock absent, a concurrent unbind frees the connection/device/file object while IofCallDriver/KeWaitForSingleObject (or AfdIssueDeviceControl) is outstanding, producing a use-after-free (typically a bugcheck such as 0xA IRQL_NOT_LESS_OR_EQUAL, 0x50 PAGE_FAULT_IN_NONPAGED_AREA, or pool-corruption codes, depending on what reuses the freed object).",
+        "notes": "The patch removes the feature gates Feature_831225147 (AfdSocketTransferBegin/End) and Feature_51867961 (AfdGetInformation) entirely and makes AfdPreventUnbind/AfdReallowUnbind mandatory. Both gate function sets are absent from afd_patched.sys. Reachability is limited to the Bluetooth RFCOMM transport and requires winning the unbind race; the full IOCTL dispatch was not traced end-to-end."
+      }
+    }
+  ],
+  "summary": "The patch adds a missing upper-bound check on the transport-address copies that AFD performs into the caller's MDL-mapped accept output buffer. In the unpatched build AfdSanAcceptCore (0x1C007C0CC) compares the output-buffer length at *( *(IRP+0xB8) + 0x10 ) only to zero and passes the connection transport-address length words (at +0x14 and +0x18) directly to memmove, so an oversized transport address overflows the kernel pool allocation. The patched build adds a length floor (>= 0xC), size clamps on both transport-address copies (cmovb; overflow-safe sub/cmp), and a minimum-size gate on the ancillary copy, all gated behind Feature_97988921__private_IsEnabledDeviceUsage; when that flag is disabled the patched path falls back to the original unbounded copies. The same unbounded pattern and the same clamp fix appear in the sibling handler AfdSanConnectHandler (0x1C007D410 -> 0x1C007D550). The copy primitive is unchanged (memmove in both builds; its address moved only because the module relocated). AfdBind (0x1C0038DB0) is a feature-gated requestor-mode tweak to an AfdTdiCreateAO flag, not an authorization or memory-safety fix. A second, independent fix removes a feature-gated unbind race window: in the unpatched build the AfdPreventUnbind/AfdReallowUnbind lock protecting BTHMS_RFCOMM connections during their transport I/O is taken only when a private feature flag is enabled - Feature_831225147 in AfdSocketTransferBegin (0x1C005FBF0)/AfdSocketTransferEnd (0x1C005F9A0) around IofCallDriver+KeWaitForSingleObject, and Feature_51867961 in the AfdGetInformation (0x1C00397E0) deliver-status path around AfdIssueDeviceControl. With the flag off the I/O runs unprotected, allowing a concurrent AfdUnbind to free the connection object (use-after-free, CWE-362 -> CWE-416). The patch deletes both feature gates (Feature_831225147* and Feature_51867961* are absent from afd_patched.sys) and makes the lock unconditional."
+}

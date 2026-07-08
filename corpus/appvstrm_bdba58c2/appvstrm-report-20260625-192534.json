@@ -1,0 +1,87 @@
+{
+  "binaries": {
+    "id_unpatched": "appvstrm_unpatched.sys",
+    "id_patched": "appvstrm_patched.sys",
+    "overall_similarity": 0.993,
+    "matched": 274,
+    "changed": 0,
+    "identical": 274,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "Streaming::Messaging::UserCommunication::ProcessMessage (message dispatch) / Streaming::Messaging::UserCommunication::Initialize (port creation)",
+      "entry_point": "FltSendMessage to the App-V Streaming minifilter communication port (FilterSendMessage user-mode API)",
+      "call_chain": [
+        "FilterSendMessage (user mode)",
+        "FltSendMessage (kernel FltMgr)",
+        "NotifyPortMessage (0x1C0012960)",
+        "Streaming::Messaging::UserCommunication::ProcessMessage (0x1C0012B80)",
+        "Streaming::staging_operations::create_hard_link (0x1C00106AC) [message type 7]"
+      ],
+      "vulnerability_class": "Design note: per-message authorization is not re-checked inside the dispatcher; authorization is enforced at the port (Administrators/SYSTEM only). Not a reachable authorization gap. Unchanged between builds.",
+      "description": "The function-level comparison reports ALL 274 functions as identical (similarity 1.0) with zero changed functions, and the disassembly and decompilation of the two files are byte-identical. The .text section (file offsets 0x400-0x14400) compares byte-for-byte equal, as do .data, .pdata, .idata and .reloc. The 0.993 overall similarity comes from build metadata only: the COFF link timestamp (file offset 0xE8), the .rdata debug directory (new CodeView/PDB GUID and updated debug timestamps; PDB name Appvstrm.pdb unchanged), the .rsrc version resource (FileVersion/ProductVersion advance from 10.0.17763.3469 to 10.0.17763.4010), and the PE Authenticode certificate directory (re-signed; countersignature timestamps advance from 2022 to 2023; timestamp-service certificate organization changes from 'Microsoft Operations Puerto Rico' to 'Microsoft Ireland Operations Limited'; ASCII string count 1711 -> 1714). This is a code-identical rebuild with a version bump and re-sign; appvstrm.sys has no CVE attribution in this update. The driver is a Windows kernel minifilter (Microsoft App-V Streaming Mini-Filter) that exposes staging operations to a connected client via FltSendMessage through a filter communication port. ProcessMessage (0x1C0012B80) dispatches on the leading DWORD of the input buffer via a decrement chain (cmp r8d,8; mov ecx,[rdx]; sub ecx,1; jz ...) to seven handled message types: 1=create_file (0x1C000FCB4), 2=write_file (0x1C000FE44), 3=request_mdl (0x1C0010404), 6=query_sparse_file (0x1C001059C), 7=create_hard_link (0x1C00106AC), 8=config (dispatch block 0x1C0012CB6, writes gStrmFltData+0x30), 9=set_directory_DACL (0x1C0010300). ProcessMessage does not re-check the caller per message. Authorization is enforced once, at the port: Streaming::Messaging::UserCommunication::Initialize (0x1C0012A80) requests DesiredAccess = FLT_PORT_ALL_ACCESS (0x1F0001, mov edx at 0x1C0012AA0), calls FltBuildDefaultSecurityDescriptor (0x1C0012AAC), and passes the descriptor to FltCreateCommunicationPort (0x1C0012B37). FltBuildDefaultSecurityDescriptor grants the requested access to Administrators and SYSTEM only, so non-privileged callers are denied at FilterConnectCommunicationPort. Because only Administrators/SYSTEM can reach the staging handlers, this dispatch design does not expose a missing-authorization primitive to unprivileged callers. The port names in the driver are \\StrmFltCommunicationClientServerPort and \\StrmFltCommunicationServerClientPort. Notable handlers: request_mdl (kernel MDL allocation via Streaming::MDLCache::GetFreeMdl), create_hard_link (calls Streaming::Messaging::PackageLoader::CreateHardLink at 0x1C0010790), set_directory_DACL (calls Streaming::DACLSetter::SetDirectoryDACL at 0x1C00103CA). This dispatch and port-init code is byte-identical in both builds; the update does not change it.",
+      "trigger_conditions": "Open a handle to the App-V Streaming minifilter communication port (\\StrmFltCommunicationClientServerPort / \\StrmFltCommunicationServerClientPort) via FilterConnectCommunicationPort, then send a FltSendMessage with message type 1/2/3/6/7/8/9. Whether a caller can connect is governed by the port security descriptor, which Initialize (0x1C0012A80) builds via FltBuildDefaultSecurityDescriptor with FLT_PORT_ALL_ACCESS. That descriptor grants access to Administrators and SYSTEM only; a non-admin caller is denied at connect time. The descriptor is byte-identical in both builds, so both behave the same. This update does not change the descriptor or the dispatcher.",
+      "primitive": "No privilege-escalation primitive for an unprivileged caller. The staging operations (hard link creation, DACL modification, file create/write) are reachable only by callers the port admits (Administrators and SYSTEM per FltBuildDefaultSecurityDescriptor). An Administrator/SYSTEM caller invoking these operations does not cross a privilege boundary. No memory-corruption primitive exists; the code is byte-identical to the prior build.",
+      "evidence": "ProcessMessage dispatch (identical in both binaries, 0x1C0012B80):\n0x1C0012BB4 : cmp r8d, 8 ; 0x1C0012BB8 jnb loc_1C0012BE5 (size gate)\n0x1C0012BE5 : mov ecx, [rdx]  // message type from input buffer\n0x1C0012BE7 : sub ecx, 1 ; 0x1C0012BEA jz loc_1C0012E8D -> create_file (type 1, 0x1C000FCB4, call @ 0x1C0012F1D)\n0x1C0012BF0 : sub ecx, 1 ; 0x1C0012BF3 jz loc_1C0012D7A -> write_file (type 2, 0x1C000FE44, call @ 0x1C0012E0A)\n0x1C0012BF9 : sub ecx, 1 ; 0x1C0012BFC jz loc_1C0012D5C -> request_mdl (type 3, 0x1C0010404, call @ 0x1C0012D6E)\n0x1C0012C02 : sub ecx, 3 ; 0x1C0012C05 jz loc_1C0012D10 -> query_sparse_file (type 6, 0x1C001059C, call @ 0x1C0012D3C)\n0x1C0012C0B : sub ecx, 1 ; 0x1C0012C0E jz loc_1C0012CF7 -> create_hard_link (type 7, 0x1C00106AC, call @ 0x1C0012D09)\n0x1C0012C14 : sub ecx, 1 ; 0x1C0012C17 jz loc_1C0012CB6 -> config (type 8, writes gStrmFltData+0x30)\n0x1C0012C1D : cmp ecx, 1 ; 0x1C0012C20 jz loc_1C0012C9A -> set_directory_DACL (type 9, 0x1C0010300, call @ 0x1C0012CAC)\n\nPort authorization (Initialize, 0x1C0012A80):\n0x1C0012AA0 : mov edx, 1F0001h  // DesiredAccess = FLT_PORT_ALL_ACCESS\n0x1C0012AAC : call FltBuildDefaultSecurityDescriptor  // grants Administrators + SYSTEM only\n0x1C0012B37 : call FltCreateCommunicationPort\n\nNote: The dispatcher does not re-check the caller per message, but the port descriptor already restricts access to Administrators/SYSTEM. This update changes only build metadata (timestamp, PDB GUID, version resource 10.0.17763.3469 -> 4010) and the Authenticode certificate, not the code or the descriptor.",
+      "assembly": "ProcessMessage dispatch logic (identical in both binaries, 0x1C0012B80):\n0x1C0012BB4 : cmp r8d, 8\n0x1C0012BB8 : jnb loc_1C0012BE5\n0x1C0012BE5 : mov ecx, [rdx]\n0x1C0012BE7 : sub ecx,1 / 0x1C0012BEA jz loc_1C0012E8D (type 1 -> create_file)\n0x1C0012BF0 : sub ecx,1 / 0x1C0012BF3 jz loc_1C0012D7A (type 2 -> write_file)\n0x1C0012BF9 : sub ecx,1 / 0x1C0012BFC jz loc_1C0012D5C (type 3 -> request_mdl)\n0x1C0012C02 : sub ecx,3 / 0x1C0012C05 jz loc_1C0012D10 (type 6 -> query_sparse_file)\n0x1C0012C0B : sub ecx,1 / 0x1C0012C0E jz loc_1C0012CF7 (type 7 -> create_hard_link)\n0x1C0012C14 : sub ecx,1 / 0x1C0012C17 jz loc_1C0012CB6 (type 8 -> config)\n0x1C0012C1D : cmp ecx,1 / 0x1C0012C20 jz loc_1C0012C9A (type 9 -> set_directory_DACL)",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "appvstrm_unpatched!Streaming::Messaging::UserCommunication::ProcessMessage",
+            "address": "0x1C0012B80",
+            "why": "Message dispatch. rcx=this, rdx=input buffer, r8d=input size, r9=output buffer, arg_20=output size, arg_28=bytes returned. The first DWORD at [rdx] is the message type (1,2,3,6,7,8,9). Minimum size gate cmp r8d,8 at 0x1C0012BB4."
+          },
+          {
+            "symbol": "appvstrm_unpatched!Streaming::Messaging::UserCommunication::Initialize",
+            "address": "0x1C0012A80",
+            "why": "Port creation. Builds the port security descriptor via FltBuildDefaultSecurityDescriptor (call 0x1C0012AAC, DesiredAccess 0x1F0001 set at 0x1C0012AA0) and passes it to FltCreateCommunicationPort (0x1C0012B37). This is the sole authorization gate; it restricts access to Administrators and SYSTEM."
+          },
+          {
+            "symbol": "appvstrm_unpatched!NotifyPortMessage",
+            "address": "0x1C0012960",
+            "why": "Port message notification handler that calls ProcessMessage (call at 0x1C0012976). Inspect the call stack to confirm FltMgr!FltSendMessage -> NotifyPortMessage -> ProcessMessage."
+          },
+          {
+            "symbol": "appvstrm_unpatched!Streaming::staging_operations::create_hard_link",
+            "address": "0x1C00106AC",
+            "why": "Hard link creation handler (message type 7). Constructs source/target UNICODE_STRINGs from input and calls Streaming::Messaging::PackageLoader::CreateHardLink (call at 0x1C0010790)."
+          },
+          {
+            "symbol": "appvstrm_unpatched!Streaming::staging_operations::set_directory_DACL",
+            "address": "0x1C0010300",
+            "why": "DACL modification handler (message type 9). Calls Streaming::DACLSetter::SetDirectoryDACL (call at 0x1C00103CA)."
+          }
+        ],
+        "watch": [
+          "[rdx] at ProcessMessage entry = message type code (1=create, 2=write, 3=mdl, 6=query, 7=hardlink, 8=config, 9=DACL)",
+          "Communication port handle in user mode: obtained via FilterConnectCommunicationPort to \\StrmFltCommunicationClientServerPort",
+          "Port security descriptor built via FltBuildDefaultSecurityDescriptor at 0x1C0012AAC (Administrators/SYSTEM only) - byte-identical in both builds",
+          "DesiredAccess 0x1F0001 (FLT_PORT_ALL_ACCESS) set at 0x1C0012AA0"
+        ],
+        "key_offsets": [
+          "0x1C0012BB4: cmp r8d, 8 - minimum message size gate",
+          "0x1C0012BE5: mov ecx, [rdx] - reads message type from input buffer",
+          "0x1C0012BEA: jz loc_1C0012E8D - type 1 (create_file) dispatch branch",
+          "0x1C0012C0E: jz loc_1C0012CF7 - type 7 (create_hard_link) dispatch branch",
+          "0x1C0012CAC: call set_directory_DACL (message type 9)",
+          "0x1C0010432: request_mdl size check cmp edx, 0Ch (minimum 12 bytes)",
+          "0x1C000FABB: GetFreeMdl size threshold cmp edx, 1000h (4KB MDL cache bucket)",
+          "0x1C0012AAC: call FltBuildDefaultSecurityDescriptor (port descriptor: Administrators/SYSTEM)",
+          "0x1C0012B37: call FltCreateCommunicationPort"
+        ],
+        "trigger_setup": "1. Connect to the App-V Streaming minifilter port (\\StrmFltCommunicationClientServerPort) via FilterConnectCommunicationPort. Connection is governed by the port descriptor built with FltBuildDefaultSecurityDescriptor, which admits Administrators and SYSTEM only. 2. Construct a message buffer with a DWORD type code (1,2,3,6,7,8,9) followed by the operation-specific payload (total length >= 8). 3. Call FilterSendMessage with the port handle, buffer, and sizes.",
+        "expected_observation": "Both binaries behave identically because the code and the port security descriptor are byte-identical. A caller holding Administrators/SYSTEM connects and dispatches the staging operation; a non-privileged caller is denied at FilterConnectCommunicationPort. This update does not change the descriptor, so the observation is the same on both.",
+        "notes": "The diff found ZERO function-level code changes - all 274 functions are identical between patched and unpatched, and the disassembly and decompilation are byte-identical (.text compares byte-for-byte equal). The 0.993 overall similarity comes from build metadata only: the COFF link timestamp (0xE8), the .rdata debug directory (new PDB GUID; PDB name Appvstrm.pdb unchanged), the .rsrc version resource (10.0.17763.3469 -> 10.0.17763.4010), and the PE Authenticode certificate directory (re-signed; countersignature timestamps 2022 -> 2023; timestamp-cert org 'Microsoft Operations Puerto Rico' -> 'Microsoft Ireland Operations Limited'; ASCII string count 1711 -> 1714). No CVE attribution in this update. This finding is an informational, unchanged design note: message dispatch is authorized at the port (Administrators/SYSTEM via FltBuildDefaultSecurityDescriptor), not per message, and this is identical in both builds."
+      }
+    }
+  ],
+  "summary": "The diff between appvstrm_unpatched.sys and appvstrm_patched.sys (Microsoft App-V Streaming minifilter driver) shows ZERO function-level code changes - all 274 functions match as identical, and the disassembly and decompilation are byte-identical, with the .text section comparing byte-for-byte equal. The 0.993 overall similarity is due to build metadata only: the COFF link timestamp, the .rdata debug directory (new PDB GUID), the .rsrc version resource (FileVersion/ProductVersion 10.0.17763.3469 -> 10.0.17763.4010), and the PE Authenticode certificate directory (re-signed; countersignature timestamps 2022 -> 2023; timestamp-cert org 'Microsoft Operations Puerto Rico' -> 'Microsoft Ireland Operations Limited'). This is a code-identical rebuild with a version bump and re-sign; appvstrm.sys has no CVE attribution and this pair contains no code-level security change. As an informational design note (unchanged between builds), the driver exposes staging operations (create_file 0x1C000FCB4, write_file 0x1C000FE44, request_mdl 0x1C0010404, query_sparse_file 0x1C001059C, create_hard_link 0x1C00106AC, set_directory_DACL 0x1C0010300) through a filter communication port, and ProcessMessage (0x1C0012B80) does not re-check the caller per message. Authorization is enforced at the port: Initialize (0x1C0012A80) builds the port descriptor with FltBuildDefaultSecurityDescriptor (FLT_PORT_ALL_ACCESS, 0x1C0012AAC), which restricts access to Administrators and SYSTEM. Because only privileged callers can reach the handlers, this is not a missing-authorization vulnerability for unprivileged callers. The descriptor and dispatcher are identical in both builds."
+}

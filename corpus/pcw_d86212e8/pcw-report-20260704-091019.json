@@ -1,0 +1,70 @@
+{
+  "binaries": {
+    "title": "pcw.sys (Windows Performance Counter for Windows) - WIL feature-staging finalization in PcwpCloseNotifier; no security-relevant change",
+    "id_unpatched": "pcw_unpatched.sys",
+    "id_patched": "pcw_patched.sys",
+    "overall_similarity": 0.9329,
+    "matched": 135,
+    "changed": 1,
+    "identical": 134,
+    "removed": 11,
+    "added": 0
+  },
+  "changed_functions": [
+    {
+      "name": "PcwpCloseNotifier",
+      "address_unpatched": "0x1C000C614",
+      "address_patched": "0x1C000B614",
+      "similarity": 0.9293,
+      "change_type": "feature_staging_finalization",
+      "key_changes": [
+        "REMOVED the call to Feature_1222059323__private_IsEnabledDeviceUsage at 0x1C000C763. That target is a Windows Internal Library (WIL) feature-staging gate: it reads Feature_1222059323__private_featureState, tests bit 0x10 (state-determined), returns bit 0 (enabled), else calls Feature_1222059323__private_IsEnabledFallback. It is NOT a per-CPU/global runtime-state check and does not read any data_1c0005468 global.",
+        "The teardown decision changed from a feature-gated two-branch selection to a single unconditional guard. Unpatched: feature enabled -> teardown when !(flags & 2); feature disabled -> teardown when (flags & 2). Patched: teardown when !(flags & 2) unconditionally. The patch keeps the feature-enabled behavior and drops the gate plus the legacy branch.",
+        "The fallback teardown sink PcwpDeliverGenericDisconnectNotification (unpatched 0x1C000BA60, patched 0x1C000AA60) is byte-identical between builds and is invoked at most once per consumer per close/rundown pass in both builds.",
+        "Function shrank from 534 to 512 bytes as a result of removing the gate branch."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The patch finalizes a staged feature (WIL feature ID 1222059323, name DeviceUsage) by removing its runtime gate from PcwpCloseNotifier and making the feature-enabled code path permanent. The earlier 'XNOR double-completion / UAF' reading does not hold: (1) the removed call is a WIL feature-staging gate, not a runtime processor-state check; (2) the consumer flags bit 0x2 (consumer+0x68) means 'disconnected / not connected' - it is set in PcwpCreateUserRegistration before ObInsertObject (0x1C000C902) and in PcwpDisconnectUserRegistration (0x1C000CAB5), and cleared on successful insert (0x1C000C9B9); it is not a 'teardown already ran' marker, and the teardown sink ORs flags with 9 (bits 0/3), never bit 2; (3) each consumer node is visited once per pass and the notify-then-optionally-teardown structure is identical in both builds, so there is no double invocation of PcwpDeliverGenericDisconnectNotification on the same consumer. The only behavioral difference is which consumers (still-connected vs already-disconnected) receive the fallback disconnect notification.",
+      "assembly_diff": "UNPATCHED PcwpCloseNotifier teardown decision (0x1C000C745 - 0x1C000C79F):\n0x1C000C745: call    cs:__imp_KeEnterCriticalRegion\n0x1C000C757: call    cs:__imp_ExAcquirePushLockExclusiveEx    ; lock at consumer+0x48\n0x1C000C763: call    Feature_1222059323__private_IsEnabledDeviceUsage  ; WIL feature gate (REMOVED in patch)\n0x1C000C768: test    eax, eax\n0x1C000C76A: mov     al, [rsi+60h]                            ; consumer flags at consumer+0x68\n0x1C000C76D: jz      0x1C000C775                              ; feature disabled -> legacy leg\n0x1C000C76F: test    al, 2                                    ; enabled: skip teardown if disconnected\n0x1C000C771: jnz     0x1C000C78D\n0x1C000C773: jmp     0x1C000C779                               ; connected -> teardown\n0x1C000C775: test    al, 2                                    ; disabled: teardown if disconnected\n0x1C000C777: jz      0x1C000C78D\n0x1C000C779: test    al, 8\n0x1C000C77B: jnz     0x1C000C788\n0x1C000C77D: lea     rcx, [rsi-8]\n0x1C000C781: call    PcwpDeliverGenericDisconnectNotification  ; fallback teardown (once per consumer)\n0x1C000C786: jmp     0x1C000C78D\n0x1C000C788: or      al, 4\n0x1C000C78A: mov     [rsi+60h], al\n\nPATCHED PcwpCloseNotifier teardown decision (0x1C000B742 - 0x1C000B78D):\n0x1C000B742: call    cs:__imp_KeEnterCriticalRegion\n0x1C000B754: call    cs:__imp_ExAcquirePushLockExclusiveEx\n0x1C000B760: mov     al, [rsi+60h]                            ; no feature gate anymore\n0x1C000B763: test    al, 2\n0x1C000B765: jnz     0x1C000B77B                              ; disconnected -> skip teardown\n0x1C000B767: test    al, 8\n0x1C000B769: jnz     0x1C000B776\n0x1C000B76B: lea     rcx, [rsi-8]\n0x1C000B76F: call    PcwpDeliverGenericDisconnectNotification  ; teardown (at most once)\n\nRemoved WIL gate Feature_1222059323__private_IsEnabledDeviceUsage (unpatched 0x1C0001E9C):\n0x1C0001EA6: mov  eax, cs:Feature_1222059323__private_featureState\n0x1C0001EB0: test al, 10h\n0x1C0001EB2: jz   0x1C0001EB9\n0x1C0001EB4: and  eax, 1\n0x1C0001EB7: jmp  0x1C0001EC8\n0x1C0001EB9: call Feature_1222059323__private_IsEnabledFallback\n\nFallback teardown sink PcwpDeliverGenericDisconnectNotification (unpatched 0x1C000BA60, identical logic in patched 0x1C000AA60):\n0x1C000BA6B: or   byte ptr [rcx+68h], 9    ; sets bits 0 and 3, NOT bit 2\n0x1C000BA72: and  qword ptr [rcx+60h], 0   ; clear in-flight notification pointer\n0x1C000BA77: mov  rdx, [rcx+28h]           ; KeyContext\n0x1C000BA7B: mov  rcx, [rcx+20h]           ; IoCompletion handle\n0x1C000BA93: call cs:__imp_IoSetIoCompletionEx"
+    }
+  ],
+  "removed_functions": [
+    "Feature_1222059323__private_IsEnabledDeviceUsage",
+    "Feature_1222059323__private_IsEnabledFallback",
+    "wil_details_FeatureReporting_RecordUsageInCache",
+    "wil_details_FeatureReporting_ReportUsageToService",
+    "wil_details_FeatureReporting_ReportUsageToServiceDirect",
+    "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+    "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath",
+    "wil_details_GetCurrentFeatureEnabledState",
+    "wil_details_IsEnabledFallback",
+    "wil_details_StagingConfig_Load",
+    "wil_details_StagingConfig_QueryFeatureState"
+  ],
+  "added_functions": [],
+  "relocation_only_functions": [
+    "McGenEventWrite_EtwWriteTransfer",
+    "PcwpFastIoDeviceControl",
+    "PcwpInitDefaultSecurityDescriptor",
+    "SepSddlGetAclForString",
+    "SepSddlGetSidForString",
+    "wil_InitializeFeatureStaging",
+    "wil_details_EvaluateFeatureDependencies",
+    "wil_details_PopulateInitialConfiguredFeatureStates",
+    "wil_details_ReevaluateOnFeatureConfigurationChange"
+  ],
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "PcwpCloseNotifier (notifier close path; type-2 branch of the PcwObject delete procedure PcwpDeleteObject)",
+      "entry_point": "PcwObject deletion (Obp delete procedure). PcwpDeleteObject (0x1C000CCB0) dispatches on *(obj+0): 0 -> list free; 1 -> PcwpCloseUserRegistration; 2 -> PcwpCloseNotifier (0x1C000CCD5). This dispatch is identical in both builds.",
+      "vulnerability_class": "None. WIL feature-staging finalization (Feature_*__private_IsEnabled* gate removal).",
+      "description": "In PcwpCloseNotifier the fallback-teardown decision was gated by the WIL staged-feature check Feature_1222059323__private_IsEnabledDeviceUsage. The unpatched build selects between two behaviors: feature enabled -> teardown when !(flags & 2) (deliver fallback disconnect to still-connected consumers); feature disabled -> teardown when (flags & 2) (legacy behavior). The patched build removes the gate and keeps the feature-enabled behavior permanently, and removes the WIL staging/telemetry helpers and the feature's descriptor-table entry. This is the standard graduation of a staged feature and is not a security fix. The previously alleged double-completion / use-after-free is not present: the flags bit 0x2 marks 'disconnected/not-connected' (not 'teardown done'); the teardown sink sets flags bits 0/3 and never bit 2; and each consumer is visited once per pass with the notify-then-teardown structure identical across builds, so PcwpDeliverGenericDisconnectNotification is never invoked twice on the same consumer.",
+      "trigger_conditions": "Not applicable - there is no vulnerability. The change is confined to which consumers (still-connected vs already-disconnected) receive the fallback disconnect notification during notifier close.",
+      "primitive": "None. No double-completion, no use-after-free, no pool corruption, and no reachable memory-safety or access-control primitive. The IoSetIoCompletionEx handle/KeyContext are consumer-registration state and are not double-completed.",
+      "evidence": "Removed call target Feature_1222059323__private_IsEnabledDeviceUsage @ 0x1C0001E9C reads Feature_1222059323__private_featureState, tests bit 0x10, returns bit 0 else calls Feature_1222059323__private_IsEnabledFallback - a WIL feature-staging gate. Consumer flags bit 0x2 is set at PcwpCreateUserRegistration 0x1C000C902 (before ObInsertObject) and PcwpDisconnectUserRegistration 0x1C000CAB5, cleared on success at 0x1C000C9B9. Teardown sink PcwpDeliverGenericDisconnectNotification 0x1C000BA6B: 'or byte [rcx+68h], 9' sets bits 0/3 only. Patched teardown decision at 0x1C000B760-0x1C000B76F: 'mov al,[rsi+60h]; test al,2; jnz skip; test al,8; jnz set4; call PcwpDeliverGenericDisconnectNotification' = teardown iff !(flags & 2). No 'call Feature_1222059323__private_IsEnabledDeviceUsage' exists anywhere in the patched binary.",
+      "independent_diff_note": "A full function-by-function comparison of both decompilations confirms: exactly one real logic change (PcwpCloseNotifier, above); 11 removed WIL feature-staging/telemetry helpers; and the remaining differing functions (McGenEventWrite_EtwWriteTransfer, PcwpFastIoDeviceControl, PcwpInitDefaultSecurityDescriptor, SepSddlGetAclForString, SepSddlGetSidForString) differ only in referenced data-section addresses (read-only section shifted by 0x1000 after the WIL code/data removal), while wil_InitializeFeatureStaging, wil_details_EvaluateFeatureDependencies, wil_details_PopulateInitialConfiguredFeatureStates and wil_details_ReevaluateOnFeatureConfigurationChange differ only because the feature-descriptor table lost feature 1222059323's entry. No omitted security-relevant change was found."
+    }
+  ],
+  "summary": "The pcw.sys patch is a Windows Internal Library (WIL) feature-staging finalization, not a security fix. In PcwpCloseNotifier (the type-2 branch of the PcwObject delete procedure PcwpDeleteObject), the runtime gate Feature_1222059323__private_IsEnabledDeviceUsage was removed and the feature-enabled fallback-teardown behavior (teardown when !(consumer_flags & 2)) was made permanent; the WIL staging/telemetry helper functions and the feature's descriptor-table entry were removed, shifting the read-only data section and relocating several unrelated functions without changing their logic. The previously claimed 'XNOR double-completion / use-after-free via IoSetIoCompletionEx' does not exist: the removed call is a WIL feature gate (not a per-CPU runtime-state check), consumer flags bit 0x2 marks 'disconnected/not-connected' rather than 'teardown already ran', the teardown sink PcwpDeliverGenericDisconnectNotification sets flags bits 0/3 (never bit 2) and is invoked at most once per consumer per pass, and the notify-then-teardown structure is identical in both builds. Severity: none; no CWE applies."
+}

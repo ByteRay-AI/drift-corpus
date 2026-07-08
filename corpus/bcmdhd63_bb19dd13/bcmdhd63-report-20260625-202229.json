@@ -1,0 +1,210 @@
+{
+  "binaries": {
+    "id_unpatched": "bcmdhd63_unpatched.sys",
+    "id_patched": "bcmdhd63_patched.sys",
+    "overall_similarity": 0.9591,
+    "matched": 1138,
+    "changed": 114,
+    "identical": 1024,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "wl_register_ie_upd",
+      "similarity": 0.9325,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Replaced call to sub_14003f534(arg1, arg3, arg4, 0, 0) in the error-cleanup path with the helper's own free-and-NULL sequence inlined: checks *arg3 != 0, calls osl_debug_mfree, then sets *arg3 = 0 and *arg4 = 0",
+        "The unpatched helper sub_14003f534 already frees the vendor IE buffer AND sets *arg3 = 0 and *arg4 = 0; the patched build inlines that identical logic, so both builds NULL the freed pointer and zero the size — functionally equivalent, no memory-safety change",
+        "Source file: ..\\..\\wl\\sys\\wl_oidext.c (vendor IE OID extension handling); osl_debug_mfree source line changes from 9849 (helper) to 9886 (inlined)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Functionally-equivalent refactor of vendor IE (Information Element) buffer cleanup; not a vulnerability. In the unpatched build the error path calls sub_14003f534(arg1, arg3, arg4, 0, 0), and that helper frees *arg3 via osl_debug_mfree and then sets *arg3 = 0 and *arg4 = 0. The patched build removes the helper call and inlines the same read-free-NULL-zero sequence. Because both builds NULL the freed pointer and zero the size, no dangling pointer is left and there is no use-after-free or double-free.",
+      "assembly_diff": "Unpatched wl_register_ie_upd at 0x140039a94 calls sub_14003f534(arg1, arg3, arg4, 0, 0), and that helper frees *arg3 then sets *arg3 = 0 and *arg4 = 0. Patched version at 0x14003b4ec inlines the same sequence: rdx_3 = *arg3; if (rdx_3) { osl_debug_mfree(...); *arg3 = 0; *arg4 = 0; }"
+    },
+    {
+      "name": "shared_indicate_status",
+      "similarity": 0.3287,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Added check: if arg6 (buffer size) == 0, prints debug warning and NULLs the buffer pointer (var_88_1 = 0) before passing to NdisMIndicateStatusEx",
+        "When buffer size is 0, the pointer passed to print_indicate_status is now NULL (r9 = nullptr) instead of the raw arg5 pointer",
+        "Prevents passing an uninitialized/zero-length buffer to downstream consumers that may read from it"
+      ],
+      "security_relevant": true,
+      "security_notes": "Potential information disclosure or out-of-bounds read when shared_indicate_status is called with a zero-size buffer (arg6 == 0). In the unpatched code, arg5 (the buffer pointer) is passed directly to print_indicate_status regardless of whether the buffer size is zero, potentially causing an OOB read or kernel information leak. The patched version NULLs the buffer pointer when size is 0.",
+      "assembly_diff": "Patched adds: test r15d, r15d / jne 0x140013373 (check arg6==0), and: xor r9d, r9d / jmp 0x140013394 (NULL r9 when size is 0) before calling print_indicate_status"
+    },
+    {
+      "name": "wl_pnp_set_power",
+      "similarity": 0.7137,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major refactoring: inline PnP power state transition code (arg2==4 case) extracted to sub_14000748c and sub_14000785c/sub_140007db4",
+        "Replaced wl_iovar_op 'devreset' power-resume path with dhd_bus_is_ioready check and new sub_14000785c/sub_140007db4 helper calls",
+        "Added *(arg1 + 0x1500) state tracking for device reset flow"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "dhd_prot_ioctl",
+      "similarity": 0.9633,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added check rax_2 != 3 (bus type != 3) to the IOCTL processing guard condition, preventing IOCTL dispatch when bus type is 3"
+      ],
+      "security_relevant": false,
+      "security_notes": "Minor functional gate change — restricts IOCTL processing to specific bus types. Not directly exploitable.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_cache_M1",
+      "similarity": 0.6207,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added wl_add_timer call for EAPOL M1 frame caching with 0xbb8 (3000ms) timeout when *(rdi + 0x18e0) is set",
+        "Added handling for second M1 detection pattern (offset 0x20/0x21/0x23/0x27 check)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for EAPOL M1 frame caching timer. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_oid_phy_build_attrs",
+      "similarity": 0.9347,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added 802.11ax (Wi-Fi 6) channel support: added rdi == 0xa case mapping to rate 7, removed rdi != 0xa exclusion from MCS rate calculation",
+        "Simplified var_68 (bool) assignment logic"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for 802.11ax support. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_set_infra",
+      "similarity": 0.9492,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Changed condition from !((var_38 - 4) & 0xfffffffb) to !((rcx_6 - 4) & 0xfffffff9) && rcx_6 != 6, adding exclusion for channel 6 in 802.11n mode check"
+      ],
+      "security_relevant": false,
+      "security_notes": "Channel mode logic update. Not a security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_iovar_op",
+      "similarity": 0.9682,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Added strcmp(arg2, \"dptx\") bypass check alongside existing 'devreset' and 'proptx' bypasses",
+        "Register/variable renaming (rbx→rdi, rdi_3→rbx_2, arg_18→arg3)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_read_reg_param",
+      "similarity": 0.2586,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Major refactoring of registry parameter reading: unpatched had inline multi-parameter reading loop, patched extracted to separate wl_read_reg_param function with cleaner parameter handling"
+      ],
+      "security_relevant": false,
+      "security_notes": "Code refactoring/rewrite of registry configuration parsing. No security implications.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wl_Rssi2LQ",
+      "similarity": 0.8618,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added new RSSI-to-link-quality mapping for arg2 == 5 (new PHY type) with configurable thresholds via arg4 pointer array",
+        "Added __security_check_cookie (stack canary) to the function"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature addition for new PHY type RSSI calculation. Not a security fix.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "wl_register_ie_upd",
+      "entry_point": "NDIS OID set request for vendor-specific Information Elements (OID 0xXXXX via wl_set_oid/wl_setoid → wl_register_ie_upd)",
+      "call_chain": ["NDIS OID set (wl_setoid/wl_set_oid)", "wl_register_ie_upd (0x140039a94)", "sub_14003f534 (0x14003f534) — frees buffer and NULLs the pointer"],
+      "vulnerability_class": "functionally-equivalent refactor; no use-after-free or double-free",
+      "description": "In wl_register_ie_upd at 0x140039a94, when updating vendor-specific Information Elements (IEs), the old IE buffer is freed in the error-cleanup path by calling sub_14003f534(arg1, arg3, arg4, 0, 0). That helper frees *arg3 via osl_debug_mfree and then sets *arg3 = 0 and *arg4 = 0, so no dangling pointer is left. The patched version at 0x14003b4ec removes the helper call from this path and inlines the identical logic: (1) reads *arg3 into a local, (2) checks if non-NULL, (3) calls osl_debug_mfree to free it, (4) sets *arg3 = 0 and *arg4 = 0. Both builds NULL the freed pointer and zero the size, so this is a functionally-equivalent refactor and not a use-after-free or double-free. The only observable difference is the osl_debug_mfree source line (9849 in the helper vs 9886 inlined) and the inlining itself.",
+      "trigger_conditions": "Not applicable. Both the unpatched and patched builds NULL the freed vendor IE pointer (*arg3 = 0) and zero the size (*arg4 = 0) after freeing, so no dangling pointer is produced and there is no state to trigger.",
+      "primitive": "None. Both builds free-and-NULL the vendor IE buffer, so no dangling pointer, use-after-free, or double-free primitive exists.",
+      "evidence": "Unpatched wl_register_ie_upd (0x140039a94) error path:\n    if (!wl_upd_vndr_ies(arg1, arg6, arg5, 1, arg2))\n        return 0;\n    sub_14003f534(arg1, arg3, arg4, 0, 0);  // helper frees *arg3, then sets *arg3 = 0 and *arg4 = 0\n    return 0xffffffff;\n\nUnpatched sub_14003f534 (0x14003f534):\n    v6 = *arg3;\n    if (v6) {\n        osl_debug_mfree(..., v6, *arg4, 9849, \"..\\\\..\\\\wl\\\\sys\\\\wl_oidext.c\");\n        *arg3 = 0;  // pointer NULLed by the helper\n        *arg4 = 0;  // size zeroed by the helper\n    }\n\nPatched wl_register_ie_upd (0x14003b4ec) error path (helper call inlined):\n    if (!wl_upd_vndr_ies(arg1, arg6, arg5, 1, arg2))\n        return 0;\n    if (*arg3) {\n        osl_debug_mfree(*(*(*arg1 + 8) + 0x10), *arg3, *arg4, 9886, \"..\\\\..\\\\wl\\\\sys\\\\wl_oidext.c\");\n        *arg3 = 0;  // same NULL as the helper performed\n        *arg4 = 0;  // same zero as the helper performed\n    }\n    return 0xffffffff;",
+      "assembly": "wl_register_ie_upd unpatched at 0x140039a94 error path:\n    call    sub_14003F534    ; helper frees *arg3 then sets *arg3 = 0 and *arg4 = 0\n\n  Patched replacement (0x14003b4ec) inlines the helper's free-and-NULL:\n    mov     rdx, [arg3]       ; rdx = *arg3\n    test    rdx, rdx          ; if (*arg3 != NULL)\n    jz      skip_free\n    ; ... setup args for osl_debug_mfree (line 9886) ...\n    call    osl_debug_mfree   ; free the buffer\n    and     qword [arg3], 0   ; *arg3 = 0\n    and     dword [arg4], 0   ; *arg4 = 0\n  skip_free:",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "bcmdhd63_unpatched!wl_register_ie_upd",
+            "address": "0x140039a94",
+            "why": "Break here to monitor vendor IE update operations. arg1 = adapter context, arg3 = pointer to IE buffer pointer (*arg3), arg4 = pointer to IE buffer size (*arg4). Watch *arg3 to confirm the buffer is freed and then set to 0 by sub_14003f534."
+          },
+          {
+            "symbol": "bcmdhd63_unpatched!sub_14003F534",
+            "address": "0x14003f534",
+            "why": "This is the function that frees the vendor IE buffer. Break here to confirm the buffer is freed. After this returns in the arg5=0,arg6=0 case, *arg3 is set to 0 and *arg4 to 0 by the helper in both builds; no dangling pointer remains."
+          }
+        ],
+        "watch": [
+          "*arg3 (rcx or the register holding arg3 pointer) — the vendor IE buffer pointer; set to 0 after free in both builds",
+          "*arg4 — the buffer size; set to 0 after free in both builds",
+          "rax return value of sub_14003f534 — check if it indicates success/failure of the free operation"
+        ],
+        "key_offsets": [
+          "0x140039b31 area: the call to sub_14003f534(arg1, arg3, arg4, 0, 0) in the unpatched version — the helper frees and NULLs *arg3",
+          "0x14003b571 in patched: the inlined 'and qword [arg3], 0' instruction that NULLs the pointer, matching what the helper already did in the unpatched build"
+        ],
+        "trigger_setup": "1. Open a handle to the Broadcom WiFi miniport adapter (\\\\.\\{GUID} or via NDIS API). 2. Use NdisOidRequest or DeviceIoControl with the appropriate OID code for setting vendor-specific IEs (the OID flows through wl_setoid → wl_set_oid → wl_register_ie_upd). 3. First OID set: provides vendor IE data, causing wl_upd_vndr_ies to allocate a buffer stored at *arg3. 4. Second OID set: triggers wl_register_ie_upd again; the old buffer (*arg3) is freed via sub_14003f534, which also sets *arg3 = 0 and *arg4 = 0 in both builds. 5. A subsequent OID query reads *arg3 as NULL, not a freed pointer. The exact OID code depends on the vendor IE extension OID registration (wl_oid_ext_init_if).",
+        "expected_observation": "In both binaries: after sub_14003f534 returns in the wl_register_ie_upd error/cleanup path, *arg3 is 0 and *arg4 is 0. No dangling pointer remains, so a subsequent access through *arg3 dereferences NULL rather than freed pool memory. The patched build reaches the same end state by inlining the helper's free-and-NULL logic.",
+        "notes": "The code is in ..\\..\\wl\\sys\\wl_oidext.c (vendor IE OID extension code). The function sub_14003f534 at 0x14003f534 in the unpatched binary is a general-purpose IE cleanup/replace function that frees the buffer and then sets *arg3 = 0 and *arg4 = 0. The patched change inlines this same free + NULL + zero sequence into wl_register_ie_upd's error path, so it is a functionally-equivalent refactor rather than a CWE-416 fix. The vendor IE feature is typically used for WPS, WFD (Wi-Fi Direct), and other 802.11 extensions."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "shared_indicate_status",
+      "entry_point": "NDIS status indication path (called from wl_ind_connect_complete, wl_wfd_oid_event, and other event handlers)",
+      "call_chain": ["Firmware event handler", "shared_indicate_status (0x140012a2c)", "print_indicate_status — receives non-NULL buffer pointer with zero size"],
+      "vulnerability_class": "potential out-of-bounds read / information disclosure (CWE-125/CWE-200)",
+      "description": "In the unpatched shared_indicate_status function at 0x140012a2c, when called with arg6 (buffer size) == 0, the buffer pointer arg5 is still passed to print_indicate_status without being NULLed. print_indicate_status (unpatched 0x14001c264) never receives the size; its only guard is if (a4 == 0) — a test rbx,rbx / jnz at 0x14001c2a8 that selects a safe NdisStatusName-only path. For any non-NULL pointer it dispatches on the status code and reads fixed offsets [a4+4], [a4+6], [a4+8], [a4+9], [a4+0xC], [a4+0x10] into a snprintf'd log string, so a non-NULL pointer with size 0 is read up to 17 bytes past a zero-length buffer: an out-of-bounds read whose bytes reach a kernel log string (information disclosure). The patched version at 0x1400132e8 adds a check: if arg6 == 0, it prints a debug warning, NULLs the buffer pointer (var_88_1 = 0), and passes NULL instead of arg5 to both NdisMIndicateStatusEx and print_indicate_status, so the sink takes its a4 == 0 safe path. Both builds already carry a stack cookie; the guard is the fix.",
+      "trigger_conditions": "A firmware event that triggers shared_indicate_status with a zero-length status indication buffer (arg6 == 0). This can occur during connect/disconnect state transitions or Wi-Fi Direct events where the status payload size is zero but a non-NULL pointer is passed.",
+      "primitive": "Potential kernel information disclosure (reading from an uninitialized or zero-length buffer) or null pointer dereference (DoS).",
+      "evidence": "Unpatched shared_indicate_status (0x140012a2c):\n    int32_t var_80 = arg6;  // stores size but doesn't check for 0\n    var_b8 = 0x700198;\n    // ... no check for arg6 == 0 ...\n    NdisMIndicateStatusEx(arg2, &var_b8);\n    // BUG: passes arg5 directly even when arg6 == 0\n    result = print_indicate_status(arg1, arg3, arg4, arg5);  // arg5 may be invalid when size is 0\n\nPatched shared_indicate_status (0x1400132e8):\n    int32_t var_80 = arg6;\n    if (!arg6) {  // NEW CHECK\n        DbgPrint(\"[BRCM]%s: buf size is 0, ptr=0x%…\", \"shared_indicate_status\", arg5);\n        int64_t var_88_1 = 0;  // NULL the buffer\n    }\n    NdisMIndicateStatusEx(arg2, &var_b8);\n    uint32_t* r9;\n    if (arg6)\n        r9 = arg5;  // valid size: use buffer\n    else\n        r9 = nullptr;  // FIX: zero size → NULL pointer\n    result = print_indicate_status(arg1, arg3, arg4, r9);  // safe",
+      "assembly": "shared_indicate_status unpatched at 0x140012a2c:\n  No check for arg6 (r9d) == 0 before passing arg5 (rbx) to print_indicate_status\n  call    print_indicate_status  ; arg5 passed regardless of size\n\nPatched at 0x1400132e8:\n  test    r15d, r15d       ; check arg6 == 0\n  jne     0x140013373      ; skip if non-zero\n  ; ... debug print ...\n  and     qword [rbp-0x39], 0x0  ; NULL the buffer pointer\n  xor     r9d, r9d         ; r9 = NULL for print_indicate_status\n  jmp     0x140013394",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "bcmdhd63_unpatched!shared_indicate_status",
+            "address": "0x140012a2c",
+            "why": "Monitor status indication calls. Watch arg6 (r9d at entry) for zero values — if it hits 0, the buffer pointer arg5 (rbx) will be passed unsanitized to print_indicate_status."
+          }
+        ],
+        "watch": [
+          "r9d (arg6) — buffer size; when this is 0, the vulnerability triggers",
+          "rbx (arg5) — buffer pointer; passed to print_indicate_status even when size is 0"
+        ],
+        "key_offsets": [
+          "0x140012a80 area in unpatched: the call to print_indicate_status where arg5 is passed regardless of arg6"
+        ],
+        "trigger_setup": "Trigger a WiFi connect/disconnect cycle or Wi-Fi Direct event that generates a zero-length status indication. This is firmware-dependent and may require specific AP behavior or P2P event sequences.",
+        "expected_observation": "When arg6 == 0, print_indicate_status receives a non-NULL pointer to a zero-length buffer and, for the DOT11/WFD status codes, reads fixed offsets up to [a4+0x10] regardless of size (it never receives the size), formatting them into a log string. With Driver Verifier special pool this manifests as a pool read violation; otherwise it leaks adjacent bytes into the status-print path. In the patched build the pointer is NULL so the sink takes its a4 == 0 safe path.",
+        "notes": "This is the security-relevant fix in this patch. The change to wl_register_ie_upd is a functionally-equivalent free-and-NULL refactor and not a vulnerability. This issue requires specific firmware event timing to trigger."
+      }
+    }
+  ],
+  "summary": "The patch adds a defensive guard in shared_indicate_status (NDIS status-indication path): when the status buffer size is 0 it forces StatusIndication.StatusBuffer to NULL and passes NULL instead of the raw pointer to NdisMIndicateStatusEx and print_indicate_status, preventing a potential out-of-bounds read / kernel information disclosure (CWE-125/CWE-200). The change to wl_register_ie_upd is a functionally-equivalent refactor: the unpatched error path calls sub_14003f534, which frees the vendor IE buffer and then sets *arg3 = 0 and *arg4 = 0, and the patched build inlines that same free-and-NULL sequence; both builds NULL the freed pointer and zero the size, so there is no use-after-free or double-free. The remaining ~104 changed functions are predominantly cosmetic (struct layout shifts, register renaming), feature additions (802.11ax support, EAPOL M1 caching), or code refactoring."
+}

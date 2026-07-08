@@ -1,0 +1,56 @@
+{
+  "binaries": {
+    "title": "ltotape.sys - No security-relevant change: LTO-9 density code (0x60) support added to GetMediaTypes callback",
+    "id_unpatched": "ltotape_unpatched.sys",
+    "id_patched": "ltotape_patched.sys",
+    "overall_similarity": 0.9823,
+    "matched": 29,
+    "changed": 1,
+    "identical": 28,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "GetMediaTypes",
+      "address": "0x1C0001CA0",
+      "similarity": 0.919,
+      "change_type": "functional_not_security",
+      "key_changes": [
+        "Adds acceptance of density code 0x60 (LTO-9). Enumerated over all byte values, the unpatched build accepts {0x00,0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E} and the patched build accepts exactly that same set plus 0x60. The accepted set only grows; nothing is removed or tightened.",
+        "Direction correction: the bitmask 0x55000055 (range density-0x40 <= 0x1E) has set bits only at offsets 0,2,4,6,24,26,28,30 (density 0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E). Codes 0x54 and 0x56 (offsets 0x14,0x16) fall in the zero middle bytes and were never accepted; codes 0x58,0x5A,0x5C,0x5E remain accepted in both builds. The patched two-branch form (0x1000055 for density<=0x58, plus explicit 0x5A/0x5C/0x5E/0x60 handling for density>0x58) reproduces the same accepts and adds 0x60.",
+        "Not a hardcoded-mode bug: both builds store 0x1E (30) on the a6==30 && a5==1 branch (*a2 = 30). mov [r14], r9d at 0x1C0001D13 (r9d=0x1E) becomes mov [r14], ecx at 0x1C0001D0E, with ecx==0x1E on that verified path.",
+        "Not a pointer bug: [rdi+0x18] (unpatched) and [r9+0x18] (patched) read the same a4->DataBuffer because rdi is set to r9 at the prologue (mov rdi, r9 at 0x1C0001CC5).",
+        "Register reassignment: density code moved r12b->bpl, 24-bit density value moved ebp->r12d; the output write block is otherwise unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. GetMediaTypes parses sense data from a4->DataBuffer and fills density/capacity fields of the returned media descriptors for recognized density codes (byte offset 4). The only functional difference is that the patched build additionally accepts density code 0x60 (LTO-9); the accepted set otherwise matches the unpatched set exactly. Because the set only grows, the patched build is not stricter, and claims that the patch removes acceptance of 0x54/0x56/0x58/0x5A/0x5C/0x5E are incorrect: 0x54 and 0x56 were never accepted in either build, and 0x58/0x5A/0x5C/0x5E remain accepted in both. This is not a memory-safety issue: the density byte and 24-bit capacity value are written to fixed output-descriptor fields ([r15+0x11] and [r15+0x8]) identically in both builds, and the descriptor loop is bounded by the fixed-size LTOMedia table. Accepting one more density value changes no bound and adds no out-of-range access.",
+      "assembly_diff": "UNPATCHED density accept test (0x1C0001DC1-0x1C0001E05):\n0x1C0001DC1: mov   rcx, [rdi+18h]     ; rdi == r9 -> a4->DataBuffer\n0x1C0001DCD: mov   r12b, byte [rcx+4] ; density code\n0x1C0001DE7: test  r12b, r12b\n0x1C0001DEA: jz    0x1C0001E00        ; density 0 accepted\n0x1C0001DEC: lea   eax, [r12-40h]\n0x1C0001DF1: cmp   al, r9b            ; r9b = 0x1E\n0x1C0001DF4: ja    0x1C0001E1C        ; reject if (density-0x40) > 0x1E\n0x1C0001DF6: mov   ecx, 55000055h\n0x1C0001DFB: bt    ecx, eax\n0x1C0001DFE: jnb   0x1C0001E1C        ; reject if bit clear\n0x1C0001E00: mov   ebx, 56h           ; accept\n\nPATCHED density accept test (0x1C0001DBC-0x1C0001E1B):\n0x1C0001DBC: mov   rcx, [r9+18h]      ; a4->DataBuffer (same location)\n0x1C0001DC9: mov   bpl, byte [rcx+4]  ; density code\n0x1C0001DE7: cmp   bpl, 58h\n0x1C0001DEB: ja    0x1C0001E03        ; density > 0x58 -> new branch\n0x1C0001DED: lea   eax, [rbp-40h]\n0x1C0001DF0: cmp   al, 18h\n0x1C0001DF2: ja    0x1C0001DFE\n0x1C0001DF4: mov   ecx, 1000055h\n0x1C0001DF9: bt    ecx, eax\n0x1C0001DFC: jb    0x1C0001E16        ; accept 0x40,0x42,0x44,0x46,0x58\n0x1C0001E03: lea   eax, [rbp-5Ah]\n0x1C0001E06: test  al, 0F9h\n0x1C0001E08: jnz   0x1C0001E10\n0x1C0001E0A: cmp   bpl, 60h\n0x1C0001E0E: jnz   0x1C0001E16        ; 0x5A/0x5C/0x5E accept\n0x1C0001E10: cmp   bpl, 60h\n0x1C0001E14: jnz   0x1C0001E33        ; reject\n0x1C0001E16: mov   ebx, 56h           ; accept (now reached by 0x60 too)\n\nOutput write block (identical effect in both builds):\nmov [r15+11h], r12b (unpatched) / bpl (patched)  ; density code byte\nmov [r15+8],   ebp  (unpatched) / r12d (patched) ; 24-bit capacity value"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "GetMediaTypes",
+      "address": "0x1C0001CA0",
+      "entry_point": "GetMediaTypes tape class callback (reached on the media-type query path with a5==2, a6==3, *a2==0)",
+      "call_chain": [
+        "DriverEntry (0x1C0001008) registers the tape callbacks via TapeClassInitialize",
+        "Tape class library dispatches the media-type query",
+        "GetMediaTypes (0x1C0001CA0) parses sense data and fills media descriptors"
+      ],
+      "vulnerability_class": "None (functional feature addition)",
+      "description": "The patch adds acceptance of SCSI density code 0x60 (LTO-9) to GetMediaTypes. Enumerated over all byte values, the unpatched build accepts {0x00,0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E} and the patched build accepts that same set plus 0x60. No accepted code was removed and no check was tightened, so this is a relaxation for new-generation media, not a tightening. The density byte and 24-bit capacity value are written to fixed output-descriptor fields ([r15+0x11] and [r15+0x8]) identically in both builds; the descriptor loop is bounded by the fixed-size LTOMedia table, so accepting one more density value introduces no memory-safety condition. On the unpatched build a device reporting 0x60 simply receives a media descriptor with those two fields left unpopulated.",
+      "trigger_conditions": "A tape device reports density code 0x60 at byte offset 4 of the sense data buffer, and an application queries tape media types so GetMediaTypes runs with a5==2, a6==3, *a2==0. The only difference between builds is whether the returned 0x60 descriptor has its density/capacity fields populated. Codes 0x54 and 0x56 are rejected by both builds; codes 0x58/0x5A/0x5C/0x5E are accepted by both.",
+      "primitive": "None. No validation is removed and no attacker-reachable memory-safety condition is introduced. Every write on the accept path is a fixed-size store to a bounded output-descriptor field, with destination and size independent of the density value; the additional accepted code cannot cause an out-of-spec write or an over-read.",
+      "evidence": "// Accepted density-code sets (enumerated over all 256 byte values):\n// UNPATCHED: {0x00,0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E}\n//   (density-0x40) <= 0x1E AND bit set in 0x55000055, plus density==0\n// PATCHED:   {0x00,0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E,0x60}\n//   density<=0x58: (density-0x40) <= 0x18 AND bit set in 0x1000055, plus density==0\n//   density>0x58: ((density-0x5A) & 0xF9)==0 or density==0x60  -> 0x5A,0x5C,0x5E,0x60\n// Difference: 0x60 added; nothing removed.\n//\n// Decompilation (both builds):\n//   DataBuffer = a4->DataBuffer;\n//   LOBYTE(density) = DataBuffer[4];\n//   capacity = DataBuffer[11] | ((DataBuffer[10] | (DataBuffer[9]<<8))<<8);\n// Accept path (both builds), fixed stores:\n//   *((_BYTE*)v9 + 17) = density;   // [r15+0x11]\n//   v9[2] = capacity;               // [r15+0x8]",
+      "assembly": "UNPATCHED density accept test:\n0x1C0001DC1: mov   rcx, [rdi+18h]     ; rdi == r9 -> a4->DataBuffer\n0x1C0001DC5: movzx eax, byte [rcx+0Ah]\n0x1C0001DC9: movzx ebp, byte [rcx+9]\n0x1C0001DCD: mov   r12b, byte [rcx+4] ; density code\n0x1C0001DD1: mov   r13b, byte [rcx+1]\n0x1C0001DD5: mov   r14b, byte [rcx+2]\n0x1C0001DD9: shl   ebp, 8\n0x1C0001DDC: or    ebp, eax\n0x1C0001DDE: movzx eax, byte [rcx+0Bh]\n0x1C0001DE2: shl   ebp, 8\n0x1C0001DE5: or    ebp, eax\n0x1C0001DE7: test  r12b, r12b\n0x1C0001DEA: jz    0x1C0001E00        ; density 0 accepted\n0x1C0001DEC: lea   eax, [r12-40h]\n0x1C0001DF1: cmp   al, r9b            ; r9b = 0x1E\n0x1C0001DF4: ja    0x1C0001E1C        ; reject if > 0x1E\n0x1C0001DF6: mov   ecx, 55000055h\n0x1C0001DFB: bt    ecx, eax\n0x1C0001DFE: jnb   0x1C0001E1C        ; reject if bit clear\n0x1C0001E00: mov   ebx, 56h           ; accept\n0x1C0001E05: jmp   0x1C0001E1C\n\nPATCHED density accept test:\n0x1C0001DBC: mov   rcx, [r9+18h]      ; a4->DataBuffer (same location)\n0x1C0001DC0: movzx eax, byte [rcx+0Ah]\n0x1C0001DC4: movzx r12d, byte [rcx+9]\n0x1C0001DC9: mov   bpl, byte [rcx+4]  ; density code\n0x1C0001DCD: mov   r13b, byte [rcx+1]\n0x1C0001DD1: mov   r14b, byte [rcx+2]\n0x1C0001DD5: shl   r12d, 8\n0x1C0001DD9: or    r12d, eax\n0x1C0001DDC: movzx eax, byte [rcx+0Bh]\n0x1C0001DE0: shl   r12d, 8\n0x1C0001DE4: or    r12d, eax\n0x1C0001DE7: cmp   bpl, 58h\n0x1C0001DEB: ja    0x1C0001E03\n0x1C0001DED: lea   eax, [rbp-40h]\n0x1C0001DF0: cmp   al, 18h\n0x1C0001DF2: ja    0x1C0001DFE\n0x1C0001DF4: mov   ecx, 1000055h\n0x1C0001DF9: bt    ecx, eax\n0x1C0001DFC: jb    0x1C0001E16        ; accept 0x40,0x42,0x44,0x46,0x58\n0x1C0001DFE: test  bpl, bpl\n0x1C0001E01: jmp   0x1C0001E14\n0x1C0001E03: lea   eax, [rbp-5Ah]\n0x1C0001E06: test  al, 0F9h\n0x1C0001E08: jnz   0x1C0001E10\n0x1C0001E0A: cmp   bpl, 60h\n0x1C0001E0E: jnz   0x1C0001E16        ; 0x5A/0x5C/0x5E accept\n0x1C0001E10: cmp   bpl, 60h\n0x1C0001E14: jnz   0x1C0001E33        ; reject\n0x1C0001E16: mov   ebx, 56h           ; accept (now reached by 0x60 too)\n0x1C0001E1B: jmp   0x1C0001E33\n\nOutput write block (identical effect in both builds):\nmov [r15+11h], r12b (unpatched) / bpl (patched)  ; density code byte\nmov [r15+8],   ebp  (unpatched) / r12d (patched) ; 24-bit capacity value",
+      "notes": "The only functional difference between the two builds is the addition of density code 0x60 (LTO-9) to the accepted set; no fault is reproducible. ltotape.sys is a tape minidriver that imports TapeClassAllocateSrbBuffer, TapeClassInitialize, and TapeClassZeroMemory. The LTOMedia table at 0x1C0003110 holds the media identifiers iterated by the descriptor loop. Image base 0x1C0000000."
+    }
+  ],
+  "summary": "The patch modifies a single function, the tape minidriver's GetMediaTypes callback (0x1C0001CA0), to add acceptance of SCSI density code 0x60 (LTO-9). Enumerating accepted density codes for both builds, the patched set equals the unpatched set {0x00,0x40,0x42,0x44,0x46,0x58,0x5A,0x5C,0x5E} plus 0x60; nothing is removed or tightened, so this is a functional feature addition (new tape generation support), not an input-validation tightening. Codes 0x54 and 0x56 were never accepted by either build, and 0x58/0x5A/0x5C/0x5E remain accepted in both. The density/capacity write path is identical and bounded in both builds. The previously reported 'hardcoded 0x1E mode' (both builds store 0x1E on the a6==30 branch) and 'wrong SRB pointer' (rdi==r9 via mov rdi, r9 at 0x1C0001CC5) are not defects. No other function changed; all others are identical apart from relocation."
+}

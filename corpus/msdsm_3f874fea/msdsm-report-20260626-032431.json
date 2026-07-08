@@ -1,0 +1,96 @@
+{
+  "binaries": {
+    "id_unpatched": "msdsm_unpatched.sys",
+    "id_patched": "msdsm_patched.sys",
+    "overall_similarity": 0.8669,
+    "matched": 257,
+    "changed": 208,
+    "identical": 49,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "DsmInquire",
+      "similarity": 0.9226,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "Allocation-size computation changed from a two-step sequence 'lea r13d, [rdx-0x28]' + 'lea eax, [r13+0xf0]' to a single 'add eax, 0xc8'. Both compute size + 0xc8 (mod 2^32); the intermediate r13d is a 32-bit value that the second LEA truncates again, so the results are identical for every input.",
+        "The '>= 0xf0' wrap-around guard (unpatched 'cmp eax, 0xf0; cmovnb; jnb' at 0x1C0001FAF; patched 'cmp eax, 0xf0; jnb' at 0x140001F67) and the 'size >= 0x28' lower bound are present and equivalent in BOTH builds.",
+        "The inquiry-data copy is unchanged: memmove of *(arg4+4) = size bytes to buffer + 0xc8, with allocation = size + 0xc8, so the copy ends exactly at the end of the allocation in both builds.",
+        "Serial-number fallback path selection on the field at arg4 + 0x18 is re-expressed with the same predicate (skip when the field is 0 or 0xFFFFFFFF).",
+        "Remaining differences are WPP tracing GUID names, register choices (r13 vs r12/r15), and basic-block ordering."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The report's original integer-overflow claim does not hold: '(size - 0x28) + 0xf0' truncated to 32 bits equals 'size + 0xc8' truncated to 32 bits, so the two-step LEA does not mask any overflow. Both builds require size >= 0x28, compute allocation = size + 0xc8, reject wrap-around via 'cmp eax, 0xf0; jnb' (a wrapped small value is < 0xf0), and copy exactly 'size' bytes to offset 0xc8 of an allocation of size + 0xc8. The copy therefore fits exactly in both builds and there is no undersized allocation or oversized copy in either. The difference is compiler code generation.",
+      "assembly_diff": "=== UNPATCHED size region (DsmInquire @ 0x1C0001870) ===\n0x1C0001F44: mov     edx, [rsi+4]          ; edx = *(arg4+4) = size\n0x1C0001F47: lea     r13d, [rdx-28h]       ; r13d = size - 0x28 (32-bit)\n0x1C0001F4B: cmp     edx, 28h\n0x1C0001F4E: jnb     0x1C0001FA3           ; size >= 0x28 -> continue\n0x1C0001FA3: lea     eax, [r13+0F0h]       ; eax = (size-0x28)+0xf0 = size+0xc8 (mod 2^32)\n0x1C0001FAA: mov     edx, 0F0h\n0x1C0001FAF: cmp     eax, edx              ; wrap-around guard\n0x1C0001FB1: cmovnb  ecx, eax\n0x1C0001FB4: jnb     0x1C0001FE5           ; size+0xc8 >= 0xf0 -> allocate\n0x1C0001FE5: mov     edx, ecx              ; Size = size+0xc8\n0x1C0001FF2: call    DsmpAllocatePool\n0x1C0002054: lea     rbx, [rdi+0C8h]       ; copy dest = buf + 0xc8\n0x1C000206C: mov     r8d, [rsi+4]          ; Size = size\n0x1C0002076: call    memmove               ; copies size bytes; alloc - 0xc8 == size\n\n=== PATCHED size region (DsmInquire @ 0x140001890) ===\n0x140001F5A: mov     eax, [rsi+4]          ; eax = size\n0x140001F5D: cmp     eax, 28h\n0x140001F60: jb      0x140001FB8           ; size < 0x28 -> error\n0x140001F62: add     eax, 0C8h             ; eax = size + 0xc8 (single 32-bit add)\n0x140001F67: cmp     eax, 0F0h             ; same wrap-around guard\n0x140001F6C: jnb     0x140001FE4           ; size+0xc8 >= 0xf0 -> allocate\n0x140001FE4: mov     edx, eax              ; Size = size+0xc8\n0x140001FF1: call    DsmpAllocatePool\n0x140002049: lea     rbx, [rdi+0C8h]       ; copy dest = buf + 0xc8\n0x140002061: mov     r8d, [rsi+4]          ; Size = size\n0x14000206B: call    memmove               ; identical copy"
+    },
+    {
+      "name": "DsmpBuildDeviceNameLegacyPage0x80",
+      "similarity": 0.8443,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "Offset-field validation on device-context fields (+0xd4, +0xd8, +0xe0) re-expressed but semantically identical: unpatched 'lea eax, [rdx-1]; cmp eax, 0xFFFFFFFD; ja skip' versus patched 'test eax, eax; jz skip; cmp eax, 0xFFFFFFFF; jz skip'. Both skip the strlen-style scan only when the field is 0 or 0xFFFFFFFF, and accept the identical value range 1..0xFFFFFFFE.",
+        "Register reallocation, stack-frame differences, and WPP tracing GUID changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "No security-relevant change. The condition '(rdx-1) <= 0xFFFFFFFD' is exactly equivalent to 'rdx != 0 && rdx != 0xFFFFFFFF', which is what the patched 'test/jz + cmp 0xFFFFFFFF/jz' encodes. No bound was added, removed, or tightened; the string-length scan and its store guard are unchanged. Compiler code generation only.",
+      "assembly_diff": "=== UNPATCHED (DsmpBuildDeviceNameLegacyPage0x80 @ 0x1C002CE70), first offset field ===\n; mov edx, [r14+0Ch]\n; mov r9d, 0FFFFFFFDh\n; lea eax, [rdx-1]\n; cmp eax, r9d\n; ja  skip            ; skip when field == 0 or 0xFFFFFFFF\n\n=== PATCHED (DsmpBuildDeviceNameLegacyPage0x80 @ 0x14002E90C), first offset field ===\n0x14002E9A0: mov     eax, [r13+0Ch]\n0x14002E9A8: test    eax, eax\n0x14002E9AA: jz      0x14002E9C9           ; skip when field == 0\n0x14002E9AC: cmp     eax, r9d              ; r9d = 0xFFFFFFFF\n0x14002E9AF: jz      0x14002E9C9           ; skip when field == 0xFFFFFFFF"
+    },
+    {
+      "name": "DsmGlobalSetData",
+      "similarity": 0.9411,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register reallocation (r12 -> r13 for the 0x40 flag constant)",
+        "WPP tracing GUID changes (different build version)",
+        "Minor control flow restructuring for WPP trace calls"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DsmpValidateSetLBPolicyInput",
+      "similarity": 0.9397,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation (r11/arg3 handling moved from separate variable to direct usage)",
+        "Element stride computation changed from explicit multiplication (rcx_5 * i) to shift (r14_1 << 6 for 0x40 stride, r14_1 * 0x18 for 0x18 stride)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DsmpReportTargetPortGroups",
+      "similarity": 0.724,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and basic block restructuring due to different compiler version",
+        "WPP tracing GUID changes"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DsmpSetLoadBalancePolicy",
+      "similarity": 0.8288,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WPP tracing changes",
+        "Register reallocation and basic-block reordering; no size-check or validation change identified"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [],
+  "summary": "No security-relevant change was delivered between msdsm_unpatched.sys and msdsm_patched.sys. The two builds differ by a full compiler/toolchain rebuild: WPP tracing GUIDs were regenerated, Control Flow Guard / XFG dispatch thunks were added (_guard_dispatch_icall, _guard_xfg_dispatch_icall_nop), the TraceLogging provider metadata was regenerated (_Tlg* -> _tlg*), and new CRT helper variants appear (__cpu_features_init, __memset_*). The originally reported DsmInquire 'integer overflow / kernel pool buffer overflow' does not exist: the unpatched two-step size computation 'lea r13d, [rdx-0x28]' + 'lea eax, [r13+0xf0]' is arithmetically identical to the patched single 'add eax, 0xc8' (both equal size + 0xc8 mod 2^32), and BOTH builds enforce the same 'size >= 0x28' lower bound and the same 'size + 0xc8 >= 0xf0' wrap-around guard before allocating and copying exactly 'size' bytes into a buffer of size 'size + 0xc8' at offset 0xc8. The copy fits exactly in both builds, so there is no undersized allocation and no reachable overflow. The secondary DsmpBuildDeviceNameLegacyPage0x80 offset-field validation is the same predicate re-expressed with different instructions and accepts the identical value range. An independent comparison of the external-data-parsing functions found no added or tightened bounds on attacker-influenced data. Final verdict: no security-relevant change (toolchain rebuild)."
+}

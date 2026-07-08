@@ -1,0 +1,152 @@
+{
+  "binaries": {
+    "title": "http.sys - Feature-gated HTTP header-count limit (CWE-400) and 16-bit buffer-growth integer-overflow guard (CWE-190)",
+    "id_unpatched": "http_unpatched.sys",
+    "id_patched": "http_patched.sys",
+    "overall_similarity": 0.9915,
+    "matched": 3587,
+    "changed": 4,
+    "identical": 3583,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UlParseRequestHeaderPairs (unpatched 0x1C000F440 / patched 0x1C000FAA0)",
+      "similarity": 0.753,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "NEW: Feature/KIR-gated header-pair count gate at 0x1C000FB13-0x1C000FB71. When the gate byte UxKirMaxHeadersCountLimit is non-zero, it reads MaxHeadersCount from the server config at *(*(rbx+0x3f8)+0x1124), computes MaxHeadersCount+4, and compares it against the header-pair count (*(rdx+8), i.e. arg2[1]).",
+        "NEW: When the header-pair count exceeds MaxHeadersCount+4, the request is rejected: error code 0x29 (r14d), status field 0xC0000040 (var_C0), status output byte set to 0, then jmp to error cleanup at 0x1C00104C3. A WPP software-trace message (id 0x5E) is emitted via WPP_SF_qLd.",
+        "The gate is initialized from WIL feature-staging (Feature_4071067963) in UxStartEnvironmentModule; when it is 0 the driver takes the original path with no count limit.",
+        "The unpatched build has no header-count limit: total request bytes (MaxRequestBytes) and per-field length (MaxFieldLength) are the only pre-existing bounds.",
+        "CORRECTION vs. naive reading: the 'cmp [rdi], ecx / jbe 0x1c001024a' at 0x1C000FBAF is the loop-termination guard on the header-pair count and is present in BOTH builds (unpatched: cmp [r12+8], ebx / jbe 0x1C000F6E6); it is not an added check.",
+        "CORRECTION: the host and cookie occurrence-counter saturation (cmp X, 0xFFFFFFFF / jnb / inc) is present in BOTH builds (unpatched var_A0/var_A4 at 0x1C0029F65/0x1C0029FAF); the patch only reallocates the registers/slots (host r12d, cookie var_B0). This is not a new integer-overflow guard."
+      ],
+      "security_relevant": true,
+      "security_notes": "Finding #1. UlParseRequestHeaderPairs iterates an already-tokenized array of header pairs (count at *(rdx+8)); for each pair it performs whitespace classification via HttpChars, a name hash, and a switch/strncmp against well-known header-name hashes (0xD2571FDB, 0x22AA28CC, 0x8364ED5D, 0x8E947973, 0x253F9D6E, 0x358E428A, 0x34291785, ...). The unpatched build places no cap on the number of header pairs; the count is bounded upstream only by MaxRequestBytes (min 0x100, default 0x4000 = 16 KB, max 0x1000000 = 16 MB). An attacker can fill the byte budget with minimal headers, forcing O(count) per-request kernel work; pipelined/concurrent requests raise aggregate kernel-CPU cost. The patch adds a gated MaxHeadersCount limit (default max(MaxRequestBytes/512, 200), range 50-65535) rejecting requests whose header-pair count exceeds MaxHeadersCount+4. IMPACT: remote, pre-authentication availability (uncontrolled resource consumption) bounded by MaxRequestBytes. CWE-400. Severity Medium. No memory-corruption primitive is demonstrated for this finding. The fix is feature-gated (staged rollout with the old path retained when the gate is off)."
+    },
+    {
+      "name": "UlpParseNextRequest (0x1C0006C30, both builds)",
+      "similarity": 0.9747,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "NEW: Feature/KIR-gated 16-bit integer-overflow guard on the request-buffer array growth path. At 0x1C0006FE8, when UxKirRefBufferOverflowCheck is set, the unchecked capacity increase is replaced with a call to the new helper RtlUShortAdd (0x1C001FBB8), which computes capacity+5 with a 16-bit overflow check and returns STATUS_INTEGER_OVERFLOW (0xC0000095) on wrap; the caller bails (js 0x1C0007127) instead of reallocating, and stores the checked new capacity.",
+        "Unpatched grows the 16-bit capacity counter unchecked: 'add word ptr [rsi+0x640], 5' at 0x1C000704E, which wraps silently at 0xFFFF.",
+        "Array layout on the connection object: buffer pointer at conn+0x648, 16-bit allocated capacity at conn+0x640, 16-bit used count at conn+0x642, 8-byte entries, pool tag 'UlRR' (0x52526C55), ExAllocatePool3.",
+        "The gate is initialized from WIL feature-staging (Feature_1643097402) in UxStartEnvironmentModule; when it is 0 the driver retains the old unchecked path.",
+        "Remaining delta in this function is WPP trace-message-ID renumbering (e.g. 101->102) and stack-frame reshuffle, which are non-behavioral."
+      ],
+      "security_relevant": true,
+      "security_notes": "Finding #2. The 16-bit capacity counter at conn+0x640 is grown by 5 per reallocation with an unchecked add in the unpatched build, so it can wrap at 0xFFFF; after a wrap the recorded capacity no longer reflects the real allocation and subsequent index writes ('mov [rax+rcx*8], r15') could fall outside the array. The patch guards the growth with RtlUShortAdd (returns STATUS_INTEGER_OVERFLOW on 16-bit wrap) and bails. Reaching the wrap requires on the order of 0xFFFF/5 ~= 13107 growth events on a single connection, so this is a hard-to-reach, feature-gated defense-in-depth change. CWE-190 (integer overflow) potentially reaching a heap out-of-bounds write (CWE-787). Severity Low. No working corruption chain is demonstrated by the diff. NOTE: this function was previously mischaracterized as cosmetic; it is a genuine (if hard-to-reach) security-relevant change."
+    },
+    {
+      "name": "UxReadHttp11ParserSettings (unpatched 0x1C0127168 / patched 0x1C0127178)",
+      "similarity": 0.9165,
+      "change_type": "fix_supporting",
+      "key_changes": [
+        "NEW: gated read of the MaxHeadersCount config value via UxReadBoundedULongSetting(regKey, L\"MaxHeadersCount\", default=max(MaxRequestBytes>>9, 0xC8), min=0x32, max=0xFFFF, type=3, cfg+0x1124). The read is gated by UxKirMaxHeadersCountLimit.",
+        "MaxRequestBytes read unchanged (min 0x100, default 0x4000, max 0x1000000).",
+        "MaxFieldLength moved from cfg+0x1124 (unpatched) to cfg+0x1128 (patched) to make room for MaxHeadersCount at cfg+0x1124; this is the source of the struct-offset churn seen elsewhere."
+      ],
+      "security_relevant": true,
+      "security_notes": "Configuration counterpart to Finding #1. Computes the default MaxHeadersCount as max(MaxRequestBytes/512, 200) with a configurable range [50, 65535] via the registry value 'MaxHeadersCount', stored at cfg+0x1124. Gated by the same UxKirMaxHeadersCountLimit feature byte as the enforcement."
+    },
+    {
+      "name": "UxStartEnvironmentModule (0x1C01767B0, both builds)",
+      "similarity": 0.9284,
+      "change_type": "fix_supporting",
+      "key_changes": [
+        "NEW: initializes UxKirMaxHeadersCountLimit from Feature_4071067963__private_IsEnabledDeviceUsage (setnz at 0x1C01768AA) - the gate for Finding #1.",
+        "NEW: initializes UxKirRefBufferOverflowCheck from Feature_1643097402__private_IsEnabledDeviceUsage (setnz at 0x1C0176891) - the gate for Finding #2.",
+        "Both gate bytes are new in the patched build; the unpatched build defines neither."
+      ],
+      "security_relevant": true,
+      "security_notes": "WIL feature-staging plumbing that drives the two feature/KIR gates for Findings #1 and #2. Previously mischaracterized as cosmetic; it is the feature-detection wiring for the two fixes."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": ["RtlUShortAdd (0x1C001FBB8)", "Feature_4071067963__private_IsEnabledDeviceUsage", "Feature_4071067963__private_IsEnabledFallback", "Feature_1643097402__private_IsEnabledDeviceUsage", "Feature_1643097402__private_IsEnabledFallback"]
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "UlParseRequestHeaderPairs (unpatched 0x1C000F440 / patched 0x1C000FAA0)",
+      "entry_point": "Remote HTTP request to any http.sys-backed service (IIS, WinRM HTTP, HTTP Server API consumers)",
+      "call_chain": ["Network TCP receive (port 80/443/5985/etc.)", "UlHttpReceiveHeadersEvent (0x1C0006050, calls the parser at 0x1C000634A)", "UlParseRequestHeaderPairs (header-pair parser)"],
+      "vulnerability_class": "Uncontrolled Resource Consumption (CWE-400)",
+      "description": "UlParseRequestHeaderPairs iterates an already-tokenized array of header pairs (count at *(rdx+8)) and performs whitespace classification, a name hash, and a switch/strncmp against known header-name hashes for each pair. The unpatched build places no limit on the number of header pairs; the count is bounded upstream only by MaxRequestBytes (min 0x100, default 0x4000 = 16 KB, max 0x1000000 = 16 MB). An attacker can fill the byte budget with minimal headers to force O(count) per-request kernel work. The patch adds a feature/KIR-gated MaxHeadersCount limit (default max(MaxRequestBytes/512, 200), range 50-65535, at cfg+0x1124): when the header-pair count exceeds MaxHeadersCount+4 the request is rejected (error 0x29, status 0xC0000040) and a WPP trace message (id 0x5E) is emitted.",
+      "trigger_conditions": "1. Open a TCP connection to any http.sys-backed port. 2. Send a valid request line and Host header, then a large number of minimal headers (Xi: a\\r\\n) within MaxRequestBytes. 3. No authentication required. 4. On the unpatched driver the loop processes every header pair. 5. On a patched driver WITH the gate enabled (UxKirMaxHeadersCountLimit != 0), requests exceeding MaxHeadersCount+4 are rejected. Note: the fix is gated by WIL feature-staging (Feature_4071067963), so its field state depends on rollout.",
+      "primitive": "Remote, pre-authentication kernel-CPU consumption bounded by MaxRequestBytes. Availability impact only; the diff shows no memory-corruption primitive for this finding.",
+      "evidence": "Patched adds at 0x1C000FB13-0x1C000FB71: if (UxKirMaxHeadersCountLimit != 0) { cfg = *(rbx+0x3f8); if ((uint32_t)(*(rdx+8)) > *(uint32_t*)(cfg+0x1124) + 4) { WPP_SF_qLd(0x5E, ...); error=0x29; status_field=0xC0000040; *status=0; goto 0x1C00104C3; } }. Unpatched reaches its header loop directly (0x1C000F4D0 cmp [r12+8], ebx / jbe 0x1C000F6E6) with no gate byte, server-config read, or MaxHeadersCount comparison.",
+      "assembly": "Patched gate (0x1C000FB13):\n0x1C000FB13 cmp cs:UxKirMaxHeadersCountLimit, r12b   ; r12b=0\n0x1C000FB1D jz 0x1C000FB76                            ; gate off -> old path\n0x1C000FB1F mov rax, [rbx+0x3f8]                      ; server config\n0x1C000FB26 mov r9d, [rdi]                            ; header-pair count (*(rdx+8))\n0x1C000FB29 mov edx, [rax+0x1124]                     ; MaxHeadersCount (new field)\n0x1C000FB2F lea eax, [rdx+4]                           ; limit+4\n0x1C000FB32 cmp r9d, eax\n0x1C000FB35 jbe 0x1C000FB7A                            ; within limit -> continue\n0x1C000FB55 call WPP_SF_qLd                            ; WPP trace msg 0x5E\n0x1C000FB5A mov r14d, 0x29                             ; http.sys internal error\n0x1C000FB60 mov [rbp+var_C0], 0xC0000040              ; stored NTSTATUS value\n0x1C000FB6E mov [r15], r12b                            ; *status=0\n0x1C000FB71 jmp 0x1C00104C3                            ; error cleanup",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlParseRequestHeaderPairs",
+            "address": "0x1C000F440 (unpatched) / 0x1C000FAA0 (patched)",
+            "why": "Header-pair parser. At entry: rcx=request object ([rcx+0x18]=connection state), rdx=header-pair array descriptor (*(rdx+8)=header-pair count), r8=flags, r9=status output byte. Watch *(rdx+8) at entry - this is the value the patched gate compares against MaxHeadersCount+4."
+          },
+          {
+            "symbol": "http!UlHttpReceiveHeadersEvent",
+            "address": "0x1C0006050",
+            "why": "Receive-event handler on the network receive path; calls UlParseRequestHeaderPairs at 0x1C000634A."
+          }
+        ],
+        "watch": [
+          "*(rdx+8) - header-pair count at parser entry",
+          "conn_state+0x3F8 - server config pointer; +0x1124 is MaxHeadersCount in patched (MaxFieldLength in unpatched)",
+          "UxKirMaxHeadersCountLimit - feature/KIR gate byte (patched only); must be non-zero for enforcement",
+          "Kernel-CPU time during header parsing on the unpatched build"
+        ],
+        "key_offsets": [
+          "req+0x18: connection-state pointer",
+          "conn_state+0x3F8: server-config pointer",
+          "cfg+0x1124: MaxHeadersCount (patched); MaxFieldLength (unpatched, moves to cfg+0x1128 in patched)",
+          "0x1C000634A: call site in UlHttpReceiveHeadersEvent that invokes the parser",
+          "UxKirMaxHeadersCountLimit / UxKirRefBufferOverflowCheck: feature/KIR gate bytes (patched only)"
+        ],
+        "trigger_setup": "Send an HTTP request with a large number of minimal headers (bounded by MaxRequestBytes) to any http.sys endpoint:\n\nimport socket\ns = socket.socket(); s.connect(('target', 80))\np = b'GET / HTTP/1.1\\r\\nHost: target\\r\\n'\nfor i in range(4000): p += b'X%d: a\\r\\n' % i\np += b'\\r\\n'\ns.sendall(p); s.recv(4096)\n\nOn the unpatched driver the loop processes every header pair in kernel context. On a patched driver with the gate enabled, requests exceeding MaxHeadersCount+4 are rejected.",
+        "expected_observation": "Unpatched: O(count) per-request whitespace/hash/strncmp work in kernel context; pipelined/concurrent requests raise aggregate kernel-CPU cost. Patched (gate enabled): request rejected once header-pair count exceeds MaxHeadersCount+4; a WPP trace message (id 0x5E) is emitted via WPP_SF_qLd.",
+        "notes": "Default MaxHeadersCount = max(MaxRequestBytes/512, 200); with default MaxRequestBytes 0x4000 (16 KB) this yields a cap of 200 (+4). Configurable via the 'MaxHeadersCount' registry value in the range [50, 65535]. The enforcement and the config read are both gated by UxKirMaxHeadersCountLimit, which is set from WIL feature-staging (Feature_4071067963) in UxStartEnvironmentModule. Pre-authentication - only the ability to open a TCP connection to an HTTP endpoint is required."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "UlpParseNextRequest (0x1C0006C30)",
+      "entry_point": "Request-buffer accumulation path on an established http.sys connection",
+      "call_chain": ["Network receive / request parsing", "UlpParseNextRequest (grows the per-connection UlRR buffer array)"],
+      "vulnerability_class": "Integer Overflow (CWE-190), potentially reaching heap out-of-bounds write (CWE-787)",
+      "description": "UlpParseNextRequest maintains a growable per-connection array of 8-byte pointers (buffer at conn+0x648, 16-bit capacity at conn+0x640, 16-bit used count at conn+0x642, pool tag 'UlRR'). When full it reallocates and increases the capacity by 5. In the unpatched build this is an unchecked 16-bit add (add word ptr [rsi+0x640], 5) that wraps silently at 0xFFFF; after a wrap the recorded capacity understates the real allocation and subsequent index writes could fall outside the array. The patch replaces the unchecked increment (when UxKirRefBufferOverflowCheck is set) with a call to the new helper RtlUShortAdd (0x1C001FBB8), which returns STATUS_INTEGER_OVERFLOW (0xC0000095) on 16-bit wrap; the caller bails instead of reallocating.",
+      "trigger_conditions": "Reaching the wrap requires driving the capacity counter toward 0xFFFF - on the order of 0xFFFF/5 ~= 13107 growth events (that many entries accumulated in the UlRR array) on a single connection. High-effort and feature-gated (Feature_1643097402).",
+      "primitive": "A 16-bit capacity wrap could cause the recorded capacity to understate the real allocation, potentially leading to an out-of-bounds index write into the UlRR array. The diff demonstrates only the arithmetic and its guard, not a working corruption chain.",
+      "evidence": "Patched (0x1C0006FE8): cmp cs:UxKirRefBufferOverflowCheck, r12b / jz 0x1C0007087 (old path) / lea r8,[pusResult] / call RtlUShortAdd / test eax,eax / js 0x1C0007127 (bail on STATUS_INTEGER_OVERFLOW) / ... ExAllocatePool3 / memmove / mov [rdi+0x640], ax (checked capacity). RtlUShortAdd (0x1C001FBB8): lea eax,[rcx+5] / cmp ax,cx / jb overflow / (no overflow) movzx edx,ax / (overflow) mov edx,0xFFFF / sbb eax,eax / mov [r8],dx / and eax,0xC0000095 / ret. Unpatched (0x1C000704E): add word ptr [rsi+0x640], 5 (unchecked).",
+      "assembly": "See evidence field. RtlUShortAdd is new in the patched build (absent in unpatched).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "http!UlpParseNextRequest",
+            "address": "0x1C0006C30",
+            "why": "Break at the buffer-growth region near 0x1C0006FD4-0x1C0007085 to observe the capacity counter (conn+0x640) growth. In the patched build with UxKirRefBufferOverflowCheck set, the growth goes through RtlUShortAdd."
+          }
+        ],
+        "watch": [
+          "conn+0x640 - 16-bit allocated capacity of the UlRR array",
+          "conn+0x642 - 16-bit used count",
+          "conn+0x648 - array buffer pointer",
+          "UxKirRefBufferOverflowCheck - feature/KIR gate byte (patched only)"
+        ],
+        "key_offsets": [
+          "conn+0x640: 16-bit capacity; unpatched grows it with unchecked 'add ..., 5' at 0x1C000704E",
+          "0x1C0006FE8: patched gate check for UxKirRefBufferOverflowCheck",
+          "0x1C001FBB8: RtlUShortAdd (new overflow-checked add-5 helper)"
+        ],
+        "trigger_setup": "Accumulate a very large number of entries in the per-connection UlRR array on one connection (~13107 growth events) to approach the 16-bit capacity wrap. This is a high-effort path and the guard is feature-gated.",
+        "expected_observation": "Unpatched: capacity counter can wrap at 0xFFFF via the unchecked add. Patched (gate enabled): RtlUShortAdd returns STATUS_INTEGER_OVERFLOW at the wrap boundary and the reallocation is not performed.",
+        "notes": "This finding was previously mislabeled cosmetic. It is a genuine but hard-to-reach, feature-gated integer-overflow hardening. No working corruption chain is demonstrated by the diff."
+      }
+    }
+  ],
+  "summary": "The patch delivers two feature-gated hardening changes to the Windows kernel HTTP driver (http.sys). (1) UlParseRequestHeaderPairs gains a MaxHeadersCount limit (default max(MaxRequestBytes/512, 200), range 50-65535, at cfg+0x1124): requests whose header-pair count exceeds MaxHeadersCount+4 are rejected. The unpatched build had no header-count limit, bounding header count only via MaxRequestBytes (default 16 KB) - a remote, pre-auth uncontrolled-resource-consumption issue (CWE-400, Medium). (2) UlpParseNextRequest gains an RtlUShortAdd 16-bit overflow guard on a buffer-growth capacity counter (conn+0x640) that the unpatched build incremented unchecked (CWE-190, Low; hard to reach). Both fixes are gated behind WIL feature-staging flags surfaced as KIR bytes (UxKirMaxHeadersCountLimit, UxKirRefBufferOverflowCheck), initialized in UxStartEnvironmentModule, with the original code paths retained when a gate is off. Corrections vs. an earlier reading: the gate is UxKirMaxHeadersCountLimit (not a generic data flag); the host/cookie counter saturation and the loop-termination guard are present in BOTH builds (not added by the patch); the header count is an input to the parser, not a per-loop-incremented value; no DoS-to-RCE, pool-exhaustion bugcheck, or memory-corruption chain is demonstrated by the diff."
+}

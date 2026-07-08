@@ -1,0 +1,226 @@
+{
+  "binaries": {
+    "title": "dxgkrnl.sys - WIL Feature-Staging Migration of OPM (Output Protection Manager) Handles from Raw Kernel Pointers to Opaque IDs",
+    "id_unpatched": "dxgkrnl_unpatched.sys",
+    "id_patched": "dxgkrnl_patched.sys",
+    "overall_similarity": 0.9913,
+    "matched": 6879,
+    "changed": 9,
+    "identical": 6870,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VmBusOpmRequest (sub_1C0245C70)",
+      "similarity": 0.4919,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed a WIL feature-staging check (Feature_15692090__private_IsEnabledDeviceUsage, sub_1c0026850) that gated two VmBus command handling paths; one path calling CastToVmBusCommand<DXGKVMB_COMMAND_VSYNCREMOTINGCTRL> (sub_1c0040714) twice (once for validation, once for the operation) and the other calling sub_1c00405d4 once (no exact-header symbol resolved at 0x1c00405d4).",
+        "The unpatched version first checks Feature_15692090__private_IsEnabledDeviceUsage() and the cast result to decide whether to proceed; if the flag is off, it skips the operation entirely returning 0.",
+        "Patched version drops the flag branch and proceeds with the operation if the result is non-null."
+      ],
+      "security_relevant": false,
+      "security_notes": "VmBus OPM request dispatch. The change is a WIL feature-staging (flighting) flag removal that commits to a single VmBus command handling path. No memory-safety consequence observed.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1C02ABA68)",
+      "similarity": 0.7564,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed a dual code path gated by WIL feature-staging flag Feature_342658361__private_IsEnabledDeviceUsage (sub_1c0027f20).",
+        "Flag ON (new, kept by the patch): takes an EXCLUSIVE handle-table lock via DXGHANDLETABLELOCKEXCLUSIVE::DXGHANDLETABLELOCKEXCLUSIVE (sub_1c0002630) / DXGAUTOPUSHLOCK::~DXGAUTOPUSHLOCK (sub_1c0004488), and while holding the lock sets the 0x2000 'in-destruction' bit on the handle-table entry before releasing.",
+        "Flag OFF (legacy, removed by the patch): takes only a SHARED push lock via DXGPUSHLOCK::AcquireShared (sub_1c0007018) + ExReleasePushLockSharedEx / KeLeaveCriticalRegion, and does NOT set the 0x2000 marking.",
+        "The patched version always uses the exclusive-lock + 0x2000-marking path."
+      ],
+      "security_relevant": true,
+      "security_notes": "The legacy path (flag OFF) protects the handle-table lookup of the DXGSYNCOBJECT with only a SHARED push lock and does not set the 0x2000 'being destroyed' marker before releasing the lock. Because the DXGGLOBAL::DestroySyncObject call happens after the lock is released, two threads running the shared-lock path concurrently can both fetch the same object and both call DestroySyncObject on it, producing a double-free / use-after-free. The new path (flag ON, and the only path in the patched build) takes an EXCLUSIVE lock and sets the 0x2000 in-destruction bit while holding it, so a second thread sees (entry & 0x2000) != 0 and fetches nullptr. NOTE: this corrects the prior claim that the flag-ON path used the shared push lock and the flag-OFF path was lock-free; the mapping is reversed (ON = exclusive, OFF = shared).",
+      "assembly_diff": "UNPATCHED key section:\ncall    Feature_342658361__private_IsEnabledDeviceUsage  ; sub_1c0027f20\ntest    eax, eax\nje      <legacy shared-lock path>\n; NEW path (flag ON) - EXCLUSIVE handle-table lock:\nlea     rcx, [rsp+...]\ncall    0x1c0002630       ; DXGHANDLETABLELOCKEXCLUSIVE::ctor (exclusive)\n...lookup; on match set entry |= 0x2000...\ncall    0x1c0004488       ; DXGAUTOPUSHLOCK::dtor (release)\n; LEGACY path (flag OFF) - SHARED push lock, no 0x2000 marking:\ncall    0x1c0007018       ; DXGPUSHLOCK::AcquireShared\n...same lookup, no marking...\ncall    qword [rel ExReleasePushLockSharedEx]\ncall    qword [rel KeLeaveCriticalRegion]\n\nPATCHED (always exclusive path):\ncall    0x1c0002630       ; DXGHANDLETABLELOCKEXCLUSIVE::ctor\n...lookup; set entry |= 0x2000...\ncall    0x1c0004488       ; release"
+    },
+    {
+      "name": "DXGSWAPCHAIN::DestroySurfacesResourcesGlobal (sub_1C02AB988)",
+      "similarity": 0.7648,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed WIL feature-staging checks (Feature_342658361__private_IsEnabledDeviceUsage, sub_1c0027f20) that gated whether DXGSYNCOBJECTLOCK::AcquireExclusive (sub_1c00186fc) was taken and whether the 4th argument to DXGGLOBAL::DestroySyncObject (sub_1c00ddb58) was 0 or 1.",
+        "Patched version always calls DXGSYNCOBJECTLOCK::AcquireExclusive and always passes arg4 = 1 to DestroySyncObject.",
+        "The arg4 value (0 vs 1) to DestroySyncObject controls teardown/assertion semantics inside DestroySyncObject."
+      ],
+      "security_relevant": true,
+      "security_notes": "The legacy path (flag OFF) skips the exclusive DXGSYNCOBJECTLOCK before destroying the sync object and passes arg4=0. The patched build always acquires the exclusive sync-object lock and passes arg4=1, matching the locking hardening in DestroySurfacesResourcesLocal. (The prior report referenced the destroy function as sub_1c00dcb58; the actual destroy routine is DXGGLOBAL::DestroySyncObject at 0x1c00ddb58.)",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ADAPTER_DISPLAY::OpmTranslateHandle (sub_1C0174F34)",
+      "similarity": 0.7748,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed a dual lookup path gated by WIL feature-staging flag Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8).",
+        "Unpatched: flag ON uses ID-based lookup ADAPTER_DISPLAY::FindOpmAdapterMapping (result[3]==a2, the +0x18 ID field); flag OFF uses ADAPTER_DISPLAY::OpmValidateAdapterHandle (sub_1c0175044), which walks the list and returns 1 only if the raw node pointer a2 is an actual member.",
+        "Patched version always uses the ID-based FindOpmAdapterMapping (sub_1c00d6190, the same function relocated from 0x1c00d7190).",
+        "After a successful lookup/validation the function returns *(node + 0x10) via *a3."
+      ],
+      "security_relevant": true,
+      "security_notes": "In the legacy (flag OFF) path the OPM handle IS the raw kernel address of the mapping node; OpmValidateAdapterHandle re-validates it by walking the adapter's OPM list and requires an exact pointer match (i == a2) before use. This is NOT a type confusion or arbitrary read: an attacker-supplied value that is not a live member returns 0 (error), and a value that is a live member is the legitimate node. The real weakness of the legacy scheme is that a raw kernel pointer is used as (and handed back as) the OPM handle, which discloses a kernel address to the caller and weakens KASLR. The patched build migrates to opaque 64-bit IDs (FindOpmAdapterMapping), removing the kernel-pointer-as-handle exposure.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ADAPTER_DISPLAY::OpmTranslateAndDestroyHandle (sub_1C0174AA8)",
+      "similarity": 0.791,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Same dual-path removal as OpmTranslateHandle: removed WIL feature-staging flag Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8) gating between ID-based lookup (FindOpmAdapterMapping) when ON and pointer-membership validation (OpmValidateAdapterHandle, sub_1c0175044) when OFF.",
+        "After lookup/validation this function unlinks the node from the doubly-linked list and frees it with operator delete (sub_1c0002824).",
+        "The unlink includes a __fastfail(3) consistency check verifying flink->blink == node and blink->flink == node before writing the two neighbor pointers.",
+        "Patched version always uses ID-based lookup (sub_1c00d6190) and takes a 64-bit ID (a2 is now __int64, not a pointer)."
+      ],
+      "security_relevant": true,
+      "security_notes": "The unlink writes (*blink = flink; *(flink+8) = blink) but only after either (a) FindOpmAdapterMapping returned a real node by ID, or (b) OpmValidateAdapterHandle confirmed the pointer is a live list member, AND a __fastfail integrity check on the neighbor links passes. There is therefore NO write-what-where / arbitrary-write primitive: the node being unlinked is always a genuine, consistency-checked member of this adapter's list. The security-relevant aspect is the same as OpmTranslateHandle: the legacy path uses raw kernel pointers as OPM handles (kernel-address disclosure), and the patch migrates to opaque IDs. (This corrects the prior claim of a pointer-vs-ID type confusion yielding a controlled kernel write.)",
+      "assembly_diff": ""
+    },
+    {
+      "name": "ADAPTER_DISPLAY::OpmCreateHandle (sub_1C0175174)",
+      "similarity": 0.8674,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Removed a dual path gated by WIL feature-staging flag Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8).",
+        "Flag OFF (legacy): inserts the new mapping node at the list head (this+0x130) WITHOUT generating an ID, and returns the raw node pointer to the caller (*a3 = node).",
+        "Flag ON (new / patched): generates a unique non-zero 64-bit ID via a loop incrementing *(this+0x140), stores it at node+0x18, inserts the node, and returns the ID to the caller (*a3 = id)."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the allocation counterpart to the translate/destroy functions. In the legacy path the OPM handle value returned to the caller is the raw kernel pointer of the freshly allocated _OPM_HANDLE_MAPPING node (kernel-address disclosure to the OPM client). The new path returns an opaque, uniquely generated 64-bit ID and stamps it into the node's +0x18 field so later ID-based lookups succeed. The patch removes the pointer-returning legacy path, eliminating the kernel-pointer-as-handle exposure.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXGGLOBAL::DestroySyncObject (sub_1C00DDB58)",
+      "similarity": 0.9088,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removed a WIL feature-staging flag (Feature_342658361__private_IsEnabledDeviceUsage, sub_1c0027f20) that gated internal assertion logic. The unpatched version has two assertion paths with different WdAssertion codes (0xac7, 0xacb, 0xad0 vs patched 0xac6, 0xaca).",
+        "The core destruction logic is otherwise identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "Assertion/diagnostic code shift tied to the same feature-staging removal. No behavioral change to the destruction path itself.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "DXG_HOST_VIRTUALGPU_VMBUS::VmBusGetRegistryKeys (sub_1C02430A0)",
+      "similarity": 0.9775,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Most changes are call-target address shifts due to binary layout differences (e.g., sub_1c0040854 -> sub_1c0040714, sub_1c003f26c -> sub_1c003f12c).",
+        "One logic change: 'if (!<feature-flag>() || rax_5)' changed to 'if (rax_5)' - removing a WIL feature-staging check.",
+        "Registry key enumeration logic is otherwise identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VIDPN_MGR::BuildSetTimingsPathInfoFromClientVidPn (sub_1C0142590)",
+      "similarity": 0.9846,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Predominantly call-target address shifts due to binary layout differences.",
+        "Large function (1196 instructions, 211 basic blocks) with minimal structural changes - mainly call target addresses shifted."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "ADAPTER_DISPLAY::OpmCreateHandle (sub_1C0175174) / ADAPTER_DISPLAY::OpmTranslateHandle (sub_1C0174F34) / ADAPTER_DISPLAY::OpmTranslateAndDestroyHandle (sub_1C0174AA8)",
+      "entry_point": "OPM (Output Protection Manager) IOCTL dispatch: DpiPdoDispatchInternalIoctl (sub_1c016a270) -> DpiPdoHandleOpmIoctls (sub_1c0174bd4) -> DxgkOpmTranslateAndDestroyHandle (sub_1c0174a00) / DxgkOpmTranslateHandle (sub_1c0174e8c) / DxgkOpmCreateHandle -> ADAPTER_DISPLAY::Opm* handlers",
+      "call_chain": ["OPM IOCTL (D3DKMT / OPM protected-output APIs)", "DpiPdoDispatchInternalIoctl (sub_1c016a270)", "DpiPdoHandleOpmIoctls (sub_1c0174bd4)", "DxgkOpmTranslateAndDestroyHandle (sub_1c0174a00) / DxgkOpmTranslateHandle (sub_1c0174e8c)", "ADAPTER_DISPLAY::OpmTranslateAndDestroyHandle (sub_1c0174aa8) / ADAPTER_DISPLAY::OpmTranslateHandle (sub_1c0174f34)"],
+      "vulnerability_class": "Information Exposure (kernel address disclosure) via raw-kernel-pointer-as-handle; hardened to opaque IDs. NOT type confusion / arbitrary write.",
+      "description": "The unpatched dxgkrnl.sys carries a WIL feature-staging (flighting) flag Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8) that selects between two OPM handle schemes in ADAPTER_DISPLAY. In the legacy scheme (flag OFF), ADAPTER_DISPLAY::OpmCreateHandle returns the raw kernel address of the newly allocated _OPM_HANDLE_MAPPING node as the OPM handle handed back to the caller, and ADAPTER_DISPLAY::OpmTranslateHandle / OpmTranslateAndDestroyHandle re-validate a supplied handle by walking the adapter's OPM list with ADAPTER_DISPLAY::OpmValidateAdapterHandle (sub_1c0175044), which returns 1 only when the raw pointer exactly matches a live list member (i == a2). In the new scheme (flag ON, and the only scheme in the patched build), the handle is an opaque uniquely generated 64-bit ID stored at node+0x18, and lookups use ADAPTER_DISPLAY::FindOpmAdapterMapping (sub_1c00d7190 unpatched / sub_1c00d6190 patched; the SAME function, relocated) comparing result[3] == a2. The patch removes the legacy pointer-handle path. The security benefit is eliminating disclosure of a kernel heap address to the OPM client (a KASLR-weakening info leak) and the fragile pointer-as-handle pattern. It is NOT a memory-corruption bug: the destroy path validates list membership and includes a __fastfail(3) neighbor-link consistency check before unlinking, so a mismatched or attacker-chosen non-member value takes the error path and never triggers a wrong-object write.",
+      "trigger_conditions": "1. The WIL feature-staging flag Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8, reading the WIL feature global) must be in the OFF state, selecting the legacy pointer-handle scheme.\n2. Issue OPM IOCTLs to the DirectX graphics kernel that reach OpmCreateHandle (to obtain a handle) and OpmTranslateHandle / OpmTranslateAndDestroyHandle (to translate/destroy).\n3. Observe that the handle value returned by OpmCreateHandle is a kernel pointer (0xFFFF...) rather than a small opaque counter, disclosing a kernel address.",
+      "primitive": "Kernel-address information disclosure: the OPM handle returned to the caller in the legacy path is the kernel address of the _OPM_HANDLE_MAPPING node, usable to defeat KASLR for the OPM handle pool. No write-what-where or arbitrary-read primitive exists: OpmValidateAdapterHandle requires an exact list-member pointer match and the unlink is guarded by a __fastfail consistency check, so only genuine, validated nodes are ever translated or unlinked.",
+      "evidence": "UNPATCHED ADAPTER_DISPLAY::OpmValidateAdapterHandle (sub_1c0175044) - list-membership validation (returns bool):\n  for ( i = *(this+38); i != this+38; i = *i )\n      if ( i == a2 )          // exact pointer match against a live list node\n          return 1;\n  return 0;                    // not a member -> caller takes error path\n\nUNPATCHED ADAPTER_DISPLAY::FindOpmAdapterMapping (sub_1c00d7190) == PATCHED (sub_1c00d6190) - ID lookup (identical logic, relocated):\n  for ( result = *(this+38); result != this+304; result = *result )\n      if ( result[3] == a2 )   // +0x18 ID field\n          return result;\n  return nullptr;\n\nUNPATCHED ADAPTER_DISPLAY::OpmCreateHandle (sub_1c0175174) - legacy path returns raw node pointer:\n  if ( Feature_2161340729__private_IsEnabledDeviceUsage() == 0 ) {  // legacy\n      ...insert node at this+0x130...\n      *a3 = node;               // OPM handle = raw kernel pointer (info leak)\n  } else {                      // new: opaque ID\n      do { id = (*(this+0x140))++; } while (id==0 || FindOpmAdapterMapping(this,id));\n      node[3] = id; ...insert...; *a3 = id;\n  }\n\nUNPATCHED ADAPTER_DISPLAY::OpmTranslateAndDestroyHandle (sub_1c0174aa8) - validated unlink (no arbitrary write):\n  if ( Feature_2161340729...() )   node = FindOpmAdapterMapping(this, a2);   // ID lookup\n  else if ( !OpmValidateAdapterHandle(this, a2) ) return error;              // pointer-membership check\n  flink = *node; *a3 = node[2];\n  if ( *(flink+8) != node || *(blink = node[1]) != node ) __fastfail(3);      // integrity check\n  *blink = flink; *(flink+8) = blink; operator delete(node);",
+      "assembly": "; UNPATCHED ADAPTER_DISPLAY::OpmValidateAdapterHandle (sub_1c0175044) - pointer-membership validation, returns bool\n; rbx = this, rdi = candidate handle (raw pointer in legacy scheme)\n0x1c017509a: lea rcx, [rbx+0x130]     ; rcx = &list head (this+0x130)\n0x1c01750a1: mov rax, [rcx]           ; rax = first list node\n0x1c01750a4: cmp rax, rcx             ; wrapped back to head? (end of list)\n0x1c01750a7: jz  0x1c01750c1          ; end -> return 0\n0x1c01750a9: cmp rax, rdi             ; exact NODE-POINTER match against a live member\n0x1c01750ac: jnz 0x1c01750bc          ; not this node -> advance\n0x1c01750ae: mov al, 1               ; genuine list node -> return 1\n0x1c01750bc: mov rax, [rax]           ; next node\n0x1c01750bf: jmp 0x1c01750a4\n0x1c01750c1: xor al, al               ; non-member -> return 0\n\n; FindOpmAdapterMapping - ID lookup (same routine in both builds; addresses for PATCHED sub_1c00d6190, unpatched sub_1c00d7190)\n; rbx = this, rdi = candidate ID\n0x1c00d6201: lea rcx, [rbx+0x130]     ; rcx = &list head (this+0x130)\n0x1c00d6208: mov rax, [rcx]           ; rax = first list node\n0x1c00d620b: jmp 0x1c00d6216\n0x1c00d620d: cmp [rax+0x18], rdi      ; +0x18 ID field comparison\n0x1c00d6211: jz  0x1c00d621d          ; match -> return node\n0x1c00d6213: mov rax, [rax]           ; next node\n0x1c00d6216: cmp rax, rcx             ; wrapped back to head? (end of list)\n0x1c00d6219: jnz 0x1c00d620d          ; more nodes -> keep scanning\n0x1c00d621b: xor eax, eax             ; not found -> nullptr",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dxgkrnl_unpatched!?OpmCreateHandle@ADAPTER_DISPLAY@@ (sub_1c0175174)",
+            "address": "0x1c0175174",
+            "why": "In the legacy (flag OFF) path this writes *a3 = raw node pointer. Step to the '*a3 = v11' store and inspect the value handed back to the OPM client; a kernel pointer here confirms the info-disclosure scheme."
+          },
+          {
+            "symbol": "dxgkrnl_unpatched!?OpmValidateAdapterHandle@ADAPTER_DISPLAY@@ (sub_1c0175044)",
+            "address": "0x1c0175044",
+            "why": "The legacy pointer-membership validation (returns bool). When hit, rcx = adapter (this), rdx = candidate handle. Confirm the loop compares rax (list node) to rdx and only returns 1 on an exact member match - i.e., there is no wrong-object match for a non-member value."
+          },
+          {
+            "symbol": "dxgkrnl_unpatched!Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8)",
+            "address": "0x1c00259e8",
+            "why": "WIL feature-staging flag that selects the OPM handle scheme. Return value 0 (eax==0) selects the legacy raw-pointer-handle path. NOTE: in the PATCHED binary address 0x1c00259e8 is a different function (DXGOVERLAYMUTEX constructor) due to address reuse; this breakpoint is meaningful only in the unpatched image."
+          }
+        ],
+        "watch": [
+          "*a3 after OpmCreateHandle legacy path - if it holds a kernel pointer (0xFFFF...), the raw-pointer-handle info-leak scheme is active",
+          "eax after sub_1c00259e8 returns - 0 selects the legacy pointer-handle path",
+          "rdx into OpmValidateAdapterHandle - the candidate handle; a non-member value makes the loop fall through to return 0 (error), NOT a wrong-object match",
+          "node+0x18 (result[3]) - the opaque ID field used by the new/patched FindOpmAdapterMapping lookup"
+        ],
+        "key_offsets": [
+          "0x1c01750a9: 'cmp rax, rdi' in OpmValidateAdapterHandle - exact list-member pointer check against the candidate handle (legacy validation)",
+          "0x1c00d620d (patched) / 0x1c00d720d (unpatched): 'cmp [rax+0x18], rdi' - ID-field comparison in FindOpmAdapterMapping",
+          "node+0x00 = Flink, node+0x08 = Blink, node+0x10 = OPM object returned via *a3, node+0x18 = opaque ID"
+        ],
+        "trigger_setup": "1. Open a handle to the DirectX graphics kernel device and drive the OPM protected-output APIs\n2. Call the OPM create path (DxgkOpmCreateHandle -> OpmCreateHandle) to obtain an OPM handle\n3. With the feature flag OFF, observe the returned handle is the kernel address of the mapping node (KASLR-weakening disclosure)\n4. Use OpmTranslateHandle / OpmTranslateAndDestroyHandle with that handle; the pointer is re-validated by list-membership walk before use",
+        "expected_observation": "In the legacy path, OpmCreateHandle hands back a kernel pointer as the OPM handle; OpmValidateAdapterHandle confirms membership on translate/destroy. Supplying a non-member value simply returns error status 0xC01E050C (no crash, no corruption). No BSOD is expected from this path under normal validation; the only security consequence is kernel-address disclosure.",
+        "notes": "The dual scheme is controlled by WIL feature-staging flags (Feature_<id>__private_IsEnabledDeviceUsage), a staged-rollout mechanism. Struct layout: _OPM_HANDLE_MAPPING +0x00 Flink, +0x08 Blink, +0x10 OPM object (returned to caller), +0x18 opaque ID. FindOpmAdapterMapping is the SAME function in both builds (0x1c00d7190 unpatched, 0x1c00d6190 patched) - a relocation, not a fix. The patch's fix is removing the legacy pointer-handle path so OPM handles are always opaque IDs."
+      }
+    },
+    {
+      "severity": "high",
+      "function": "DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1C02ABA68) / DXGSWAPCHAIN::DestroySurfacesResourcesGlobal (sub_1C02AB988)",
+      "entry_point": "Swapchain surface teardown reached via swapchain destruction paths (DXGSWAPCHAIN::DestroySwapchain* )",
+      "call_chain": ["Swapchain destroy IOCTL", "DXGSWAPCHAIN::DestroySwapchainGlobal / DestroySurfacesResources*", "DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1c02aba68) / DestroySurfacesResourcesGlobal (sub_1c02ab988)", "DXGGLOBAL::DestroySyncObject (sub_1c00ddb58)"],
+      "vulnerability_class": "Race Condition (insufficient lock strength) leading to double-free / Use-After-Free",
+      "description": "The unpatched DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1c02aba68) has two code paths gated by WIL feature-staging flag Feature_342658361__private_IsEnabledDeviceUsage (sub_1c0027f20). The legacy path (flag OFF) protects the handle-table lookup of the swapchain's DXGSYNCOBJECT with only a SHARED push lock (DXGPUSHLOCK::AcquireShared, sub_1c0007018) and does NOT set the 0x2000 'in-destruction' marker on the handle-table entry. Because DXGGLOBAL::DestroySyncObject is invoked after the lock is released, two threads executing the shared-lock path concurrently can both fetch the same DXGSYNCOBJECT and both destroy it, producing a double-free / use-after-free. The new path (flag ON, and the only path in the patched build) takes an EXCLUSIVE handle-table lock (DXGHANDLETABLELOCKEXCLUSIVE, sub_1c0002630 / sub_1c0004488) and sets the 0x2000 bit while holding it, so a concurrent thread sees the marker and fetches nullptr. The sibling function DestroySurfacesResourcesGlobal (sub_1c02ab988) mirrors this: the legacy path skips the exclusive DXGSYNCOBJECTLOCK (sub_1c00186fc) and passes arg4=0 to DestroySyncObject, while the patched path always acquires the exclusive lock and passes arg4=1.",
+      "trigger_conditions": "1. Feature flag Feature_342658361__private_IsEnabledDeviceUsage (sub_1c0027f20) is OFF, selecting the shared-lock path with no 0x2000 marking.\n2. Two concurrent swapchain-destroy operations reach DestroySurfacesResourcesLocal targeting the same swapchain surface / sync-object handle.\n3. The race window is between the shared-locked lookup (which does not mark the entry) and the post-lock DXGGLOBAL::DestroySyncObject call.",
+      "primitive": "Double-free / use-after-free of a DXGSYNCOBJECT: two concurrent shared-lock-path threads both resolve and destroy the same object. The freed pool allocation can be reclaimed with attacker-controlled data before or after the second free, enabling further corruption.",
+      "evidence": "UNPATCHED DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1c02aba68):\n  if ( Feature_342658361__private_IsEnabledDeviceUsage() != 0 ) {   // NEW path (flag ON)\n      DXGHANDLETABLELOCKEXCLUSIVE ctor (exclusive lock);             // sub_1c0002630\n      ...lookup...; if match: entry |= 0x2000;                       // mark in-destruction\n      DXGAUTOPUSHLOCK dtor (release);                                // sub_1c0004488\n  } else {                                                          // LEGACY path (flag OFF)\n      DXGPUSHLOCK::AcquireShared(current+208);                       // sub_1c0007018 - SHARED\n      ...same lookup, NO 0x2000 marking...\n      ExReleasePushLockSharedEx(...); KeLeaveCriticalRegion();\n  }\n  if ( syncobj != nullptr ) DXGGLOBAL::DestroySyncObject(global, syncobj, v7, 0);  // AFTER lock release\n\nPATCHED (always exclusive + marking):\n  DXGHANDLETABLELOCKEXCLUSIVE ctor; ...lookup; entry |= 0x2000...; DXGAUTOPUSHLOCK dtor;\n  if ( syncobj != nullptr ) DXGGLOBAL::DestroySyncObject(global, syncobj, v7, 0);",
+      "assembly": "; UNPATCHED DXGSWAPCHAIN::DestroySurfacesResourcesLocal (sub_1c02aba68)\ncall    Feature_342658361__private_IsEnabledDeviceUsage  ; sub_1c0027f20\ntest    eax, eax\nje      <legacy shared-lock path>\n; NEW path (flag ON): EXCLUSIVE lock + 0x2000 marking\ncall    0x1c0002630       ; DXGHANDLETABLELOCKEXCLUSIVE::ctor\n...or entry, 0x2000...\ncall    0x1c0004488       ; DXGAUTOPUSHLOCK::dtor\njmp     <destroy>\n; LEGACY path (flag OFF): SHARED lock, NO marking\nlea     rcx, [current+0xd0]\ncall    0x1c0007018       ; DXGPUSHLOCK::AcquireShared\n...lookup...\ncall    qword [rel ExReleasePushLockSharedEx]\ncall    qword [rel KeLeaveCriticalRegion]\n<destroy>:\ncall    0x1c00ddb58       ; DXGGLOBAL::DestroySyncObject (after lock released)\n\n; PATCHED (single exclusive path)\ncall    0x1c0002630       ; DXGHANDLETABLELOCKEXCLUSIVE::ctor\n...lookup; or entry,0x2000...\ncall    0x1c0004488       ; DXGAUTOPUSHLOCK::dtor",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dxgkrnl_unpatched!?DestroySurfacesResourcesLocal@DXGSWAPCHAIN@@ (sub_1c02aba68)",
+            "address": "0x1c02aba68",
+            "why": "Break at entry, then step past the sub_1c0027f20 call. eax==0 selects the legacy SHARED-lock path (racy, no 0x2000 marking); eax!=0 selects the EXCLUSIVE-lock path that marks the entry."
+          },
+          {
+            "symbol": "dxgkrnl_unpatched!Feature_342658361__private_IsEnabledDeviceUsage (sub_1c0027f20)",
+            "address": "0x1c0027f20",
+            "why": "WIL feature-staging flag selecting the lock strength. eax==0 => legacy shared lock (double-destroy possible); eax!=0 => exclusive lock + 0x2000 marking."
+          }
+        ],
+        "watch": [
+          "eax after sub_1c0027f20 - 0 selects the shared-lock (racy) path",
+          "handle-table entry dword (the one that receives |= 0x2000) - only the exclusive path sets it; absence of the marker is what allows the double-destroy",
+          "the DXGSYNCOBJECT pointer (v14/v15) fetched from the table and passed to DestroySyncObject",
+          "concurrent second-thread fetch of the same table index"
+        ],
+        "key_offsets": [
+          "call DXGPUSHLOCK::AcquireShared (sub_1c0007018) - shared lock, legacy path only",
+          "call DXGHANDLETABLELOCKEXCLUSIVE::ctor (sub_1c0002630) - exclusive lock, new/patched path",
+          "'entry |= 0x2000' store - in-destruction marker, new/patched path only",
+          "call DXGGLOBAL::DestroySyncObject (sub_1c00ddb58) - executed after the lock is released"
+        ],
+        "trigger_setup": "1. Create a swapchain with sync objects via D3DKMT swapchain APIs\n2. Issue concurrent swapchain / surface destruction from multiple threads targeting the same surface\n3. With the feature flag OFF, the shared-lock path lets two threads both resolve and destroy the same DXGSYNCOBJECT",
+        "expected_observation": "BSOD 0x19 (BAD_POOL_HEADER) or 0xC2 (BAD_POOL_CALLER) from double-free of the DXGSYNCOBJECT pool block, or a delayed use-after-free crash if the block is reclaimed between the two frees. The patched exclusive-lock + 0x2000-marking path serializes and de-duplicates the destroy, preventing the second free.",
+        "notes": "The fix standardizes on the exclusive handle-table lock plus the 0x2000 in-destruction marker (the new WIL-staged path), removing the legacy shared-lock path. IMPORTANT correction over the prior report: the flag-ON path is the EXCLUSIVE lock (safe), and the flag-OFF path is the SHARED push lock (racy) - the earlier report reversed this mapping and mislabeled these swapchain-surface functions as generic 'sync object table cleanup'."
+      }
+    }
+  ],
+  "summary": "This patch is a WIL feature-staging (flighting) cleanup, not a memory-corruption fix on the primary path. The unpatched dxgkrnl.sys carries feature-staging flags Feature_2161340729__private_IsEnabledDeviceUsage (sub_1c00259e8) and Feature_342658361__private_IsEnabledDeviceUsage (sub_1c0027f20) that gate legacy vs. new implementations of (1) OPM (Output Protection Manager) handle management in ADAPTER_DISPLAY and (2) swapchain sync-object teardown in DXGSWAPCHAIN. For OPM, the legacy scheme (flag OFF) uses the raw kernel address of the _OPM_HANDLE_MAPPING node as the OPM handle handed back to the caller (a kernel-address / KASLR-weakening information disclosure) and re-validates it via ADAPTER_DISPLAY::OpmValidateAdapterHandle (sub_1c0175044), an exact list-membership check; the new scheme uses opaque 64-bit IDs looked up by ADAPTER_DISPLAY::FindOpmAdapterMapping (sub_1c00d7190 unpatched / sub_1c00d6190 patched - the same function relocated). There is NO type-confusion or write-what-where primitive here: the destroy path only unlinks a validated, __fastfail-consistency-checked member. The genuinely memory-safety-relevant change is in DXGSWAPCHAIN::DestroySurfacesResourcesLocal/Global (sub_1c02aba68 / sub_1c02ab988): the legacy path takes only a SHARED push lock and omits the 0x2000 in-destruction marker, so two concurrent swapchain-destroy threads can double-free the same DXGSYNCOBJECT (use-after-free); the patched build always takes the EXCLUSIVE handle-table lock and sets the marker. The patch removes all these feature-staging branches, committing to the opaque-ID OPM handles and the exclusive-lock swapchain teardown."
+}

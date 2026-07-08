@@ -1,0 +1,64 @@
+{
+  "binaries": {
+    "title": "ntfs.sys - No security-relevant change (version-drift recompilation; misattributed EDP telemetry)",
+    "id_unpatched": "ntfs_unpatched.sys",
+    "id_patched": "ntfs_patched.sys",
+    "overall_similarity": 0.5882,
+    "matched": 3938,
+    "changed": 3137,
+    "identical": 801,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "EdpEnforcementLog_FileRequiresEncryption @ 0x1C02A8BC8 (unpatched) — EDP/WIP enforcement telemetry, NOT a reparse/stat helper",
+      "similarity": 0.85,
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "The original pairing of unpatched 0x1C02A8BC8 with patched 0x140252D28 is incorrect: these are two DIFFERENT functions. 0x1C02A8BC8 is EdpEnforcementLog_FileRequiresEncryption; 0x140252D28 is EdpEnforcementLog_AutomaticEncryption. The patched build of EdpEnforcementLog_FileRequiresEncryption is at 0x14011B804.",
+        "Both are Enterprise Data Protection (EDP/WIP) enforcement-logging routines (they call EEL_GetProcessInfo). Neither parses reparse points nor fills stat information.",
+        "The prologue difference cited earlier (push r12/push r13, frame 0x268 -> 0x278) is the natural difference between two unrelated EDP functions, not an inserted bounds check.",
+        "No string 'NtfsFillStatInfoFromMftRecordBailedBecauseOfNonResReparsePointCount' (nor any '...Bailed...' / 'NonResReparsePointCount' string) exists in either build.",
+        "At 0x1C02A8D81 the real instruction is 'jz short loc_1C02A8D94' (not a telemetry-string load); at 0x1C02A8DA6 it is 'mov rax, r8' (not a data reference)."
+      ],
+      "security_relevant": false,
+      "security_notes": "The out-of-bounds read attributed to this function does not exist. The function is EDP/WIP enforcement telemetry. The real stat-fill routine NtfsFillStatInfoFromMftRecord (0x1C0200F98 unpatched, 0x140237014 patched) already rejects non-resident reparse attributes (byte at attribute-header +8) and caps resident reparse data length at 0x4000 in BOTH builds, so there is no missing check and no direction change. The differences between the two binaries on this and related paths are recompilation drift (renamed locals, changed structure offsets, reordered corruption checks, different debug-message constant IDs, and a shared-security reference-counting refactor gated by EnableFeatureServicing_48459730).",
+      "assembly_diff": "Draft-claimed pairing compares two unrelated EDP functions and does not represent a security fix.\n\nReal reparse validation, present in BOTH builds of NtfsFillStatInfoFromMftRecord:\n\nUnpatched @ 0x1C0200F98:\n  0x1C0201355  mov [rsp+..], 0C0h            ; look up $REPARSE_POINT attribute\n  0x1C0201388  cmp [r14+8], r9b              ; non-resident? -> bail\n  0x1C0201393  cmp dword ptr [r14+10h], 4000h ; reparse length cap 0x4000\n\nPatched @ 0x140237014:\n  0x140237416  mov [rsp+..], 0C0h            ; look up $REPARSE_POINT attribute\n  0x140237449  cmp [r14+8], r8b              ; non-resident? -> bail\n  0x1402377E6  cmp dword ptr [r14+10h], 4000h ; reparse length cap 0x4000"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "NtfsFillStatInfoFromMftRecord (0x1C0200F98 unpatched, 0x140237014 patched)",
+      "entry_point": "NtQueryInformationFile(FileStatInformation) / NtQueryDirectoryFile - stat info query on a file with a reparse point",
+      "call_chain": [
+        "NtQueryInformationFile (syscall) or NtQueryDirectoryFile",
+        "NtfsCommonQueryInformation / NtfsCommonDirControl",
+        "NtfsFillStatInfoFromMftRecord"
+      ],
+      "vulnerability_class": "No security-relevant change (claimed CWE-125 / CWE-129 not supported by the binaries)",
+      "description": "The reported out-of-bounds read when processing a non-resident reparse point attribute in NtfsFillStatInfoFromMftRecord could not be reproduced. In BOTH builds the routine rejects non-resident $REPARSE_POINT (type 0xC0) attributes via the byte at attribute-header offset +8 and caps resident reparse data length at 0x4000 before any reparse data is consumed. There is no missing bounds check and no relaxation. The function originally named as the vulnerable helper (0x1C02A8BC8) is EdpEnforcementLog_FileRequiresEncryption, an EDP/WIP enforcement-telemetry routine unrelated to reparse parsing, and its supposed patched counterpart (0x140252D28) is a different function (EdpEnforcementLog_AutomaticEncryption). The telemetry string cited as naming the bug does not exist in either build.",
+      "trigger_conditions": "None. No reachable out-of-bounds read exists on this path; non-resident reparse attributes are rejected and resident length is capped in both builds.",
+      "primitive": "None. No kernel-pool out-of-bounds read, information-disclosure, or denial-of-service primitive is supported by the binaries on this path.",
+      "evidence": "Reparse validation present identically in both builds:\n  Unpatched NtfsFillStatInfoFromMftRecord @ 0x1C0200F98: 0x1C0201355 (0xC0 attribute lookup), 0x1C0201388 (cmp [r14+8], r9b non-resident bail), 0x1C0201393 (cmp dword [r14+10h], 4000h length cap).\n  Patched NtfsFillStatInfoFromMftRecord @ 0x140237014: 0x140237416 (0xC0 attribute lookup), 0x140237449 (cmp [r14+8], r8b non-resident bail), 0x1402377E6 (cmp dword [r14+10h], 4000h length cap).\nThe cited telemetry string 'NtfsFillStatInfoFromMftRecordBailedBecauseOfNonResReparsePointCount' is absent from both builds. At 0x1C02A8D81 the real instruction is 'jz short loc_1C02A8D94'; at 0x1C02A8DA6 it is 'mov rax, r8'.",
+      "assembly": "EdpEnforcementLog_FileRequiresEncryption @ 0x1C02A8BC8 (unpatched, real prologue - EDP telemetry, not reparse):\n  0x1C02A8BC8: mov rax, rsp\n  0x1C02A8BCB: mov [rax+8], rbx\n  0x1C02A8BCF: mov [rax+10h], rsi\n  0x1C02A8BD3: mov [rax+18h], rdi\n  0x1C02A8BD7: push rbp\n  0x1C02A8BD8: push r14\n  0x1C02A8BDA: push r15\n  0x1C02A8BDC: lea rbp, [rax-268h]\n  0x1C02A8BE3: sub rsp, 350h\n  0x1C02A8C1B: call EEL_GetProcessInfo",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [
+          "0x1C0201388 / 0x140237449: cmp [r14+8], reg - non-resident reparse attribute bail (present in both builds)",
+          "0x1C0201393 / 0x1402377E6: cmp dword ptr [r14+10h], 4000h - resident reparse length cap (present in both builds)"
+        ],
+        "trigger_setup": "Not applicable - no vulnerable code path.",
+        "expected_observation": "Not applicable - no out-of-bounds read exists on this path.",
+        "notes": "Symbols are present in both disassemblies; functions were matched by name. The reparse-length error strings referenced in the draft ('has exceeded a maximum' / 'less than a minimum') were not found in these builds and are not used as evidence."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was found. The two binaries are different builds of ntfs.sys (different image base, ~750 KB size delta), so the 0.59 overall similarity and 3137 changed functions are dominated by recompilation drift. The reported non-resident reparse-point out-of-bounds read in NtfsFillStatInfoFromMftRecord is not supported: both builds reject non-resident reparse attributes and cap resident reparse length at 0x4000. The function named as the vulnerable helper (0x1C02A8BC8) is EDP/WIP enforcement telemetry (EdpEnforcementLog_FileRequiresEncryption), its supposed patched counterpart (0x140252D28) is a different function (EdpEnforcementLog_AutomaticEncryption), and the telemetry string cited as naming the bug does not exist in either build. An independent name-matched diff of untrusted-metadata parsing routines surfaced no added bounds/length/overflow check in the patched build that the unpatched build lacks."
+}

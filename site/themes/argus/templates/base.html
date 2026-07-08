@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="{{ DEFAULT_LANG }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ SITENAME }}{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{{ SITEURL }}/theme/assets/argus-logo-monogram.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ SITEURL }}/theme/css/style.css">
+    {% if FEED_ALL_ATOM %}
+    <link href="{{ FEED_DOMAIN }}/{{ FEED_ALL_ATOM }}" type="application/atom+xml" rel="alternate" title="{{ SITENAME }} Atom Feed">
+    {% endif %}
+</head>
+<body>
+    <nav class="nav">
+        <a class="nav-brand" href="{{ SITEURL }}/">
+            <img src="{{ SITEURL }}/theme/assets/argus-logo-monogram.png" alt="Argus">
+            <span class="name">Argus <b>·</b> Blog</span>
+        </a>
+        <div class="nav-links">
+            <a href="{{ SITEURL }}/">Posts</a>
+            <a href="https://pop.argus-systems.ai/">PoC &#8599;</a>
+            <a href="https://byteray.co.uk/">ByteRay &#8599;</a>
+        </div>
+    </nav>
+
+    {% block body %}{% endblock %}
+
+    <footer class="site-footer">
+        <div class="container">
+            <p>&copy; ByteRay Ltd. &mdash; security and engineering notes.</p>
+        </div>
+    </footer>
+</body>
+</html>

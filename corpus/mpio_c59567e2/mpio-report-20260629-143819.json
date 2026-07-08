@@ -1,0 +1,77 @@
+{
+  "binaries": {
+    "title": "mpio.sys (Windows Multipath I/O Driver) - PERSISTENT_RESERVE_IN passive-deferral classification refactor (no security-relevant change)",
+    "id_unpatched": "mpio_unpatched.sys",
+    "id_patched": "mpio_patched.sys",
+    "overall_similarity": 0.9917,
+    "matched": 369,
+    "changed": 3,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "MPIOMustProcessRequestAtPassive",
+      "address": "0x1C00042F8",
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Removed SCSI opcode 0x5E (PERSISTENT_RESERVE_IN) from the set of opcodes for which the classifier returns 1. Removed instruction pair: 'cmp cl, 5Eh' at 0x1C00043FC and 'jnz loc_1C0004403' at 0x1C00043FF.",
+        "Register assignment for the two inspected CDB bytes swapped (cl <-> r8b); semantically identical.",
+        "The function still returns 1 only for opcode 0x83 (service action 0x10/0x11) and 0x84 (service action 7), and only when the current IRQL is >= DISPATCH_LEVEL (CR8 >= 2 gate at 0x1C000430D)."
+      ],
+      "security_relevant": false,
+      "security_notes": "MPIOMustProcessRequestAtPassive returns non-zero when a request must be deferred to passive-level processing. In the caller MPIOPdoCommonDeviceControl (0x1C000ADB8), a non-zero return (test al,al at 0x1C000B114; fall-through) selects the asynchronous work-item path (MPIOQueueWorkItem at 0x1C000B174, callback MPIOInternalDevCtlCallBack), which runs at passive level; a zero return (jz loc_1C000B1A4 at 0x1C000B116) selects the synchronous inline path (MPIOPdoInternalDeviceControl at 0x1C000B1AA). The unpatched build therefore DEFERRED 0x5E to a passive-level work item; the patched build handles it inline. This is the opposite of forcing the command onto a synchronous path. Because the classifier only returns 1 at or above DISPATCH_LEVEL, the change is only observable for 0x5E requests reaching this code at elevated IRQL; ordinary user-mode IOCTLs arrive at PASSIVE_LEVEL and return 0 in both builds. The work-item deferral code path is byte-for-byte identical in both builds. No reference-count, rundown-protection, or object-lifetime change accompanies this decision. No use-after-free or race condition is demonstrable.",
+      "assembly_diff": "UNPATCHED opcode-check tail (0x1C00043DD-0x1C0004401):\n0x1C00043DD : mov     cl, [r9]           ; CDB[0]\n0x1C00043E0 : mov     r8b, [r9+1]        ; CDB[1]\n0x1C00043E4 : cmp     cl, 83h\n0x1C00043E7 : jnz     0x1C00043F1\n0x1C00043E9 : lea     eax, [r8-10h]\n0x1C00043ED : cmp     al, 1\n0x1C00043EF : jbe     0x1C0004401        ; SA 0x10/0x11 -> return 1\n0x1C00043F1 : cmp     cl, 84h\n0x1C00043F4 : jnz     0x1C00043FC\n0x1C00043F6 : cmp     r8b, 7\n0x1C00043FA : jz      0x1C0004401        ; SA 7 -> return 1\n0x1C00043FC : cmp     cl, 5Eh            ; *** removed in patched build ***\n0x1C00043FF : jnz     0x1C0004403        ; *** removed in patched build ***\n0x1C0004401 : mov     dl, 1              ; return 1\n\nPATCHED opcode-check tail: the 'cmp cl,5Eh' and its 'jnz' are gone; 0x84 branch ends at 'jnz loc_1C00043FE' (0x1C00043FA) and 'mov dl,1' sits at 0x1C00043FC, reachable only from the 0x83/0x84 checks."
+    },
+    {
+      "name": "MPIOReadWrite",
+      "address": "0x1C000B5F8",
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "WPP trace control GUID rebuilt (differs throughout the function).",
+        "Zero-initialization of stack slots emitted as 'and [mem], 0' / 'mov byte [mem], 0' instead of storing an explicitly-zeroed r12 ('xor r12d, r12d' then 'mov [mem], r12'); both forms write zero.",
+        "Two redundant 'test rbx, rbx; jz' guards removed by the optimizer (near 0x1C000BAF5 and 0x1C000BB40).",
+        "Basic-block reordering and branch-displacement shifts."
+      ],
+      "security_relevant": false,
+      "security_notes": "MPIOReadWrite is the SCSI read/write handler (called from MPIOPdoHandleRequest at 0x1C000C026), not part of the PERSISTENT_RESERVE_IN device-control path. The reference count at [r15+8] is read, tested for zero, and decremented identically in both builds (mov eax,[r15+8]; test eax,eax; jz; dec eax; mov [r15+8],eax at 0x1C000BB49 unpatched / 0x1C000BB39 patched). The count of ExAcquireRundownProtectionCacheAware/ExReleaseRundownProtectionCacheAware calls is identical in both builds. The removed 'test rbx, rbx' guard is redundant with adjacent 'test rdi, rdi' and 'test eax, eax' checks; its removal drops a check rather than adding one. No stale, attacker-influenced register value is passed anywhere (r12 is explicitly zeroed in the unpatched build before use). All differences are code generation and WPP tracing rebuild artifacts.",
+      "assembly_diff": "Reference-count handling, IDENTICAL in both builds (unpatched addresses shown):\n0x1C000BB49 : mov     eax, [r15+8]\n0x1C000BB4D : test    eax, eax\n0x1C000BB4F : jz      <bad-path>\n0x1C000BB55 : dec     eax\n0x1C000BB57 : mov     [r15+8], eax\n\nRepresentative codegen difference:\nUNPATCHED: xor r12d, r12d ; ... ; mov [rsp+...+SourceString], r12 ; mov [rsp+...+var_1A0], r12d\nPATCHED:   and [rsp+...+SourceString], 0 ; and [rsp+...+var_1A0], 0   (same zero written)\n\nUNPATCHED extra guard removed in patched: 'test rbx, rbx' / 'jz loc_1C000B9E1' at 0x1C000BB40 (redundant with the surrounding rdi and refcount checks)."
+    },
+    {
+      "name": "MPIOPdoHandleRequest",
+      "address": "0x1C000BD90",
+      "change_type": "not_security_relevant",
+      "key_changes": [
+        "Single WPP trace message identifier changed: 'mov r9d, 198Eh' at 0x1C000CCDF -> 'mov r9d, 198Bh' in the patched build."
+      ],
+      "security_relevant": false,
+      "security_notes": "The only difference is a WPP trace message id, shifted as a consequence of the tracing rebuild. Not security-relevant. This function calls MPIOReadWrite (read/write dispatch) and is not on the PERSISTENT_RESERVE_IN path."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "cwe": null,
+      "function": "MPIOMustProcessRequestAtPassive",
+      "address": "0x1C00042F8",
+      "entry_point": "IRP_MJ_DEVICE_CONTROL (MajorFunction 0x0F) via MPIOPdoCommonDeviceControl (0x1C000ADB8)",
+      "call_chain": [
+        "MPIOPdoCommonDeviceControl (0x1C000ADB8): calls MPIOMustProcessRequestAtPassive at 0x1C000B10F; test al,al at 0x1C000B114",
+        "return 1 (al != 0): work-item path -> MPIOQueueWorkItem at 0x1C000B174 (callback MPIOInternalDevCtlCallBack), processed at passive level",
+        "return 0 (al == 0): synchronous path -> jz loc_1C000B1A4 -> MPIOPdoInternalDeviceControl at 0x1C000B1AA"
+      ],
+      "vulnerability_class": "Dispatch-context / IRQL-handling classification change for one SCSI opcode (no demonstrable security impact)",
+      "description": "The patched MPIOMustProcessRequestAtPassive (0x1C00042F8) no longer classifies SCSI opcode 0x5E (PERSISTENT_RESERVE_IN) as an operation requiring passive-level deferral. The removed code is the instruction pair 'cmp cl, 5Eh' (0x1C00043FC) and 'jnz loc_1C0004403' (0x1C00043FF). In the caller, a non-zero return selects the asynchronous work-item (passive) path and a zero return selects the synchronous inline path (MPIOPdoInternalDeviceControl). Consequently the unpatched build deferred 0x5E to a passive-level work item, and the patched build handles it inline. The classifier only returns 1 when already at DISPATCH_LEVEL (CR8 >= 2 gate at 0x1C000430D), so the change is only observable for 0x5E requests reaching this code at elevated IRQL; user-mode IOCTLs arriving at PASSIVE_LEVEL return 0 in both builds and behave identically. No reference-count error, rundown double-release, race condition, use-after-free, information disclosure, or privilege boundary crossing is present in the changed code of either build. The earlier characterization of this change as forcing 0x5E onto a synchronous path with broken reference-count semantics leading to a use-after-free is not supported by the binaries: the routing direction is the opposite, and the reference-count/rundown handling in MPIOReadWrite is identical between builds.",
+      "trigger_conditions": "The classifier decision for 0x5E only differs between builds when a PERSISTENT_RESERVE_IN device-control request reaches MPIOMustProcessRequestAtPassive at or above DISPATCH_LEVEL (CR8 >= 2). Ordinary user-mode IOCTL_SCSI_PASS_THROUGH requests arrive at PASSIVE_LEVEL, at which point both builds return 0 and process the command identically. No attacker-controlled memory-safety condition is reachable through this change.",
+      "primitive": "None. The change does not create, free, or alter the lifetime of any object, and does not modify reference counting or rundown protection. Both candidate paths complete the same IRP.",
+      "evidence": "Unpatched MPIOMustProcessRequestAtPassive (0x1C00043FC-0x1C0004401):\n0x1C00043FC : cmp     cl, 5Eh\n0x1C00043FF : jnz     0x1C0004403\n0x1C0004401 : mov     dl, 1\nBoth the cmp and jnz are absent in the patched build; 'mov dl,1' (patched 0x1C00043FC) is reachable only from the 0x83/0x84 service-action checks.\n\nCaller MPIOPdoCommonDeviceControl (0x1C000ADB8):\n0x1C000B10F : call    MPIOMustProcessRequestAtPassive\n0x1C000B114 : test    al, al\n0x1C000B116 : jz      loc_1C000B1A4          ; al==0 -> synchronous MPIOPdoInternalDeviceControl (0x1C000B1AA)\n; fall-through (al!=0):\n0x1C000B174 : call    MPIOQueueWorkItem      ; deferred/passive path",
+      "assembly": "sub_MPIOMustProcessRequestAtPassive full unpatched assembly (mpio_unpatched.sys):\n0x1C00042F8 : mov     [rsp+arg_0], rbx\n0x1C00042FD : mov     [rsp+arg_8], rsi\n0x1C0004302 : mov     [rsp+arg_10], rdi\n0x1C0004307 : xor     edx, edx\n0x1C0004309 : mov     rax, cr8\n0x1C000430D : cmp     al, 2                 ; IRQL >= DISPATCH_LEVEL ?\n0x1C000430F : jb      0x1C0004403\n0x1C0004315 : mov     r8, [rcx+0B8h]        ; IO_STACK_LOCATION\n0x1C000431C : cmp     byte ptr [r8], 0Fh    ; MajorFunction == 0x0F ?\n0x1C0004320 : jnz     0x1C0004403\n0x1C0004326 : mov     r8, [r8+8]            ; SRB\n0x1C000432A : test    r8, r8\n0x1C000432D : jz      0x1C0004403\n0x1C0004333 : cmp     byte ptr [r8+2], 28h  ; queue-tag type ?\n0x1C0004338 : jnz     0x1C00043D4           ; -> r9 = SRB + 0x48 (direct CDB)\n; ... queue-tag path array iteration elided ...\n0x1C00043D4 : lea     r9, [r8+48h]\n0x1C00043D8 : test    r9, r9\n0x1C00043DB : jz      0x1C0004403\n0x1C00043DD : mov     cl, [r9]              ; CDB[0]\n0x1C00043E0 : mov     r8b, [r9+1]           ; CDB[1]\n0x1C00043E4 : cmp     cl, 83h\n0x1C00043E7 : jnz     0x1C00043F1\n0x1C00043E9 : lea     eax, [r8-10h]\n0x1C00043ED : cmp     al, 1\n0x1C00043EF : jbe     0x1C0004401           ; SA 0x10/0x11 -> return 1\n0x1C00043F1 : cmp     cl, 84h\n0x1C00043F4 : jnz     0x1C00043FC\n0x1C00043F6 : cmp     r8b, 7\n0x1C00043FA : jz      0x1C0004401           ; SA 7 -> return 1\n0x1C00043FC : cmp     cl, 5Eh               ; *** removed in patched build ***\n0x1C00043FF : jnz     0x1C0004403           ; *** removed in patched build ***\n0x1C0004401 : mov     dl, 1\n0x1C0004403 : mov     rbx, [rsp+arg_0]\n0x1C0004408 : mov     al, dl\n0x1C000440A : mov     rsi, [rsp+arg_8]\n0x1C000440F : mov     rdi, [rsp+arg_10]\n0x1C0004414 : retn",
+      "notes": "The MPIO driver (mpio.sys) is a Windows kernel storage driver for Multipath I/O. SCSI opcode 0x5E = PERSISTENT_RESERVE_IN (SPC-3/SPC-4). The r9 pointer in MPIOMustProcessRequestAtPassive points to the SCSI CDB; for non-queued SRBs (SRB+0x2 != 0x28), r9 = SRB + 0x48. Both binaries share module base 0x1C0000000. This entry documents a code change but no security-relevant impact: the routing direction is deferral-to-passive (unpatched) versus inline (patched), gated on DISPATCH_LEVEL, with no accompanying reference-count, rundown, or lifetime change."
+    }
+  ],
+  "summary": "The patch makes one intentional behavioral change: MPIOMustProcessRequestAtPassive (0x1C00042F8) no longer classifies SCSI opcode 0x5E (PERSISTENT_RESERVE_IN) as an operation requiring passive-level deferral (removed 'cmp cl, 5Eh' at 0x1C00043FC and its branch). In the caller MPIOPdoCommonDeviceControl (0x1C000ADB8), a non-zero classifier return selects the asynchronous work-item path (MPIOQueueWorkItem, passive level) and a zero return selects the synchronous inline path (MPIOPdoInternalDeviceControl); thus the unpatched build DEFERRED 0x5E to passive and the patched build handles it inline. The decision only differs at DISPATCH_LEVEL (CR8 >= 2 gate); user-mode IOCTLs at PASSIVE_LEVEL behave identically in both builds. No reference-count error, rundown double-release, race condition, or use-after-free is present: the [r15+8] reference-count handling and the rundown acquire/release pairing in MPIOReadWrite (0x1C000B5F8) are identical between builds, and its remaining differences plus the single WPP trace-id change in MPIOPdoHandleRequest (0x1C000BD90) are compiler code-generation and tracing rebuild artifacts. Verdict: no security-relevant change."
+}

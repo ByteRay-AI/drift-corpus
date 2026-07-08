@@ -1,0 +1,202 @@
+{
+  "binaries": {
+    "title": "cldflt.sys (Windows Cloud Files Minifilter) - Feature-gated missing authorization on sync-root disconnect and insert allows token-free teardown of a shared sync root",
+    "id_unpatched": "cldflt_unpatched.sys",
+    "id_patched": "cldflt_patched.sys",
+    "overall_similarity": 0.9894,
+    "matched": 998,
+    "changed": 6,
+    "identical": 992,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4)",
+      "similarity": 0.123,
+      "change_type": "behavioral",
+      "key_changes": [
+        "This is a WIL (Windows Implementation Library) feature-staging check, present in BOTH binaries. It reads a global feature descriptor word (data_1c0024780 / WPP_MAIN_CB.DeviceQueue.Busy), tests bit 0x10, and returns the enabled bit, else falls back to Feature_565656888__private_IsEnabledFallback (sub_1C00097DC). It is a build/servicing feature toggle, not a per-caller authorization function.",
+        "In the patched binary a different feature occupies this slot at the same address 0x1C00097A4, so it is named Feature_Servicing_PostRelOutlookHangIssue__private_IsEnabledDeviceUsage. This feature-descriptor swap accounts for the low reported similarity (0.123); it is not a security rewrite.",
+        "It was NOT replaced by CldiPortInsertSyncRootNoLock (sub_1C005DD94). That helper exists in both binaries (unpatched 0x1C005DDB4) and already performs ownership validation. The security-relevant change is that this feature toggle was removed from its callers (CldSyncConnectRoot and CldiPortProcessServiceCommands)."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4) is a WIL feature-staging toggle used to gate the sync-root registration/disconnect code paths in CldSyncConnectRoot and CldiPortProcessServiceCommands. When the feature is disabled, those callers take a path that skips the ownership-validating helper CldiPortInsertSyncRootNoLock and performs a raw AVL delete+insert. The patch removes the feature call from the callers so the ownership-validated path is always taken. The function itself is unchanged in behavior; only the feature descriptor bound to that address differs between builds.",
+      "assembly_diff": "sub_1c00097a4 (WIL feature-staging check, both binaries):\nsub     rsp, 0x28\nand     qword [rsp+0x30], 0x0\nmov     eax, dword [rel 0x1c0024780]   ; global feature descriptor\nmov     dword [rsp+0x30], eax\ntest    al, 0x10                        ; feature-present bit\nje      0x1c00097c1\nand     eax, 0x1                        ; return enabled bit\njmp     0x1c00097d0\nmov     rcx, qword [rsp+0x30]\nmov     edx, 0x3\ncall    0x1c00097dc                     ; Feature_565656888__private_IsEnabledFallback\nadd     rsp, 0x28\nretn"
+    },
+    {
+      "name": "CldSyncConnectRoot (sub_1C0062CC0)",
+      "similarity": 0.8198,
+      "change_type": "behavioral",
+      "key_changes": [
+        "UNPATCHED (sub_1C0062CC0): calls Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4) to select between two branches with different preliminary ordering. When the feature is disabled the decision keys on the refcount at entry+0x30 first; when enabled it keys on whether the owner field at entry+0x60 is NULL first. Both branches then apply the same owner (entry+0x60 == arg2) and token (entry+0 == arg7) check and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09).",
+        "PATCHED (0x1C0062BD0): removes the feature call and keeps a single branch that is equivalent to the unpatched feature-enabled branch (owner-null check first, then owner/token validation).",
+        "This is a branch-ordering refactor, not an authorization change: neither unpatched branch allows a cross-owner overwrite."
+      ],
+      "security_relevant": false,
+      "security_notes": "CldSyncConnectRoot (sub_1C0062CC0) registers cloud file sync-root state in a push-lock-protected AVL table. The unpatched version calls the WIL feature toggle Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4) to choose which preliminary test runs first, but both branches enforce the same owner (offset 0x60 vs arg2) and token (offset 0 vs arg7) check and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09). The patched version (relocated to 0x1C0062BD0) drops the feature call and keeps the owner-first branch. There is no authorization difference between the builds in this function.",
+      "assembly_diff": "UNPATCHED CldSyncConnectRoot feature-enabled branch at 0x1c0062d27:\ncall    Feature_565656888__private_IsEnabledDeviceUsage   ; WIL feature gate\ntest    eax, eax\njz      0x1c0062de2        ; feature-disabled branch\nmov     rax, [rsi+60h]     ; owner field (0x1c0062d34)\ncmp     rax, rbx           ; owner check (0x1c0062d45)\ncmp     [rax], r15         ; token check (0x1c0062d4e)\nxor     edi, edi           ; success only when both checks pass (0x1c0062d62)\n\nUNPATCHED feature-disabled branch at 0x1c0062de2 also validates owner/token:\nmov     eax, [rsi+30h]     ; refcount keyed first (0x1c0062de2)\njle     0x1c0062e6e        ; refcount<=0 -> create new\nmov     ebx, 0C000CF09h    ; STATUS_CLOUD_FILE_NOT_IN_SYNC on owner/token mismatch (0x1c0062e14)\n\nPATCHED CldSyncConnectRoot at 0x1c0062bd0: no call to the feature toggle; single owner/token-validated path."
+    },
+    {
+      "name": "CldiPortProcessServiceCommands (sub_1C0060514)",
+      "similarity": 0.9655,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "UNPATCHED (sub_1C0060514) disconnect path (primary gap): calls Feature_565656888__private_IsEnabledDeviceUsage. When enabled it calls CldSyncDisconnectRoot (token-checked: entry+0 == caller token, else STATUS_CLOUD_FILE_NOT_SUPPORTED 0xc000cf0b). When DISABLED it calls CldSyncDisconnectRootDeprecated (sub_1C00630E8), which takes no token argument and disconnects whatever entry the key resolves to on the per-volume table (v117+16) with no token check.",
+        "UNPATCHED register path (secondary gap): after CldSyncConnectRoot succeeds, when the feature is enabled it calls CldiPortInsertSyncRootNoLock (sub_1C005DDB4, validates owner at 0x60 and token at 0x18). When DISABLED it performs a raw RtlDeleteElementGenericTableAvl + RtlInsertElementGenericTableAvl into the per-connection table at a1+104 (asm 0x1c006167b) with no owner/token check. That table is bound to a single sync-provider process (a1+80), so this gap is intra-connection state integrity.",
+        "PATCHED (0x1C00604E4): removes the feature gate; always calls CldSyncDisconnectRoot (token-checked) and CldiPortInsertSyncRootNoLock (sub_1C005DD94, owner/token-validated).",
+        "Both the lookup key and the token used by the register/disconnect operations are read from the user-mode message buffer.",
+        "The SrIn (0x6E497253) size check is NOT part of this change: both binaries reject a declared size < 0x18 with STATUS_INVALID_PARAMETER (0xc000000d); that guard is identical and unchanged."
+      ],
+      "security_relevant": true,
+      "security_notes": "CldiPortProcessServiceCommands (sub_1C0060514) is the cloud files service dispatcher reachable via FilterSendMessage through \\CLDMSGPORT (SDDL D:P(A;;GA;;;AU), any authenticated user). It gates both the sync-root disconnect and register operations on the WIL feature Feature_565656888__private_IsEnabledDeviceUsage. When the feature is disabled, disconnect uses CldSyncDisconnectRootDeprecated (sub_1C00630E8), which tears down the sync root matching an attacker-supplied key on the shared per-volume table with no token check, and register uses a raw RtlInsertElementGenericTableAvl into the per-connection table a1+104 with no owner/token check. The patched version (relocated to 0x1C00604E4) removes the gate and always uses the validated helpers. The demonstrable impact is local integrity/denial of service against cloud sync-root state, contingent on the feature being disabled. The SrIn size < 0x18 guard (STATUS_INVALID_PARAMETER, 0xc000000d) is present and identical in both binaries and is not the vulnerability.",
+      "assembly_diff": "UNPATCHED sub_1c0060514 register path:\ncall    CldSyncConnectRoot                 ; 0x1c00615b7\ncall    Feature_565656888__private_IsEnabledDeviceUsage  ; 0x1c0061605 register gate\ncall    CldiPortInsertSyncRootNoLock       ; 0x1c0061630 enabled: validated insert\nlea     rcx, [rbx+68h]                     ; 0x1c0061677 Table = a1+104 (per-connection)\ncall    __imp_RtlInsertElementGenericTableAvl  ; 0x1c006167b disabled: raw insert, NO owner/token check\n\nUNPATCHED sub_1c0060514 disconnect path:\ncall    Feature_565656888__private_IsEnabledDeviceUsage  ; 0x1c006187a disconnect gate\ncall    CldSyncDisconnectRoot              ; 0x1c0061892 enabled: token-checked\ncall    CldSyncDisconnectRootDeprecated    ; 0x1c006189d disabled: NO token check\n\nPATCHED sub_1c00604e4:\ncall    CldSyncConnectRoot                 ; 0x1c0061579\ncall    CldiPortInsertSyncRootNoLock       ; 0x1c00615e3 unconditional validated insert\ncall    CldSyncDisconnectRoot              ; 0x1c00617d3 unconditional token-checked disconnect\n; no Feature_565656888 call, no raw RtlInsertElementGenericTableAvl, no CldSyncDisconnectRootDeprecated"
+    },
+    {
+      "name": "HsmiOpUpdatePlaceholderFile (sub_1C007B554)",
+      "similarity": 0.9892,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Removes call to Feature_2400225592__private_IsEnabledDeviceUsage (sub_1c0019fb0) from the initial condition check - unpatched: 'if (!Feature_2400225592__private_IsEnabledDeviceUsage() || !arg9 || *arg9 >= 0)' vs patched: 'if (!arg9 || *arg9 >= 0)'",
+        "Helper function addresses changed (sub_1c006bcb4->sub_1c006ba14, sub_1c006bc1c->sub_1c006b97c, sub_1c0058fb8->sub_1c0058f98, sub_1c005add0->sub_1c005adb0) - relocated versions",
+        "All label addresses shifted but logic structure is essentially the same"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "HsmiGrantLockRequest (sub_1C0047F10)",
+      "similarity": 0.9306,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Memory growth strategy changed: unpatched uses fixed increment (rsi_1 + 4) for allocation, patched adds a Feature_98338106__private_IsEnabledDeviceUsage (sub_1c00163b8) check that uses smaller initial growth (min(rax_6, 2) * 2) then falls back to +4",
+        "Register allocation changed: r12/r15 swapped for tracking variables",
+        "Helper function addresses shifted (sub_1c001ad40->sub_1c001ae80, sub_1c001b000->sub_1c001b140, sub_1c004b364->sub_1c004b384)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "CldSyncSendHydrationRequest (sub_1C00644D4)",
+      "similarity": 0.9927,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor branch target address adjustments due to function reordering",
+        "No logic changes - all branch conditions and operations remain the same"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "CldSyncConnectRoot (sub_1C0062CC0)",
+      "entry_point": "CldiPortNotifyMessage message handler sub_1C00501B0 via \\CLDMSGPORT (FilterSendMessage from user mode)",
+      "call_chain": [
+        "FilterSendMessage(\\CLDMSGPORT) [user mode API]",
+        "CldiPortNotifyMessage (sub_1C00501B0) [MessageNotifyCallback registered via FltCreateCommunicationPort]",
+        "CldiPortProcessServiceCommands (sub_1C0060514) [cloud files operation dispatcher]",
+        "CldSyncConnectRoot (sub_1C0062CC0) [synchronization state registration]"
+      ],
+      "vulnerability_class": "Not a vulnerability (branch-ordering refactor, no authorization change)",
+      "description": "The unpatched CldSyncConnectRoot (sub_1C0062CC0) registers cloud file sync-root state in a push-lock-protected AVL table. When an existing entry is found it calls Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4) to choose which preliminary test runs first. That function is a WIL (Windows Implementation Library) feature-staging check: it reads a global feature descriptor (data_1c0024780), tests bit 0x10, and returns the enabled bit (or falls back to sub_1C00097DC). Critically, BOTH the feature-enabled and feature-disabled branches apply the same authorization check: they compare the existing entry's owner field at offset 0x60 against arg2 and the token at offset 0 against arg7, and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09). The only difference is the preliminary key: the disabled branch keys on the refcount at entry+0x30 first, the enabled branch keys on whether the owner field at entry+0x60 is NULL first. The patched CldSyncConnectRoot (relocated to 0x1C0062BD0) removes the feature call and keeps a single branch equivalent to the unpatched feature-enabled branch. There is no cross-owner overwrite in either build through this function; this is a branch-ordering refactor, not an authorization fix. The security-relevant change is in the caller CldiPortProcessServiceCommands (see the finding below).",
+      "trigger_conditions": "Not applicable: no authorization difference exists between the two builds in this function. Both unpatched branches validate the owner field at offset 0x60 and the token at offset 0 and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09).",
+      "primitive": "None. Neither build allows a caller to overwrite a sync-root entry owned by another owner through CldSyncConnectRoot; the owner/token check is present in both branches of the unpatched function and in the single path of the patched function.",
+      "evidence": "UNPATCHED CldSyncConnectRoot (sub_1c0062cc0), both branches validate owner+token:\n    if (Feature_565656888__private_IsEnabledDeviceUsage() == 0) {\n        // feature disabled: refcount at entry+0x30 keyed first\n        if (*(int*)(entry+48) > 0) {\n            if (*(entry+96) == arg2 && *entry == arg7) { status = 0; *a8 = entry; }  // owner + token\n            else status = STATUS_CLOUD_FILE_NOT_IN_SYNC;  // 0xc000cf09\n        } else goto create_new_entry;\n    } else {\n        // feature enabled: owner field at entry+0x60 keyed first\n        if (*(entry+96) == 0) goto create_new_entry;\n        if (*(entry+96) == arg2 && *entry == arg7) { ... }  // owner + token\n        else status = STATUS_CLOUD_FILE_NOT_IN_SYNC;\n    }\n\nPATCHED CldSyncConnectRoot (0x1c0062bd0), equivalent to the unpatched enabled branch:\n    if (entry == NULL || *(entry+96) == 0) goto create_new_entry;   // owner field at 0x60\n    if (*(entry+96) == arg2 && *entry == arg7) { status = 0; *a8 = entry; }\n    else { status = STATUS_CLOUD_FILE_NOT_IN_SYNC; TlmWriteSyncRootAlreadyConnected(); }",
+      "assembly": "UNPATCHED CldSyncConnectRoot (sub_1c0062cc0) feature-enabled branch:\n0x1c0062d27: call    Feature_565656888__private_IsEnabledDeviceUsage  ; WIL feature gate\n0x1c0062d2c: test    eax, eax\n0x1c0062d2e: jz      0x1c0062de2           ; feature-disabled branch\n0x1c0062d34: mov     rax, [rsi+0x60]       ; owner field\n0x1c0062d45: cmp     rax, rbx              ; owner check\n0x1c0062d48: jnz     0x1c0062d70\n0x1c0062d4e: cmp     [rax], r15            ; token check\n0x1c0062d51: jnz     0x1c0062d70\n0x1c0062d62: xor     edi, edi              ; success only when both checks pass\n\nUNPATCHED feature-disabled branch also validates owner/token:\n0x1c0062de2: mov     eax, [rsi+0x30]       ; refcount keyed first\n0x1c0062de7: jle     0x1c0062e6e           ; refcount<=0 -> create new\n0x1c0062e14: mov     ebx, 0C000CF09h       ; STATUS_CLOUD_FILE_NOT_IN_SYNC on owner/token mismatch\n\nPATCHED CldSyncConnectRoot at 0x1c0062bd0 has no call to Feature_565656888__private_IsEnabledDeviceUsage; a single owner/token-validated path.\n\nGate sub_1c00097a4 (WIL feature-staging check):\n0x1c00097ae: mov     eax, dword [rel 0x1c0024780]  ; global feature descriptor\n0x1c00097b8: test    al, 0x10                       ; feature-present bit\n0x1c00097bc: and     eax, 0x1                       ; return enabled bit\n0x1c00097cb: call    0x1c00097dc                    ; Feature_565656888__private_IsEnabledFallback",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!sub_1c0062cc0",
+            "address": "0x1c0062cc0",
+            "why": "CldSyncConnectRoot, the sync-root registration function. RCX = arg1 (connection context table), RDX = arg2 (owner/token to register), R8 = arg3 (file identifier), R9 = arg4 (buffer pointer). Observe the call to Feature_565656888__private_IsEnabledDeviceUsage at +0x67 selecting the validation branch from feature-staging state."
+          },
+          {
+            "symbol": "cldflt_unpatched!sub_1c00097a4",
+            "address": "0x1c00097a4",
+            "why": "Feature_565656888__private_IsEnabledDeviceUsage, a WIL feature-staging check. Confirm it reads data_1c0024780, tests bit 0x10, and returns the feature-enabled bit, independent of any connection context. EAX return value controls which validation branch in CldSyncConnectRoot is taken."
+          },
+          {
+            "symbol": "cldflt_unpatched!sub_1c00501b0",
+            "address": "0x1c00501b0",
+            "why": "CldiPortNotifyMessage, the FilterSendMessage message handler (MessageNotifyCallback). RCX = FltPort, RDX = InputBuffer (user-controlled), R8 = InputBufferLength, R9 = OutputBuffer. Verify attacker-controlled data reaches CldiPortProcessServiceCommands (sub_1c0060514) and then CldSyncConnectRoot."
+          }
+        ],
+        "watch": [
+          "data_1c0024780: global feature descriptor read by the WIL toggle; bit 0x10 = feature-present, bit 0 = enabled",
+          "At sub_1c0062cc0: RSI = existing sync-root entry; RSI+0x60 = owner field; RSI+0x30 = reference count; RSI+0 = token",
+          "At sub_1c0062cc0: RBX = arg2 (owner being compared)"
+        ],
+        "key_offsets": [
+          "0x1c0062d27: call Feature_565656888__private_IsEnabledDeviceUsage: selects which preliminary test runs first (both branches validate owner/token)",
+          "0x1c0062d45: cmp rax, rbx: owner check in the feature-enabled branch",
+          "0x1c0062d4e: cmp [rax], r15: token check in the feature-enabled branch",
+          "0x1c0062e14: mov ebx, 0C000CF09h: STATUS_CLOUD_FILE_NOT_IN_SYNC set by the feature-disabled branch on owner/token mismatch"
+        ],
+        "trigger_setup": "Not applicable. This function has no authorization difference between the two builds; both unpatched branches validate the owner (offset 0x60) and token (offset 0). Observe at 0x1c0062d45 (enabled branch) and 0x1c0062e14 (disabled branch) that both paths reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC.",
+        "expected_observation": "Breaking at sub_1c0062cc0, the call to Feature_565656888__private_IsEnabledDeviceUsage at 0x1c0062d27 selects only which preliminary test runs first. Both branches compare the entry's owner (offset 0x60) against arg2 and token (offset 0) against arg7 and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09). The patched function at 0x1c0062bd0 applies the same validation without the feature call.",
+        "notes": "The port SDDL 'D:P(A;;GA;;;AU)' grants Generic All to Authenticated Users. This function is not the security-relevant change; the delivered fix is in the caller CldiPortProcessServiceCommands (next finding), which drops feature-gated legacy disconnect and insert paths."
+      }
+    },
+    {
+      "severity": "medium",
+      "function": "CldiPortProcessServiceCommands (sub_1C0060514)",
+      "entry_point": "CldiPortNotifyMessage message handler sub_1C00501B0 via \\CLDMSGPORT (FilterSendMessage from user mode)",
+      "call_chain": [
+        "FilterSendMessage(\\CLDMSGPORT) [user mode API]",
+        "CldiPortNotifyMessage (sub_1C00501B0) [MessageNotifyCallback]",
+        "CldiPortProcessServiceCommands (sub_1C0060514) [cloud files operation dispatcher, arg2==2 path]"
+      ],
+      "vulnerability_class": "Missing/insufficient authorization check (CWE-862)",
+      "description": "CldiPortProcessServiceCommands (sub_1C0060514) is the cloud-files service dispatcher reachable via FilterSendMessage through \\CLDMSGPORT. It gates both the sync-root disconnect and register operations on the WIL feature toggle Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4). PRIMARY GAP (disconnect): when the feature is enabled it calls CldSyncDisconnectRoot, which disconnects the entry found by key only if the entry's stored token (offset 0) matches the caller-supplied token, else returns STATUS_CLOUD_FILE_NOT_SUPPORTED (0xc000cf0b). When the feature is DISABLED it calls CldSyncDisconnectRootDeprecated (sub_1C00630E8), which takes no token argument and tears down whatever entry the key resolves to on the per-volume sync-root table (v117+16) with no token check. Both the lookup key and the token are read from the user-mode message buffer, and the per-volume table is shared across connections, so on the disabled path a caller who knows only a sync-root key can disconnect another provider's sync root. SECONDARY GAP (register): after CldSyncConnectRoot succeeds, when the feature is disabled the code performs a raw RtlDeleteElementGenericTableAvl + RtlInsertElementGenericTableAvl into the per-connection table at a1+104 (asm 0x1c006167b) with no owner/token check, bypassing CldiPortInsertSyncRootNoLock (sub_1C005DDB4). That table is bound to a single sync-provider process (a1+80), so this gap is intra-connection state integrity. The patched version (relocated to 0x1C00604E4) removes the feature gate and always calls CldSyncDisconnectRoot and CldiPortInsertSyncRootNoLock. The SrIn size < 0x18 guard (STATUS_INVALID_PARAMETER, 0xc000000d) is present and identical in both binaries and is not the vulnerability.",
+      "trigger_conditions": "1. Connect to \\CLDMSGPORT via FilterConnectCommunicationPort (SDDL D:P(A;;GA;;;AU), any authenticated user). 2. Send a FilterSendMessage that routes to the sync-root disconnect or register operation with a valid SrIn structure (magic 0x6E497253) whose declared size (*(arg3+0x2a)) is >= 0x18 and passes CRC and entry-count validation. 3. On a build where Feature_565656888 is disabled, the disconnect reaches CldSyncDisconnectRootDeprecated (0x1c006189d) and tears down the sync root matching the supplied key without a token check; the register reaches the raw RtlInsertElementGenericTableAvl (0x1c006167b) without an owner/token check. 4. Supplying the key of a sync root belonging to another provider on the same volume disconnects it without authorization.",
+      "primitive": "Token-free sync-root disconnect: on the feature-disabled path, a caller with only the sync-root key can disconnect a cloud sync-root entry on the shared per-volume table (v117+16) via CldSyncDisconnectRootDeprecated with no token check, tearing down another provider's sync root (local integrity/denial of service against cloud synchronization). Secondary: a raw AVL delete+insert into the per-connection table (a1+104) with no owner/token check, affecting the caller's own connection state.",
+      "evidence": "UNPATCHED sub_1c0060514, disconnect path:\nif (Feature_565656888__private_IsEnabledDeviceUsage() != 0)\n    status = CldSyncDisconnectRoot(volume, key, token, &out);      // checks entry+0 == token, else 0xc000cf0b\nelse\n    status = CldSyncDisconnectRootDeprecated(volume, key, &out);   // NO token argument, NO token check\n\nUNPATCHED sub_1c0060514, register path:\nif (Feature_565656888__private_IsEnabledDeviceUsage() != 0) {\n    FltAcquirePushLockExclusiveEx(a1+96, 0);\n    status = CldiPortInsertSyncRootNoLock(a1, key1, key0, token);   // validates owner/token\n} else {\n    Buffer = { key0, key1 };\n    FltAcquirePushLockExclusiveEx(a1+96, 0);\n    RtlDeleteElementGenericTableAvl(a1+104, &Buffer);              // per-connection table\n    RtlInsertElementGenericTableAvl(a1+104, &Buffer, 0x10, &NewElement);  // NO owner/token check\n}\n\nPATCHED sub_1c00604e4:\nFltAcquirePushLockExclusiveEx(a1+96, 0);\nstatus = CldiPortInsertSyncRootNoLock(a1, key1, key0, token);       // register: always validated\n...\nstatus = CldSyncDisconnectRoot(volume, key, token, &out);          // disconnect: always token-checked\n\nCldSyncDisconnectRoot vs CldSyncDisconnectRootDeprecated (both binaries):\n// CldSyncDisconnectRoot(a1,key,token,out): entry=lookup(key); if (*entry==token) disconnect; else 0xc000cf0b\n// CldSyncDisconnectRootDeprecated(a1,key,out): entry=lookup(key); if (entry) disconnect;  // no token check\n\nCldiPortInsertSyncRootNoLock (sub_1c005dd94 / unpatched sub_1c005ddb4), both binaries:\nentry = CldiPortLookupSyncRootNoLock(a1, key0);\nif (entry && *(entry+96) != 0 && *(entry+24) != token)\n    return STATUS_CLOUD_FILE_NOT_IN_SYNC;   // 0xc000cf09\nRtlDeleteElementGenericTableAvl(...); RtlInsertElementGenericTableAvl(...);",
+      "assembly": "UNPATCHED sub_1c0060514 register path:\n0x1c00615b7: call    CldSyncConnectRoot\n0x1c0061605: call    Feature_565656888__private_IsEnabledDeviceUsage   ; register gate\n0x1c0061630: call    CldiPortInsertSyncRootNoLock                      ; enabled: validated insert\n0x1c0061677: lea     rcx, [rbx+68h]                                    ; Table = a1+104 (per-connection)\n0x1c006167b: call    __imp_RtlInsertElementGenericTableAvl             ; disabled: raw insert, NO owner/token check\n\nUNPATCHED sub_1c0060514 disconnect path:\n0x1c006187a: call    Feature_565656888__private_IsEnabledDeviceUsage   ; disconnect gate\n0x1c0061892: call    CldSyncDisconnectRoot                             ; enabled: token-checked\n0x1c006189d: call    CldSyncDisconnectRootDeprecated                   ; disabled: NO token check\n\nPATCHED sub_1c00604e4:\n0x1c0061579: call    CldSyncConnectRoot\n0x1c00615e3: call    CldiPortInsertSyncRootNoLock                      ; unconditional validated insert\n0x1c00617d3: call    CldSyncDisconnectRoot                             ; unconditional token-checked disconnect\n; no Feature_565656888 call, no raw RtlInsertElementGenericTableAvl, no CldSyncDisconnectRootDeprecated",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "cldflt_unpatched!sub_1c0060514",
+            "address": "0x1c0060514",
+            "why": "CldiPortProcessServiceCommands, the main operation handler. RCX = arg1 (connection context), DX = arg2 (operation type, must be 2), R8 = arg3 (input buffer), R9D = arg4 (input buffer length). Set a conditional breakpoint for arg2==2 (DX==2)."
+          },
+          {
+            "symbol": "cldflt_unpatched!sub_1c006189d",
+            "address": "0x1c006189d",
+            "why": "The call to CldSyncDisconnectRootDeprecated on the feature-disabled disconnect path (primary gap). It takes no token argument and disconnects the entry found by key with no token check. In the patched dispatcher this path does not exist; CldSyncDisconnectRoot (token-checked) is always called at 0x1c00617d3."
+          },
+          {
+            "symbol": "cldflt_unpatched!sub_1c006167b",
+            "address": "0x1c006167b",
+            "why": "The raw RtlInsertElementGenericTableAvl on the feature-disabled register path (secondary gap, per-connection table [rbx+68h]=a1+104). Reaching it means the entry is inserted without an owner/token check. In the patched dispatcher CldiPortInsertSyncRootNoLock is always called instead."
+          }
+        ],
+        "watch": [
+          "EAX after the call to Feature_565656888__private_IsEnabledDeviceUsage at 0x1c006187a (disconnect) and 0x1c0061605 (register): 0 selects the legacy path",
+          "The per-volume sync-root table (v117+16) targeted by CldSyncDisconnectRootDeprecated on the disabled disconnect path",
+          "The per-connection table a1+104 ([rbx+68h]) targeted by the raw insert on the disabled register path",
+          "data_1c0024780: global feature descriptor controlling the toggle"
+        ],
+        "key_offsets": [
+          "0x1c006187a: call Feature_565656888__private_IsEnabledDeviceUsage: the disconnect gate",
+          "0x1c0061892: call CldSyncDisconnectRoot: token-checked disconnect (feature enabled)",
+          "0x1c006189d: call CldSyncDisconnectRootDeprecated: no-token-check disconnect (feature disabled)",
+          "0x1c0061605: call Feature_565656888__private_IsEnabledDeviceUsage: the register gate",
+          "0x1c006167b: call RtlInsertElementGenericTableAvl: raw insert on per-connection table (feature disabled)"
+        ],
+        "trigger_setup": "1. Connect to \\CLDMSGPORT. 2. Send FilterSendMessage that routes to the sync-root disconnect (or register) operation with a valid SrIn structure (magic 0x6E497253, declared size *(arg3+0x2a) >= 0x18) so it passes size, CRC, and entry-count checks. 3. On a build where Feature_565656888 is disabled, the disconnect reaches 0x1c006189d (CldSyncDisconnectRootDeprecated) and tears down the sync root matching the supplied key with no token check. 4. Supply the key of a sync root belonging to another provider on the same volume to disconnect it without authorization.",
+        "expected_observation": "At 0x1c006187a the feature call returns 0 on a feature-disabled build, and execution reaches CldSyncDisconnectRootDeprecated (0x1c006189d), which disconnects the sync root by key with no token check on the shared per-volume table. In the patched version the same input flows through CldSyncDisconnectRoot, which rejects a token mismatch with STATUS_CLOUD_FILE_NOT_SUPPORTED (0xc000cf0b); the register path flows through CldiPortInsertSyncRootNoLock, which rejects an owner/token mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09).",
+        "notes": "The SrIn structure format: offset 0x0 = 'SrIn' magic (0x6E497253, 4B), 0x4 = CRC32 (4B), 0x8 = data size (4B), 0xc = flags, 0xe = entry count, 0x10+ = entries. Minimum valid size is 0x18; both binaries reject smaller with STATUS_INVALID_PARAMETER (0xc000000d). CldSyncDisconnectRoot checks the entry token at offset 0; CldiPortInsertSyncRootNoLock checks the owner field at offset 0x60 and the token at offset 0x18. Both the lookup key and token come from the user-mode message buffer."
+      }
+    }
+  ],
+  "summary": "The patch closes a feature-gated missing-authorization gap (CWE-862, Medium) in the Windows Cloud Files Minifilter (cldflt.sys), reachable via the \\CLDMSGPORT communication port whose security descriptor is built in the driver from SDDL 'D:P(A;;GA;;;AU)' (accessible to all authenticated users). In the unpatched binary the sync-root disconnect and register operations in CldiPortProcessServiceCommands (sub_1C0060514) are gated on the WIL feature-staging toggle Feature_565656888__private_IsEnabledDeviceUsage (sub_1C00097A4). When the feature is disabled, disconnect uses CldSyncDisconnectRootDeprecated (sub_1C00630E8), which tears down the sync root matching an attacker-supplied key on the shared per-volume table (v117+16) with no token check, and register uses a raw RtlDeleteElementGenericTableAvl + RtlInsertElementGenericTableAvl into the per-connection table (a1+104) with no owner/token check, bypassing CldiPortInsertSyncRootNoLock (sub_1C005DDB4). The patched dispatcher (relocated to 0x1C00604E4) removes the feature gate and always calls the token-checked CldSyncDisconnectRoot and the owner/token-validating CldiPortInsertSyncRootNoLock (sub_1C005DD94). CldSyncConnectRoot (sub_1C0062CC0 / patched 0x1C0062BD0) also had its feature call removed, but both of its unpatched branches already validate the owner (offset 0x60) and token (offset 0) and reject a mismatch with STATUS_CLOUD_FILE_NOT_IN_SYNC (0xc000cf09), so that change is a branch-ordering refactor with no authorization difference. The demonstrable impact is local integrity/denial of service against cloud sync-root state, contingent on the feature being disabled. The SrIn size < 0x18 guard (STATUS_INVALID_PARAMETER, 0xc000000d) is identical in both binaries and is not the vulnerability."
+}

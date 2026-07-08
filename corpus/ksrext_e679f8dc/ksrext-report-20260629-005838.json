@@ -1,0 +1,205 @@
+{
+  "binaries": {
+    "title": "ksrext.sys (Kernel Soft Restart Extension) - rebuild/refactor; no attacker-reachable vulnerability fixed",
+    "id_unpatched": "ksrext_unpatched.sys",
+    "id_patched": "ksrext_patched.sys",
+    "overall_similarity": 0.3722,
+    "matched": 119,
+    "changed": 69,
+    "identical": 50,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KsrpNkAllocatePagesForMdl",
+      "address_unpatched": "0x1C000BB20",
+      "address_patched": "0x140013888",
+      "similarity": 0.94,
+      "change_type": "feature_refactor",
+      "key_changes": [
+        "Patched adds a back-linked page chain: writes the previous page-array entry into each mapped page's first quadword ('mov [rdi], r13' at 0x1400139A5), starts the chain with a -1 sentinel ('or rax, 0xFFFFFFFFFFFFFFFF' at 0x140013950; 'or r13, rax' at 0x140013970), and stores the chain head into a NEW output parameter ('mov [r13], rax' at 0x140013A02)",
+        "Patched signature grew from 6 to 8 parameters (added a partition Handle and the chain-head output pointer)",
+        "Patched allocates via KsrMmAllocatePartitionNumaPagesForMdlEx instead of KsrMmAllocatePagesForMdlEx",
+        "The overflow page-array copy (memmove to mapping+0x30) is unchanged between builds"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is a format/feature change, not a fix. The unpatched layout has no page chain at all, so the absent first-quadword write is not an omitted safety store. No code in either build dereferences a persisted page's first quadword as a next-pointer: the consumer KsrpNkFreePersistedPages (unpatched 0x1C000BE1C, patched 0x140013FBC) is logically identical in both builds and reads a fixed inline array of up to 11 entries from the request structure. Reachable only from the Secure Kernel -> Normal Kernel secure-call dispatcher KsrpNkHandleSecureCall (0x1C000C720, command index 0 at 0x1C000C7DE calling at 0x1C000C7FD), not from an unprivileged user. Direction is not reversed (patched initializes more), but there is no demonstrable reachable impact.",
+      "assembly_diff": "; UNPATCHED KsrpNkAllocatePagesForMdl @ 0x1C000BB20 loop body 0x1C000BBFD..0x1C000BC67\n0x1C000BBFD mov rax, [r12]                 ; page-array entry\n0x1C000BC0C mov [rsp+98h+var_38], rax       ; into stack MDL page slot\n0x1C000BC16 lea r12, [r12+8]\n0x1C000BC1B mov rcx, rsi                     ; reserved mapping addr\n0x1C000BC1E call MmMapLockedPagesWithReservedMapping\n; no store to [rsi] in this build\n0x1C000BC34 lea rcx, [rsi+30h]\n0x1C000BC42 call memmove                     ; copy page-array bytes to mapping+0x30\n0x1C000BC54 call MmUnmapReservedMapping\n0x1C000BC66 jb 0x1C000BBFD\n\n; PATCHED KsrpNkAllocatePagesForMdl @ 0x140013888 loop body 0x140013977..0x1400139E7\n0x140013977 mov rax, [rsi]                   ; next page-array entry\n0x14001398D lea rsi, [rsi+8]\n0x140013991 mov rcx, rdi                     ; reserved mapping addr\n0x140013994 call MmMapLockedPagesWithReservedMapping\n0x1400139A5 mov [rdi], r13                   ; NEW: chain link (previous entry)\n0x1400139A8 mov r13, [rbp+var_10]\n0x1400139B3 lea rcx, [rdi+30h]\n0x1400139C4 call memmove\n0x1400139D5 call MmUnmapReservedMapping\n0x1400139E7 jb 0x140013977\n0x140013A02 mov [r13+0], rax                 ; NEW: store chain head to output param"
+    },
+    {
+      "name": "KsrConnectSecureLoader",
+      "address_unpatched": "0x1C000CC90",
+      "address_patched": "0x140013180",
+      "similarity": 0.721,
+      "change_type": "refactor",
+      "key_changes": [
+        "Unpatched unlocks the transfer pages via MmUnlockPages (count==1, 0x1C000CDB7) or KsrpNkUnlockPagesForLargeTransfer (count>1, 0x1C000CDCA); both branches execute BEFORE the connection-result test at 0x1C000CDCF",
+        "Patched replaces the count-based branch with a single unconditional call to KsrpNkUnlockPagesForTransfer (0x140013286)",
+        "Patched migrates the context allocation from ExAllocatePoolWithTag to ExAllocatePool2 (0x1400131E6) and zero-initializes the descriptor up front (memset at 0x1400131BC)"
+      ],
+      "security_relevant": false,
+      "security_notes": "The reported leak-on-failure does not exist. In the unpatched build the two unlock branches converge at 0x1C000CDCF and execute before the connection-result test (test edi at 0x1C000CDCF; failure branch to 0x1C000CDED). The result test only decides store-on-success vs ExFreePoolWithTag-on-failure (0x1C000CDFA); it does not gate the unlock. The count==0 skip (0x1C000CDA8) matches the case where KsrpNkLockPagesForTransfer also locked nothing. The patched change is consolidation of the two matched unlock branches into one helper plus API modernization.",
+      "assembly_diff": "; UNPATCHED @ 0x1C000CC90 - unlock precedes result test\n0x1C000CDA8 test rax, rax        ; page count\n0x1C000CDAB jz 0x1C000CDCF        ; count 0 -> nothing was locked\n0x1C000CDB1 cmp rax, 1\n0x1C000CDB7 call MmUnlockPages    ; count == 1\n0x1C000CDCA call KsrpNkUnlockPagesForLargeTransfer ; count > 1\n0x1C000CDCF test edi, edi         ; connect result checked AFTER unlock\n0x1C000CDFA call ExFreePoolWithTag ; free context on failure only\n\n; PATCHED @ 0x140013180 - single unconditional unlock\n0x1400131BC call memset          ; zero descriptor up front\n0x1400131E6 call ExAllocatePool2\n0x140013286 call KsrpNkUnlockPagesForTransfer ; unconditional cleanup"
+    },
+    {
+      "name": "KsrPdFreeUnusedPartitionPages -> KsrpFreeUnusedPartitionMemory/Routine/Worker",
+      "address_unpatched": "0x1C000B500",
+      "address_patched": "0x14000D8C4 / 0x14000DBFC / 0x14000DE10",
+      "similarity": 0.612,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched KsrPdFreeUnusedPartitionPages walks the shared red-black tree at KsrpPdDatabase+0x40 (root computed at 0x1C000B5E7, traversal 0x1C000B5EB..0x1C000B76B) and frees pages within each range via KsrPdFreePagesInRange (0x1C000B6A7) with NO lock acquired anywhere in the function; its only caller KsrpRestoreMemoryPartition (call at 0x1C0009631) also holds no KsrpPdDatabaseLock",
+        "Patched redesigns this into a per-NUMA-node parallel worker model (PsCreateSystemThreadEx at 0x14000DB4B) and brackets the equivalent work with KsrpPdDatabaseLock: shared for object lookup (acquire 0x14000DC7D, release 0x14000DC9E) and exclusive around the per-range cursor walk KsrpPdMovePartitionMemoryRangeCursor (0x14000DCC2; acquire 0x14000DCB2, release 0x14000DCFF), snapshotting each range under the lock before freeing via KsrpPdFreePartitionRange (0x14000DD2C)",
+        "Mechanism detail: the unpatched traversal is a read-only red-black in-order walk (the 'and rbx, 0xFFFFFFFFFFFFFFFC' operations mask parent-pointer colour bits to find in-order successors); it does not remove tree nodes and does not call RtlRbRemoveNode, and its ExFreePoolWithTag calls free scratch buffers and a local range list rather than tree nodes; the synchronization added is KsrpPdDatabaseLock via ExAcquirePushLockSharedEx/ExAcquirePushLockExclusiveEx"
+      ],
+      "security_relevant": true,
+      "security_notes": "Genuine but boot-restore-only defensive synchronization. The unpatched traversal of the shared KsrpPdDatabase tree runs without holding KsrpPdDatabaseLock, whereas other functions that mutate the same tree do hold it. The patched build brackets the equivalent traversal with the lock. However, this runs during soft-restart partition restoration on OS-owned data with no attacker-controlled input, and the concurrency the lock guards is largely introduced by the patched build's own new parallel worker design; a concurrent mutation window in the unpatched single-threaded restore path is not demonstrable from these binaries. Best characterized as defense-in-depth synchronization coupled to a redesign, not a fix to a demonstrated attacker-reachable race.",
+      "assembly_diff": "; UNPATCHED KsrPdFreeUnusedPartitionPages @ 0x1C000B500 - no lock\n0x1C000B5E0 mov rbx, cs:KsrpPdDatabase\n0x1C000B5E7 add rbx, 40h                     ; red-black tree root\n0x1C000B6A7 call KsrPdFreePagesInRange\n0x1C000B765 and rbx, 0xFFFFFFFFFFFFFFFC       ; parent colour-bit mask (successor walk)\n0x1C000B76E jnz 0x1C000B611                   ; continue traversal\n; no ExAcquirePushLock* anywhere in the function\n\n; PATCHED KsrpFreeUnusedPartitionMemoryRoutine @ 0x14000DBFC - bracketed by lock\n0x14000DC7D call ExAcquirePushLockSharedEx    ; KsrpPdDatabaseLock (lookup)\n0x14000DC9E call ExReleasePushLockSharedEx\n0x14000DCB2 call ExAcquirePushLockExclusiveEx ; KsrpPdDatabaseLock (range cursor)\n0x14000DCC2 call KsrpPdMovePartitionMemoryRangeCursor\n0x14000DCFF call ExReleasePushLockExclusiveEx\n0x14000DD2C call KsrpPdFreePartitionRange"
+    },
+    {
+      "name": "KsrpRestoreMemoryPartition",
+      "address_unpatched": "0x1C000926C",
+      "address_patched": "0x14000DFF0",
+      "similarity": 0.388,
+      "change_type": "refactor",
+      "key_changes": [
+        "Metadata offset/length bounds validation is byte-equivalent in both builds: fields at +4/+8/+0xC/+0x10 checked against the metadata size, plus the two cross-field sums, with a common reject target",
+        "Unpatched: cmp eax,0FDCh (0x1C000940E), lea eax,[rcx-1]/[r8-1]; cmp 0x12 (0x1C000941F/0x1C000942F), field-vs-esi ja rejects (0x1C000943C/0x1C0009444/0x1C0009450/0x1C000945C), lea eax,[rdx+rcx]; cmp esi (0x1C0009465), lea eax,[r9+r8]; cmp esi (0x1C0009470)",
+        "Patched: same block at 0x14000E133/0x14000E144/0x14000E153/0x14000E15F../0x14000E187/0x14000E191, same reject target loc_14000E448",
+        "Only non-security differences: query helper renamed (KsrPdQueryRegionMetadata -> KsrDbQueryRegionMetadata), ExAllocatePool2 migration, and a dropped redundant KsrPdRetrieveMemoryRegion call"
+      ],
+      "security_relevant": false,
+      "security_notes": "The metadata bounds validation is present and equivalent in both builds; no check is removed, relaxed, or added. This contradicts any claim that the patched build removes or relocates these checks. Pure data-access-layer refactor.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrQueryMetadata",
+      "address_unpatched": "0x1C0007290",
+      "similarity": 0.12,
+      "change_type": "refactor",
+      "key_changes": [
+        "Metadata-query dispatch reorganized as part of the data-access-layer rename/split",
+        "Routes queries through the renamed KsrDb* helpers"
+      ],
+      "security_relevant": false,
+      "security_notes": "Behavioral reorganization of metadata query dispatch. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpRestoreMemoryPartitionsWorker",
+      "address_unpatched": "0x1C0009770",
+      "address_patched": "0x14000E830",
+      "similarity": 0.34,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Restoration worker; adds locking/consistency hardening (KeBugCheckEx on inconsistency) consistent with the redesign"
+      ],
+      "security_relevant": false,
+      "security_notes": "Hardening of the restore worker consistent with the broader redesign. Not a standalone vulnerability.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpNkLockPagesForLargeTransfer",
+      "address_unpatched": "0x1C000BF30",
+      "similarity": 0.355,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Error-path hardening and object-open modernization"
+      ],
+      "security_relevant": false,
+      "security_notes": "Error handling hardening. Not security-relevant.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpNkLockPagesForTransfer",
+      "address_unpatched": "0x1C000C45C",
+      "address_patched": "0x140014A20",
+      "similarity": 0.9,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Identical page-count math, MmProbeAndLockPages, and >1-page delegation to KsrpNkLockPagesForLargeTransfer"
+      ],
+      "security_relevant": false,
+      "security_notes": "No change of security relevance.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPdQueryRegionMetadata",
+      "address_unpatched": "0x1C000B7CC",
+      "address_patched": "0x14001060C",
+      "similarity": 0.9,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Identical table-index bound (cmp edx,[rcx+0x14]; jnb reject) and pre-memmove copy-size guard (cmp edx,arg; ja reject at 0x1C000B902 / 0x140010757); only a block-id constant shifted (0x33 -> 0x34)"
+      ],
+      "security_relevant": false,
+      "security_notes": "Validation identical in both builds. No change of security relevance.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "memmove / memset variants",
+      "address_unpatched": "0x1C0001D00 / 0x1C0002040",
+      "similarity": 0.59,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Copy/fill routines rewritten; semantically equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "Compiler/library rewrite. No security implications.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "KsrNkConnectSecureExtension and related secure-extension split functions (new secure-extension code path)",
+      "KsrpNkMapTransferPage @ 0x140014B3C (new code carrying a one-page size cap cmp r8,0x1000; jbe at 0x140014B59; newly introduced, not a hardening of a pre-existing function)"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "KsrpNkAllocatePagesForMdl",
+      "address_unpatched": "0x1C000BB20",
+      "address_patched": "0x140013888",
+      "entry_point": "Secure Kernel -> Normal Kernel secure-call dispatcher KsrpNkHandleSecureCall (0x1C000C720), command index 0",
+      "call_chain": ["Secure Kernel secure call", "KsrpNkHandleSecureCall (0x1C000C720)", "command 0 dispatch (0x1C000C7DE -> call 0x1C000C7FD)", "KsrpNkAllocatePagesForMdl"],
+      "vulnerability_class": "None demonstrable (defensive initialization of a newly-introduced page-linkage field)",
+      "description": "The patched KsrpNkAllocatePagesForMdl adds a back-linked page chain through the persisted overflow pages (writes the previous page-array entry into each mapped page's first quadword at 0x1400139A5, with a -1 sentinel, and stores the chain head into a new output parameter at 0x140013A02). The unpatched build has no such chain: its overflow loop (0x1C000BBFD..0x1C000BC67) copies page-array bytes into mapping+0x30 and never writes the mapping base. The signature grew from 6 to 8 parameters and the allocator changed to KsrMmAllocatePartitionNumaPagesForMdlEx. This is a format/feature change, not a fix: the unpatched layout had no chain field to leave uninitialized in a safety sense, and no in-binary consumer dereferences the field. KsrpNkFreePersistedPages (unpatched 0x1C000BE1C, patched 0x140013FBC) is logically identical in both builds and reads a fixed inline array from the request, not the chain.",
+      "trigger_conditions": "Reached only when the Secure Kernel issues secure-call command 0 with an allocation whose MDL page array exceeds the 0x58-byte inline header copy. Not reachable or influenced from an unprivileged user context.",
+      "primitive": "None. The added writes initialize memory that no in-binary path reads as a pointer.",
+      "evidence": "Patched (0x140013888): 'mov [rdi], r13' at 0x1400139A5 (chain link); 'or rax,-1' at 0x140013950 and 'or r13,rax' at 0x140013970 (sentinel); 'mov [r13],rax' at 0x140013A02 (chain head to new output param). Unpatched loop 0x1C000BBFD..0x1C000BC67 has no store to the mapping base.",
+      "notes": "Any consumption of the new chain by an external component (the Secure Kernel or boot loader) cannot be confirmed from the provided binaries and is not claimed."
+    },
+    {
+      "severity": "informational",
+      "function": "KsrConnectSecureLoader",
+      "address_unpatched": "0x1C000CC90",
+      "address_patched": "0x140013180",
+      "entry_point": "Boot / soft-restart secure-loader connect",
+      "call_chain": ["loader connect", "KsrConnectSecureLoader", "KsrpNkLockPagesForTransfer (0x1C000CD44)", "connect indirect call", "unlock (0x1C000CDB7 / 0x1C000CDCA)"],
+      "vulnerability_class": "None (resource-cleanup refactor)",
+      "description": "The reported conditional-unlock leak does not exist. In the unpatched build both unlock branches (MmUnlockPages at 0x1C000CDB7 for count 1, KsrpNkUnlockPagesForLargeTransfer at 0x1C000CDCA for count>1) execute before the connection-result test at 0x1C000CDCF; the result test only decides store-on-success vs ExFreePoolWithTag-on-failure (0x1C000CDFA). The count==0 skip matches the case where the lock also locked nothing. The patched build consolidates the two matched unlock branches into a single KsrpNkUnlockPagesForTransfer call (0x140013286) and migrates to ExAllocatePool2 with an up-front descriptor memset.",
+      "trigger_conditions": "N/A - no leak is triggerable; unlock is unconditional in the unpatched build.",
+      "primitive": "None.",
+      "evidence": "Unpatched: unlock at 0x1C000CDB7/0x1C000CDCA precedes result test at 0x1C000CDCF; free-on-failure at 0x1C000CDFA. Patched: single unlock at 0x140013286.",
+      "notes": ""
+    },
+    {
+      "severity": "low",
+      "function": "KsrPdFreeUnusedPartitionPages -> KsrpFreeUnusedPartitionMemory/Routine/Worker",
+      "address_unpatched": "0x1C000B500",
+      "address_patched": "0x14000D8C4 / 0x14000DBFC / 0x14000DE10",
+      "entry_point": "Soft-restart partition restoration via KsrpRestoreMemoryPartition (0x1C000926C), call at 0x1C0009631",
+      "call_chain": ["Soft-restart restoration", "KsrpRestoreMemoryPartition (0x1C000926C)", "KsrPdFreeUnusedPartitionPages (0x1C000B500)", "shared red-black tree walk at KsrpPdDatabase+0x40 without lock", "KsrPdFreePagesInRange (0x1C000B6A7)"],
+      "vulnerability_class": "Missing synchronization on a shared tree traversal (CWE-362), boot-restore path",
+      "description": "The unpatched KsrPdFreeUnusedPartitionPages walks the shared red-black tree rooted at KsrpPdDatabase+0x40 (root at 0x1C000B5E7, traversal 0x1C000B5EB..0x1C000B76B) and frees pages within each range via KsrPdFreePagesInRange (0x1C000B6A7) without acquiring any lock; its only caller KsrpRestoreMemoryPartition (call at 0x1C0009631) also holds no KsrpPdDatabaseLock. The same tree is protected by KsrpPdDatabaseLock in other functions of the module. The patched build redesigns this path into per-NUMA-node parallel workers and brackets the equivalent traversal with KsrpPdDatabaseLock (shared acquire 0x14000DC7D / release 0x14000DC9E; exclusive acquire 0x14000DCB2 / release 0x14000DCFF around the range cursor at 0x14000DCC2), snapshotting each range under the lock before freeing via KsrpPdFreePartitionRange (0x14000DD2C). CORRECTION: the unpatched function does not remove tree nodes and does not call RtlRbRemoveNode; the 'and rbx, 0xFFFFFFFFFFFFFFFC' operations are red-black in-order-successor traversal (parent colour-bit masking), and its ExFreePoolWithTag calls free scratch buffers and a local range list, not tree nodes.",
+      "trigger_conditions": "The traversal runs during soft-restart partition restoration on OS-owned data with no attacker-controlled input. A live race requires another thread to mutate the KsrpPdDatabase tree during that boot-restore window; such a concurrent path is not demonstrable in the unpatched build. The concurrency the patched lock guards is largely introduced by the patched build's own parallel worker design.",
+      "primitive": "None demonstrable. No use-after-free or read/write primitive is shown; the lock addition is defense-in-depth coupled to a redesign.",
+      "evidence": "Unpatched: tree root at 0x1C000B5E7, KsrPdFreePagesInRange at 0x1C000B6A7, successor mask at 0x1C000B765, no ExAcquirePushLock* in the function; caller call site 0x1C0009631 with no lock held. Patched: KsrpPdDatabaseLock acquired at 0x14000DC7D (shared) and 0x14000DCB2 (exclusive).",
+      "notes": "Rated Low as defensive boot-restore synchronization; not an attacker-reachable race with demonstrable impact from these binaries."
+    }
+  ],
+  "summary": "The patch to ksrext.sys (Kernel Soft Restart Extension) is predominantly a rebuild/refactor: functions are renamed, relocated, and split; pool allocations migrated broadly from ExAllocatePoolWithTag to ExAllocatePool2; WPP/ETW tracing and KeBugCheckEx hardening were added; and the free-unused-partition-memory path was redesigned into a per-NUMA-node parallel worker model. No attacker-reachable vulnerability is fixed. The three originally-flagged items reduce to: (1) KsrpNkAllocatePagesForMdl gained a back-linked page-chain field and a chain-head output parameter (a format/feature change reached only via the Secure Kernel secure-call interface; no in-binary consumer reads the field); (2) KsrConnectSecureLoader had its two matched MDL-unlock branches consolidated into one helper (a refactor - the unpatched build already unlocks unconditionally before the failure free, so no leak); and (3) KsrPdFreeUnusedPartitionPages, previously walking the shared partition-database tree without KsrpPdDatabaseLock, is now bracketed by that lock in the redesigned parallel path (boot-restore-only defensive synchronization, no attacker-controlled input). The restore-path metadata offset/length bounds validation is byte-equivalent in both builds. No omitted security-relevant change was found."
+}

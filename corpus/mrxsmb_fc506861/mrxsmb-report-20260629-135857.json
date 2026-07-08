@@ -1,0 +1,58 @@
+{
+  "binaries": {
+    "title": "mrxsmb.sys - No security-relevant change: SMB-over-QUIC compression transform header recognition staged behind a WIL feature flag",
+    "id_unpatched": "mrxsmb_unpatched.sys",
+    "id_patched": "mrxsmb_patched.sys",
+    "overall_similarity": 0.9919,
+    "matched": 1228,
+    "changed": 1,
+    "identical": 1227,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "SmbQuicReceiveEvent",
+      "unpatched_address": "0x140050EA4",
+      "patched_address": "0x140050F54",
+      "similarity": 0.9924,
+      "change_type": "feature_staging_not_security_relevant",
+      "key_changes": [
+        "Replaced the inline 4-byte transform-magic read + single comparison (cmp dword [rbp+57h+Mdl], 0x424d53fd at 0x140051223) with a call to the new helper SmbQuicIsIndicationTransformedMessage (0x140050C80).",
+        "The new helper reads the same 4-byte magic, then calls the WIL feature-flag stub Feature_Servicing_SmbCompressionOverQuicFix__private_IsEnabledDeviceUsageNoInline (0x14004F73C).",
+        "When the feature flag is disabled (default for staged rollout), the helper accepts only 0x424d53fd (encrypted transform header) -- identical to the unpatched behavior.",
+        "When the feature flag is enabled, the helper additionally accepts 0x424d53fc (compressed transform header) via the range test (magic + 0xbdb2ac04) <= 1, routing it to the pre-existing transform handler."
+      ],
+      "security_relevant": false,
+      "security_notes": "These are SMB-over-QUIC receive-indication functions (SmbQuic*), not the TCP/445 receive path. The only behavior-affecting change is that the patched build, when the WIL feature flag Feature_Servicing_SmbCompressionOverQuicFix is enabled, recognizes the SMB compressed transform header magic 0x424d53fc in addition to the encrypted transform header magic 0x424d53fd. With the flag off (default), the patched and unpatched builds behave identically (0x424d53fd only). The transform handler that follows a magic match (loc_140051371: ExAllocatePool2 / IoAllocateMdl / MmBuildMdlForNonPagedPool / SmbQuicReceive) is byte-for-byte identical in both builds and is reached only when the magic matches; its allocation size (esi) derives from the SMB message-length field at [rdi+0x80], byte-swapped and bounds-checked at 0x1400510B4 before use. In the unpatched build a 0x424d53fc header does not match and falls through to a length-bounded SmbQuicCopyIndicationToBufferEx copy (r13 bytes, capped at ebx, required >= 4) into [rdi+0x88]; it does not reach ExAllocatePool2. The change therefore widens which magics reach the transform path (feature enablement), it does not tighten a bounds check. sub_14004F73C is an auto-generated WIL feature-state stub (reads __private_featureState, tests bit 0x10, else wil_details_IsEnabledFallback), not a per-connection compression-negotiation check. At the same address the unpatched build hosts a different WIL stub (Feature_servicing_SmbQuicCertRevocationCheckFollowup), confirming the slot was repurposed. No memory-corruption or code-execution primitive is demonstrable in either build.",
+      "assembly_diff": "=== UNPATCHED SmbQuicReceiveEvent (0x140051204-0x14005122A) ===\nmov     rcx, [rbp+57h+arg_8]           ; indication context\nlea     rdx, [rbp+57h+Mdl]             ; 4-byte stack buffer\nand     dword ptr [rbp+57h+Mdl], r15d ; zero buffer\nmov     r9d, 4                         ; read 4 bytes\nand     [rsp+0F0h+Irp], r15\nmov     r8d, r14d                      ; stream offset\ncall    SmbQuicCopyIndicationToBufferEx\ncmp     dword ptr [rbp+57h+Mdl], 424D53FDh ; ONLY encrypted magic (0xFD 'SMB')\njz      loc_140051371                  ; match -> transform handler\nmov     rbx, [rdi+88h]                 ; else: bounded raw-message copy target\nmov     r9d, r13d                      ; r13d bounded (<= ebx, >= 4)\ncall    SmbQuicCopyIndicationToBufferEx\n\n=== PATCHED SmbQuicReceiveEvent (0x1400512B4-0x1400512C8) ===\nmov     rcx, [rbp+57h+arg_8]           ; indication context\nmov     edx, r14d                      ; stream offset\ncall    SmbQuicIsIndicationTransformedMessage\ntest    al, al\njnz     loc_140051409                  ; true -> transform handler\nmov     rbx, [rdi+88h]                 ; else: bounded raw-message copy target\n\n=== NEW HELPER SmbQuicIsIndicationTransformedMessage (0x140050C80) ===\n0x140050c80: sub     rsp, 38h\n0x140050c84: and     [rsp+38h+arg_10], 0            ; init 4-byte buffer\n0x140050c89: mov     r8d, edx                       ; stream offset\n0x140050c8c: and     [rsp+38h+var_18], 0\n0x140050c92: lea     rdx, [rsp+38h+arg_10]\n0x140050c97: mov     r9d, 4                         ; read 4 bytes\n0x140050c9d: call    SmbQuicCopyIndicationToBufferEx\n0x140050ca2: call    Feature_Servicing_SmbCompressionOverQuicFix__private_IsEnabledDeviceUsageNoInline\n0x140050ca7: test    eax, eax\n0x140050ca9: jz      short loc_140050cbc            ; feature off -> encrypted-only\n0x140050cab: mov     eax, [rsp+38h+arg_10]\n0x140050caf: add     eax, 0BDB2AC04h                ; 0x424d53fc -> 0, 0x424d53fd -> 1\n0x140050cb4: cmp     eax, 1                         ; accept 0x424d53fc OR 0x424d53fd\n0x140050cb7: setbe   al\n0x140050cba: jmp     short loc_140050cc7\n0x140050cbc: cmp     [rsp+38h+arg_10], 424D53FDh    ; feature off: encrypted only\n0x140050cc4: setz    al\n0x140050cc7: add     rsp, 38h\n0x140050ccb: retn"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      "SmbQuicIsIndicationTransformedMessage (0x140050C80) - new magic-recognition helper",
+      "Feature_Servicing_SmbCompressionOverQuicFix__private_IsEnabledDeviceUsageNoInline / __private_IsEnabledFallback - auto-generated WIL feature-state stubs"
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "SmbQuicReceiveEvent",
+      "entry_point": "SMB-over-QUIC receive-indication callback (SmbQuic* path). Not the TCP/445 receive path.",
+      "call_chain": [
+        "SMB-over-QUIC stream receive indication",
+        "SmbQuicReceiveEvent (0x140050EA4 unpatched / 0x140050F54 patched): reads 4-byte transform magic and dispatches",
+        "SmbQuicIsIndicationTransformedMessage (0x140050C80, patched only): feature-gated magic recognition",
+        "loc_140051371 transform handler (ExAllocatePool2 / IoAllocateMdl / SmbQuicReceive): identical in both builds, reached only on a magic match"
+      ],
+      "vulnerability_class": "None. Feature staging: recognition of the SMB compressed transform header (0x424d53fc) over QUIC, gated behind a WIL feature flag.",
+      "description": "The unpatched SmbQuicReceiveEvent reads a 4-byte transform magic from the QUIC receive indication and compares it inline against 0x424d53fd (encrypted transform header). On a match it branches to the transform handler; otherwise it copies a bounded number of bytes into an existing buffer at [rdi+0x88] and continues parsing the data as a normal SMB message. The patched build extracts that read-and-compare into the new helper SmbQuicIsIndicationTransformedMessage, which consults the WIL feature flag Feature_Servicing_SmbCompressionOverQuicFix. With the flag disabled (default), the helper accepts only 0x424d53fd, identical to the unpatched behavior. With the flag enabled, it also accepts the compressed transform header magic 0x424d53fc via the arithmetic range test (magic + 0xbdb2ac04) <= 1, routing compressed transform messages to the pre-existing transform handler. This is SMB-over-QUIC compression support being staged behind a feature flag, not a delivered security fix. The transform handler (allocation + MDL path) is byte-for-byte identical in both builds and is reached only on a magic match; its allocation size comes from a bounds-checked message-length field. There is no demonstrable memory-corruption, out-of-bounds, or code-execution primitive introduced or removed by this change.",
+      "trigger_conditions": "Requires a negotiated SMB-over-QUIC transport. The behavioral delta (acceptance of 0x424d53fc) is active only when the WIL feature flag Feature_Servicing_SmbCompressionOverQuicFix is enabled, which is not the default state for a staged feature. With the flag off, unpatched and patched behavior is identical.",
+      "primitive": "None demonstrable. The allocation on the transform path uses a bounds-checked message-length field ([rdi+0x80], byte-swapped, checked at 0x1400510B4) and is unchanged between builds. The fall-through path performs a length-bounded copy into an existing buffer. No pool-corruption, MDL write primitive, control-flow hijack, or mitigation bypass is supported by the binaries; any such claim would be speculative and is not made.",
+      "evidence": "// UNPATCHED SmbQuicReceiveEvent inline check (0x140051204-0x14005122A):\n//   read 4 bytes, then cmp against 0x424d53fd only; else bounded raw copy.\n// PATCHED SmbQuicReceiveEvent (0x1400512B4):\n//   call SmbQuicIsIndicationTransformedMessage; test al,al; jnz transform_handler.\n// PATCHED SmbQuicIsIndicationTransformedMessage (0x140050C80):\n//   read 4 bytes;\n//   if (Feature_Servicing_SmbCompressionOverQuicFix__IsEnabled() == 0)\n//       return magic == 0x424d53fd;            // encrypted only (== unpatched)\n//   return (magic + 0xbdb2ac04) <= 1;          // 0x424d53fc or 0x424d53fd (feature on)",
+      "notes": "The report's earlier attribution to CVE-2020-0796 (SMBGhost) is not supported by these binaries and has been removed. SMBGhost was a 2020 server-side SMBv3.1.1 decompression flaw on the TCP/445 path; the change here is on the SMB-over-QUIC client receive-indication path, is gated behind a WIL feature flag, and delivers no default behavior change. The 0xFC/0xFD magic coincidence does not establish that vulnerability."
+    }
+  ],
+  "summary": "No delivered security-relevant change. The single behavior-affecting change is in SmbQuicReceiveEvent (SMB-over-QUIC receive-indication parser): an inline 4-byte magic read plus single comparison against 0x424d53fd was moved into a new helper, SmbQuicIsIndicationTransformedMessage, which additionally recognizes the compressed transform header magic 0x424d53fc only when the WIL feature flag Feature_Servicing_SmbCompressionOverQuicFix is enabled. With the flag off (default), the patched and unpatched builds behave identically. The transform allocation/MDL path is identical in both builds and reached only on a magic match, with a bounds-checked allocation size. No memory-corruption or code-execution primitive is demonstrable. The prior CVE-2020-0796 (SMBGhost) attribution and associated exploit chain were fabricated and have been removed. An independent content-based diff confirms this is the only behavior-affecting change; all other differences are relocation/layout noise."
+}

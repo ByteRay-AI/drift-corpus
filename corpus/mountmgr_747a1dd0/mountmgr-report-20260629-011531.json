@@ -1,0 +1,456 @@
+{
+  "binaries": {
+    "title": "mountmgr.sys - No security-relevant change (Cluster-Shared-Volume characteristic tracking field plus IoCreateSymbolicLink2 modernization)",
+    "id_unpatched": "mountmgr_unpatched.sys",
+    "id_patched": "mountmgr_patched.sys",
+    "overall_similarity": 0.9587,
+    "matched": 156,
+    "changed": 36,
+    "identical": 120,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C00014C0",
+      "similarity": 0.599,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Compiler intrinsic rewrite of memset with different vectorization strategy (SSE2 vs older scalar loop). Functionally identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0001010",
+      "similarity": 0.771,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IRP cancel routine loop restructured - same logic with different register allocation and control flow layout."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000F2D0",
+      "similarity": 0.8456,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Removed conditional `if (!*(i_1 + 0x7c))` before calling sub_1c0016fbc - cleanup loop always calls the function now. Minor behavioral change in cleanup path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015B44",
+      "similarity": 0.8458,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Device type validation logic reorganized with if-else branch inversion (compiler optimization). Memset size changed from 0x90 to 0x8c indicating struct layout change (4 bytes smaller local buffer). Device ID magic-number comparison chain reordered."
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct offset shift consistent with global layout change. Logic is equivalent after reordering.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000F390",
+      "similarity": 0.8469,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Linked list search rewritten from for-loop to while-loop with explicit list-head check. Same logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0016760",
+      "similarity": 0.8668,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pool allocation retry loop control flow restructured - equivalent logic with cleaner error paths."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002DF0",
+      "similarity": 0.8678,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Event waiting loop restructured: unpatched checks data_1c00061d0 flag, patched checks data_1c0006220. Different global variable used for shutdown detection. Work item drain loop unchanged."
+      ],
+      "security_relevant": false,
+      "security_notes": "Different shutdown flag global used, likely due to data section reorganization.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00170E0",
+      "real_name": "ReconcileThisDatabaseWithMasterWorker",
+      "patched_address": "0x1C0017130",
+      "similarity": 0.8832,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added a third term `|| *(entry + 0x7d) != 0` to the reconciliation skip condition. UNPATCHED: `if (MntMgrFindDevice(...) == listHead || *(entry + 0x7c) != 0)`. PATCHED adds `|| *(entry + 0x7d) != 0`. When the condition is true the function releases its locks and returns WITHOUT calling IoGetDeviceObjectPointer, so the new term causes matching entries (CSV volumes) to be SKIPPED, not processed.",
+        "Struct offset shift (+1) for fields at 0x7d and above due to the new byte inserted at 0x7d (e.g. word write moves from 0x82 to 0x83).",
+        "The IoGetDeviceObjectPointer return value is checked in BOTH builds (test eax,eax; jns after the call): unpatched 0x1C0017250, patched 0x1C00172A5. No unchecked-return path exists in either build."
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the remote-database reconciliation worker, not volume-arrival processing. The added 0x7d term tightens a skip/bail-out condition so that Cluster-Shared-Volume devices are excluded from reconciliation. Direction is fewer entries reconciled, not more; no bounds/ACL/pointer-validation change. State-management/correctness change, not a security fix.",
+      "assembly_diff": "UNPATCHED 0x1C0017226: cmp [r15+7Ch], al ; 0x1C001723F call IoGetDeviceObjectPointer ; 0x1C0017250 test eax,eax ; 0x1C0017252 jns. PATCHED 0x1C0017274: cmp [r15+7Ch], al ; 0x1C001727E cmp [r15+7Dh], al (NEW) ; 0x1C0017297 call IoGetDeviceObjectPointer ; 0x1C00172A5 test eax,eax ; 0x1C00172A7 jns."
+    },
+    {
+      "name": "sub_1C00183D4",
+      "similarity": 0.8844,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000D898",
+      "similarity": 0.8988,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Pool allocation retry loop control flow restructured to use guard-clause pattern instead of if-else. Equivalent logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00152E4",
+      "similarity": 0.908,
+      "change_type": "behavioral",
+      "key_changes": [
+        "File creation logic restructured: patched version always calls IoSetThreadHardErrorMode to restore state at end",
+        "Patched version uses clearer control flow for IoCreateFile error handling paths",
+        "Offset 0x85 changed to 0x86 for device info structure field"
+      ],
+      "security_relevant": false,
+      "security_notes": "Struct offset shift consistent with global layout change. Error path handling is equivalent.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0014C24",
+      "similarity": 0.9129,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation (r14->r15, r15->r14, ebx->esi) throughout. Control flow layout reorganized. Logic is identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0018990",
+      "similarity": 0.9223,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and minor optimization changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00162A0",
+      "similarity": 0.9303,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Control flow restructured with equivalent logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E458",
+      "similarity": 0.939,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Linked list traversal rewritten from do-while to while-true with explicit list head check. Same logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000C878",
+      "similarity": 0.9402,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IoAllocateWorkItem check restructured from if-else to guard-clause pattern. Equivalent logic."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009E90",
+      "similarity": 0.942,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation (r13->r8, r15 removed). Offset 0x84->0x85 struct shift."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0015EBC",
+      "similarity": 0.9502,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0010D18",
+      "similarity": 0.9523,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow restructuring."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C001085C",
+      "similarity": 0.9528,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and control flow restructuring. Logic equivalent."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000F7E4",
+      "real_name": "MountMgrMountedDeviceArrival",
+      "similarity": 0.9577,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "This function does NOT call IoGetDeviceObjectPointer and is not the site of the reconciliation change. Its diff is the mechanical +1 struct-offset shift (same 0xB8 allocation and memset in both builds) plus decompiler register/type reallocation. No logic change."
+      ],
+      "security_relevant": false,
+      "security_notes": "Allocates and initializes the 0xB8-byte mounted-device structure. The only difference between builds is the +1 offset shift caused by the new 0x7d byte and decompiler variable renaming. No security-relevant change.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0016FBC",
+      "similarity": 0.9595,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00091D0",
+      "similarity": 0.9624,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "IOCTL dispatch function. Register reallocation (rbx->rsi, r15->r14). Added Object_1 local FILE_OBJECT pointer. Struct offset shifts consistent with layout change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009940",
+      "similarity": 0.9671,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation and minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0012CCC",
+      "similarity": 0.9704,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Control flow restructuring."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0009010",
+      "similarity": 0.9716,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000A280",
+      "similarity": 0.9727,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00110C8",
+      "similarity": 0.9738,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00185C0",
+      "similarity": 0.9747,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000E124",
+      "similarity": 0.9786,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register reallocation (rbp_1->rcx) in linked list search. Logic identical."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000DDC0",
+      "similarity": 0.9821,
+      "change_type": "behavioral",
+      "key_changes": [
+        "API call changed from IoCreateSymbolicLink to IoCreateSymbolicLink2 - newer variant with additional safety checks. Local variable initialization pattern changed."
+      ],
+      "security_relevant": false,
+      "security_notes": "IoCreateSymbolicLink2 is a hardened variant. This is a minor hardening change, not the primary vulnerability fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00157D0",
+      "real_name": "QueryDeviceInformation",
+      "similarity": 0.9892,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Populates the new byte field at struct offset 0x7d from BYTE2(DeviceObject->Characteristics) & 1, i.e. bit 0x10000 (FILE_CHARACTERISTIC_CSV, Cluster Shared Volume). The pre-existing 0x7c byte still records bit 0x1 (FILE_REMOVABLE_MEDIA). Store at 0x1C00158D3 (mov [rbx+7Dh], al). Remaining struct writes shift +1."
+      ],
+      "security_relevant": false,
+      "security_notes": "Source of the new 0x7d flag consumed by ReconcileThisDatabaseWithMasterWorker. Derived from a storage-stack-reported device characteristic bit, not attacker-controlled IOCTL input. Not security-relevant."
+    },
+    {
+      "name": "sub_1C00197C0",
+      "similarity": 0.9895,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000CA20",
+      "similarity": 0.9896,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Struct offset shift: 0x85->0x86 for device info field. Function call addresses updated for renamed functions."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0013F14",
+      "similarity": 0.9899,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Minor control flow changes."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "none",
+      "function": "ReconcileThisDatabaseWithMasterWorker (sub_1C00170E0 unpatched / 0x1C0017130 patched); QueryDeviceInformation (sub_1C00157D0)",
+      "entry_point": "Remote-database reconciliation path; the new flag is populated from a storage-stack device characteristic, not from attacker-controlled IOCTL data.",
+      "call_chain": [
+        "QueryDeviceInformation @ 0x1C00157D0 records FILE_CHARACTERISTIC_CSV into new byte at struct offset 0x7d (store at 0x1C00158D3)",
+        "ReconcileThisDatabaseWithMasterWorker @ 0x1C00170E0 reads *(entry+0x7d) in its skip condition before IoGetDeviceObjectPointer (0x1C001727E cmp [r15+7Dh], al in patched build)"
+      ],
+      "vulnerability_class": "No security-relevant change (state-management / correctness change for Cluster Shared Volumes; plus IoCreateSymbolicLink2 API modernization)",
+      "description": "Assessment of the diff. The patched build adds one byte field at structure offset 0x7d that records whether a device carries FILE_CHARACTERISTIC_CSV (device Characteristics bit 0x10000, Cluster Shared Volume), set in QueryDeviceInformation as *(a2+0x7d)=BYTE2(Characteristics)&1. Inserting this byte shifts fields at 0x7d and above by +1, which accounts for the mechanical offset changes across many functions. ReconcileThisDatabaseWithMasterWorker adds the term `|| *(entry+0x7d)!=0` to a condition that, when true, releases locks and returns WITHOUT calling IoGetDeviceObjectPointer and without reconciling the entry. The added term therefore causes CSV volumes to be SKIPPED (fewer entries reconciled), not processed. This is the opposite direction from a check that would gate entry into a risky call.\n\nBoth builds check the IoGetDeviceObjectPointer NTSTATUS return before using DeviceObject. In assembly the sequence `mov esi,eax; test eax,eax; jns` follows the call in both builds (unpatched 0x1C0017250, patched 0x1C00172A5), and the decompilation shows `if (DeviceObjectPointer < 0)` in both. No use-after-free, uninitialized-pointer use, or out-of-bounds access exists on this path in either build.\n\nSeparately, GlobalCreateSymbolicLink (0x1C000DDC0 -> 0x1C000DE30) switches from IoCreateSymbolicLink to IoCreateSymbolicLink2 with a flags structure (leading dword = 1, followed by the target UNICODE_STRING). This is API modernization / defense-in-depth; no attacker-reachable difference in link creation was demonstrated.",
+      "trigger_conditions": "None that produce a security-relevant divergence. The 0x7d flag reflects a device characteristic reported by the storage stack; it is not derived from user-mode IOCTL input. Skipping reconciliation for CSV volumes does not create or remove a memory-safety or access-control condition.",
+      "primitive": "None. Both builds validate the IoGetDeviceObjectPointer return value before dereferencing the returned device object, and both bound the mount-point buffers they process.",
+      "evidence": "UNPATCHED ReconcileThisDatabaseWithMasterWorker (0x1C00170E0):\n  Device = MntMgrFindDevice(v1, v2);\n  if (Device == listHead || *(_BYTE*)(v2+124) != 0) { release locks; return; }   // 124 = 0x7c\n  DeviceObjectPointer = IoGetDeviceObjectPointer((PUNICODE_STRING)(v2+80), 0x80u, &FileObject, &DeviceObject);\n  if (DeviceObjectPointer < 0) { ...bail out... }   // return value IS checked\n\nPATCHED ReconcileThisDatabaseWithMasterWorker (0x1C0017130):\n  Device = MntMgrFindDevice(v1, v2);\n  if (Device == listHead || *(_BYTE*)(v2+124) != 0 || *(_BYTE*)(v2+125) != 0) { release locks; return; }   // added 125 = 0x7d\n  DeviceObjectPointer = IoGetDeviceObjectPointer((PUNICODE_STRING)(v2+80), 0x80u, &FileObject, &DeviceObject);\n  if (DeviceObjectPointer < 0) { ...bail out... }   // unchanged\n\nQueryDeviceInformation (0x1C00157D0): PATCHED adds *(_BYTE*)(a2+125) = BYTE2(v4->Characteristics) & 1;  (0x7d = FILE_CHARACTERISTIC_CSV)\n\nGlobalCreateSymbolicLink: UNPATCHED IoCreateSymbolicLink(&SymbolicLinkName, a2); PATCHED IoCreateSymbolicLink2(P, v10) with LODWORD(v10[0])=1 and the target string copied into v10[1].",
+      "assembly": "UNPATCHED (0x1C00170E0):\n  0x1C0017216  call    MntMgrFindDevice\n  0x1C0017226  cmp     [r15+7Ch], al\n  0x1C001723F  call    cs:__imp_IoGetDeviceObjectPointer\n  0x1C001724E  mov     esi, eax\n  0x1C0017250  test    eax, eax\n  0x1C0017252  jns     short loc_1C0017290\n\nPATCHED (0x1C0017130):\n  0x1C0017264  call    MntMgrFindDevice\n  0x1C0017274  cmp     [r15+7Ch], al\n  0x1C001727E  cmp     [r15+7Dh], al           ; NEW 0x7d (CSV) flag test\n  0x1C0017297  call    cs:__imp_IoGetDeviceObjectPointer\n  0x1C00172A3  mov     esi, eax\n  0x1C00172A5  test    eax, eax\n  0x1C00172A7  jns     short loc_1C00172E2\n\nQueryDeviceInformation store of the new flag (patched): 0x1C00158D3  mov [rbx+7Dh], al\n\nThe only path-level difference is the added cmp [r15+7Dh], al at 0x1C001727E. The return-value test (test eax,eax; jns) is present in both builds.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "mountmgr!ReconcileThisDatabaseWithMasterWorker",
+            "address": "0x1C00170E0 (unpatched) / 0x1C0017130 (patched)",
+            "why": "Compare the skip condition at the cmp [r15+7Ch] / cmp [r15+7Dh] sequence just before the IoGetDeviceObjectPointer call."
+          },
+          {
+            "symbol": "mountmgr!QueryDeviceInformation",
+            "address": "0x1C00157D0",
+            "why": "Store mov [rbx+7Dh], al at 0x1C00158D3 (patched) records the FILE_CHARACTERISTIC_CSV bit into the new 0x7d field."
+          }
+        ],
+        "watch": [
+          "[r15+0x7c] = FILE_REMOVABLE_MEDIA bit (both builds)",
+          "[r15+0x7d] = FILE_CHARACTERISTIC_CSV bit (patched build only)",
+          "eax after the IoGetDeviceObjectPointer call = NTSTATUS, tested by test eax,eax; jns in both builds"
+        ],
+        "key_offsets": [
+          "0x1C001727E (patched): cmp [r15+7Dh], al - the added CSV-flag test",
+          "0x1C0017250 (unpatched) / 0x1C00172A5 (patched): test eax,eax return-value check, present in both",
+          "0x1C00158D3 (patched): mov [rbx+7Dh], al - populates the new 0x7d field"
+        ],
+        "trigger_setup": "Not applicable. No user-mode IOCTL sequence produces a security-relevant difference between the two builds on the changed paths.",
+        "expected_observation": "Both builds test the IoGetDeviceObjectPointer NTSTATUS and bail out on failure; neither dereferences an invalid DeviceObject. The only observable divergence is that the patched build additionally skips reconciliation for volumes with the CSV characteristic bit set.",
+        "notes": "Structure fields at offset 0x7d and above shift by +1 between builds because of the inserted byte; a raw per-offset comparison must account for this shift."
+      }
+    }
+  ],
+  "summary": "No security-relevant change was found. The patched build adds one byte field at structure offset 0x7d recording FILE_CHARACTERISTIC_CSV (Cluster Shared Volume; device Characteristics bit 0x10000), populated in QueryDeviceInformation (0x1C00157D0) and consumed in ReconcileThisDatabaseWithMasterWorker (0x1C00170E0 -> 0x1C0017130) where it is added as `|| *(entry+0x7d)` to a skip condition that returns before IoGetDeviceObjectPointer. The direction excludes CSV volumes from reconciliation (fewer entries processed), which is a state-management/correctness change, not a memory-safety fix. The IoGetDeviceObjectPointer return value is checked in BOTH builds (test eax,eax; jns at 0x1C0017250 unpatched and 0x1C00172A5 patched). Separately, GlobalCreateSymbolicLink switches to IoCreateSymbolicLink2 (defense-in-depth / API modernization). The remaining changed functions are the mechanical +1 offset shift, WPP tracing/data reshuffle, and CRT/intrinsic churn. No exploit primitive, no attacker-reachable vulnerability."
+}

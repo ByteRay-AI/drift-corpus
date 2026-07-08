@@ -1,0 +1,97 @@
+{
+  "binaries": {
+    "title": "dmvsc.sys - Channel Close MDL Cleanup Extracted into PkUninitializeRingBuffer Helper (No Security Change)",
+    "id_unpatched": "dmvsc_unpatched.sys",
+    "id_patched": "dmvsc_patched.sys",
+    "overall_similarity": 0.9888,
+    "matched": 92,
+    "changed": 1,
+    "identical": 91,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 1
+  },
+  "changed_functions": [
+    {
+      "name": "DmcEvtChannelClosed (sub_1C000CCA0)",
+      "similarity": 0.6798,
+      "change_type": "refactor",
+      "key_changes": [
+        "UNPATCHED: MDL cleanup at ctx+0x70 and ctx+0x78 done INLINE by calling PkpFreeDoubleMappedBuffer (sub_1c000cff0) directly for each MDL, then zeroing the pointers, after ExReleaseFastMutex",
+        "PATCHED: the two inline free-and-null blocks are replaced by a single call to a new helper PkUninitializeRingBuffer (sub_1c0001dd4) with rcx = ctx+0x40; the helper frees the same two MDLs and zeroes the same fields",
+        "Behavior is IDENTICAL between builds: both free the MDLs at ctx+0x70 (= substruct+0x30) and ctx+0x78 (= substruct+0x38) via PkpFreeDoubleMappedBuffer and zero the pointers, in the same order, at the same point after the fast mutex is released",
+        "The unpatched inline free (PkpFreeDoubleMappedBuffer at 0x1c000cff0) and the function called by the patched helper (PkpFreeDoubleMappedBuffer at 0x1c0001c98) are the SAME function, identical instruction-for-instruction, only relocated between builds",
+        "The fast mutex at ctx+0x100 is acquired only to clear the channel-active flag (ctx+0x18 = 0) and is released before MDL cleanup in BOTH versions; the patch does not change this"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the VMBus channel close state-change callback (DmcEvtChannelClosed) for the Dynamic Memory VSC driver, registered together with the open callback DmcEvtChannelOpened (sub_1c000cb50) via VmbChannelInitSetStateChangeCallbacks in DmcChannelCreate (sub_1c000cd50). The two MDLs at ctx+0x70 and ctx+0x78 map double-mapped ring buffer pages allocated during channel open. The only difference between the two builds is code organization: the unpatched callback freed the two MDLs with inline code, and the patched callback calls a newly extracted helper PkUninitializeRingBuffer (sub_1c0001dd4) that performs the exact same two frees and pointer clears. Both builds free the MDLs at the same position, after the fast mutex is released, using the same underlying free routine PkpFreeDoubleMappedBuffer (which itself is only relocated between builds). No synchronization was added or removed, no ordering changed, no free function changed in behavior. The hot-add message handler DmcHotAddPageRange (sub_1c0005298) does NOT free these MDLs and does NOT call PkUninitializeRingBuffer or PkpFreeDoubleMappedBuffer; it only calls MmAddPhysicalMemory and WPP tracing. There is no second concurrent path that frees these MDLs, so there is no race, no double-free, and no use-after-free either before or after the patch. This change is a non-security refactor.",
+      "assembly_diff": "UNPATCHED DmcEvtChannelClosed (sub_1C000CCA0 @ 0x1c000cca0):\n0x1c000cca0: mov [rsp+8], rbx\n0x1c000cca5: push rdi\n0x1c000cca6: sub rsp, 0x20\n0x1c000ccaa: call cs:__imp_VmbChannelGetPointer\n0x1c000ccb6: mov rdi, rax                          ; rdi = channel context\n0x1c000ccb9: lea rbx, [rax+0x100]                 ; rbx = ctx+0x100 (FAST_MUTEX)\n0x1c000ccc0: mov rcx, rbx\n0x1c000ccc3: call cs:__imp_ExAcquireFastMutex\n0x1c000cccf: mov rcx, rbx\n0x1c000ccd2: mov byte [rdi+0x18], 0                ; clear channel-active flag\n0x1c000ccd6: call cs:__imp_ExReleaseFastMutex\n--- inline MDL cleanup ---\n0x1c000cce2: mov rcx, [rdi+0x70]                   ; MDL1\n0x1c000cce6: test rcx, rcx\n0x1c000cce9: jz 0x1c000ccf5\n0x1c000cceb: call PkpFreeDoubleMappedBuffer        ; sub_1c000cff0\n0x1c000ccf0: and qword [rdi+0x70], 0\n0x1c000ccf5: mov rcx, [rdi+0x78]                   ; MDL2\n0x1c000ccf9: test rcx, rcx\n0x1c000ccfc: jz 0x1c000cd08\n0x1c000ccfe: call PkpFreeDoubleMappedBuffer        ; sub_1c000cff0\n0x1c000cd03: and qword [rdi+0x78], 0\n0x1c000cd08: [WPP trace check + retn]\n\nPATCHED DmcEvtChannelClosed (sub_1C000CCA0 @ 0x1c000cca0):\n[... identical prolog + mutex acquire/release + flag clear ...]\n0x1c000cce2: lea rcx, [rdi+0x40]                   ; substruct base\n0x1c000cce6: call PkUninitializeRingBuffer         ; sub_1c0001dd4\n0x1c000cceb: [WPP trace check + retn]\n\nPATCHED PkUninitializeRingBuffer (sub_1c0001dd4 @ 0x1c0001dd4):\n0x1c0001dd4: push rbx\n0x1c0001dd6: sub rsp, 0x20\n0x1c0001dda: mov rbx, rcx\n0x1c0001ddd: mov rcx, [rcx+0x30]                   ; ctx+0x70 MDL1\n0x1c0001de1: test rcx, rcx\n0x1c0001de4: jz 0x1c0001df0\n0x1c0001de6: call PkpFreeDoubleMappedBuffer        ; sub_1c0001c98 (same fn, relocated)\n0x1c0001deb: and qword [rbx+0x30], 0\n0x1c0001df0: mov rcx, [rbx+0x38]                   ; ctx+0x78 MDL2\n0x1c0001df4: test rcx, rcx\n0x1c0001df7: jz 0x1c0001e03\n0x1c0001df9: call PkpFreeDoubleMappedBuffer        ; sub_1c0001c98\n0x1c0001dfe: and qword [rbx+0x38], 0\n0x1c0001e03: add rsp, 0x20\n0x1c0001e07: pop rbx\n0x1c0001e08: retn"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": ["PkUninitializeRingBuffer (sub_1c0001dd4)"]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "DmcEvtChannelClosed (sub_1C000CCA0)",
+      "entry_point": "VMBus channel close state-change callback (registered via VmbChannelInitSetStateChangeCallbacks in DmcChannelCreate sub_1c000cd50)",
+      "call_chain": [
+        "Host triggers VMBus channel close",
+        "VMBus invokes state-change callback DmcEvtChannelClosed (sub_1C000CCA0)",
+        "Unpatched: callback frees MDLs at ctx+0x70/ctx+0x78 inline via PkpFreeDoubleMappedBuffer (sub_1c000cff0)",
+        "Patched: callback calls PkUninitializeRingBuffer (sub_1c0001dd4) which frees the same two MDLs via PkpFreeDoubleMappedBuffer (sub_1c0001c98)",
+        "No second concurrent path frees these MDLs: DmcHotAddPageRange (sub_1c0005298) only calls MmAddPhysicalMemory and WPP tracing"
+      ],
+      "vulnerability_class": "None (non-security refactor / code reorganization)",
+      "description": "The only functional difference between the two builds is that the channel close callback DmcEvtChannelClosed (sub_1C000CCA0) had its inline MDL cleanup extracted into a newly introduced helper, PkUninitializeRingBuffer (sub_1c0001dd4). In the unpatched build the callback reads ctx+0x70 and ctx+0x78, and if non-NULL frees each via PkpFreeDoubleMappedBuffer (sub_1c000cff0) then zeroes the pointer. In the patched build the callback instead calls PkUninitializeRingBuffer(ctx+0x40), which reads substruct+0x30 (= ctx+0x70) and substruct+0x38 (= ctx+0x78) and performs exactly the same free-and-zero via PkpFreeDoubleMappedBuffer (sub_1c0001c98). PkpFreeDoubleMappedBuffer is the same function in both builds (identical instruction-for-instruction, only relocated from 0x1c000cff0 to 0x1c0001c98). The two builds free the same MDLs, in the same order, using the same routine, at the same point after ExReleaseFastMutex. No lock was added or removed and no ordering changed. A race condition / double-free / use-after-free reading is not supported by the binaries: DmcHotAddPageRange (sub_1c0005298) does not free these MDLs (it calls only MmAddPhysicalMemory and WPP tracing) and never invokes PkUninitializeRingBuffer or PkpFreeDoubleMappedBuffer, so there is no second concurrent free path in either build. This is a code-organization change with no security impact.",
+      "trigger_conditions": "Not applicable. There is no vulnerability introduced or fixed by this change. Both builds free the two channel MDLs identically during channel close.",
+      "primitive": "None. The change is a refactor of the close callback's MDL cleanup into a shared helper. No memory-safety primitive is present in either build as a result of this diff.",
+      "evidence": "UNPATCHED DmcEvtChannelClosed (channel close callback):\n{\n    ctx = VmbChannelGetPointer();\n    ExAcquireFastMutex(ctx + 0x100);\n    *(ctx + 0x18) = 0;\n    ExReleaseFastMutex(ctx + 0x100);\n    if (*(ctx + 0x70)) { PkpFreeDoubleMappedBuffer(*(ctx + 0x70)); *(ctx + 0x70) = 0; }\n    if (*(ctx + 0x78)) { PkpFreeDoubleMappedBuffer(*(ctx + 0x78)); *(ctx + 0x78) = 0; }\n    [WPP trace]\n}\n\nPATCHED DmcEvtChannelClosed replaces the two inline blocks with:\n    PkUninitializeRingBuffer(ctx + 0x40);\n\nPkUninitializeRingBuffer (sub_1c0001dd4):\n{\n    if (*(s + 0x30)) { PkpFreeDoubleMappedBuffer(*(s + 0x30)); *(s + 0x30) = 0; }   // s = ctx+0x40, s+0x30 = ctx+0x70\n    if (*(s + 0x38)) { PkpFreeDoubleMappedBuffer(*(s + 0x38)); *(s + 0x38) = 0; }   // s+0x38 = ctx+0x78\n}\n\nPkpFreeDoubleMappedBuffer is identical in both builds (unpatched 0x1c000cff0, patched 0x1c0001c98):\n    MmUnmapLockedPages(mdl->MappedSystemVa, mdl);\n    mdl->ByteCount >>= 1;\n    MmUnlockPages(mdl);\n    IoFreeMdl(mdl);\n\nDmcHotAddPageRange (sub_1c0005298) does NOT free these MDLs; it calls MmAddPhysicalMemory and WPP tracing only. No concurrent MDL-free path exists in either build.",
+      "assembly": "PkpFreeDoubleMappedBuffer (unpatched @ 0x1c000cff0, identical patched @ 0x1c0001c98):\n0x1c000cff0: push rbx\n0x1c000cff2: sub rsp, 0x20\n0x1c000cff6: mov rbx, rcx\n0x1c000cff9: mov rdx, rcx\n0x1c000cffc: mov rcx, [rcx+0x18]              ; MDL->MappedSystemVa\n0x1c000d000: call cs:__imp_MmUnmapLockedPages\n0x1c000d00c: shr dword [rbx+0x28], 1          ; MDL->ByteCount >>= 1\n0x1c000d00f: mov rcx, rbx\n0x1c000d012: call cs:__imp_MmUnlockPages\n0x1c000d01e: mov rcx, rbx\n0x1c000d021: call cs:__imp_IoFreeMdl\n0x1c000d02d: add rsp, 0x20\n0x1c000d031: pop rbx\n0x1c000d032: retn\n\nUNPATCHED DmcEvtChannelClosed (sub_1C000CCA0 @ 0x1c000cca0), full listing:\n0x1c000cca0: mov [rsp+8], rbx\n0x1c000cca5: push rdi\n0x1c000cca6: sub rsp, 0x20\n0x1c000ccaa: call cs:__imp_VmbChannelGetPointer\n0x1c000ccb6: mov rdi, rax\n0x1c000ccb9: lea rbx, [rax+0x100]\n0x1c000ccc0: mov rcx, rbx\n0x1c000ccc3: call cs:__imp_ExAcquireFastMutex\n0x1c000cccf: mov rcx, rbx\n0x1c000ccd2: mov byte [rdi+0x18], 0\n0x1c000ccd6: call cs:__imp_ExReleaseFastMutex\n0x1c000cce2: mov rcx, [rdi+0x70]\n0x1c000cce6: test rcx, rcx\n0x1c000cce9: jz 0x1c000ccf5\n0x1c000cceb: call PkpFreeDoubleMappedBuffer   ; sub_1c000cff0\n0x1c000ccf0: and qword [rdi+0x70], 0\n0x1c000ccf5: mov rcx, [rdi+0x78]\n0x1c000ccf9: test rcx, rcx\n0x1c000ccfc: jz 0x1c000cd08\n0x1c000ccfe: call PkpFreeDoubleMappedBuffer   ; sub_1c000cff0\n0x1c000cd03: and qword [rdi+0x78], 0\n0x1c000cd08: mov rcx, cs:WPP_GLOBAL_Control\n0x1c000cd0f: lea rax, WPP_GLOBAL_Control\n0x1c000cd16: cmp rcx, rax\n0x1c000cd19: jz 0x1c000cd3d\n0x1c000cd1b: mov eax, [rcx+0x2c]\n0x1c000cd1e: test al, 4\n0x1c000cd20: jz 0x1c000cd3d\n0x1c000cd22: cmp byte [rcx+0x29], 4\n0x1c000cd26: jb 0x1c000cd3d\n0x1c000cd28: mov rcx, [rcx+0x18]\n0x1c000cd2c: lea r8, WPP_Traceguids\n0x1c000cd33: mov edx, 0x20\n0x1c000cd38: call WPP_SF_\n0x1c000cd3d: mov rbx, [rsp+0x30]\n0x1c000cd42: add rsp, 0x20\n0x1c000cd46: pop rdi\n0x1c000cd47: retn\n\nPATCHED changed region only:\n0x1c000cce2: lea rcx, [rdi+0x40]\n0x1c000cce6: call PkUninitializeRingBuffer   ; sub_1c0001dd4",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "dmvsc!DmcEvtChannelClosed (sub_1C000CCA0)",
+            "address": "0x1c000cca0",
+            "why": "Channel close callback entry. After VmbChannelGetPointer, rax/rdi = channel context. Inspect ctx+0x70 and ctx+0x78 (the two MDL pointers) to observe the cleanup. Behavior is the same in both builds."
+          },
+          {
+            "symbol": "dmvsc!PkUninitializeRingBuffer (sub_1c0001dd4)",
+            "address": "0x1c0001dd4",
+            "why": "Patched-only helper that the close callback now calls with rcx = ctx+0x40. It frees the two MDLs at substruct+0x30 (ctx+0x70) and substruct+0x38 (ctx+0x78), matching the unpatched inline code."
+          },
+          {
+            "symbol": "dmvsc!PkpFreeDoubleMappedBuffer",
+            "address": "0x1c000cff0 (unpatched) / 0x1c0001c98 (patched)",
+            "why": "The single MDL free routine (MmUnmapLockedPages, halve ByteCount, MmUnlockPages, IoFreeMdl). Same function in both builds, only relocated. rcx = MDL being freed."
+          },
+          {
+            "symbol": "dmvsc!DmcHotAddPageRange (sub_1c0005298)",
+            "address": "0x1c0005298",
+            "why": "Hot-add page range handler. Confirms it calls MmAddPhysicalMemory and WPP tracing only; it does not free these MDLs, so there is no concurrent free path racing the close callback."
+          }
+        ],
+        "watch": [
+          "ctx+0x70 (MDL1 pointer) - freed and zeroed identically by both builds during channel close",
+          "ctx+0x78 (MDL2 pointer) - same",
+          "ctx+0x18 (channel active flag) - cleared under the fast mutex in both builds",
+          "ctx+0x100 (FAST_MUTEX) - guards only the flag clear in both builds; unchanged by the patch",
+          "PkpFreeDoubleMappedBuffer rcx - MDL pointer; single free path, no second concurrent caller"
+        ],
+        "key_offsets": [
+          "0x1c000cce2 (unpatched): 'mov rcx, [rdi+0x70]' - inline read of MDL1",
+          "0x1c000cceb (unpatched): 'call PkpFreeDoubleMappedBuffer (sub_1c000cff0)' - inline free of MDL1",
+          "0x1c000ccf5 (unpatched): 'mov rcx, [rdi+0x78]' - inline read of MDL2",
+          "0x1c000ccfe (unpatched): 'call PkpFreeDoubleMappedBuffer (sub_1c000cff0)' - inline free of MDL2",
+          "0x1c000cce2 (patched): 'lea rcx, [rdi+0x40]' then 0x1c000cce6 'call PkUninitializeRingBuffer (sub_1c0001dd4)' - the inline cleanup extracted into a helper",
+          "0x1c000ccd6 (both): 'call ExReleaseFastMutex' - mutex released before MDL cleanup in both builds (unchanged)"
+        ],
+        "trigger_setup": "Not applicable. This diff introduces and fixes no vulnerability. The channel close path frees the two ring-buffer MDLs identically before and after the patch; the change only moves that cleanup from inline code into the PkUninitializeRingBuffer helper.",
+        "expected_observation": "Both builds free the two MDLs (MmUnmapLockedPages, MmUnlockPages, IoFreeMdl) once each and zero the pointers. No double-free or use-after-free is observable in either build from this path.",
+        "notes": "The MDLs map double-mapped ring buffer pages. They are allocated with doubled ByteCount, and PkpFreeDoubleMappedBuffer halves ByteCount before MmUnlockPages. The helper PkUninitializeRingBuffer is new in the patched build and is called only from DmcEvtChannelClosed; it does not appear in the hot-add/hot-remove message path. The mutex at ctx+0x100 guards only the channel-active flag clear in both builds; the patch does not extend it to cover MDL cleanup."
+      }
+    }
+  ],
+  "summary": "The patch changes a single function, DmcEvtChannelClosed (sub_1C000CCA0), the VMBus channel close callback of the Hyper-V Dynamic Memory VSC driver (dmvsc.sys). In the unpatched build the callback frees the two channel MDLs at ctx+0x70 and ctx+0x78 with inline code (PkpFreeDoubleMappedBuffer, sub_1c000cff0). In the patched build that inline cleanup is extracted into a new helper, PkUninitializeRingBuffer (sub_1c0001dd4), called with ctx+0x40; the helper frees the same two MDLs via the same underlying routine PkpFreeDoubleMappedBuffer (relocated to sub_1c0001c98). The behavior is identical: same MDLs, same free routine, same order, same position after the fast mutex is released. This is a non-security refactor. There is no race condition, double-free, or use-after-free: the hot-add handler DmcHotAddPageRange (sub_1c0005298) does not free these MDLs and never calls the cleanup helper, so no second concurrent free path exists in either build."
+}

@@ -1,0 +1,135 @@
+{
+  "binaries": {
+    "id_unpatched": "cea_unpatched.sys",
+    "id_patched": "cea_patched.sys",
+    "overall_similarity": 0.9861,
+    "matched": 151,
+    "changed": 4,
+    "identical": 147,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "BripCreateBrokeredEvent (sub_1C0006AB0)",
+      "similarity": 0.6883,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "REMOVED: NtDuplicateObject(NtCurrentProcess(-1), NtCurrentProcess(-1), NtCurrentProcess(-1), &Handle_1, 0x101000, 0, 0) call at 0x1c0006bb1 that duplicates the current process pseudo-handle into a real handle with access mask 0x101000 (SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION)",
+        "REMOVED: The duplicated process handle was passed as a parameter to NdrClientCall3 (kernel-mode RPC call to a broker service) at 0x1c0006c91, giving the broker service a handle to the calling user-mode process",
+        "REMOVED: NtClose(Handle) cleanup at 0x1c0006ce5 — no longer needed since no handle is created",
+        "REMOVED: Error-path cleanup via BriDeleteEventImpl (sub_1C0007068) that passed the process context/handle back on RPC failure at 0x1c0006d0a",
+        "ADDED: In patched version, the RPC call (NdrClientCall3 at 0x1c0006c39) no longer includes a duplicated process handle; instead passes arg1 (broker type identifier) directly without process handle marshaling",
+        "CHANGED: Stack frame reduced from 0x108 to 0xe8 bytes; local variables for Handle_1, Handle_2, and related state removed",
+        "CHANGED: RtlRunOnceExecuteOnce callback changed from BrpInitOnceRunOnceCallback (sub_1C00077E0) to BrpInitOnceRunOnceCallback (sub_1C0007770) (function body shifted)",
+        "CHANGED: RPC binding creation function changed from BripCreateRpcBindingHandle (sub_1C00070E0) to BripCreateRpcBindingHandle (sub_1C000706C)"
+      ],
+      "security_relevant": true,
+      "security_notes": "The unpatched driver duplicates the current-process pseudo-handle (-1) into a real handle to the current (caller's) process with access mask 0x101000 (SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION) and transmits it over kernel RPC (NdrClientCall3) to the broker service, then closes it. The patch removes the duplication, the NtClose cleanup, and the handle argument to the RPC call. Impact is limited: no memory corruption, and the recipient broker is the privileged party, so a query-limited/synchronize handle to a less-privileged caller's process grants it nothing it could not already obtain. Best characterized as removal of an unnecessary process-handle exposure over the kernel-to-broker RPC boundary (least-privilege hardening), not a reachable exploit.",
+      "assembly_diff": "Key removed instructions (unpatched → patched):\n\n--- UNPATCHED BripCreateBrokeredEvent (sub_1C0006AB0) (NtDuplicateObject sequence) ---\n0x1c0006b91 : and     dword [rsp+0x30], 0x0      ; Options = 0\n0x1c0006b96 : lea     r9, [rbp-0x70]               ; &Handle_1\n0x1c0006b9a : and     dword [rsp+0x28], 0x0        ; HandleAttributes = 0\n0x1c0006b9f : or      rcx, 0xffffffffffffffff      ; rcx = -1 = NtCurrentProcess\n0x1c0006ba3 : mov     r8, rcx                      ; r8 = -1 (SourceHandle)\n0x1c0006ba6 : mov     dword [rsp+0x20], 0x101000   ; DesiredAccess = SYNCHRONIZE|QUERY_LIMITED_INFO\n0x1c0006bae : mov     rdx, rcx                     ; rdx = -1 (SourceProcessHandle)\n0x1c0006bb1 : call    qword [rel 0x1c0011080]     ; NtDuplicateObject(-1,-1,-1,&Handle_1,0x101000,0,0)\n0x1c0006bb8 : nop\n0x1c0006bbd : mov     ebx, eax\n0x1c0006bbf : test    eax, eax\n0x1c0006bc1 : js      0x1c0006cdc                  ; fail → cleanup\n\n--- Then Handle is passed to RPC: ---\n0x1c0006c83 : mov     qword [rsp+0x20], rbx        ; rbx = Handle_1 passed as 5th param\n0x1c0006c88 : jne     0x1c0006c91\n0x1c0006c91 : call    qword [rel 0x1c0011028]     ; NdrClientCall3(..., Handle_1, ...)\n\n--- Handle cleanup at function exit: ---\n0x1c0006cdc : mov     rcx, qword [rbp-0x70]       ; rcx = Handle_1\n0x1c0006ce0 : test    rcx, rcx\n0x1c0006ce3 : je      0x1c0006cf1\n0x1c0006ce5 : call    qword [rel 0x1c0011070]     ; NtClose(Handle_1)\n\n--- PATCHED BripCreateBrokeredEvent (sub_1C0006AB0) (these instructions are ABSENT) ---\nNo NtDuplicateObject call exists anywhere in the patched function.\nThe RPC call passes r12d (arg1 = broker type) instead of a process handle."
+    },
+    {
+      "name": "BriDeleteEventImpl (sub_1C0007068)",
+      "similarity": 0.4839,
+      "change_type": "behavioral",
+      "key_changes": [
+        "RPC error-path cleanup routine. It takes the same four register inputs in both builds (a1=UUID, a2=binding, a3=broker type, a4=state pointer) and is called with four arguments from BripCreateBrokeredEvent in both builds; the parameter signature did NOT change.",
+        "What changed is the RPC proc selection: unpatched calls NdrClientCall3 with off_1C000B5A0 (nProcNum=1, or pProxyInfo when the UUID does not match g_SmsRouterBrokerId); patched calls off_1C000B428 (nProcNum=1) when the UUID matches and pProxyInfo (nProcNum=2) otherwise. This is a wire-protocol/proc-number adjustment consistent with the create path no longer carrying a process handle.",
+        "Address shifted from 0x1c0007068 (unpatched) to 0x1c0006fec (patched)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BripMapRpcStatus (sub_1C0007894)",
+      "similarity": 0.0447,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "This is a simple NTSTATUS lookup table function that maps RPC status codes to local status codes via a table at data_1c000c080. The function logic is identical in both versions; the addresses shifted due to code reordering (unpatched at 0x1c0007894, patched at 0x1c0007824). The lookup table address shifted from 0x1c000c080 to 0x1c000c160.",
+        "Iterates 0x6f entries matching the input status code and returns the mapped value."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "BripCreateEventContext (sub_1C0006D48)",
+      "similarity": 0.1342,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "This is the hash table entry insertion function (ExAllocatePoolWithTag + RtlComputeCrc32 + RtlInsertEntryHashTable). Function logic is identical in both versions; the address shifted from 0x1c0006d48 (unpatched) to 0x1c0006ccc (patched). Allocates 0x38 bytes with tag 'EvtA' (0x41747645) for RTL_DYNAMIC_HASH_TABLE_ENTRY.",
+        "Both functions keep their relative order; only their start addresses shifted due to code reordering."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "BripCreateBrokeredEvent (0x1C0006AB0)",
+      "entry_point": "BriCreateBrokeredEvent (0x1c0006990) / BriCreateBrokeredEventEx (0x1c00069e0) — exported kernel-library routines serviced by this driver as an RPC client; no IOCTL/device dispatch reaching them exists in these binaries, so no unprivileged user-mode trigger is established",
+      "call_chain": [
+        "Caller reaches exported BriCreateBrokeredEventEx (0x1c00069e0) or BriCreateBrokeredEvent (0x1c0006990)",
+        "BriCreateBrokeredEventEx calls BripCreateBrokeredEvent (0x1c0006ab0) at 0x1c0006a79",
+        "BripCreateBrokeredEvent calls NtDuplicateObject((HANDLE)-1, (HANDLE)-1, (HANDLE)-1, &TargetHandle, 0x101000, 0, 0) at 0x1c0006bb1",
+        "BripCreateBrokeredEvent passes the resulting handle as an argument to NdrClientCall3 at 0x1c0006c91 — handle transmitted to the broker service"
+      ],
+      "vulnerability_class": "Exposure of a process handle across a trust boundary / least-privilege violation (CWE-668, CWE-269)",
+      "description": "The unpatched driver's BripCreateBrokeredEvent calls NtDuplicateObject((HANDLE)-1, (HANDLE)-1, (HANDLE)-1, &TargetHandle, 0x101000, 0, 0). All three process/handle arguments are the current-process pseudo-handle (-1), so this duplicates the current (caller's) process into a real handle in the current process's handle table with access mask 0x101000 (SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION). That handle value is placed into the NdrClientCall3 argument list (a client-side kernel RPC call) and sent to the broker service; the driver then closes it with NtClose. The patched build removes the NtDuplicateObject call, the NtClose cleanup, and the handle argument to NdrClientCall3; the RPC call carries only the remaining event parameters (broker type id a1, GUID, SID, output buffers). Impact is limited: this is not memory corruption, and the recipient broker is the privileged party in this design, so a query-limited/synchronize handle to a less-privileged caller's process grants it nothing it could not already obtain. No confused-deputy or privilege-escalation primitive is demonstrable from these binaries. The change is best described as removal of an unnecessary process-handle exposure over the kernel-to-broker RPC boundary (least-privilege hardening).",
+      "trigger_conditions": "1. A component reaches the exported BriCreateBrokeredEvent (0x1c0006990) or BriCreateBrokeredEventEx (0x1c00069e0); these are exported kernel-library routines and no IOCTL/device path reaching them exists in these binaries. 2. The call must provide a non-null GUID (a2), non-null output pointers (a8, a9), and a valid SID (a4 that passes RtlValidSid). 3. RtlRunOnceExecuteOnce initialization must succeed. 4. Once these hold, NtDuplicateObject at 0x1c0006bb1 runs unconditionally and NdrClientCall3 at 0x1c0006c91 passes the handle to the broker. No privilege check gates the duplication.",
+      "primitive": "No memory-corruption or privilege-escalation primitive. The unpatched code transiently creates a handle to the caller's own process with PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE and sends it to the broker over RPC; the handle is closed via NtClose at 0x1c0006ce5 after the call returns. Because the broker is the privileged party, this exposes no capability the broker lacked. The security value of the patch is least-privilege / attack-surface reduction, not closing a reachable exploit.",
+      "evidence": "UNPATCHED decompilation of BripCreateBrokeredEvent (0x1C0006AB0), key excerpt:\n\n```c\nv14 = RtlRunOnceExecuteOnce(&BrokerInternalClientInitOnce, BrpInitOnceRunOnceCallback, nullptr, nullptr);\nif ( v14 >= 0 )\n{\n    // 0x1c0006bb1 — duplicates a real handle to the current process (access 0x101000)\n    v14 = NtDuplicateObject((HANDLE)-1, (HANDLE)-1, (HANDLE)-1, &TargetHandle, 0x101000u, 0, 0);\n    if ( v14 >= 0 )\n    {\n        *a8 = 0;\n        LODWORD(v15.Pointer) = BripCreateRpcBindingHandle(a2);\n        if ( LODWORD(v15.Pointer) != 0 ) goto LABEL_9;\n        v31 = RtlLengthSid(a4);\n        v17 = TargetHandle;   // duplicated process handle\n        v18 = UuidEqual(a2, &g_SmsRouterBrokerId, &Status);\n        v19 = &off_1C000B5A0; if ( v18 == 0 ) v19 = &pProxyInfo;\n        // handle (v17) passed to the broker over RPC:\n        v15.Pointer = NdrClientCall3(v19, 0, nullptr, Binding, v17, /*a1*/v23, a3, &v31, ...).Pointer;\n    }\n}\nif ( TargetHandle != nullptr ) NtClose(TargetHandle);\n```\n\nPATCHED decompilation (same function, handle removed):\n```c\nv14 = RtlRunOnceExecuteOnce(&BrokerInternalClientInitOnce, BrpInitOnceRunOnceCallback, nullptr, nullptr);\nif ( v14 >= 0 )\n{\n    // no NtDuplicateObject call; no TargetHandle local\n    *a8 = 0;\n    LODWORD(v15.Pointer) = BripCreateRpcBindingHandle(a2);\n    if ( LODWORD(v15.Pointer) != 0\n      || (v27 = a4, v26 = RtlLengthSid(a4), v19 = a1,\n          // RPC call carries no process handle; a1 sits in that slot:\n          v15.Pointer = NdrClientCall3(&pProxyInfo, 0, nullptr, Binding, v19, a3, &v26, ...).Pointer,\n          LODWORD(v15.Pointer) != 0) )\n    ...\n}\n// no NtClose: no handle is created\n```",
+      "assembly": "Full unpatched assembly of BripCreateBrokeredEvent (sub_1C0006AB0) (0x1c0006ab0, 167 instructions):\n\n0x1c0006ab0 : push    rbp\n0x1c0006ab2 : push    rbx\n0x1c0006ab3 : push    rsi\n0x1c0006ab4 : push    rdi\n0x1c0006ab5 : push    r12\n0x1c0006ab7 : push    r13\n0x1c0006ab9 : push    r14\n0x1c0006abb : push    r15\n0x1c0006abd : lea     rbp, [rsp-0x8]\n0x1c0006ac2 : sub     rsp, 0x108\n0x1c0006ac9 : mov     rax, qword [rel 0x1c000f040]\n0x1c0006ad0 : xor     rax, rsp\n0x1c0006ad3 : mov     qword [rbp-0x10], rax\n0x1c0006ad7 : mov     rax, qword [rbp+0x70]\n0x1c0006adb : xor     ebx, ebx\n0x1c0006add : mov     r15, qword [rbp+0x88]\n0x1c0006ae4 : mov     r13, r8\n0x1c0006ae7 : mov     r14, qword [rbp+0x90]\n0x1c0006aee : mov     rdi, rdx\n0x1c0006af1 : mov     qword [rbp-0x58], rax\n0x1c0006af5 : mov     r12d, ecx\n0x1c0006af8 : mov     rax, qword [rbp+0x80]\n0x1c0006aff : lea     r8d, [rbx+0x20]\n0x1c0006b03 : mov     qword [rbp-0x60], rax\n0x1c0006b07 : lea     rcx, [rbp-0x30]\n0x1c0006b0b : mov     rax, qword [rbp+0x98]\n0x1c0006b12 : xor     edx, edx\n0x1c0006b14 : mov     qword [rbp-0x68], rax\n0x1c0006b18 : mov     rsi, r9\n0x1c0006b1b : mov     qword [rbp-0x78], rbx\n0x1c0006b1f : mov     qword [rbp-0x70], rbx\n0x1c0006b23 : mov     qword [rbp-0x80], rbx\n0x1c0006b27 : call    0x1c000a440\n0x1c0006b2c : test    rdi, rdi\n0x1c0006b2f : je      0x1c0006cd7\n0x1c0006b35 : test    r15, r15\n0x1c0006b38 : je      0x1c0006cd7\n0x1c0006b3e : test    r14, r14\n0x1c0006b41 : je      0x1c0006cd7\n0x1c0006b47 : test    rsi, rsi\n0x1c0006b4a : je      0x1c0006cd7\n0x1c0006b50 : mov     rcx, rsi\n0x1c0006b53 : call    qword [rel 0x1c0011050]\n0x1c0006b5a : nop     dword [rax+rax]\n0x1c0006b5f : test    al, al\n0x1c0006b61 : je      0x1c0006cd7\n0x1c0006b67 : xor     r9d, r9d\n0x1c0006b6a : lea     rdx, [rel 0x1c00077e0]\n0x1c0006b71 : xor     r8d, r8d\n0x1c0006b74 : lea     rcx, [rel 0x1c000f0b0]\n0x1c0006b7b : call    qword [rel 0x1c0011068]\n0x1c0006b82 : nop     dword [rax+rax]\n0x1c0006b87 : mov     ebx, eax\n0x1c0006b89 : test    eax, eax\n0x1c0006b8b : js      0x1c0006cdc\n; ===== VULNERABLE NtDuplicateObject CALL SEQUENCE =====\n0x1c0006b91 : and     dword [rsp+0x30], 0x0\n0x1c0006b96 : lea     r9, [rbp-0x70]\n0x1c0006b9a : and     dword [rsp+0x28], 0x0\n0x1c0006b9f : or      rcx, 0xffffffffffffffff\n0x1c0006ba3 : mov     r8, rcx\n0x1c0006ba6 : mov     dword [rsp+0x20], 0x101000\n0x1c0006bae : mov     rdx, rcx\n0x1c0006bb1 : call    qword [rel 0x1c0011080]  ; NtDuplicateObject(-1,-1,-1,&Handle,0x101000,0,0)\n0x1c0006bb8 : nop     dword [rax+rax]\n0x1c0006bbd : mov     ebx, eax\n0x1c0006bbf : test    eax, eax\n0x1c0006bc1 : js      0x1c0006cdc\n; ===== END NtDuplicateObject =====\n0x1c0006bc7 : xor     eax, eax\n0x1c0006bc9 : lea     rdx, [rbp-0x78]\n0x1c0006bcd : mov     rcx, rdi\n0x1c0006bd0 : mov     qword [r15], rax\n0x1c0006bd3 : call    0x1c00070e0\n0x1c0006bd8 : test    eax, eax\n0x1c0006bda : je      0x1c0006bea\n0x1c0006bea : mov     rcx, rsi\n0x1c0006bed : mov     qword [rbp-0x40], rsi\n0x1c0006bf1 : call    qword [rel 0x1c0011060]\n0x1c0006bf8 : nop     dword [rax+rax]\n0x1c0006bfd : mov     rbx, qword [rbp-0x70]  ; rbx = Handle_1 (duplicated process handle)\n0x1c0006c01 : lea     r8, [rbp-0x50]\n0x1c0006c05 : mov     rsi, qword [rbp-0x78]\n0x1c0006c09 : lea     rdx, [rel 0x1c000c068]\n0x1c0006c10 : mov     rcx, rdi\n0x1c0006c13 : mov     dword [rbp-0x48], eax\n0x1c0006c16 : call    qword [rel 0x1c0011018]  ; UuidEqual\n0x1c0006c1d : nop     dword [rax+rax]\n0x1c0006c22 : xor     r8d, r8d\n0x1c0006c25 : lea     rcx, [rel 0x1c000b5a0]\n0x1c0006c2c : xor     edx, edx\n0x1c0006c2e : mov     r9, rsi\n0x1c0006c31 : test    eax, eax\n0x1c0006c33 : mov     rax, qword [rbp-0x68]\n0x1c0006c37 : mov     qword [rsp+0x70], rax\n0x1c0006c3c : lea     rax, [rbp-0x80]\n0x1c0006c40 : mov     qword [rsp+0x68], rax\n0x1c0006c45 : lea     rax, [rbp-0x30]\n0x1c0006c49 : mov     qword [rsp+0x60], rax\n0x1c0006c4e : lea     rax, [rbp-0x38]\n0x1c0006c52 : mov     qword [rsp+0x58], rax\n0x1c0006c57 : mov     rax, qword [rbp-0x60]\n0x1c0006c5b : mov     qword [rsp+0x50], rax\n0x1c0006c60 : mov     eax, dword [rbp+0x78]\n0x1c0006c63 : mov     dword [rsp+0x48], eax\n0x1c0006c67 : mov     rax, qword [rbp-0x58]\n0x1c0006c6b : mov     qword [rsp+0x40], rax\n0x1c0006c70 : lea     rax, [rbp-0x48]\n0x1c0006c74 : mov     qword [rsp+0x38], rax\n0x1c0006c79 : mov     qword [rsp+0x30], r13\n0x1c0006c7e : mov     dword [rsp+0x28], r12d\n0x1c0006c83 : mov     qword [rsp+0x20], rbx  ; Handle_1 passed as 5th arg to RPC\n0x1c0006c88 : jne     0x1c0006c91\n0x1c0006c91 : call    qword [rel 0x1c0011028]  ; NdrClientCall3(..., Handle_1, ...)\n0x1c0006c98 : nop     dword [rax+rax]\n0x1c0006c9d : test    eax, eax\n0x1c0006c9f : jne     0x1c0006bdc\n0x1c0006ca5 : mov     r8, qword [rbp-0x80]\n0x1c0006ca9 : lea     rcx, [rbp-0x38]\n0x1c0006cad : mov     rdx, rdi\n0x1c0006cb0 : call    0x1c0006d48\n0x1c0006cb5 : mov     ebx, eax\n0x1c0006cb7 : test    eax, eax\n0x1c0006cb9 : js      0x1c0006cdc\n0x1c0006cbb : movups  xmm0, xmmword [rbp-0x30]\n0x1c0006cbf : mov     rax, qword [rbp-0x38]\n0x1c0006cc3 : xor     ebx, ebx\n0x1c0006cc5 : movups  xmm1, xmmword [rbp-0x20]\n0x1c0006cc9 : mov     qword [r15], rax\n0x1c0006ccc : movups  xmmword [r14], xmm0\n0x1c0006cd0 : movups  xmmword [r14+0x10], xmm1\n0x1c0006cd5 : jmp     0x1c0006cdc\n; ===== CLEANUP: NtClose(Handle) =====\n0x1c0006cd7 : mov     ebx, 0xc000000d\n0x1c0006cdc : mov     rcx, qword [rbp-0x70]  ; rcx = Handle_1\n0x1c0006ce0 : test    rcx, rcx\n0x1c0006ce3 : je      0x1c0006cf1\n0x1c0006ce5 : call    qword [rel 0x1c0011070]  ; NtClose(Handle_1)\n0x1c0006cec : nop     dword [rax+rax]\n0x1c0006cf1 : test    ebx, ebx\n0x1c0006cf3 : jns     0x1c0006d0f\n0x1c0006cf5 : cmp     qword [rbp-0x80], 0x0\n0x1c0006cfa : je      0x1c0006d0f\n0x1c0006cfc : mov     rdx, qword [rbp-0x78]\n0x1c0006d00 : lea     r9, [rbp-0x80]\n0x1c0006d04 : mov     r8d, r12d\n0x1c0006d07 : mov     rcx, rdi\n0x1c0006d0a : call    0x1c0007068  ; error cleanup RPC with process context\n0x1c0006d0f : lea     rcx, [rbp-0x78]\n0x1c0006d13 : call    qword [rel 0x1c0011008]  ; RpcBindingFree\n0x1c0006d1a : nop     dword [rax+rax]\n0x1c0006d1f : mov     eax, ebx\n0x1c0006d21 : mov     rcx, qword [rbp-0x10]\n0x1c0006d25 : xor     rcx, rsp\n0x1c0006d28 : call    0x1c000a000  ; __security_check_cookie\n0x1c0006d2d : add     rsp, 0x108\n0x1c0006d34 : pop     r15\n0x1c0006d36 : pop     r14\n0x1c0006d38 : pop     r13\n0x1c0006d3a : pop     r12\n0x1c0006d3c : pop     rdi\n0x1c0006d3d : pop     rsi\n0x1c0006d3e : pop     rbx\n0x1c0006d3f : pop     rbp\n0x1c0006d40 : retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "EventAggregation!BripCreateBrokeredEvent+0x101 (NtDuplicateObject call site)",
+            "address": "0x1c0006bb1",
+            "why": "This is the NtDuplicateObject call that duplicates the current process handle with access mask 0x101000. Set breakpoint here to observe the handle being created. At this point: rcx=-1 (NtCurrentProcess=SourceProcessHandle), rdx=-1 (SourceHandle=NtCurrentProcess), r8=-1 (TargetProcessHandle=NtCurrentProcess), r9=[rbp-0x70] (output &Handle_1), [rsp+0x20]=0x101000 (DesiredAccess=SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION), [rsp+0x28]=0 (HandleAttributes), [rsp+0x30]=0 (Options)."
+          },
+          {
+            "symbol": "EventAggregation!BripCreateBrokeredEvent+0x1e1 (NdrClientCall3 with handle)",
+            "address": "0x1c0006c91",
+            "why": "This is the NdrClientCall3 that passes the duplicated process handle (rbx at [rsp+0x20]) to the broker service via RPC. At this point rbx = Handle_1 (the duplicated process handle value). Verify rbx is non-zero and is a valid handle value."
+          },
+          {
+            "symbol": "EventAggregation!BripCreateBrokeredEvent+0x235 (NtClose cleanup)",
+            "address": "0x1c0006ce5",
+            "why": "NtClose on the duplicated handle — observe the handle value in rcx being closed after the RPC call returns. Removed in the patch."
+          },
+          {
+            "symbol": "BriCreateBrokeredEventEx",
+            "address": "0x1c00069e0",
+            "why": "Entry-point breakpoint for the exported wrapper that calls BripCreateBrokeredEvent at 0x1c0006a79. Use to confirm the code path is entered."
+          }
+        ],
+        "watch": [
+          "rbx register at 0x1c0006bfd — contains Handle_1 (the duplicated process handle) loaded from [rbp-0x70]. This handle value will be passed to NdrClientCall3 at [rsp+0x20].",
+          "[rbp-0x70] (Handle_1 storage) — initialized to 0 at 0x1c0006b1f, then filled by NtDuplicateObject at 0x1c0006bb1",
+          "[rsp+0x20] at 0x1c0006c83 — this is where Handle_1 (rbx) is stored as the 5th parameter for NdrClientCall3",
+          "Access mask 0x101000 at 0x1c0006ba6 — confirms DesiredAccess = SYNCHRONIZE(0x100000) | PROCESS_QUERY_LIMITED_INFORMATION(0x1000)",
+          "Return value of NtDuplicateObject in eax at 0x1c0006bbd — should be 0 (STATUS_SUCCESS) for the vulnerable path to continue"
+        ],
+        "key_offsets": [
+          "0x1c0006bb1: call qword [rel 0x1c0011080] — NtDuplicateObject(-1, -1, -1, &Handle_1, 0x101000, 0, 0) — THIS IS THE REMOVED CALL IN THE PATCH",
+          "0x1c0006ba6: mov dword [rsp+0x20], 0x101000 — DesiredAccess = SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION",
+          "0x1c0006b9f: or rcx, 0xffffffffffffffff — sets rcx to NtCurrentProcess (-1)",
+          "0x1c0006c83: mov qword [rsp+0x20], rbx — Handle_1 passed as 5th NdrClientCall3 param",
+          "0x1c0006c91: call qword [rel 0x1c0011028] — NdrClientCall3 that sends handle to broker",
+          "0x1c0006ce5: call qword [rel 0x1c0011070] — NtClose(Handle_1) cleanup"
+        ],
+        "trigger_setup": "To reach the removed code path: reach the exported BriCreateBrokeredEventEx (which calls BripCreateBrokeredEvent at 0x1c0006a79) with a non-null GUID (a2), a non-null valid SID (a4 that passes RtlValidSid), and non-null output pointers (a8, a9). The RtlRunOnceExecuteOnce init must succeed. Once the null checks and RtlValidSid pass, NtDuplicateObject at 0x1c0006bb1 runs unconditionally. Note these exports are kernel-library routines; no IOCTL/device path reaching them is present in these binaries.",
+        "expected_observation": "At the NtDuplicateObject breakpoint (0x1c0006bb1): rcx=rdx=r8=0xFFFFFFFFFFFFFFFF (current-process pseudo-handle), r9 points to the TargetHandle output slot, [rsp+0x20]=0x101000. After the call, the output slot holds a non-zero handle value; it then appears in rbx at 0x1c0006bfd and is placed at [rsp+0x20] at 0x1c0006c83 before NdrClientCall3. In the patched binary this breakpoint is never reached: the NtDuplicateObject call is removed.",
+        "notes": "The IAT entry for NtDuplicateObject is at [0x1c0011080] (unpatched). The RPC call uses NdrClientCall3 with proc info at off_1C000B5A0 and pProxyInfo, selected via a UuidEqual check against g_SmsRouterBrokerId. The error-path cleanup routine BriDeleteEventImpl also changes its RPC proc selection in the patch, consistent with the create path no longer carrying a process handle."
+      }
+    }
+  ],
+  "summary": "The patch removes an unnecessary process-handle exposure in BripCreateBrokeredEvent (0x1C0006AB0), called via the exported BriCreateBrokeredEvent/BriCreateBrokeredEventEx. The unpatched build duplicates the current-process pseudo-handle (-1) into a real handle to the current (caller's) process with access 0x101000 (SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION) via NtDuplicateObject at 0x1c0006bb1, passes that handle as an argument to NdrClientCall3 at 0x1c0006c91 (client-side kernel RPC to the broker), then closes it with NtClose at 0x1c0006ce5. The patch removes the duplication, the NtClose cleanup, and the handle argument to the RPC call, and shrinks the stack frame from 0x108 to 0xe8 bytes. Severity is low: no memory corruption, the recipient broker is the privileged party (so no privilege boundary is crossed in the escalation direction), and no unprivileged user-mode entry point reaching this code is present in these binaries. The exported EaSignalAggregatedEvent routine (0x1C00042B0) is byte-for-byte identical in both builds and is not involved in this change. Best characterized as least-privilege / attack-surface-reduction hardening at the kernel-to-broker RPC boundary."
+}

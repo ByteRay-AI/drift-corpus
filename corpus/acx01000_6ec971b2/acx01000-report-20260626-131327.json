@@ -1,0 +1,204 @@
+{
+  "binaries": {
+    "id_unpatched": "acx01000_unpatched.sys",
+    "id_patched": "acx01000_patched.sys",
+    "overall_similarity": 0.9875,
+    "matched": 1223,
+    "changed": 13,
+    "identical": 1210,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "Acx::AfxDataFormatList::~AfxDataFormatList (unpatched 0x1C0008ED8 / patched 0x1C0008B6C)",
+      "similarity": 0.8058,
+      "change_type": "informational",
+      "key_changes": [
+        "Both builds walk the doubly-linked 'AfxD' list at struct offset +0x30 and free each entry with ExFreePoolWithTag(entry, 0x44786641); the list offset is unchanged (unpatched lea at [rdi+0x30 region via +48], patched lea rbx, [rsi+0x30] @ 0x1c0008c0c)",
+        "Both builds emit the same WPP_RECORDER_AND_TRACE_SF_ trace records before and after the free loop",
+        "Patched version adds a WIL feature gate Feature_Servicing_Audio_ACXGetNotificationDevice__private_IsEnabledDeviceUsage() (@ 0x1c0008c10) that selects between a plain free loop (else branch, byte-identical to the unpatched loop) and a free loop that additionally emits a per-entry trace record",
+        "The per-entry trace record in the enabled path carries source-file reference 'onecoreuap\\drivers\\wdm\\audio\\backpln\\acx\\class\\src\\main\\afxdataformatlist.cpp'"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched AfxDataFormatList scalar-deleting destructor (??_GAfxDataFormatList @ 0x1C0008ED8) and the patched base destructor (??1AfxDataFormatList @ 0x1C0008B6C) both clean up the doubly-linked list of 'AfxD' pool allocations (tag 0x44786641) anchored at struct offset +0x30, freeing each entry with ExFreePoolWithTag. AddDataFormat and RemoveDataFormat also use +0x30 in both builds. The only delta is a WIL feature gate in the patched destructor that, when enabled, emits an extra per-entry WPP/ETW trace record; when the feature is disabled the loop is byte-identical to the unpatched loop. No offset change, no change to the unlink/free logic, no memory-safety impact. (The unrelated AfxTargetPin scalar-deleting destructor at 0x1C0005368 unpatched / 0x1C0005CF8 patched walks a different list at +0x80 in both builds; that offset is correct for that class and is unchanged.)",
+      "assembly_diff": "PATCHED ??1AfxDataFormatList (0x1C0008B6C):\n0x1c0008c0c  lea     rbx, [rsi+0x30]          ; 'AfxD' list anchor at +0x30 (same as unpatched)\n0x1c0008c10  call    Feature_Servicing_Audio_ACXGetNotificationDevice__private_IsEnabledDeviceUsage\n0x1c0008c71  call    qword [__guard_dispatch_icall_fptr]   ; per-entry trace record (feature-enabled path)\n0x1c0008c7f  call    qword [__imp_ExFreePoolWithTag]       ; free 'AfxD' entry\n0x1c0008d3a  call    qword [__imp_ExFreePoolWithTag]       ; free 'AfxD' entry (feature-disabled path)",
+      "notes": "Added feature-gated WPP/ETW per-entry trace record around the +0x30 'AfxD' list free loop; feature-disabled path is byte-identical to unpatched. List offset unchanged between versions."
+    },
+    {
+      "name": "wil_details_FeatureReporting_RecordUsageInCache (unpatched 0x1C0001ABC / patched 0x1C00022E4)",
+      "similarity": 0.9808,
+      "change_type": "informational",
+      "key_changes": [
+        "WIL feature-usage reporting cache. Fills a caller-supplied 24-byte report descriptor (a1) and updates the per-feature usage bits in *a2 via an interlocked compare-exchange loop.",
+        "Unpatched writes the report-descriptor fields a1+4 (=1), a1+8 (=a3) and a1+12 (=a4) unconditionally after the compare-exchange loop.",
+        "Patched writes those fields only on a cache miss: when the reporting index is out of range (>= 0x40) or the 'already recorded' flag at a1+16 is zero after the loop; on a cache hit the already-reported usage is not re-emitted.",
+        "Bounds written into a1 (offsets 0..16) are identical in both builds."
+      ],
+      "security_relevant": false,
+      "security_notes": "De-duplication refinement in WIL's feature-usage reporting cache: the patched build skips re-populating the report descriptor when the usage was already recorded this session. This changes what is reported to telemetry, not memory safety. The output structure a1 is written within the same offsets (0 through 16) in both builds; no attacker-controlled bound, no out-of-bounds access.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_TryEnableDeviceUsageFastPath (unpatched 0x1C0001E78 / patched 0x1C00027D0)",
+      "similarity": 0.1455,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state cache; function relocated (low similarity is an address-collision artifact, not an in-place rewrite).",
+        "Unpatched unconditionally set bit 0x10 in the Feature_Audio_Drivers_Acx_MultiStack_Support feature-state word.",
+        "Patched takes the feature-state pointer and a kind parameter, selects mask 0x10 or 0x20, and conditionally applies it via an interlocked update.",
+        "Feature-staging infrastructure, not memory safety."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureReporting_ReportUsageToServiceDirect (unpatched 0x1C0001D88 / patched 0x1C00025BC)",
+      "similarity": 0.1831,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL usage-reporting; function relocated (low similarity is an address-collision artifact, not an in-place rewrite).",
+        "Same flow in both builds: calls wil_details_FeatureReporting_RecordUsageInCache, then g_wil_details_recordFeatureUsage / RtlNotifyFeatureUsage.",
+        "Unpatched hard-coded feature id 7189701 and the static Feature_..._reporting global; patched reads the feature id and reporting pointer from its parameters (a1+24, a1+8).",
+        "Parameterization of feature-staging telemetry, not memory safety."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C002EC10",
+      "similarity": 0.8804,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Added RtlUnregisterFeatureConfigurationChangeNotification cleanup with NULL check on data_1c0029bb0",
+        "Telemetry/ETW function reference updates (data address relocations)"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0091790",
+      "similarity": 0.8864,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry notification refactoring: replaced sub_1c0001d88/sub_1c0001e78 calls with sub_1c00026a4/sub_1c00027d0",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0090C30",
+      "similarity": 0.9079,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry notification refactoring: replaced sub_1c0001d88/sub_1c0001e78 calls with sub_1c00026a4/sub_1c00027d0",
+        "Removed stack variables used for telemetry call parameters",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00A9008",
+      "similarity": 0.9141,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry notification refactoring",
+        "Added RtlUnregisterFeatureConfigurationChangeNotification cleanup in error path",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0070620",
+      "similarity": 0.9151,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry notification refactoring: replaced sub_1c0001d88/sub_1c0001e78 calls with sub_1c00026a4/sub_1c00027d0",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C007C8F0",
+      "similarity": 0.9459,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Telemetry notification refactoring",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Acx::AfxDataFormatList::RemoveDataFormat (sub_1C00084B4)",
+      "similarity": 0.9545,
+      "change_type": "informational",
+      "key_changes": [
+        "Added sub_1c0008b34() conditional ETW logging when freeing list entries at offset 0x30",
+        "The list offset (0x30) is correct in both versions \u2014 this function was already correct"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Acx::AfxDataFormatList::AddDataFormat (sub_1C000818C)",
+      "similarity": 0.9719,
+      "change_type": "informational",
+      "key_changes": [
+        "Added sub_1c0008b34() conditional ETW logging when inserting list entries at offset 0x30",
+        "The list offset (0x30) is correct in both versions \u2014 this function was already correct"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C001628C",
+      "similarity": 0.9796,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming (rdi\u2192rsi, Object\u2194Object_1 swap) due to compiler differences",
+        "Added sub_1c0008b34() check before ObfReferenceObjectWithTag call",
+        "Data reference relocations"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "Acx::AfxDataFormatList::~AfxDataFormatList (unpatched ??_GAfxDataFormatList 0x1C0008ED8 / patched ??1AfxDataFormatList 0x1C0008B6C)",
+      "entry_point": "ACX audio class extension AfxDataFormatList teardown",
+      "call_chain": [
+        "AfxDataFormatList object destruction (audio circuit/data-format list teardown)",
+        "Acx::AfxDataFormatList::~AfxDataFormatList (0x1C0008B6C patched) walks the +0x30 'AfxD' list and frees each entry"
+      ],
+      "vulnerability_class": "Telemetry / instrumentation change (non-security)",
+      "description": "AfxDataFormatList maintains a doubly-linked list of AfxDataFormat pool allocations (tag 'AfxD' / 0x44786641) at structure offset +0x30. AddDataFormat (0x1C000818C), RemoveDataFormat (0x1C00084B4), and the destructor all use offset +0x30 in BOTH the unpatched and patched binaries; the list offset is unchanged. The patch adds feature-gated WPP/ETW trace records around these list operations, gated by Feature_Servicing_Audio_ACXGetNotificationDevice__private_IsEnabledDeviceUsage(). The list traversal and ExFreePoolWithTag free logic are otherwise unchanged. Acx::AfxTargetPin::`scalar deleting destructor` (unpatched 0x1C0005368, patched 0x1C0005CF8) is a separate class's destructor that walks its own list at +0x80 and uses +0x80 in both versions.",
+      "trigger_conditions": "N/A - instrumentation change, no memory-safety condition to trigger.",
+      "primitive": "None. No memory-safety primitive; the list offsets are consistent across versions.",
+      "evidence": "Unpatched ~AfxDataFormatList (0x1C0008ED8): walks list anchor at [rdi+0x30] and frees 'AfxD' entries with ExFreePoolWithTag. Patched ~AfxDataFormatList (0x1C0008B6C): walks the SAME anchor at [rsi+0x30] (0x1c0008c0c), calls Feature_...ACXGetNotificationDevice_IsEnabledDeviceUsage (0x1c0008c10) as a trace gate, then frees with ExFreePoolWithTag (0x1c0008c7f). AddDataFormat (0x1C000818C) uses [rbp+0x30]/[r11+0x30]; RemoveDataFormat uses +0x30. AfxTargetPin destructor uses [rdi+0x80] in both 0x1C0005368 (unpatched) and 0x1C0005CF8 (patched).",
+      "assembly": "PATCHED ~AfxDataFormatList (0x1C0008B6C):\n0x1c0008c0c: lea rbx, [rsi+0x30]        ; list anchor at +0x30 (unchanged)\n0x1c0008c10: call Feature_..._ACXGetNotificationDevice_IsEnabledDeviceUsage\n0x1c0008c15: test eax, eax               ; feature-flag gate for tracing\n0x1c0008c71: call qword [rel __guard_dispatch_icall_fptr]\n0x1c0008c7f: call qword [rel __imp_ExFreePoolWithTag]  ; free 'AfxD' entry"
+    }
+  ],
+  "summary": "The patch adds conditional WPP/ETW trace instrumentation to the AfxDataFormatList data-format list operations (AddDataFormat 0x1C000818C, RemoveDataFormat 0x1C00084B4, and the ~AfxDataFormatList destructor: unpatched 0x1C0008ED8 / patched 0x1C0008B6C), gated by Feature_Servicing_Audio_ACXGetNotificationDevice__private_IsEnabledDeviceUsage(). The 'AfxD' pool list is anchored at offset +0x30 in both versions and the unlink/free logic is unchanged. The remaining changed functions are WIL feature-staging and feature-usage-reporting churn (including a de-duplication refinement in wil_details_FeatureReporting_RecordUsageInCache) and feature-configuration-change-notification registration/unregistration. No memory-safety vulnerability is fixed or introduced by this patch."
+}

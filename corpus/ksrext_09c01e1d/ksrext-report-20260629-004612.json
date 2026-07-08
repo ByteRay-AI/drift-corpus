@@ -1,0 +1,263 @@
+{
+  "binaries": {
+    "title": "ksrext.sys (Kernel Soft Restart Extension) - Integer overflow removed from persisted-memory partition-restore allocation and restore error path hardened to fail-fast",
+    "id_unpatched": "ksrext_unpatched.sys",
+    "id_patched": "ksrext_patched.sys",
+    "overall_similarity": 0.6282,
+    "matched": 166,
+    "changed": 82,
+    "identical": 84,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "KsrpRestoreMemoryPartitionsWorker (unpatched 0x1C000BCB0 / patched 0x14000E830)",
+      "similarity": 0.6212,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "On a negative return from KsrpRestoreMemoryPartition the unpatched worker continues: it increments a global counter and walks the internal page database KsrpPdDatabase linked list, decrementing global counters (dec dword ptr [KsrpPdDatabase+0x24] at 0x1C000BE52, dec qword ptr [KsrpPdDatabase+0x28] at 0x1C000BE57) and zeroing entries whose partition id matches the failed partition.",
+        "The patched worker removes that rollback and calls KeBugCheckEx(0x70, 0x211, status, descriptor, ...) immediately on failure (mov edx, 211h at 0x14000EAE7, call at 0x14000EAF1).",
+        "The patched worker also switches to MDL-based enumeration of persisted memory via KsrEnumeratePersistedMemory + KsrpBadPageListBlockCallback."
+      ],
+      "security_relevant": true,
+      "security_notes": "Fail-fast hardening. After a partition that was partially restored before failing, the internal bookkeeping can be in a partly-initialized state, and the unpatched rollback runs decrements and entry-zeroing over that state. The rollback operates on driver-owned structures (KsrpPdDatabase), not directly on attacker-supplied buffers, and no concrete memory-corruption primitive is demonstrable. The patched build is the stricter one (it bugchecks instead of continuing). Severity Low (defense-in-depth). CWE-758.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpRestoreMemoryPartition (unpatched 0x1C000B160 / patched 0x14000DFF0)",
+      "similarity": 0.7342,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched: two 32-bit entry counts are added with a 32-bit LEA (lea edi, [r15+r12] at 0x1C000B27F), truncating the sum to 32 bits; the zero-extended sum scales the ExAllocatePool2 size (lea rdx, [rsi+rdi*8] at 0x1C000B3A5, call at 0x1C000B3A9) while the element copies use the full 64-bit counts (lea rcx, [rax+r12*8] at 0x1C000B3D2, lea rdi, [rcx+r15*8] at 0x1C000B3DA).",
+        "Patched: the combined count-based allocation is removed; the buffer is sized only from the metadata query (KsrDbQueryRegionMetadata then ExAllocatePool2 at 0x14000E0EE), and persisted pages are processed through an MDL list (MmMapLockedPagesSpecifyCache + KsrDbAddBadPageRanges).",
+        "Both builds retain the same metadata field bounds checks (v15-20 > 0xFDC, field-1 <= 0x12, etc.)."
+      ],
+      "security_relevant": true,
+      "security_notes": "If the two entry counts sum to more than 0xFFFFFFFF the 32-bit truncated sum yields an undersized ExAllocatePool2 buffer while the copies write at the true, unwrapped offsets, overflowing the pool (CWE-190/CWE-122). The counts come from KsrPdRetrieveMemoryRegion over kernel soft-reboot persisted memory; reaching the wrap threshold requires on the order of four billion 8-byte entries (~32 GB of table data), which is not a demonstrably reachable input on realistic systems, and the persisted metadata is not an ordinary attacker-writable surface. The change is a genuine removal of overflow-prone arithmetic; demonstrable impact is Low.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpPdWalkRegionPage (unpatched 0x1C000C690 / patched 0x140012B58)",
+      "similarity": 0.55,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched only maps each persisted region page and calls KsrpPdVerifyRamRanges; it performs no aggregation copy.",
+        "Patched aggregates the chained pages' PFN entries into a pool buffer sized from the first page's advertised count and adds two capacity guards before each memmove: KeBugCheckEx(0x70, 5, 1, capacity, count) at line 9440-9441 and KeBugCheckEx(0x70, 5, 0, capacity, count) at line 9492-9493."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the defensively-written replacement path for the combined allocation that KsrpRestoreMemoryPartition removed. The unpatched build has no copy here, so this is not a separate unpatched overflow; the added guards fail-stop if a later chained persisted page claims more entries than were allocated. Supporting evidence for the Finding on KsrpRestoreMemoryPartition, not an independent finding.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpPdDestroyDatabase (unpatched 0x1C000C8B0 / patched 0x1400114F0)",
+      "similarity": 0.9346,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Unpatched frees the work area via KsrPdFreeWorkArea(P[6]) = MmFreeMappingAddress(*P, tag) then ExFreePoolWithTag(P, tag); P[6] is not read again.",
+        "Patched inlines the same two calls and adds *v9 = 0 between them; that store targets a field of v9, which is freed on the very next line (dead store). The parent pointer P[6] is not NULLed.",
+        "Patched adds ZwSetSystemInformation(SystemPoolTagInformation|0x80, 0, 0) on the teardown-with-free path."
+      ],
+      "security_relevant": false,
+      "security_notes": "No reachable use-after-free. The added zeroing is dead (freed on the next line), the parent pointer is not cleared, and P[6] is not used after the free in either build. Refactor plus a behavioral ZwSetSystemInformation cleanup.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpHotAddPartitionMemory (unpatched 0x1C000AFC0 / patched 0x14000DE34)",
+      "similarity": 0.8024,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Allocation ExAllocatePool2(258, 16 * (count + 3LL), tag) is computed in 64-bit in both builds; at count near 0xFFFFFFFF the size is ~68 GB and does not wrap.",
+        "The two-call query-then-fill pattern (KsrDbQueryPartitionRanges once for the count, once to fill pool+48) is present unchanged in both builds; ZwManagePartition is used in both.",
+        "Patched adds two output parameters (count and range sum returned to the caller), applies the KsrPd->KsrDb rename, and removes a count <= 0xFFFFFFFF check that became a no-op after the count variable narrowed."
+      ],
+      "security_relevant": false,
+      "security_notes": "No integer overflow (64-bit allocation math) and no TOCTOU fix (the double-call and ZwManagePartition exist in both builds). Refactor: added output parameters, prefix rename, removed no-op check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpPdAddAllocatedRangesCallback (unpatched 0x1C000E1FC / patched 0x140010B74)",
+      "similarity": 0.9545,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Unpatched updates two adjacent 64-bit counters with separate adds; patched combines them into one _mm_add_epi64 store (compiler auto-vectorization).",
+        "The counters live in a stack-local accumulator passed by KsrPdAddAllocatedRanges, not in shared state."
+      ],
+      "security_relevant": false,
+      "security_notes": "Not a race fix. The counters are stack-local per-call accumulators, and _mm_add_epi64 is not an atomic operation (no LOCK), so no cross-thread atomicity is added. Pure auto-vectorization.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrMmAllocatePagesForMdlEx",
+      "similarity": 0.9677,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched masks the flags argument with & 0x7fffffff (strips sign bit) before use.",
+        "Minor register-allocation differences."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrRegisterLoaderCallbacks",
+      "similarity": 0.7845,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Structure-size validation grows to accommodate a new field.",
+        "A feature-gated secure-loader path is added while the existing path is retained."
+      ],
+      "security_relevant": false,
+      "security_notes": "Staged feature rollout (secure-loader path), not a memory-safety fix. The size-validation increase accommodates an added callback field.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPersistMemoryPartition",
+      "similarity": 0.8637,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched adds ObReferenceObjectByHandle before querying partition data.",
+        "The locked traversal is restructured; adds a metadata-persistence helper call."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPdFreeMemoryRegions (unpatched 0x1C000CC00 / patched 0x14000F75C)",
+      "similarity": 0.899,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Matching logic and conditional entry processing restructured; equivalent offsets and outcome."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrpMmReplenishPages (unpatched 0x1C0009E68 / patched 0x14000D058)",
+      "similarity": 0.908,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Min/max physical-address calculation logically equivalent in both.",
+        "Tree-insertion null-check handling restructured but equivalent; register renaming."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KsrPdRetrieveMemoryRegion (unpatched 0x1C000CF38 / patched 0x1400107B4)",
+      "similarity": 0.9881,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register renaming.",
+        "Cleanup path changes from an inline memset to a helper call."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "KsrpRestoreMemoryPartitionsWorker (unpatched 0x1C000BCB0 / patched 0x14000E830)",
+      "entry_point": "KsrInitSystem -> KsrpRestoreMemoryPartitions (0x1C000BFF4) -> ExQueueWorkItem -> KsrpRestoreMemoryPartitionsWorker",
+      "call_chain": ["KsrInitSystem", "KsrpRestoreMemoryPartitions", "ExQueueWorkItem", "KsrpRestoreMemoryPartitionsWorker", "KsrpRestoreMemoryPartition"],
+      "vulnerability_class": "Use of inconsistent state on error path (CWE-758)",
+      "description": "When KsrpRestoreMemoryPartition returns a negative status during soft-restart partition restoration, the unpatched KsrpRestoreMemoryPartitionsWorker does not stop. It increments dword_1C0012178 and walks the internal page database KsrpPdDatabase linked list (j = *((_QWORD*)KsrpPdDatabase + 1); j; j = *(_QWORD*)j). For each entry whose partition id matches the failed partition (v4), it decrements a global counter (dec dword ptr [KsrpPdDatabase+0x24] at 0x1C000BE52 or dec qword ptr [KsrpPdDatabase+0x28] at 0x1C000BE57) and zeroes the entry (*(_QWORD*)v14 = 0). After a partition that was partially restored before failing, this bookkeeping can be inconsistent. The patched build removes this rollback and calls KeBugCheckEx(0x70, 0x211, status, descriptor, ...) immediately on failure.",
+      "trigger_conditions": "A partition restore fails during soft-restart initialization (KsrpRestoreMemoryPartition returns negative). In the unpatched build the worker then runs the rollback over KsrpPdDatabase; in the patched build it bugchecks.",
+      "primitive": "No concrete memory-corruption primitive is demonstrable. The rollback operates on driver-owned bookkeeping, not on attacker-supplied buffers. The change is a fail-fast robustness hardening.",
+      "evidence": "Unpatched KsrpRestoreMemoryPartitionsWorker error path (decompiled):\n```c\nif ( v13 < 0 ) {\n    if ( v7 >= 0 ) v7 = v13;\n    ++dword_1C0012178;\n    for ( j = *((_QWORD *)KsrpPdDatabase + 1); j; j = *(_QWORD *)j ) {\n        for ( k = 0; (unsigned)k < *(_DWORD *)(j + 20); ++k ) {\n            v14 = j + 32 * ((unsigned)k + 1);\n            if ( (matched failed partition id v4) ) {\n                if ( ... ) --*((_DWORD *)KsrpPdDatabase + 9);   // dec [+0x24]\n                else       --*((_QWORD *)KsrpPdDatabase + 5);   // dec [+0x28]\n                *(_QWORD *)v14 = 0;\n            }\n        }\n    }\n}\n```\nPatched KsrpRestoreMemoryPartitionsWorker replaces this with:\n```c\nif ( v12 < 0 )\n    KeBugCheckEx(0x70, 0x211, v7, (ULONG_PTR)v10, descriptor);\n```",
+      "assembly": "// Unpatched KsrpRestoreMemoryPartitionsWorker error path:\n// 0x1C000BE04  mov rax, cs:KsrpPdDatabase\n// 0x1C000BE52  dec dword ptr [rax+24h]\n// 0x1C000BE57  dec qword ptr [rax+28h]\n// (no KeBugCheckEx on this failure path)\n// Patched KsrpRestoreMemoryPartitionsWorker same logical point:\n// 0x14000EAE7  mov edx, 211h\n// 0x14000EAF1  call cs:__imp_KeBugCheckEx",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksrext_unpatched!KsrpRestoreMemoryPartitionsWorker",
+            "address": "0x1c000bcb0",
+            "why": "Break at the worker entry; watch for a negative return from KsrpRestoreMemoryPartition, which in the unpatched build reaches the rollback at 0x1c000be04."
+          },
+          {
+            "symbol": "ksrext_unpatched!KsrpRestoreMemoryPartitionsWorker+error",
+            "address": "0x1c000be04",
+            "why": "Break at the rollback entry (loads KsrpPdDatabase). If reached, the unpatched cleanup over the internal database is about to run instead of a bugcheck."
+          }
+        ],
+        "watch": [
+          "return value of KsrpRestoreMemoryPartition - negative triggers the error path",
+          "KsrpPdDatabase - the internal database walked on error",
+          "[KsrpPdDatabase+0x24] and [KsrpPdDatabase+0x28] - counters decremented on match"
+        ],
+        "key_offsets": [
+          "0x1c000be04: rollback entry (loads KsrpPdDatabase)",
+          "0x1c000be52: dec dword ptr [rax+24h]",
+          "0x1c000be57: dec qword ptr [rax+28h]"
+        ],
+        "trigger_setup": "Cause a partition restore to fail during soft-restart initialization so KsrpRestoreMemoryPartition returns a negative status.",
+        "expected_observation": "Unpatched: execution continues into the KsrpPdDatabase rollback. Patched: KeBugCheckEx(0x70, 0x211, ...) halts immediately.",
+        "notes": "This is a robustness/defense-in-depth change over driver-owned state, not a demonstrable attacker-controlled corruption primitive."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "KsrpRestoreMemoryPartition (unpatched 0x1C000B160 / patched 0x14000DFF0)",
+      "entry_point": "KsrInitSystem -> KsrpRestoreMemoryPartitions -> KsrpRestoreMemoryPartitionsWorker -> KsrpRestoreMemoryPartition",
+      "call_chain": ["KsrInitSystem", "KsrpRestoreMemoryPartitions", "KsrpRestoreMemoryPartitionsWorker", "KsrpRestoreMemoryPartition", "KsrPdRetrieveMemoryRegion", "ExAllocatePool2"],
+      "vulnerability_class": "Integer overflow leading to heap buffer overflow (CWE-190/CWE-122)",
+      "description": "The unpatched KsrpRestoreMemoryPartition adds two 32-bit entry counts with a 32-bit LEA (lea edi, [r15+r12] at 0x1C000B27F), truncating the sum to 32 bits. The zero-extended sum scales the ExAllocatePool2 size (lea rdx, [rsi+rdi*8] at 0x1C000B3A5; call ExAllocatePool2 at 0x1C000B3A9), while the element copies compute destinations from the full 64-bit counts (lea rcx, [rax+r12*8] at 0x1C000B3D2; lea rdi, [rcx+r15*8] at 0x1C000B3DA). If count1 + count2 exceeds 0xFFFFFFFF the allocation wraps to a small value while the copies write at the true offsets, overflowing the pool. The patched build removes the combined count-based allocation: it sizes the buffer from a single metadata query (KsrDbQueryRegionMetadata; ExAllocatePool2 at 0x14000E0EE) and processes persisted pages through an MDL list (MmMapLockedPagesSpecifyCache + KsrDbAddBadPageRanges).",
+      "trigger_conditions": "The two entry counts, read from kernel soft-reboot persisted memory via KsrPdRetrieveMemoryRegion, must sum to more than 0xFFFFFFFF. That requires on the order of four billion 8-byte entries (~32 GB of table data describing terabytes of physical memory), which is not attainable on realistic hardware and is not an ordinary attacker-controlled input.",
+      "primitive": "A pool overflow in principle, but only at count totals that are not reachable on realistic systems and only if the persisted-memory metadata is attacker-controlled. No controlled write of a specific size or content is demonstrable.",
+      "evidence": "Unpatched KsrpRestoreMemoryPartition allocation (decompiled):\n```c\nv15 = v42;                 // count2\nv16 = v41;                 // count1\nv17 = v42 + v41;           // 32-bit add: sum truncated, then widened\nPool2 = ExAllocatePool2(258, (unsigned int)v44 + 8 * v17, 1165128523);  // undersized if wrapped\nv22 = (__int64)Pool2 + 8 * v16;   // destination uses full 64-bit count1\nv23 = v22 + 8 * v15;              // destination uses full 64-bit count2\nKsrPdRetrieveMemoryRegion(a1, ..., Pool2, v16, 0, &v41);          // writes count1 entries\nKsrPdRetrieveMemoryRegion(a1, ..., v22,   v15, 0x80000000, &v42); // writes count2 entries\n```\nPatched KsrpRestoreMemoryPartition:\n```c\nRegionMetadata = KsrDbQueryRegionMetadata(v10, v9, v7, 0, 0, &v33);\nPool2 = ExAllocatePool2(258, v33, 1165128523);   // metadata only; combined buffer removed\n// persisted pages handled via MmMapLockedPagesSpecifyCache + KsrDbAddBadPageRanges\n```",
+      "assembly": "// Unpatched KsrpRestoreMemoryPartition:\n// 0x1C000B277  mov r15d, [rbp+70h+var_E4]   ; count2 (32-bit)\n// 0x1C000B27B  mov r12d, [rbp+70h+var_E8]   ; count1 (32-bit)\n// 0x1C000B27F  lea edi, [r15+r12]           ; 32-bit add -> TRUNCATED sum\n// 0x1C000B3A5  lea rdx, [rsi+rdi*8]         ; alloc size = metadata + sum*8\n// 0x1C000B3A9  call cs:__imp_ExAllocatePool2\n// 0x1C000B3D2  lea rcx, [rax+r12*8]         ; dest = pool + count1*8 (full 64-bit)\n// 0x1C000B3DA  lea rdi, [rcx+r15*8]         ; dest = pool + (count1+count2)*8 (full 64-bit)\n// Patched KsrpRestoreMemoryPartition:\n// 0x14000E0BE  call KsrDbQueryRegionMetadata\n// 0x14000E0EE  call cs:__imp_ExAllocatePool2 ; sized from metadata only",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ksrext_unpatched!KsrpRestoreMemoryPartition",
+            "address": "0x1c000b160",
+            "why": "Break at entry; the two counts are read at 0x1c000b277 (r15d) and 0x1c000b27b (r12d), and the truncating add is at 0x1c000b27f."
+          }
+        ],
+        "watch": [
+          "r15d/r12d at 0x1c000b277/0x1c000b27b - the two 32-bit counts",
+          "edi after 0x1c000b27f - the 32-bit truncated sum",
+          "rdx at the ExAllocatePool2 call (0x1c000b3a9) - allocation size = metadata + sum*8"
+        ],
+        "key_offsets": [
+          "0x1c000b27f: lea edi, [r15+r12] - 32-bit truncating add",
+          "0x1c000b3a5: lea rdx, [rsi+rdi*8] - allocation size from truncated sum",
+          "0x1c000b3a9: ExAllocatePool2",
+          "0x1c000b3d2/0x1c000b3da: copy destinations from full 64-bit counts"
+        ],
+        "trigger_setup": "Would require persisted-memory metadata whose two entry counts sum to more than 0xFFFFFFFF, which is not attainable on realistic systems.",
+        "expected_observation": "On realistic inputs the counts are far below the wrap threshold and the allocation is correctly sized; the overflow is not reachable in practice.",
+        "notes": "The change is a genuine removal of overflow-prone arithmetic; the patched allocation is sized from a single metadata query and page data is handled via MDLs."
+      }
+    },
+    {
+      "severity": "none",
+      "function": "KsrpPdDestroyDatabase (unpatched 0x1C000C8B0 / patched 0x1400114F0)",
+      "entry_point": "page database teardown",
+      "call_chain": ["KsrpPdDestroyDatabase", "KsrPdFreeWorkArea", "MmFreeMappingAddress", "ExFreePoolWithTag"],
+      "vulnerability_class": "No security-relevant change (refactor)",
+      "description": "The unpatched build frees the work area via KsrPdFreeWorkArea(P[6]), which does MmFreeMappingAddress(*P, tag) then ExFreePoolWithTag(P, tag). The patched build inlines the same two calls and adds *v9 = 0 between them. That store targets a field of v9, which is freed on the very next line, so it is dead and cannot prevent any use. The parent pointer P[6] is not NULLed in either build, and P[6] is not read again after the free. There is no reachable use-after-free. The additional ZwSetSystemInformation(SystemPoolTagInformation|0x80, 0, 0) call on the teardown-with-free path is behavioral.",
+      "trigger_conditions": "None applicable; no reachable use-after-free.",
+      "primitive": "None.",
+      "evidence": "Unpatched:\n```c\nKsrPdFreeWorkArea(*((PVOID *)P + 6));  // MmFreeMappingAddress(*P, tag); ExFreePoolWithTag(P, tag);\n// P[6] not read again\n```\nPatched:\n```c\nv9 = (PVOID *)P[6];\nMmFreeMappingAddress(*v9, tag);\n*v9 = nullptr;              // dead: v9 freed on the next line\nExFreePoolWithTag(v9, tag);\n// P[6] not NULLed; not used after\n```",
+      "assembly": "",
+      "debugging_aids": {
+        "breakpoints": [],
+        "watch": [],
+        "key_offsets": [],
+        "trigger_setup": "",
+        "expected_observation": "",
+        "notes": "Downgraded from a claimed use-after-free: the added zeroing is a dead store on about-to-be-freed memory and the parent pointer is never cleared."
+      }
+    }
+  ],
+  "summary": "The ksrext.sys (Kernel Soft Restart Extension) patch rearchitects the persisted-memory partition-restore path. Two changes are security-relevant. (1) In KsrpRestoreMemoryPartition the unpatched build sizes a kernel pool buffer from a 32-bit-truncated sum of two entry counts (lea edi, [r15+r12] at 0x1C000B27F feeding ExAllocatePool2 at 0x1C000B3A9) while the element copies use the full 64-bit counts, an integer overflow that could undersize the buffer (CWE-190/CWE-122); the patch removes the combined allocation and processes pages through an MDL list, and the aggregation moved into KsrpPdWalkRegionPage gained explicit KeBugCheckEx capacity guards. Reaching the wrap threshold requires on the order of four billion entries, so demonstrable impact is Low. (2) In KsrpRestoreMemoryPartitionsWorker the unpatched build continues after a restore failure and mutates the internal page database KsrpPdDatabase (counter decrements at 0x1C000BE52/0x1C000BE57 and entry zeroing); the patch replaces that with KeBugCheckEx(0x70, 0x211, ...) fail-fast (CWE-758, Low, defense-in-depth). The previously-claimed use-after-free in KsrpPdDestroyDatabase is not real (the added zeroing is a dead store on memory freed on the next line and no parent pointer is cleared), and the previously-claimed TOCTOU/integer overflow in KsrpHotAddPartitionMemory is not real (64-bit allocation math, and the double query-then-fill and ZwManagePartition are present unchanged in both builds). The counter-update change in KsrpPdAddAllocatedRangesCallback is compiler auto-vectorization of adds on a stack-local accumulator (_mm_add_epi64 is not atomic), not a race fix. Both security-relevant changes depend on kernel soft-reboot persisted-memory metadata, which is not an ordinary user-writable surface."
+}

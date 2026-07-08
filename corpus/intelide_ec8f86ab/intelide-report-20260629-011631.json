@@ -1,0 +1,181 @@
+{
+  "binaries": {
+    "title": "intelide.sys - Init-only PCI-config stack buffers zero-initialized (CWE-908 hardening); not attacker-reachable",
+    "id_unpatched": "intelide_unpatched.sys",
+    "id_patched": "intelide_patched.sys",
+    "overall_similarity": 0.7894,
+    "matched": 16,
+    "changed": 6,
+    "identical": 10,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 5
+  },
+  "changed_functions": [
+    {
+      "name": "PiixIdeGetControllerProperties",
+      "address_unpatched": "0x1C0001040",
+      "address_patched": "0x1C0001050",
+      "similarity": 0.9122,
+      "change_type": "hardening",
+      "key_changes": [
+        "PATCHED adds memset(buf, 0, 0x40) at 0x1C000108F BEFORE the first PciIdeXGetBusData call (reads 0x40 bytes of the controller's own PCI config space into a stack buffer)",
+        "PATCHED adds memset(buf, 0, 0x56) at 0x1C00012F1 BEFORE the second PciIdeXGetBusData call (0x56 bytes)",
+        "PATCHED zeroes the bus-location local ('and [var_F0], 0' at 0x1C0001487) BEFORE the PciIdexGetBusLocation call; UNPATCHED leaves var_F8 uncleared before that call",
+        "UNPATCHED reads device-ID/vendor and capability fields (var_E6, var_E8, var_DF) and the bus-location result without pre-clearing the buffers; if PciIdeXGetBusData under-filled a buffer, stale stack bytes would feed those decisions",
+        "Stack frame restructured (rbp-based in patched vs rsp-based in unpatched) and register allocation changes throughout"
+      ],
+      "security_relevant": false,
+      "security_notes": "Init-only controller-properties callback registered via PciIdeXInitialize. It reads the controller's OWN assigned PCI configuration space through the PCIIDEX library during boot enumeration; no user-mode, file, or network input reaches it. The added memset/zero-init is CWE-908-style defensive hardening against a hypothetical partial buffer fill. It is not attacker-reachable and exposes no read-back channel, so no information disclosure, corruption, or DoS is demonstrable.",
+      "assembly_diff": "First read:\n--- UNPATCHED (no clear) ---\n0x1C000107E  mov  r9d, 40h\n0x1C0001084  lea  rdx, [rsp+118h+var_E8]      ; buffer NOT cleared\n0x1C0001089  xor  r8d, r8d\n0x1C000108C  call cs:__imp_PciIdeXGetBusData\n0x1C00010A2  movzx ecx, [rsp+118h+var_E6]      ; device ID from buffer\n0x1C00010AF  cmp  [rsp+118h+var_E8], ax         ; vendor 0x8086 check\n0x1C00010CA  test [rsp+118h+var_DF], 80h        ; capability bit from buffer\n--- PATCHED (memset added) ---\n0x1C0001080  mov  esi, 40h\n0x1C0001085  lea  rcx, [rsp+110h+var_E0]\n0x1C000108A  mov  r8d, esi                       ; Size = 0x40\n0x1C000108D  xor  edx, edx                       ; Val = 0\n0x1C000108F  call memset                         ; <<< ADDED\n0x1C00010A3  mov  r9d, esi\n0x1C00010A6  lea  rdx, [rsp+110h+var_E0]\n0x1C00010B1  call cs:__imp_PciIdeXGetBusData\n\nSecond read (0x56):\n--- PATCHED ---\n0x1C00012E2  mov  r14d, 56h\n0x1C00012E8  lea  rcx, [rbp+57h+var_A0]\n0x1C00012F1  call memset                         ; <<< ADDED\n0x1C0001303  call cs:__imp_PciIdeXGetBusData\n\nBus-location:\n--- UNPATCHED (var_F8 uncleared) ---\n0x1C0001468  lea  rdx, [rsp+118h+var_F8]\n0x1C0001470  call cs:__imp_PciIdexGetBusLocation\n0x1C00014B3  cmp  [rsp+118h+var_F8], 1F0002h\n--- PATCHED (zeroed first) ---\n0x1C0001487  and  [rsp+110h+var_F0], 0           ; <<< ADDED\n0x1C0001494  call cs:__imp_PciIdexGetBusLocation\n0x1C00014D9  cmp  [rsp+110h+var_F0], 1F0002h"
+    },
+    {
+      "name": "PiixIdeChannelEnabled",
+      "address_unpatched": "0x1C0001580",
+      "address_patched": "0x1C00015B0",
+      "similarity": 0.8723,
+      "change_type": "hardening",
+      "key_changes": [
+        "PATCHED adds memset(buf, 0, 0x4C) at 0x1C00015DC BEFORE the PciIdeXGetBusData call that reads PCI config offset 0x40 (length 4)",
+        "The routine returns bit 7 of a per-channel byte ([rsp+rbx*2+var_27], rbx = channel index 0/1) as the channel-enabled status; UNPATCHED reads this from an uncleared buffer",
+        "Register allocation changed (patched moves the handle to rdi)"
+      ],
+      "security_relevant": false,
+      "security_notes": "This is the channel-enabled callback (registered at properties-struct offset +0x18), not a UDMA-status callback. It reads the controller's own PCI config offset 0x40 during channel setup and returns bit 7 of a per-channel byte. The patched build clears the buffer via memset before the read. Init-only and not attacker-reachable; the added clear is CWE-908 hardening with no demonstrable impact.",
+      "assembly_diff": "--- UNPATCHED ---\n0x1C0001580  push rbx\n0x1C0001582  sub  rsp, 80h\n0x1C00015A6  mov  r9d, 4\n0x1C00015AC  lea  rdx, [rsp+88h+var_28]        ; buffer NOT cleared\n0x1C00015B1  lea  r8d, [r9+3Ch]                ; offset 0x40\n0x1C00015B5  call cs:__imp_PciIdeXGetBusData\n0x1C00015C1  test eax, eax\n0x1C00015C3  jns  loc_1C00015CC\n0x1C00015C5  mov  eax, 2\n0x1C00015CC  movzx eax, [rsp+rbx*2+88h+var_27] ; per-channel byte\n0x1C00015D1  shr  eax, 7\n--- PATCHED (memset added before the branch) ---\n0x1C00015D1  xor  edx, edx\n0x1C00015D3  lea  rcx, [rsp+88h+var_68]\n0x1C00015D8  lea  r8d, [rdx+4Ch]               ; Size = 0x4C\n0x1C00015DC  call memset                       ; <<< ADDED\n0x1C00015ED  mov  r9d, 4\n0x1C00015F3  lea  rdx, [rsp+88h+var_28]\n0x1C00015FF  call cs:__imp_PciIdeXGetBusData"
+    },
+    {
+      "name": "PiixIdeTransferModeSelect",
+      "address_unpatched": "0x1C0001660",
+      "address_patched": "0x1C00016B0",
+      "similarity": 0.989,
+      "change_type": "no_security_change",
+      "key_changes": [
+        "PATCHED zero-initializes five locals in the prologue (0x1C00016C7-0x1C00016ED): var_50 (word), arg_18 (byte), arg_20 (byte), var_58 (byte), var_4c (word) before calling PiixIdepTransferModeSelect",
+        "These locals are output parameters to PiixIdepTransferModeSelect, whose values are later written to PCI config registers via PciIdeXSetBusData",
+        "In BOTH builds PiixIdepTransferModeSelect has a single return path and writes ALL six output parameters (*a3..*a8) unconditionally before returning 0; there is no early return, so the locals are always fully written by the callee before use",
+        "The added zero-init is therefore dead defensive code, not a fix for a reachable uninitialized read"
+      ],
+      "security_relevant": false,
+      "security_notes": "The unpatched build does NOT actually use uninitialized memory here: the callee PiixIdepTransferModeSelect writes every one of its six output parameters unconditionally on its only return path (in both builds), and PiixIdeTransferModeSelect only reaches the PciIdeXSetBusData writes when that call returns >= 0 (always 0). The patched zero-init is defense-in-depth (robustness against future callee changes), with no reachable security effect. The earlier claim that stale stack data could flow into PCI config writes is not supported by the control flow.",
+      "assembly_diff": "--- UNPATCHED prologue (no local zero-init) ---\n0x1C0001670  mov  rbp, rsp\n0x1C0001673  sub  rsp, 60h\n0x1C0001677  mov  r14d, 2\n...\n0x1C000172E  call PiixIdepTransferModeSelect   ; callee fills all outputs\n--- PATCHED prologue (5 locals zeroed) ---\n0x1C00016C7  xor  esi, esi\n0x1C00016D0  mov  [rbp+var_18], si             ; <<< var_50 = 0\n0x1C00016D7  mov  [rbp+arg_10], sil            ; <<< arg_18 = 0\n0x1C00016DE  mov  [rbp+arg_18], sil            ; <<< arg_20 = 0\n0x1C00016E6  mov  [rbp+var_20], sil            ; <<< var_58 = 0\n0x1C00016ED  mov  [rbp+var_14], si             ; <<< var_4c = 0\n...\n0x1C0001793  call PiixIdepTransferModeSelect   ; callee still fills all outputs"
+    },
+    {
+      "name": "PiixIdepTransferModeSelect",
+      "address_unpatched": "0x1C00019B8",
+      "address_patched": "0x1C0001A24",
+      "similarity": 0.8585,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Register reallocation and basic-block restructuring",
+        "Loop-invariant hoisting differs between versions",
+        "Still writes all six output parameters (*a3..*a8) unconditionally before returning 0 in both builds",
+        "No new security checks; changes are compiler optimization/restructuring"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "PiixIdeUdmaModesSupported",
+      "address_unpatched": "0x1C0001600",
+      "address_patched": "0x1C0001660",
+      "similarity": 0.98,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Trivial bit-count loop codegen difference (post-increment temporary vs subtract-one); semantically equivalent"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "__GSHandlerCheckCommon",
+      "address_unpatched": "0x1C0002004",
+      "address_patched": "0x1C0002054",
+      "similarity": 0.9883,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Zero-extension instruction-selection difference (mov+movzx vs movzx+mov); semantically identical",
+        "Callee/layout addresses shifted due to binary layout change"
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": [
+      {
+        "name": "memset",
+        "address_patched": "0x1C0002200",
+        "note": "Compiler-runtime memset implementation, linked in as a byproduct of the added memset calls. Not a security fix."
+      },
+      {
+        "name": "__memset_repmovs",
+        "address_patched": "0x1C0002340",
+        "note": "memset helper (rep movs path). Not a security fix."
+      },
+      {
+        "name": "__memset_query",
+        "address_patched": "0x1C00023C0",
+        "note": "memset helper (CPU-feature query path). Not a security fix."
+      },
+      {
+        "name": "__cpu_features_init",
+        "address_patched": "0x1C00020D0",
+        "note": "CPU-feature probe used by the memset implementation. Not a security fix."
+      },
+      {
+        "name": "_guard_xfg_dispatch_icall_nop",
+        "address_patched": "0x1C00021C0",
+        "note": "XFG control-flow-guard dispatch thunk. Servicing/toolchain artifact, not a security fix."
+      }
+    ]
+  },
+  "security_findings": [
+    {
+      "severity": "informational",
+      "function": "PiixIdeGetControllerProperties (controller-properties callback)",
+      "address_unpatched": "0x1C0001040",
+      "address_patched": "0x1C0001050",
+      "entry_point": "GsDriverEntry (0x1C0007010) -> DriverEntry (0x1C0001008) -> PciIdeXInitialize callback",
+      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008) - calls PciIdeXInitialize(DriverObject, RegistryPath, PiixIdeGetControllerProperties, 1052)", "PciIdeXInitialize invokes PiixIdeGetControllerProperties during controller enumeration - reads the controller's own PCI config space into stack buffers"],
+      "vulnerability_class": "Use of Uninitialized Resource (CWE-908) - defensive hardening, not attacker-reachable",
+      "description": "The unpatched function reads the controller's own PCI configuration space into stack buffers via PciIdeXGetBusData (0x40 bytes into var_E8, then 0x56 bytes into var_A8) and calls PciIdexGetBusLocation into an uncleared local (var_F8), without pre-clearing them. If PciIdeXGetBusData reported success while under-filling a buffer, untouched bytes would hold stale stack contents and feed device-ID/vendor (var_E6, var_E8) and capability (var_DF) decisions and the bus-location comparison. The patched build adds memset(buf, 0, 0x40) at 0x1C000108F, memset(buf, 0, 0x56) at 0x1C00012F1, and zeroes the bus-location local ('and [var_F0], 0' at 0x1C0001487). This is CWE-908 hardening confined to the init path.",
+      "trigger_conditions": "Runs once during PCI IDE controller enumeration at boot. Observing any pre-patch difference requires PciIdeXGetBusData to report success while leaving part of a requested buffer unwritten for the controller's own config space. No user-mode, file, or network input reaches this code.",
+      "primitive": "None. Init-only routine on the controller's own PCI config space; no attacker-controlled input and no exposed read-back channel.",
+      "evidence": "See assembly_diff for PiixIdeGetControllerProperties in changed_functions.",
+      "notes": "Registered callbacks stored into the properties structure by this function: +0x18 PiixIdeChannelEnabled, +0x20 PiixIdeSyncAccessRequired, +0x28 PiixIdeTransferModeSelect, +0x38 PiixIdeUseDma, +0x48 PiixIdeUdmaModesSupported. Imports referenced: PciIdeXGetBusData, PciIdeXSetBusData, PciIdexGetBusLocation, PciIdeXInitialize. The memset added by the patch is at 0x1C0002200 in the patched binary."
+    },
+    {
+      "severity": "informational",
+      "function": "PiixIdeChannelEnabled (channel-enabled callback)",
+      "address_unpatched": "0x1C0001580",
+      "address_patched": "0x1C00015B0",
+      "entry_point": "PciIdeXInitialize -> PiixIdeGetControllerProperties registers PiixIdeChannelEnabled at properties+0x18",
+      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008) -> PciIdeXInitialize(..., PiixIdeGetControllerProperties, 1052)", "PiixIdeGetControllerProperties registers PiixIdeChannelEnabled at properties+0x18", "PiixIdeChannelEnabled (0x1C0001580) - reads PCI config offset 0x40 into a stack buffer, returns bit 7 of a per-channel byte"],
+      "vulnerability_class": "Use of Uninitialized Resource (CWE-908) - defensive hardening, not attacker-reachable",
+      "description": "PiixIdeChannelEnabled reads 4 bytes of the controller's own PCI config space at offset 0x40 into a stack buffer and returns bit 7 of a per-channel byte ([rsp+rbx*2+var_27], rbx = channel index 0/1) as the channel-enabled status. The unpatched build does not clear the buffer before the read; the patched build adds memset(buf, 0, 0x4C) at 0x1C00015DC covering the buffer region. This is the channel-enabled callback (properties+0x18), not a UDMA-status callback.",
+      "trigger_conditions": "Called by the PCIIDEX library during channel setup at init. Observing a pre-patch difference would require PciIdeXGetBusData to under-fill the 4-byte read for the controller's own config space. No attacker-controlled input.",
+      "primitive": "None. Init-only, controller's own config space.",
+      "evidence": "See assembly_diff for PiixIdeChannelEnabled in changed_functions.",
+      "notes": "The patched memset zeroes 0x4C bytes covering the buffer region prior to the read at 0x1C00015FF."
+    },
+    {
+      "severity": "none",
+      "function": "PiixIdeTransferModeSelect (transfer-mode-select callback)",
+      "address_unpatched": "0x1C0001660",
+      "address_patched": "0x1C00016B0",
+      "entry_point": "PciIdeXInitialize -> PiixIdeGetControllerProperties registers PiixIdeTransferModeSelect at properties+0x28",
+      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008) -> PciIdeXInitialize(..., PiixIdeGetControllerProperties, 1052)", "PiixIdeGetControllerProperties registers PiixIdeTransferModeSelect at properties+0x28", "PiixIdeTransferModeSelect (0x1C0001660) - calls PiixIdepTransferModeSelect, then writes results to PCI config via PciIdeXSetBusData"],
+      "vulnerability_class": "No security-relevant change (defensive zero-init of locals the callee already fully writes)",
+      "description": "The patched prologue zero-initializes five locals (var_50, arg_18, arg_20, var_58, var_4c) at 0x1C00016C7-0x1C00016ED before passing their addresses to PiixIdepTransferModeSelect, which computes IDE timing values into those outputs; the values are later written to PCI config registers via PciIdeXSetBusData. However, in BOTH builds PiixIdepTransferModeSelect has a single return path and writes all six output parameters (*a3..*a8) unconditionally immediately before returning 0, with no early return. PiixIdeTransferModeSelect only reaches the PciIdeXSetBusData writes when that call returns >= 0 (always 0). Therefore the unpatched build never uses uninitialized memory here; the added zero-init is dead defensive code.",
+      "trigger_conditions": "N/A - no reachable uninitialized use exists in the unpatched build.",
+      "primitive": "None.",
+      "evidence": "See assembly_diff for PiixIdeTransferModeSelect in changed_functions; the callee PiixIdepTransferModeSelect ends with '*a3=..; *a4=..; *a5=..; *a6=..; *a7=..; *a8=..; return 0;' on its only path in both builds.",
+      "notes": "This finding is retained for completeness and downgraded to no security-relevant change. The prior claim that stale stack data flows into PCI config register writes is contradicted by the callee's control flow."
+    }
+  ],
+  "summary": "The patch adds zero-initialization of local stack buffers/variables before PCI configuration-space reads in the Intel IDE controller initialization path. PiixIdeGetControllerProperties gains memset before both PciIdeXGetBusData reads (0x40 and 0x56 bytes) and a zeroing of the bus-location local; PiixIdeChannelEnabled gains memset(0x4C) before its PciIdeXGetBusData read. Both are CWE-908-style defensive hardening confined to boot-time controller initialization, operating on the controller's own assigned PCI configuration space, and are not reachable from any untrusted surface; no information-disclosure, corruption, or DoS primitive is demonstrable. The third touched function, PiixIdeTransferModeSelect, gains defensive zero-init of five locals, but its callee PiixIdepTransferModeSelect writes all six output parameters unconditionally on its only return path in both builds, so no uninitialized use actually occurs and that change is dead defensive code. The patched build also links the compiler-runtime memset implementation, a CPU-feature probe, and an XFG dispatch thunk as byproducts. Net assessment: init-only defensive hardening with no reachable security impact."
+}

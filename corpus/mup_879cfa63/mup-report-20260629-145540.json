@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mup.sys - No security-relevant change (WIL feature-staging library churn)",
+    "title": "mup.sys - WIL feature-staging library churn",
     "id_unpatched": "mup_unpatched.sys",
     "id_patched": "mup_patched.sys",
     "overall_similarity": 0.9862,

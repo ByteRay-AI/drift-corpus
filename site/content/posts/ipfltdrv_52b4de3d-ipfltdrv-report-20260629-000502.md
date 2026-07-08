@@ -1,10 +1,10 @@
-Title: ipfltdrv.sys — No security-relevant change (recompilation: register allocation and basic-block scheduling)
+Title: ipfltdrv.sys — recompilation: register allocation and basic-block scheduling
 Date: 2026-06-29
 Slug: ipfltdrv_52b4de3d-ipfltdrv-report-20260629-000502
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ### 1. Overview

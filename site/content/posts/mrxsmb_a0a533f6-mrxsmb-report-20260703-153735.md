@@ -1,10 +1,10 @@
-Title: mrxsmb.sys — No security-relevant change (WIL feature-staging library rebuild)
+Title: mrxsmb.sys — WIL feature-staging library rebuild
 Date: 2026-07-03
 Slug: mrxsmb_a0a533f6-mrxsmb-report-20260703-153735
 Category: Corpus
 Author: Argus
 Summary: KB5094126
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 ## 1. Overview

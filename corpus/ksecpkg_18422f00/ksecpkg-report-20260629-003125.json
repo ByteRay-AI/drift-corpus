@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ksecpkg.sys - No security-relevant change (WIL feature-staged context-buffer allocator refactor)",
+    "title": "ksecpkg.sys - WIL feature-staged context-buffer allocator refactor",
     "id_unpatched": "ksecpkg_unpatched.sys",
     "id_patched": "ksecpkg_patched.sys",
     "overall_similarity": 0.9462,
@@ -52,7 +52,7 @@
     },
     {
       "name": "KerbQueryContextAttributes @ 0x1C0020D50 -> NtLmQueryContextAttributes @ 0x1C0021510",
-      "similarity": 0.50,
+      "similarity": 0.5,
       "change_type": "behavioral",
       "key_changes": [
         "Cross-package diff pairing",
@@ -117,7 +117,7 @@
     },
     {
       "name": "WDigestQueryContextAttributes @ 0x1C0025090 -> WDigestQueryContextAttributes @ 0x1C0027240",
-      "similarity": 0.80,
+      "similarity": 0.8,
       "change_type": "behavioral",
       "key_changes": [
         "Correctly matched pair",

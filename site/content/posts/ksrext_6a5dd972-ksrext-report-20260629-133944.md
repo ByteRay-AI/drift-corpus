@@ -1,10 +1,10 @@
-Title: ksrext.sys — No security-relevant change (KSR persistence-subsystem feature expansion, no reachable vulnerability)
+Title: ksrext.sys — KSR persistence-subsystem feature expansion, no reachable vulnerability
 Date: 2026-06-29
 Slug: ksrext_6a5dd972-ksrext-report-20260629-133944
 Category: Corpus
 Author: Argus
 Summary: KB5075912
-Severity: None
+Severity: Unknown
 KBDate: 2026-02-10
 
 ## 1. Overview

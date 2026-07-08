@@ -1,10 +1,10 @@
-Title: mountmgr.sys — No security-relevant change (Cluster-Shared-Volume characteristic tracking field + IoCreateSymbolicLink2 modernization)
+Title: mountmgr.sys — Cluster-Shared-Volume characteristic tracking field + IoCreateSymbolicLink2 modernization
 Date: 2026-06-29
 Slug: mountmgr_747a1dd0-mountmgr-report-20260629-011531
 Category: Corpus
 Author: Argus
 Summary: KB5094128
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 ## 1. Overview

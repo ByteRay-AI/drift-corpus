@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "cmimcext.sys (Configuration Manager Init Machine Config Extension) - No security-relevant change: WIL feature-staging library rebuild (one-time-init flag + usage provider), Feature_ImcL staged rollout gating IMC config paths, and ExAllocatePool2 API modernization",
+    "title": "cmimcext.sys (Configuration Manager Init Machine Config Extension) - WIL feature-staging library rebuild (one-time-init flag + usage provider), Feature_ImcL staged rollout gating IMC config paths, and ExAllocatePool2 API modernization",
     "id_unpatched": "cmimcext_unpatched.sys",
     "id_patched": "cmimcext_patched.sys",
     "overall_similarity": 0.7993,
@@ -92,7 +92,9 @@
       "name": "McTemplateK0hzr0_EtwWriteTransfer (sub_1C0001220) / McTemplateK0hzr0_EtwWriteTransfer (sub_1400013F0)",
       "similarity": 0.6966,
       "change_type": "cosmetic",
-      "key_changes": ["Address relocation and minor register allocation changes"],
+      "key_changes": [
+        "Address relocation and minor register allocation changes"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -115,7 +117,9 @@
       "name": "McTemplateK0d_EtwWriteTransfer (sub_1C00011BC) / McTemplateK0d_EtwWriteTransfer (sub_140001390)",
       "similarity": 0.7019,
       "change_type": "cosmetic",
-      "key_changes": ["Address relocation"],
+      "key_changes": [
+        "Address relocation"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -324,7 +328,9 @@
       "name": "ImpSetRegValue (sub_1C000BEB4) / ImpSetRegValue (sub_14000D45C)",
       "similarity": 0.9787,
       "change_type": "cosmetic",
-      "key_changes": ["Object attributes initialization reordered, functionally equivalent"],
+      "key_changes": [
+        "Object attributes initialization reordered, functionally equivalent"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -346,7 +352,9 @@
       "name": "ImpGetRegValueSz (sub_1C000BCE0) / ImpGetRegValueSz (sub_14000D000)",
       "similarity": 0.9828,
       "change_type": "cosmetic",
-      "key_changes": ["Object attributes initialization reordered, address relocations"],
+      "key_changes": [
+        "Object attributes initialization reordered, address relocations"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -355,7 +363,9 @@
       "name": "ImpReadImcHiveDword (sub_1C000BAE4) / ImpReadImcHiveDword (sub_14000C960)",
       "similarity": 0.9832,
       "change_type": "cosmetic",
-      "key_changes": ["Address relocations only, registry value query wrapper unchanged"],
+      "key_changes": [
+        "Address relocations only, registry value query wrapper unchanged"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -413,7 +423,9 @@
       "name": "ImpEstablishIMCPolicies (sub_1C000B7E8) / ImpEstablishIMCPolicies (sub_14000C66C)",
       "similarity": 0.9906,
       "change_type": "cosmetic",
-      "key_changes": ["High similarity, minor address relocations and register allocation"],
+      "key_changes": [
+        "High similarity, minor address relocations and register allocation"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -428,7 +440,12 @@
       "severity": "none",
       "function": "wil_InitializeFeatureStaging (sub_1C000B008)",
       "entry_point": "CmSetInitMachineConfig (called during boot-time machine configuration init) -> wil_InitializeFeatureStaging",
-      "call_chain": ["System initialization", "CmSetInitMachineConfig", "wil_InitializeFeatureStaging (sub_1C000B008)", "RtlRegisterFeatureConfigurationChangeNotification (module-global feature-staging setup)"],
+      "call_chain": [
+        "System initialization",
+        "CmSetInitMachineConfig",
+        "wil_InitializeFeatureStaging (sub_1C000B008)",
+        "RtlRegisterFeatureConfigurationChangeNotification (module-global feature-staging setup)"
+      ],
       "vulnerability_class": "None - WIL feature-staging library boilerplate (one-time-init flag + usage-provider registration added by a newer WIL)",
       "description": "The patched wil_InitializeFeatureStaging (sub_14000CB94) adds the WIL one-time-init flag 'if (g_wil_details_isFeatureStagingInitialized != 0) return 0; g_wil_details_isFeatureStagingInitialized = 1;', registers a feature usage provider via RtlRegisterFeatureUsageProvider (callback wil_details_OnFeatureUsageProviderFlushNotification (sub_14000A320), handle g_wil_details_featureUsageProvider), and sets g_wil_details_recordFeatureUsage = wil_details_RecordFeatureUsageReporting (sub_140002010). CmCompleteInitMachineConfig adds the paired reset g_wil_details_isFeatureStagingInitialized = 0 and RtlUnregisterFeatureUsageProvider. These are stock characteristics of the newer WIL feature-staging library linked into the patched build (the same rebuild that refactored the many wil_details_* helpers), not a cmimcext-specific security fix. wil_InitializeFeatureStaging has a single call site (CmSetInitMachineConfig, boot-time), cmimcext exposes no IOCTL handlers or device objects, and the notification callback wil_details_ReevaluateOnFeatureConfigurationChange (sub_1C0008010) re-evaluates the module-global feature descriptor table (wil_details_featureDescriptors_a..z), which persists for the driver lifetime and is not the IMCP-tagged pool freed at teardown - so there is no stale-callback use-after-free and no attacker-controlled leak. The additional Feature_ImcL__private_IsEnabledDeviceUsageNoInline (sub_140001020) checks in CmSetInitMachineConfig / CmCompleteInitMachineConfig are a WIL feature-staging rollout gate (reading Feature_ImcL__private_featureState) with the legacy path retained, not a VBS/HVCI secure-kernel gate; no VBS/HVCI/secure-kernel state exists in this binary.",
       "trigger_conditions": "wil_InitializeFeatureStaging runs once during boot-time machine-config init from its single caller CmSetInitMachineConfig. There is no IOCTL/device attack surface and no attacker-controlled way to force repeated re-initialization. Even if the boot init path ran twice, the only effect in the unpatched build would be a redundant one-time registration of a notification object whose callback operates on persistent module-global state.",
@@ -474,7 +491,11 @@
       "severity": "none",
       "function": "McGenControlCallbackV2 (sub_1C0001010)",
       "entry_point": "Invoked by ETW when a session enables/disables the IMCEXT provider; registered via EtwRegister in McGenEventRegister_EtwRegister",
-      "call_chain": ["EtwRegister(IMCEXT_PROVIDER_ID, McGenControlCallbackV2, ...)", "ETW enable/disable notification", "McGenControlCallbackV2 (sub_1C0001010)"],
+      "call_chain": [
+        "EtwRegister(IMCEXT_PROVIDER_ID, McGenControlCallbackV2, ...)",
+        "ETW enable/disable notification",
+        "McGenControlCallbackV2 (sub_1C0001010)"
+      ],
       "vulnerability_class": "None - cosmetic re-expression of the standard ETW enable-bit computation",
       "description": "McGenControlCallbackV2 (sub_1C0001010) / McGenControlCallbackV2 (sub_1400011E0) is McGenControlCallbackV2, the compiler/WIL-generated ETW provider control callback, not a feature-bitmap evaluator. For ControlCode==1 (enable) it computes, per event descriptor, the enable bit: enabled = (perEventLevel <= Level || Level == 0) && (keyword == 0 || ((keyword & MatchAnyKeyword) != 0 && (keyword & MatchAllKeyword) == MatchAllKeyword)). Here Level is the ETW trace level (0 = all levels). This predicate is IDENTICAL in both versions; the 'perEventLevel <= Level || Level == 0' comparison is present unchanged. The only difference is expression form (unpatched: nested if statements setting a boolean; patched: one combined boolean) and register allocation. There is no inverted enable/disable logic and no security impact. The earlier 'inverted feature bitmap' reading mis-identified this stock ETW callback and an ETW level/keyword test as a threshold comparison.",
       "trigger_conditions": "Reached only when an ETW session enables or disables the IMCEXT provider (ControlCode 0 or 1). Not reachable as a feature-evaluation routine.",

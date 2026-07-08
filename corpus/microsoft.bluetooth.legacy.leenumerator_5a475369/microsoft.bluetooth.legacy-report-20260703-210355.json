@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "Microsoft.Bluetooth.Legacy.LEEnumerator.sys - No security-relevant change (RootFdo::EnumerateDevices child-list enumeration refactor plus WPP trace-only updates)",
+    "title": "Microsoft.Bluetooth.Legacy.LEEnumerator.sys - RootFdo::EnumerateDevices child-list enumeration refactor plus WPP trace-only updates",
     "id_unpatched": "microsoft.bluetooth.legacy.leenumerator_unpatched.sys",
     "id_patched": "microsoft.bluetooth.legacy.leenumerator_patched.sys",
     "overall_similarity": 0.9887,

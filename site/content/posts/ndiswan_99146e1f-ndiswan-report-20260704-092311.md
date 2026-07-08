@@ -1,10 +1,10 @@
-Title: ndiswan.sys — No security-relevant change (PPP multilink receive return-value / frame-ownership refactor)
+Title: ndiswan.sys — PPP multilink receive return-value / frame-ownership refactor
 Date: 2026-07-04
 Slug: ndiswan_99146e1f-ndiswan-report-20260704-092311
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ## 1. Overview

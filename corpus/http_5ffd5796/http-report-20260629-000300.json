@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys (Windows HTTP Protocol Stack) - No security-relevant change: Known-Issue-Rollback gate for channel-binding hardening graduated to permanent",
+    "title": "http.sys (Windows HTTP Protocol Stack) - Known-Issue-Rollback gate for channel-binding hardening graduated to permanent",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.9908,

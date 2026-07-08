@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "msisadrv.sys - No security-relevant change (KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths)",
+    "title": "msisadrv.sys - KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths",
     "id_unpatched": "msisadrv_unpatched.sys",
     "id_patched": "msisadrv_patched.sys",
     "overall_similarity": 0.7282,

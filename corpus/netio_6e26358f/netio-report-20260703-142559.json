@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "netio.sys - No security-relevant change (WIL feature-staging graduation and compiler inlining)",
+    "title": "netio.sys - WIL feature-staging graduation and compiler inlining",
     "id_unpatched": "netio_unpatched.sys",
     "id_patched": "netio_patched.sys",
     "overall_similarity": 0.9717,

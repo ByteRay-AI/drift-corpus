@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "clfs.sys - No security-relevant change: WIL-staged large-sector device alignment rollout in CClfsRequest::ReserveAndAppendLog and CClfsRequest::WriteRestart",
+    "title": "clfs.sys - WIL-staged large-sector device alignment rollout in CClfsRequest::ReserveAndAppendLog and CClfsRequest::WriteRestart",
     "id_unpatched": "clfs_unpatched.sys",
     "id_patched": "clfs_patched.sys",
     "overall_similarity": 0.9912,

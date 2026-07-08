@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb.sys - No security-relevant change (WIL feature-staging library churn)",
+    "title": "mrxsmb.sys - WIL feature-staging library churn",
     "id_unpatched": "mrxsmb_unpatched.sys",
     "id_patched": "mrxsmb_patched.sys",
     "overall_similarity": 0.9922,

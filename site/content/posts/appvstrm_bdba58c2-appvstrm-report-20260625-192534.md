@@ -1,4 +1,4 @@
-Title: appvstrm.sys — No security-relevant change (code-identical rebuild; version bump 10.0.17763.3469 → 10.0.17763.4010)
+Title: appvstrm.sys — code-identical rebuild; version bump 10.0.17763.3469 → 10.0.17763.4010
 Date: 2026-06-25
 Slug: appvstrm_bdba58c2-appvstrm-report-20260625-192534
 Category: Corpus

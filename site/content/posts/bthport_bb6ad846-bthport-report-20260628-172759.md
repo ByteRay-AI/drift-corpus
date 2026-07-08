@@ -1,10 +1,10 @@
-Title: bthport.sys — No security-relevant change (feature-staged advertising-request teardown refactor)
+Title: bthport.sys — feature-staged advertising-request teardown refactor
 Date: 2026-06-28
 Slug: bthport_bb6ad846-bthport-report-20260628-172759
 Category: Corpus
 Author: Argus
 Summary: KB5094127
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 ## 1. Overview

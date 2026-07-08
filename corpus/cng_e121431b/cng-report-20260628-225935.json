@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "cng.sys - No security-relevant change (SymCrypt point-format element-count generalization)",
+    "title": "cng.sys - SymCrypt point-format element-count generalization",
     "id_unpatched": "cng_unpatched.sys",
     "id_patched": "cng_patched.sys",
     "overall_similarity": 0.9685,

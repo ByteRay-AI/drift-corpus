@@ -1,10 +1,10 @@
-Title: bthpan.sys — No security-relevant change (feature-staged async request-lifetime refactor)
+Title: bthpan.sys — feature-staged async request-lifetime refactor
 Date: 2026-06-28
 Slug: bthpan_0ad4ad12-bthpan-report-20260628-172631
 Category: Corpus
 Author: Argus
 Summary: KB5094127
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 - **Unpatched Binary:** `bthpan_unpatched.sys`

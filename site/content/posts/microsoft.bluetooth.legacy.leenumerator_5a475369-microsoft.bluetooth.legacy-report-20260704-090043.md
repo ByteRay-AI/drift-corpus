@@ -1,10 +1,10 @@
-Title: microsoft.bluetooth.legacy.leenumerator.sys — No security-relevant change (child-list enumeration refactor and trace-only updates)
+Title: microsoft.bluetooth.legacy.leenumerator.sys — child-list enumeration refactor and trace-only updates
 Date: 2026-07-04
 Slug: microsoft.bluetooth.legacy.leenumerator_5a475369-microsoft.bluetooth.legacy-report-20260704-090043
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ### 1. Overview

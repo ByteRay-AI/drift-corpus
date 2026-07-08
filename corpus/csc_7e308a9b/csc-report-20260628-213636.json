@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "csc.sys (Windows Offline Files / Client-Side Caching driver) - No security-relevant change: feature-gated directory-enumeration double-buffering refactor in CscQueryDirectory",
+    "title": "csc.sys (Windows Offline Files / Client-Side Caching driver) - feature-gated directory-enumeration double-buffering refactor in CscQueryDirectory",
     "id_unpatched": "csc_unpatched.sys",
     "id_patched": "csc_patched.sys",
     "overall_similarity": 0.9867,

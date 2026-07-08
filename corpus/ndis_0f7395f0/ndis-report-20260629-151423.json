@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndis.sys (Windows NDIS Network Driver) - No security-relevant change; per-processor slot free loop differs only by compiler codegen",
+    "title": "ndis.sys (Windows NDIS Network Driver) - per-processor slot free loop differs only by compiler codegen",
     "id_unpatched": "ndis_unpatched.sys",
     "id_patched": "ndis_patched.sys",
     "overall_similarity": 0.9424,
@@ -230,7 +230,10 @@
       "address_unpatched": "0x140050390",
       "address_patched": "0x140054E30",
       "entry_point": "NDIS internal teardown — frees a per-processor descriptor slot back to a free list",
-      "call_chain": ["NDIS per-processor descriptor slot free path", "ndis!ndisFreePerProcessorSlot"],
+      "call_chain": [
+        "NDIS per-processor descriptor slot free path",
+        "ndis!ndisFreePerProcessorSlot"
+      ],
       "vulnerability_class": "No security-relevant change (compiler codegen difference)",
       "description": "ndisFreePerProcessorSlot releases a per-processor descriptor slot. It validates the tag stored in the descriptor page (bugchecking with code 0x2C on mismatch), walks each processor's per-CPU region writing a single 8-byte zeroing store per slot, then relinks the slot onto the ndisPerProcessorDescriptorLock-protected free list. Both the unpatched (0x140050390) and patched (0x140054E30) builds are behaviorally identical: both bound the loop by the global ndisMaxNumberOfProcessors, both store one 8-byte zero at (i << 12) + base per iteration (the << 12 is the per-processor stride, not a store length), and both validate via ndisBugCheckEx(0x2C). The only difference is that the unpatched build caches ndisMaxNumberOfProcessors in a register before the loop while the patched build re-reads the global in the loop condition — a loop-invariant-load codegen choice with no behavioral effect. The earlier reading of a loop-bound variable substitution (data_14011eb38 -> data_14011ead8) came from treating one relocated global (ndisMaxNumberOfProcessors) as two distinct variables.",
       "trigger_conditions": "None. There is no vulnerability. The loop bound is the system processor count (ndisMaxNumberOfProcessors), not attacker-controlled, and both builds bound and store identically.",

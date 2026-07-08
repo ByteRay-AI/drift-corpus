@@ -1,10 +1,10 @@
-Title: mqac.sys — No security-relevant change (cross-branch rebuild; validation inlined from callees)
+Title: mqac.sys — cross-branch rebuild; validation inlined from callees
 Date: 2026-06-29
 Slug: mqac_d43bbd4a-mqac-report-20260629-125923
 Category: Corpus
 Author: Argus
 Summary: KB5075912
-Severity: None
+Severity: Unknown
 KBDate: 2026-02-10
 
 ## 1. Overview

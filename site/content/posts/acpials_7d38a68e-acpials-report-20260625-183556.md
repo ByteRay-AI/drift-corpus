@@ -1,10 +1,10 @@
-Title: acpials.sys — No security-relevant change (KMDF framework stub library rebuild)
+Title: acpials.sys — KMDF framework stub library rebuild
 Date: 2026-06-25
 Slug: acpials_7d38a68e-acpials-report-20260625-183556
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ## 1. Overview

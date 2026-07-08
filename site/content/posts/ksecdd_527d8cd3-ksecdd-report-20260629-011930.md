@@ -1,10 +1,10 @@
-Title: ksecdd.sys — No security-relevant change (staged, feature-gated address-space check in protected-process free paths)
+Title: ksecdd.sys — staged, feature-gated address-space check in protected-process free paths
 Date: 2026-06-29
 Slug: ksecdd_527d8cd3-ksecdd-report-20260629-011930
 Category: Corpus
 Author: Argus
 Summary: KB5082200
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ## 1. Overview

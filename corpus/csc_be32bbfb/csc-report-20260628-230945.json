@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "csc.sys - No security-relevant change: WIL feature-staging gate around a NULL check in CscDclMRxTransition (dclmrx.c) graduated to unconditional",
+    "title": "csc.sys - WIL feature-staging gate around a NULL check in CscDclMRxTransition (dclmrx.c) graduated to unconditional",
     "id_unpatched": "csc_unpatched.sys",
     "id_patched": "csc_patched.sys",
     "overall_similarity": 0.992,

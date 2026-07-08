@@ -1,10 +1,10 @@
-Title: monitor.sys — No security-relevant change (brightness dim-state telemetry instrumentation and recompilation churn)
+Title: monitor.sys — brightness dim-state telemetry instrumentation and recompilation churn
 Date: 2026-06-29
 Slug: monitor_b6b390ec-monitor-report-20260629-011354
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ## 1. Overview

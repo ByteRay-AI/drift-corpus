@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ci.dll - No security-relevant change (statically-linked SymCrypt library rebuild plus WIL feature-staged TrustedLaunch/AppID-tagging development)",
+    "title": "ci.dll - statically-linked SymCrypt library rebuild plus WIL feature-staged TrustedLaunch/AppID-tagging development",
     "id_unpatched": "ci_unpatched.dll",
     "id_patched": "ci_patched.dll",
     "overall_similarity": 0.9887,

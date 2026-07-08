@@ -1,10 +1,10 @@
-Title: mssecwfp.sys — No security-relevant change (feature-staged WFP filter-condition matching rollout with the old comparison path retained)
+Title: mssecwfp.sys — feature-staged WFP filter-condition matching rollout with the old comparison path retained
 Date: 2026-06-29
 Slug: mssecwfp_04ed7c5a-mssecwfp-report-20260629-144748
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ## 1. Overview

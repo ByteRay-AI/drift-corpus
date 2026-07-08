@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndis.sys - No security-relevant change: WIL feature-staging retirement moves per-handle context free from IRP_MJ_CLEANUP to IRP_MJ_CLOSE",
+    "title": "ndis.sys - WIL feature-staging retirement moves per-handle context free from IRP_MJ_CLEANUP to IRP_MJ_CLOSE",
     "id_unpatched": "ndis_unpatched.sys",
     "id_patched": "ndis_patched.sys",
     "overall_similarity": 0.9908,

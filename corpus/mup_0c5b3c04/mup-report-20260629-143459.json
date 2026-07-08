@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mup.sys - No security-relevant change: WIL feature-state cache library churn (bit 0x40000 marking + feature-usage provider registration)",
+    "title": "mup.sys - WIL feature-state cache library churn (bit 0x40000 marking + feature-usage provider registration)",
     "id_unpatched": "mup_unpatched.sys",
     "id_patched": "mup_patched.sys",
     "overall_similarity": 0.992,

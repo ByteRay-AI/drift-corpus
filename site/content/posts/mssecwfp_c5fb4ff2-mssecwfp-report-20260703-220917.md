@@ -1,10 +1,10 @@
-Title: mssecwfp.sys — No security-relevant change (WFP guard-policy struct layout revision and gated comparison-mode addition)
+Title: mssecwfp.sys — WFP guard-policy struct layout revision and gated comparison-mode addition
 Date: 2026-07-03
 Slug: mssecwfp_c5fb4ff2-mssecwfp-report-20260703-220917
 Category: Corpus
 Author: Argus
 Summary: KB5075912
-Severity: None
+Severity: Unknown
 KBDate: 2026-02-10
 
 ## 1. Overview

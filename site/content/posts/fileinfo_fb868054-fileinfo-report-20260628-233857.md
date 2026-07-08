@@ -1,10 +1,10 @@
-Title: fileinfo.sys — No security-relevant change (RB-tree root pointer-encoding completed, but encoding is disabled on every reachable path)
+Title: fileinfo.sys — RB-tree root pointer-encoding completed, but encoding is disabled on every reachable path
 Date: 2026-06-28
 Slug: fileinfo_fb868054-fileinfo-report-20260628-233857
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ## 1. Overview

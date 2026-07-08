@@ -1,10 +1,10 @@
-Title: intelpep.sys — No security-relevant change (idle-state reporting refactor and device/processor struct-layout revision)
+Title: intelpep.sys — idle-state reporting refactor and device/processor struct-layout revision
 Date: 2026-06-29
 Slug: intelpep_9ad6ab99-intelpep-report-20260629-010836
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ## 1. Overview

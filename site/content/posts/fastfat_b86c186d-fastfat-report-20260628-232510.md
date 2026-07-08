@@ -1,4 +1,4 @@
-Title: fastfat.sys — No security-relevant change (CWE-190 guards emitted in both)
+Title: fastfat.sys — CWE-190 guards emitted in both
 Date: 2026-06-28
 Slug: fastfat_b86c186d-fastfat-report-20260628-232510
 Category: Corpus

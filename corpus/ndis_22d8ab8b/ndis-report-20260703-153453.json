@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndis.sys - No security-relevant change: feature-staged StatusBufferSize pre-check in ndisMRawIndicateStatusEx (StatusCode 0x40030053), old unchecked path retained",
+    "title": "ndis.sys - feature-staged StatusBufferSize pre-check in ndisMRawIndicateStatusEx (StatusCode 0x40030053), old unchecked path retained",
     "id_unpatched": "ndis_unpatched.sys",
     "id_patched": "ndis_patched.sys",
     "overall_similarity": 0.9424,

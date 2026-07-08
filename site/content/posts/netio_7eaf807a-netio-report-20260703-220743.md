@@ -1,10 +1,10 @@
-Title: netio.sys — No security-relevant change (NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds)
+Title: netio.sys — NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds
 Date: 2026-07-03
 Slug: netio_7eaf807a-netio-report-20260703-220743
 Category: Corpus
 Author: Argus
 Summary: KB5082142
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ## 1. Overview

@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mqac.sys (MSMQ Access Control driver) - No security-relevant change (cross-branch rebuild; validation checks inlined from callees)",
+    "title": "mqac.sys (MSMQ Access Control driver) - cross-branch rebuild; validation checks inlined from callees",
     "id_unpatched": "mqac_unpatched.sys",
     "id_patched": "mqac_patched.sys",
     "unpatched_file_version": "10.0.28000.2336",
@@ -67,7 +67,9 @@
       "name": "CStorage::GetWriteRequest (0x140022B8C)",
       "similarity": 0.0803,
       "change_type": "cosmetic",
-      "key_changes": ["Restructured control flow, cross-branch compiler differences"],
+      "key_changes": [
+        "Restructured control flow, cross-branch compiler differences"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -76,7 +78,9 @@
       "name": "CPacket::GetProperties (0x140017000)",
       "similarity": 0.0791,
       "change_type": "behavioral",
-      "key_changes": ["Restructured property enumeration; cross-branch difference"],
+      "key_changes": [
+        "Restructured property enumeration; cross-branch difference"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""

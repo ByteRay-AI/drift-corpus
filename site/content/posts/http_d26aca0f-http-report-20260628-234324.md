@@ -1,4 +1,4 @@
-Title: http.sys — No security-relevant change (feature-staged QUIC frame length-check guard, old path retained)
+Title: http.sys — feature-staged QUIC frame length-check guard, old path retained
 Date: 2026-06-28
 Slug: http_d26aca0f-http-report-20260628-234324
 Category: Corpus

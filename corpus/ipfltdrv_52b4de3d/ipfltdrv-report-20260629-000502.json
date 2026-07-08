@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ipfltdrv.sys - No security-relevant change (recompilation: register allocation and basic-block scheduling)",
+    "title": "ipfltdrv.sys - recompilation: register allocation and basic-block scheduling",
     "id_unpatched": "ipfltdrv_unpatched.sys",
     "id_patched": "ipfltdrv_patched.sys",
     "overall_similarity": 0.9875,

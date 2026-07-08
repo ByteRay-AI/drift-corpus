@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mssecwfp.sys - No security-relevant change (feature-staged WFP filter-condition matching rollout with the old comparison path retained)",
+    "title": "mssecwfp.sys - feature-staged WFP filter-condition matching rollout with the old comparison path retained",
     "id_unpatched": "mssecwfp_unpatched.sys",
     "id_patched": "mssecwfp_patched.sys",
     "overall_similarity": 0.8904,

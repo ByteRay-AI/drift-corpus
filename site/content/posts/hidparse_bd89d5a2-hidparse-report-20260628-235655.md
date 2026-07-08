@@ -1,4 +1,4 @@
-Title: hidparse.sys — No security-relevant change (input-validation relaxation / recompilation)
+Title: hidparse.sys — input-validation relaxation / recompilation
 Date: 2026-06-28
 Slug: hidparse_bd89d5a2-hidparse-report-20260628-235655
 Category: Corpus

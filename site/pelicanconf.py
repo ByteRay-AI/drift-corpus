@@ -16,7 +16,7 @@ THEME = "themes/argus"
 
 ARTICLE_URL = "item/{slug}.html"
 ARTICLE_SAVE_AS = "item/{slug}.html"
-_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "informational": 1, "none": 0}
+_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "informational": 1, "none": 0, "unknown": 0}
 
 
 def ARTICLE_ORDER_BY(article):

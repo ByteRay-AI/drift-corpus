@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "pcw.sys (Performance Counter for Windows) - No security-relevant change: user-mode write hardening via Rtl*ToUser accessors, WIL feature-staging, and statically-linked security-library churn",
+    "title": "pcw.sys (Performance Counter for Windows) - user-mode write hardening via Rtl*ToUser accessors, WIL feature-staging, and statically-linked security-library churn",
     "id_unpatched": "pcw_unpatched.sys",
     "id_patched": "pcw_patched.sys",
     "overall_similarity": 0.7938,

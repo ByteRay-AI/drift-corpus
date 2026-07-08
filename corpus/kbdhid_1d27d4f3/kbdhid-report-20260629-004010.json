@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "kbdhid.sys - No security-relevant change: KbdHid_Create (IRP_MJ_CREATE) device-name string corrected from 'KBD' to '\\KBD', metadata opens newly allowed",
+    "title": "kbdhid.sys - KbdHid_Create (IRP_MJ_CREATE) device-name string corrected from 'KBD' to '\\KBD', metadata opens newly allowed",
     "id_unpatched": "kbdhid_unpatched.sys",
     "id_patched": "kbdhid_patched.sys",
     "overall_similarity": 0.9917,

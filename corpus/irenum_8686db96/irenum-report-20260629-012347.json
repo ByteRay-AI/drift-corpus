@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "irenum.sys (IR Bus Enumerator) - No security-relevant change (redundant zero-init of registry-path pool buffer)",
+    "title": "irenum.sys (IR Bus Enumerator) - redundant zero-init of registry-path pool buffer",
     "id_unpatched": "irenum_unpatched.sys",
     "id_patched": "irenum_patched.sys",
     "overall_similarity": 0.9927,

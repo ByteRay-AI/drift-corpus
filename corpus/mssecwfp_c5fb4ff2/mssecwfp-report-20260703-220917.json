@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mssecwfp.sys - No security-relevant change (WFP guard-policy stored-value struct layout revision plus gated comparison mode)",
+    "title": "mssecwfp.sys - WFP guard-policy stored-value struct layout revision plus gated comparison mode",
     "id_unpatched": "mssecwfp_unpatched.sys",
     "id_patched": "mssecwfp_patched.sys",
     "overall_similarity": 0.8839,

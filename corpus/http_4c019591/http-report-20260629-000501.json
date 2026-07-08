@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys - No security-relevant change (performance-counter buffer zeroing moved into callee) & KIR feature-flag cleanup",
+    "title": "http.sys - performance-counter buffer zeroing moved into callee & KIR feature-flag cleanup",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.9806,
@@ -152,7 +152,12 @@
       "severity": "informational",
       "function": "UlpPcwCopyGlobalCounters (sub_140149B64)",
       "entry_point": "Performance counter query (PerfMon / typeperf / PCW query for the HTTP Server API global counter set)",
-      "call_chain": ["PerfMon / performance-counter enumeration", "UlpPcwCollectInstances (sub_14008CFCC) counter type 0", "UlpPcwCopyGlobalCounters (sub_140149B64) aggregate copy", "counter totals returned as _PCW_DATA to user mode (identical in both builds)"],
+      "call_chain": [
+        "PerfMon / performance-counter enumeration",
+        "UlpPcwCollectInstances (sub_14008CFCC) counter type 0",
+        "UlpPcwCopyGlobalCounters (sub_140149B64) aggregate copy",
+        "counter totals returned as _PCW_DATA to user mode (identical in both builds)"
+      ],
       "vulnerability_class": "None (defense-in-depth hardening; the caller already fully initializes the buffer)",
       "description": "UlpPcwCopyGlobalCounters (sub_140149B64) copies aggregated global HTTP counters into a 40-byte (0x28) output buffer. The unpatched version zeroes only the first 8 bytes in-function (*(_QWORD *)a2 = 0), then reads the buffer's fields at +0x08, +0x0C, +0x10, +0x14 as 32-bit accumulator start values and accumulates 64-bit values into +0x18 and +0x20 (gated by UxKirHttpTlsHandshakePerfCounter) before writing them. In isolation that reads not-yet-written output fields, but the function has exactly one caller, UlpPcwCollectInstances (sub_14008CFCC), which fully zeroes the 40-byte stack buffer before every call in BOTH builds: memset(v24, 0, sizeof(v24)) clears +0x00..+0x1F and v25 = 0 clears +0x20..+0x27 (identical in the patched caller, v22[4]+v23). Therefore the unpatched reads return zero, not stack residue, no uninitialized data is folded into the result, and the returned counter totals are identical in both builds. The patched version zeroes the whole 0x28-byte structure up front (16-byte store at +0x00, 16-byte store at +0x10, 8-byte store at +0x20) and starts every accumulator from zero. This is a defense-in-depth hardening that moves the zeroing from the caller into the callee, with no observable behavior change.",
       "trigger_conditions": "Not applicable. Querying HTTP Server API global performance counters via PerfMon, typeperf, or the PCW query path returns identical totals in both builds because the caller fully zeroes the buffer before the call in both builds.",
@@ -187,7 +192,11 @@
       "severity": "informational",
       "function": "UxSslValidateErrorHeaders (sub_14008AEB8)",
       "entry_point": "SSL/TLS error-response header validation, reached from UxpSslValidateExtendedPropertiesHelper (sub_14008AD98)",
-      "call_chain": ["SSL/TLS error-response construction", "UxpSslValidateExtendedPropertiesHelper (sub_14008AD98)", "UxSslValidateErrorHeaders (sub_14008AEB8) header list validation"],
+      "call_chain": [
+        "SSL/TLS error-response construction",
+        "UxpSslValidateExtendedPropertiesHelper (sub_14008AD98)",
+        "UxSslValidateErrorHeaders (sub_14008AEB8) header list validation"
+      ],
       "vulnerability_class": "None (feature-flag consolidation)",
       "description": "UxSslValidateErrorHeaders (sub_14008AEB8) validates the header list of an SSL/TLS error response. For each header it looks up the name in a hash table (UxFindHeaderNameHashEntry), breaks on the ':status' pseudo-header, and scans the name and value bytes for disallowed control characters using bit-test masks (0x2401 for value bytes, 0x400000000002401 for name bytes). In the unpatched build the per-header body is duplicated into two identical branches gated by the Known-Issue-Rollback global UxKirHttpBugFix25Q1; both branches perform the same name-pointer NULL and zero-length guard (if (v8 == nullptr || <name-len> == 0) break;) before scanning the name. The patched build removes the rolled-back branch and keeps the single unified path. The NULL/zero-length check is present in both builds, and the one length-guarded read of the name's first byte (<name-len> != 0 && **name == ':') is byte-for-byte identical in both builds. No pointer validation is added or removed and no NULL dereference is fixed; this is a feature-staging cleanup.",
       "trigger_conditions": "Not applicable. The change is a Known-Issue-Rollback branch consolidation with no behavioral difference in header validation.",

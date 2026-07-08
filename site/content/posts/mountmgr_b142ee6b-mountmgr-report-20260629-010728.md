@@ -1,10 +1,10 @@
-Title: mountmgr.sys — No security-relevant change (device-characteristic gate added to remote-database reconciliation)
+Title: mountmgr.sys — device-characteristic gate added to remote-database reconciliation
 Date: 2026-06-29
 Slug: mountmgr_b142ee6b-mountmgr-report-20260629-010728
 Category: Corpus
 Author: Argus
 Summary: KB5087545
-Severity: None
+Severity: Unknown
 KBDate: 2026-05-12
 
 ## 1. Overview

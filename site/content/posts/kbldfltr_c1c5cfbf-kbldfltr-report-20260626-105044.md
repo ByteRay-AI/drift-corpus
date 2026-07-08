@@ -1,10 +1,10 @@
-Title: kbldfltr.sys — No security-relevant change (modifier-key state-tracking feature, lock-scope refactor, and debug tracing)
+Title: kbldfltr.sys — modifier-key state-tracking feature, lock-scope refactor, and debug tracing
 Date: 2026-06-26
 Slug: kbldfltr_c1c5cfbf-kbldfltr-report-20260626-105044
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ---

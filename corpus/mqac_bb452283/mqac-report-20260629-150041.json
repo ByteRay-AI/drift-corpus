@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mqac.sys (MSMQ AC Kernel Driver) - No security-relevant change; probe direction and size identical across builds (compiler inlining churn)",
+    "title": "mqac.sys (MSMQ AC Kernel Driver) - probe direction and size identical across builds (compiler inlining churn)",
     "id_unpatched": "mqac_unpatched.sys",
     "id_patched": "mqac_patched.sys",
     "overall_similarity": 0.6052,

@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb.sys - No security-relevant change (connection-info parser refactor and AlternativePort feature staging)",
+    "title": "mrxsmb.sys - connection-info parser refactor and AlternativePort feature staging",
     "id_unpatched": "mrxsmb_unpatched.sys",
     "id_patched": "mrxsmb_patched.sys",
     "overall_similarity": 0.9498,

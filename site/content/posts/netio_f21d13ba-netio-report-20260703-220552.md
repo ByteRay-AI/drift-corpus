@@ -1,10 +1,10 @@
-Title: netio.sys — No security-relevant change (NBL refcount hardening + WFP stream-inspection verifier/telemetry)
+Title: netio.sys — NBL refcount hardening + WFP stream-inspection verifier/telemetry
 Date: 2026-07-03
 Slug: netio_f21d13ba-netio-report-20260703-220552
 Category: Corpus
 Author: Argus
 Summary: KB5087545
-Severity: None
+Severity: Unknown
 KBDate: 2026-05-12
 
 ## 1. Overview

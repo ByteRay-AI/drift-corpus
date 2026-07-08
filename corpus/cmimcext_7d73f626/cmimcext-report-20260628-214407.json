@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "cmimcext.sys - No security-relevant change: WIL feature-staging library churn, ExAllocatePool2 modernization, and a feature-gated (Feature_ImcL) rollout",
+    "title": "cmimcext.sys - WIL feature-staging library churn, ExAllocatePool2 modernization, and a feature-gated (Feature_ImcL) rollout",
     "id_unpatched": "cmimcext_unpatched.sys",
     "id_patched": "cmimcext_patched.sys",
     "overall_similarity": 0.7993,
@@ -417,7 +417,15 @@
       "severity": "none",
       "function": "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4) / wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC) (WIL feature-usage reporting helpers)",
       "entry_point": "CmSetInitMachineConfig (single boot-time call site) -> wil_InitializeFeatureStaging -> WIL feature-evaluation/reporting tree",
-      "call_chain": ["CmSetInitMachineConfig", "wil_InitializeFeatureStaging (sub_1C000B008)", "wil_details_EvaluateFeatureDependencies (sub_1C0008138)", "wil_details_IsEnabledFallback (sub_1C0001B30)", "wil_details_FeatureReporting_ReportUsageToService (sub_1C00017C4)", "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4)", "wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC)"],
+      "call_chain": [
+        "CmSetInitMachineConfig",
+        "wil_InitializeFeatureStaging (sub_1C000B008)",
+        "wil_details_EvaluateFeatureDependencies (sub_1C0008138)",
+        "wil_details_IsEnabledFallback (sub_1C0001B30)",
+        "wil_details_FeatureReporting_ReportUsageToService (sub_1C00017C4)",
+        "wil_details_FeatureReporting_ReportUsageToServiceDirect (sub_1C00016D4)",
+        "wil_details_FeatureReporting_RecordUsageInCache (sub_1C00013FC)"
+      ],
       "vulnerability_class": "No security-relevant change (WIL feature-staging library refactor; not a synchronization defect)",
       "description": "There is no race condition on global feature-config state in this diff. The touched globals are the WIL feature-property cache (off_1C00038F8) and a set-once reporting callback pointer (g_wil_details_recordFeatureUsage / data_1c0004170). In the patched (newer WIL) build these helpers receive their state through a caller-supplied context pointer instead of reading the module-global cache, but g_wil_details_recordFeatureUsage is STILL read as a module-global in the patched build, so no racing global was removed. The per-dword lock cmpxchg is WIL's normal in-place feature-state update, present in both builds. The path is PASSIVE_LEVEL feature-usage telemetry; no attacker-controlled two-writer concurrency was demonstrated. The 'multi-field non-atomic write' race, 'stale callback pointer' dereference, and 'notification-list pool corruption' were not substantiated by the binaries. This is a WIL library-version refactor, not a security fix.",
       "trigger_conditions": "cmimcext.sys is a boot-time driver; CmSetInitMachineConfig runs once during initialization to migrate content from \\REGISTRY\\MACHINE\\INITIALMACHINECONFIG. The WIL reporting/evaluation helpers examined here run at PASSIVE_LEVEL from that single boot-time path. No attacker-reachable concurrent-writer trigger was identified.",
@@ -470,7 +478,13 @@
       "severity": "none",
       "function": "wil_InitializeFeatureStaging (sub_1C000B008) (WIL one-time staging init)",
       "entry_point": "CmSetInitMachineConfig -> wil_InitializeFeatureStaging (sub_1C000B008)",
-      "call_chain": ["CmSetInitMachineConfig", "wil_InitializeFeatureStaging (sub_1C000B008)", "wil_details_PopulateInitialConfiguredFeatureStates (sub_1C000B0B4)", "wil_details_EvaluateFeatureDependencies (sub_1C0008138)", "RtlRegisterFeatureConfigurationChangeNotification"],
+      "call_chain": [
+        "CmSetInitMachineConfig",
+        "wil_InitializeFeatureStaging (sub_1C000B008)",
+        "wil_details_PopulateInitialConfiguredFeatureStates (sub_1C000B0B4)",
+        "wil_details_EvaluateFeatureDependencies (sub_1C0008138)",
+        "RtlRegisterFeatureConfigurationChangeNotification"
+      ],
       "vulnerability_class": "No security-relevant change (WIL one-time-init guard + new usage-provider registration; not a re-entrancy/pool-corruption fix)",
       "description": "There is no exploitable missing-re-entrancy-guard defect here. The unpatched wil_InitializeFeatureStaging (sub_1C000B008) allocates nothing and inserts nothing into any list: it calls RtlQueryFeatureConfigurationChangeStamp, wil_details_PopulateInitialConfiguredFeatureStates, wil_details_EvaluateFeatureDependencies, and conditionally RtlRegisterFeatureConfigurationChangeNotification. There is no ImpAddAllowListEvent call and no notification-node list in this function in either build, so there is no double-registration corruption primitive. The patched wil_InitializeFeatureStaging (sub_14000CB94) adds WIL's standard one-time-init guard (g_wil_details_isFeatureStagingInitialized) and a new RtlRegisterFeatureUsageProvider registration (with matching RtlUnregisterFeatureUsageProvider teardown in CmCompleteInitMachineConfig). This is a newer-WIL library shape, not a security fix.",
       "trigger_conditions": "wil_InitializeFeatureStaging runs from the single boot-time CmSetInitMachineConfig call site. No exploitable re-invocation path or corruption target was identified in either build.",

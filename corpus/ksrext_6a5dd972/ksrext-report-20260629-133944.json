@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ksrext.sys (Windows Kernel Soft Restart Extension Driver) - No security-relevant change; KSR persistence-subsystem feature expansion",
+    "title": "ksrext.sys (Windows Kernel Soft Restart Extension Driver) - KSR persistence-subsystem feature expansion",
     "id_unpatched": "ksrext_unpatched.sys",
     "id_patched": "ksrext_patched.sys",
     "overall_similarity": 0.4998,
@@ -222,7 +222,18 @@
       "severity": "none",
       "function": "KsrPersistMemoryPartition",
       "entry_point": "KSR infrastructure function invoked by the kernel soft-restart/servicing path; not reachable from user mode (no device object, IOCTL dispatch, or symbolic link in either build)",
-      "call_chain": ["KsrPersistMemoryPartition", "ExAcquirePushLockSharedEx (KsrpPdDatabaseLock, unpatched)", "list-presence check", "ExReleasePushLockSharedEx", "ObOpenObjectByPointerWithTag", "ObQueryNameString", "ObGetObjectSecurity", "KsrpQueryMemoryRuns", "KsrpQueryIoSpaceRuns", "KsrpPersistMemoryPartitionRoutinePointer (guarded icall)"],
+      "call_chain": [
+        "KsrPersistMemoryPartition",
+        "ExAcquirePushLockSharedEx (KsrpPdDatabaseLock, unpatched)",
+        "list-presence check",
+        "ExReleasePushLockSharedEx",
+        "ObOpenObjectByPointerWithTag",
+        "ObQueryNameString",
+        "ObGetObjectSecurity",
+        "KsrpQueryMemoryRuns",
+        "KsrpQueryIoSpaceRuns",
+        "KsrpPersistMemoryPartitionRoutinePointer (guarded icall)"
+      ],
       "vulnerability_class": "No security-relevant change (originally suspected CWE-367 / CWE-911 / CWE-404)",
       "description": "Originally reported as a TOCTOU race plus missing object reference plus handle leak. Against the binaries none of these hold. (1) Locking: the unpatched build uses a SHARED lock for the list-presence check and releases it with the matching ExReleasePushLockSharedEx (0x1C000888D) before the persist work; the patched build uses an EXCLUSIVE lock held throughout. This is stricter locking introduced to support the newly-added unpersist lifecycle, but the 'free side' (unpersist) does not exist in the unpatched build, so no reachable use-after-free is present there. (2) Object reference: the patched build adds ObReferenceObjectByHandle (0x14000A98D); the unpatched build performs the same operations on the caller-supplied pointer, which is kept alive by the handle opened at ObOpenObjectByPointerWithTag. (3) Handle leak: false positive. On success the unpatched build stores the opened handle into the persisted-partition record (var_148 -> var_E8 at 0x1C0008A01) and hands the record to the persist routine; the handle is transferred, not leaked, and is closed via ZwClose only on the error path (0x1C0008A83). ObCloseHandle is not referenced anywhere in the image.",
       "trigger_conditions": "None demonstrable. Neither build exposes a user-mode attack surface, and the unpatched build has no unpersist path to free a persisted object concurrently.",
@@ -274,7 +285,14 @@
       "severity": "none",
       "function": "KsrQueryPersistedMemoryPartition",
       "entry_point": "KSR infrastructure function; not user-mode reachable",
-      "call_chain": ["KsrQueryPersistedMemoryPartition", "KsrpWaitForPartitionsRestored", "lock acquisition", "list traversal", "ObfReferenceObject", "return referenced object pointer"],
+      "call_chain": [
+        "KsrQueryPersistedMemoryPartition",
+        "KsrpWaitForPartitionsRestored",
+        "lock acquisition",
+        "list traversal",
+        "ObfReferenceObject",
+        "return referenced object pointer"
+      ],
       "vulnerability_class": "No security-relevant change (originally suspected CWE-911 / CWE-416, reversed)",
       "description": "The originally-reported 'missing ObfReferenceObject' is reversed against the binaries: the unpatched build already calls ObfReferenceObject (0x1C0008C46) on the located partition object before returning it, exactly as the patched build does (0x14000AF8D). The only difference is that the lock is relaxed from EXCLUSIVE (unpatched, 0x1C0008BF7) to SHARED (patched, 0x14000AF0F). The relaxation is safe because the returned object is reference-counted in both builds. Correct unpatched address is 0x1C0008BC0.",
       "trigger_conditions": "None; no reference was removed and no lifetime bug exists.",
@@ -307,7 +325,9 @@
       "severity": "none",
       "function": "KsrUnpersistMemoryPartition",
       "entry_point": "New function in the patched build (0x14000B450); no unpatched counterpart",
-      "call_chain": ["KsrUnpersistMemoryPartition (new feature)"],
+      "call_chain": [
+        "KsrUnpersistMemoryPartition (new feature)"
+      ],
       "vulnerability_class": "No security-relevant change (new feature; original CWE-404 / CWE-367 attribution was to the wrong function)",
       "description": "The unpatched image contains no unpersist function. The previously-cited unpatched address 0x1C000B094 is KsrpRestoreMemoryPartition, an unrelated restore-path routine; the low-similarity match to the patched unpersist is an address-reuse artifact. KsrUnpersistMemoryPartition is newly-added feature code, so there is no prior vulnerable code to remediate.",
       "trigger_conditions": "None.",

@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "bthport.sys - No security-relevant change: feature-staged refactor of the HCI LE advertising-request coordinator teardown",
+    "title": "bthport.sys - feature-staged refactor of the HCI LE advertising-request coordinator teardown",
     "id_unpatched": "bthport_unpatched.sys",
     "id_patched": "bthport_patched.sys",
     "overall_similarity": 0.992,

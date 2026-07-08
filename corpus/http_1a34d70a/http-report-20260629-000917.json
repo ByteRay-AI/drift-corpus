@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys - No security-relevant change (KIR/feature-staged HTTP/2 MaxHeadersCount limit)",
+    "title": "http.sys - KIR/feature-staged HTTP/2 MaxHeadersCount limit",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.9915,
@@ -121,7 +121,11 @@
       "severity": "none",
       "function": "UlParseRequestHeaderPairs (0x1400C7BD0)",
       "entry_point": "HTTP/2 header processing, reached via UlHttpReceiveHeadersEvent (0x1400C6CB0)",
-      "call_chain": ["HTTP/2 header event", "UlHttpReceiveHeadersEvent (0x1400C6CB0) calls UlParseRequestHeaderPairs at 0x1400C6FDE", "UlParseRequestHeaderPairs (0x1400C7BD0) header validation/processing loop"],
+      "call_chain": [
+        "HTTP/2 header event",
+        "UlHttpReceiveHeadersEvent (0x1400C6CB0) calls UlParseRequestHeaderPairs at 0x1400C6FDE",
+        "UlParseRequestHeaderPairs (0x1400C7BD0) header validation/processing loop"
+      ],
       "vulnerability_class": "No security-relevant change (feature-gated resource-limit hardening)",
       "description": "The patched build adds a new, configurable MaxHeadersCount cap to the HTTP/2 header-processing function UlParseRequestHeaderPairs. The whole block is gated behind UxKirMaxHeadersCountLimit, a UxKir* Known-Issue-Rollback / WIL feature-staging flag set at driver init (setnz at 0x1400BC95E) from Feature_3936850235 (call at 0x1400BC947). When the flag is non-zero, the function reads MaxHeadersCount from the server config at *(*(obj+0x18)+0x448)+0x1128 (default max(MaxRequestBytes>>9, 0xC8)=200, bounds 0x32..0xFFFF, registry value 'MaxHeadersCount') and, if the decoded HPACK entry count (arg2[1]) exceeds MaxHeadersCount+4, sets fault code 0x14 and returns 0xc0000040 (STATUS_FAIL_CHECK) before the loop. The unpatched build has neither the flag nor the check. This is not an exploitable-vulnerability fix: per-entry work is constant (name hashed via HashCountedStringNoCaseA @ 0x14006D5A0, then hash-dispatched to a fixed set of known/sensitive header handlers with fixed-slot duplicate tracking), total processing is O(n) linear, and the entry count n is already bounded by the existing MaxRequestBytes request-size cap. There is no super-linear amplification, no attacker-controlled unbounded workload, and no memory-safety difference. The change is feature-staged robustness/serviceability hardening.",
       "trigger_conditions": "With the feature flag enabled on the patched build, an HTTP/2 request whose decoded header-entry count exceeds MaxHeadersCount+4 is rejected early with STATUS_FAIL_CHECK. In the unpatched build (or when the flag is off) all entries are processed. Because the entry count is bounded by MaxRequestBytes and per-entry work is constant, neither build exposes an attacker-controlled unbounded workload; there is no exploitable trigger.",

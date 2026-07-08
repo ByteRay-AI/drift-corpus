@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "e1i63x64.sys (Intel PRO/1000 PCIe NDIS Miniport Driver) - No security-relevant change: NDIS OID request-type check present in both builds; patch relocates OID extraction into a helper",
+    "title": "e1i63x64.sys (Intel PRO/1000 PCIe NDIS Miniport Driver) - NDIS OID request-type check present in both builds; patch relocates OID extraction into a helper",
     "id_unpatched": "e1i63x64_unpatched.sys",
     "id_patched": "e1i63x64_patched.sys",
     "overall_similarity": 0.8577,

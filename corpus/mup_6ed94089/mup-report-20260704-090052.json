@@ -1,13 +1,16 @@
 {
   "binaries": {
-    "title": "mup.sys (Multiple UNC Provider) - No security-relevant change (WIL feature-staging library churn)",
+    "title": "mup.sys (Multiple UNC Provider) - WIL feature-staging library churn",
     "id_unpatched": "mup_unpatched.sys",
     "id_patched": "mup_patched.sys",
     "overall_similarity": 0.9873,
     "matched": 357,
     "changed": 3,
     "identical": 354,
-    "matched_changed_identical": {"changed": 3, "identical": 354},
+    "matched_changed_identical": {
+      "changed": 3,
+      "identical": 354
+    },
     "unmatched_unpatched": 1,
     "unmatched_patched": 3
   },
@@ -59,12 +62,26 @@
   ],
   "unmatched": {
     "removed": [
-      {"name": "WPP_SF_D", "note": "WPP trace-format helper differing from WPP_SF_d only in a format specifier."}
+      {
+        "name": "WPP_SF_D",
+        "note": "WPP trace-format helper differing from WPP_SF_d only in a format specifier."
+      }
     ],
     "added": [
-      {"name": "wil_details_AreDependenciesEnabled", "address": "0x140002C3C", "note": "WIL feature-dependency evaluation helper extracted from wil_details_GetCurrentFeatureEnabledState; walks *(a1+32) and evaluates each dependency via wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState."},
-      {"name": "wil_details_RegisterFeatureUsageProvider", "address": "0x14001238C", "note": "WIL feature-usage-provider registration helper extracted from wil_InitializeFeatureStaging."},
-      {"name": "WPP_SF_d", "note": "WPP trace-format helper."}
+      {
+        "name": "wil_details_AreDependenciesEnabled",
+        "address": "0x140002C3C",
+        "note": "WIL feature-dependency evaluation helper extracted from wil_details_GetCurrentFeatureEnabledState; walks *(a1+32) and evaluates each dependency via wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState."
+      },
+      {
+        "name": "wil_details_RegisterFeatureUsageProvider",
+        "address": "0x14001238C",
+        "note": "WIL feature-usage-provider registration helper extracted from wil_InitializeFeatureStaging."
+      },
+      {
+        "name": "WPP_SF_d",
+        "note": "WPP trace-format helper."
+      }
     ]
   },
   "security_findings": [

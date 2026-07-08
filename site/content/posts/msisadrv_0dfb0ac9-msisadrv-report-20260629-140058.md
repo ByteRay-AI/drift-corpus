@@ -1,10 +1,10 @@
-Title: msisadrv.sys — No security-relevant change (KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths)
+Title: msisadrv.sys — KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths
 Date: 2026-06-29
 Slug: msisadrv_0dfb0ac9-msisadrv-report-20260629-140058
 Category: Corpus
 Author: Argus
 Summary: KB5087545
-Severity: None
+Severity: Unknown
 KBDate: 2026-05-12
 
 ## 1. Overview

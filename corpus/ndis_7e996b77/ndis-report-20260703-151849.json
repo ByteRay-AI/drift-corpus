@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndis.sys - No security-relevant change (WIL feature-staged miniport/interface synchronization, old path retained)",
+    "title": "ndis.sys - WIL feature-staged miniport/interface synchronization, old path retained",
     "id_unpatched": "ndis_unpatched.sys",
     "id_patched": "ndis_patched.sys",
     "overall_similarity": 0.9858,
@@ -192,16 +192,29 @@
     }
   ],
   "unmatched": {
-    "removed": ["Feature_2332236090__private_IsEnabled* and folded interface-index/lambda helpers"],
-    "added": ["Feature_CFHCancelTimerFix__private_IsEnabled*", "Feature_NDPQualitySummer26__private_IsEnabled*", "ndisWdfNotifyStuckOperation", "WPP_RECORDER_SF_* tracing thunks"]
+    "removed": [
+      "Feature_2332236090__private_IsEnabled* and folded interface-index/lambda helpers"
+    ],
+    "added": [
+      "Feature_CFHCancelTimerFix__private_IsEnabled*",
+      "Feature_NDPQualitySummer26__private_IsEnabled*",
+      "ndisWdfNotifyStuckOperation",
+      "WPP_RECORDER_SF_* tracing thunks"
+    ]
   },
   "security_findings": [
     {
       "severity": "informational",
       "delivered": false,
       "function": "ndisMWakeUpDpcX / ndisQueuedCheckForHang",
-      "address_unpatched": ["0x14007CA70", "0x14007CC60"],
-      "address_patched": ["0x14007ABE0", "0x14007AE20"],
+      "address_unpatched": [
+        "0x14007CA70",
+        "0x14007CC60"
+      ],
+      "address_patched": [
+        "0x14007ABE0",
+        "0x14007AE20"
+      ],
       "entry_point": "Internal miniport check-for-hang timer / wake-up DPC and adapter halt/reset sequencing (not an unprivileged user-mode request)",
       "vulnerability_class": "Race/ordering hardening (adjacent to CWE-362); no demonstrable use-after-free primitive in these binaries",
       "description": "In the unpatched build, ndisMWakeUpDpcX and ndisQueuedCheckForHang signal the miniport block's embedded event at +0x778 (KeSetEvent) after releasing the +0x60 spinlock, and re-acquire it afterward (ndisMWakeUpDpcX early-exit 0x14007CBE9->0x14007CC01 and deferred 0x14007CB79->0x14007CB89; ndisQueuedCheckForHang 0x14007CF01). The patched build adds a Feature_CFHCancelTimerFix gate (0x14007ACF9 / 0x14007B0B5); when enabled it signals the event while holding the +0x60 spinlock. When disabled, the original lock-released-then-signal path runs unchanged. No behavior change is delivered unconditionally.",
@@ -213,8 +226,16 @@
       "severity": "informational",
       "delivered": false,
       "function": "ndisIfCreateInterfaceFromPersistentStore / ndisIfRegisterInterfaceEx / IFBLOCK_DECREMENT_REF",
-      "address_unpatched": ["0x14006C070", "0x14007AF90", "0x140011220"],
-      "address_patched": ["0x140089D40", "0x14007AF90", "0x140011220"],
+      "address_unpatched": [
+        "0x14006C070",
+        "0x14007AF90",
+        "0x140011220"
+      ],
+      "address_patched": [
+        "0x140089D40",
+        "0x14007AF90",
+        "0x140011220"
+      ],
       "entry_point": "Interface initialization from persisted (registry) state via ndisLoadNetworkInterfaceFromPersistedState, and interface registration; not an unprivileged user-mode OID/IOCTL request",
       "vulnerability_class": "Create/delete serialization hardening (adjacent to CWE-362); no demonstrable primitive in these binaries",
       "description": "The patched build adds a Feature_NDPQualitySummer26 gate around a new PendingDeletionComplete KEVENT handshake in the interface-block (_NDIS_IF_BLOCK) lifecycle: interface-create paths park a local event in block->PendingDeletionComplete and wait (ndisWaitForKernelObject) when a matching block is still pending deletion, and IFBLOCK_DECREMENT_REF signals that event before ExFreePoolWithTag. When the feature is disabled, the original list lookup and free run unchanged. No behavior change is delivered unconditionally.",

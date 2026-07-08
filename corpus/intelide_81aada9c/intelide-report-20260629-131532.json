@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "intelide.sys - No security-relevant change (init-only zero-init hardening of PCI IDE enumeration callbacks)",
+    "title": "intelide.sys - init-only zero-init hardening of PCI IDE enumeration callbacks",
     "id_unpatched": "intelide_unpatched.sys",
     "id_patched": "intelide_patched.sys",
     "overall_similarity": 0.7894,
@@ -87,11 +87,31 @@
   "unmatched": {
     "removed": [],
     "added": [
-      {"name": "memset", "address": "0x1C0002200", "note": "memset runtime pulled in by the new zero-init calls; not a security fix."},
-      {"name": "__memset_repmovs", "address": "0x1C0002340", "note": "memset rep-movs fast path; not a security fix."},
-      {"name": "__memset_query", "address": "0x1C00023C0", "note": "memset CPU-feature query helper; not a security fix."},
-      {"name": "__cpu_features_init", "address": "0x1C00020D0", "note": "CPUID feature probe used by memset to select a code path; not a security fix."},
-      {"name": "_guard_xfg_dispatch_icall_nop", "address": "0x1C00021C0", "note": "Control Flow Guard (XFG) dispatch thunk; guard modernization, not a security fix."}
+      {
+        "name": "memset",
+        "address": "0x1C0002200",
+        "note": "memset runtime pulled in by the new zero-init calls; not a security fix."
+      },
+      {
+        "name": "__memset_repmovs",
+        "address": "0x1C0002340",
+        "note": "memset rep-movs fast path; not a security fix."
+      },
+      {
+        "name": "__memset_query",
+        "address": "0x1C00023C0",
+        "note": "memset CPU-feature query helper; not a security fix."
+      },
+      {
+        "name": "__cpu_features_init",
+        "address": "0x1C00020D0",
+        "note": "CPUID feature probe used by memset to select a code path; not a security fix."
+      },
+      {
+        "name": "_guard_xfg_dispatch_icall_nop",
+        "address": "0x1C00021C0",
+        "note": "Control Flow Guard (XFG) dispatch thunk; guard modernization, not a security fix."
+      }
     ]
   },
   "security_findings": [
@@ -101,7 +121,12 @@
       "address_unpatched": "0x1C0001040",
       "address_patched": "0x1C0001050",
       "entry_point": "PciIdeXInitialize properties/ControllerInitialize callback - invoked during IDE controller initialization/enumeration on the controller's own PCI config space.",
-      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008) -> PciIdeXInitialize", "PiixIdeGetControllerProperties (init-only callback)", "PciIdeXGetBusData into stack buffers"],
+      "call_chain": [
+        "GsDriverEntry (0x1C0007010)",
+        "DriverEntry (0x1C0001008) -> PciIdeXInitialize",
+        "PiixIdeGetControllerProperties (init-only callback)",
+        "PciIdeXGetBusData into stack buffers"
+      ],
       "vulnerability_class": "Use of Uninitialized Memory (CWE-908) - defense-in-depth hardening only",
       "description": "The properties callback reads the controller's PCI config space into two stack buffers: a 0x40-byte read into var_E8 (call at 0x1C000108C) and a 0x56-byte read into var_A8 (call at 0x1C00012E4). The patched build adds memset before each read (0x1C000108F and 0x1C00012F1). All fields the function consumes (vendor ID at offset 0, device ID at offset 2, byte at offset 9, timing byte at offset 84) are within the requested read lengths and are used only after the read returns success. On conformant PCI hardware (config space >= 256 bytes) the reads are fully satisfied, so no uninitialized data is used. This is init-only zero-init hardening, not a reachable vulnerability.",
       "trigger_conditions": "Runs during IDE controller enumeration/initialization (boot or PnP re-enumeration). No untrusted, attacker-controlled input reaches this path; the data is the controller's own PCI configuration space.",
@@ -115,7 +140,13 @@
       "address_unpatched": "0x1C0001580",
       "address_patched": "0x1C00015B0",
       "entry_point": "PciIdeXInitialize ChannelEnabled callback - invoked during IDE channel query at init/enumeration time.",
-      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008)", "PiixIdeGetControllerProperties stores PiixIdeChannelEnabled in the property struct", "PiixIdeChannelEnabled", "PciIdeXGetBusData into stack buffer"],
+      "call_chain": [
+        "GsDriverEntry (0x1C0007010)",
+        "DriverEntry (0x1C0001008)",
+        "PiixIdeGetControllerProperties stores PiixIdeChannelEnabled in the property struct",
+        "PiixIdeChannelEnabled",
+        "PciIdeXGetBusData into stack buffer"
+      ],
       "vulnerability_class": "Use of Uninitialized Memory (CWE-908) - defense-in-depth hardening only",
       "description": "The callback reads 4 bytes of PCI config at offset 0x40 into var_28 (call at 0x1C00015B5) and returns var_27[2*channel+1] >> 7. The channel index is masked to 0/1 (0x1C000159A) so the extracted byte (offset 1 or 3) is within the 4-byte read, and the value is produced only on the success path (jns at 0x1C00015C3). The patched build adds memset(0x4C) at 0x1C00015DC. Init-only zero-init hardening, not a reachable vulnerability.",
       "trigger_conditions": "Invoked by the PciIdeX framework during IDE channel enumeration. No attacker-controlled input; reads the controller's own PCI config space.",
@@ -129,7 +160,14 @@
       "address_unpatched": "0x1C0001660",
       "address_patched": "0x1C00016B0",
       "entry_point": "PciIdeXInitialize TransferModeSelect callback - invoked to program IDE timing registers at init/mode-selection time.",
-      "call_chain": ["GsDriverEntry (0x1C0007010)", "DriverEntry (0x1C0001008)", "PiixIdeGetControllerProperties stores PiixIdeTransferModeSelect in the property struct", "PiixIdeTransferModeSelect", "PiixIdepTransferModeSelect (writes all outputs)", "PciIdeXSetBusData"],
+      "call_chain": [
+        "GsDriverEntry (0x1C0007010)",
+        "DriverEntry (0x1C0001008)",
+        "PiixIdeGetControllerProperties stores PiixIdeTransferModeSelect in the property struct",
+        "PiixIdeTransferModeSelect",
+        "PiixIdepTransferModeSelect (writes all outputs)",
+        "PciIdeXSetBusData"
+      ],
       "vulnerability_class": "Use of Uninitialized Memory (CWE-908) - redundant hardening (not a bug in either build)",
       "description": "The callback passes five stack slots as output pointers to the timing calculator PiixIdepTransferModeSelect, then writes results to PCI config via PciIdeXSetBusData. The patched build zero-initializes those slots (0x1C00016C7-0x1C00016ED). However, the callee writes all six of its output parameters unconditionally on its single return path in BOTH builds (*a3..*a8 = ...; return 0), so the slots are always initialized by the callee before use. The zero-init is redundant defense-in-depth, not a fix for a real uninitialized-use bug.",
       "trigger_conditions": "Invoked by the PciIdeX framework to program IDE timing after mode selection, during device init. No attacker-controlled input.",

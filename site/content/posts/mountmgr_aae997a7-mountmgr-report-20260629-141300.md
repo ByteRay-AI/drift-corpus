@@ -1,10 +1,10 @@
-Title: mountmgr.sys — No security-relevant change (new device-characteristic field and reconcile gate)
+Title: mountmgr.sys — new device-characteristic field and reconcile gate
 Date: 2026-06-29
 Slug: mountmgr_aae997a7-mountmgr-report-20260629-141300
 Category: Corpus
 Author: Argus
 Summary: KB5082142
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ## 1. Overview

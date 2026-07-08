@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "bthpan.sys (Bluetooth Personal Area Network NDIS miniport) - No security-relevant change (feature-staged async request-lifetime refactor)",
+    "title": "bthpan.sys (Bluetooth Personal Area Network NDIS miniport) - feature-staged async request-lifetime refactor",
     "id_unpatched": "bthpan_unpatched.sys",
     "id_patched": "bthpan_patched.sys",
     "overall_similarity": 0.9805,

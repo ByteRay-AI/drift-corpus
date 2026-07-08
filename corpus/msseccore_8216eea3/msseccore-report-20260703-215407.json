@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "msseccore.sys (Microsoft Security Core / VBS) - No security-relevant change (recompile with a redundant field zero in the APC context allocator and an opaque integrity-check flag-constant tweak)",
+    "title": "msseccore.sys (Microsoft Security Core / VBS) - recompile with a redundant field zero in the APC context allocator and an opaque integrity-check flag-constant tweak",
     "id_unpatched": "msseccore_unpatched.sys",
     "id_patched": "msseccore_patched.sys",
     "overall_similarity": 0.897
@@ -43,7 +43,9 @@
     {
       "name": "memmove (0x1C0001C80)",
       "change_type": "cosmetic",
-      "key_changes": ["Different instruction sequence for the same block move; identical semantics"],
+      "key_changes": [
+        "Different instruction sequence for the same block move; identical semantics"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -51,7 +53,9 @@
     {
       "name": "__GSHandlerCheckCommon (0x1C0001BCC)",
       "change_type": "cosmetic",
-      "key_changes": ["'movzx edx' replaced with 'mov dl' + 'movzx eax, dl'; identical byte semantics, different register allocation"],
+      "key_changes": [
+        "'movzx edx' replaced with 'mov dl' + 'movzx eax, dl'; identical byte semantics, different register allocation"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -59,7 +63,9 @@
     {
       "name": "SecCreateKernelClient (0x1C0008378)",
       "change_type": "cosmetic",
-      "key_changes": ["Inline xorps/movups zeroing replaced with a memset call; identical behaviour"],
+      "key_changes": [
+        "Inline xorps/movups zeroing replaced with a memset call; identical behaviour"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -67,7 +73,9 @@
     {
       "name": "SecRegisterKernelExtension (0x1C0008304 -> 0x1C00082F0)",
       "change_type": "cosmetic",
-      "key_changes": ["Inline 'and ...,0' zeroing replaced with a memset call; identical behaviour"],
+      "key_changes": [
+        "Inline 'and ...,0' zeroing replaced with a memset call; identical behaviour"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -75,7 +83,9 @@
     {
       "name": "SecCreateDriverValidationKernelEcp (0x1C0008560 -> 0x1C00085FC)",
       "change_type": "cosmetic",
-      "key_changes": ["Inline zeroing replaced with a memset call; symbol/layout addresses shifted; identical behaviour"],
+      "key_changes": [
+        "Inline zeroing replaced with a memset call; symbol/layout addresses shifted; identical behaviour"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -83,7 +93,9 @@
     {
       "name": "SecValidateDriverFileSignatureLevel (0x1C000169C -> 0x1C00014C0)",
       "change_type": "cosmetic",
-      "key_changes": ["Inline zeroing replaced with memset; same IoQueryFullDriverPath / SecCreateDriverValidationKernelEcp / IoCreateFileEx (flags 0x89, 0x80, 0x160) / SecIsWindowsSigned logic and status codes"],
+      "key_changes": [
+        "Inline zeroing replaced with memset; same IoQueryFullDriverPath / SecCreateDriverValidationKernelEcp / IoCreateFileEx (flags 0x89, 0x80, 0x160) / SecIsWindowsSigned logic and status codes"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -91,7 +103,9 @@
     {
       "name": "SecBindHost (0x1C00010E0 -> 0x1C00010B0)",
       "change_type": "cosmetic",
-      "key_changes": ["Register allocation differences (immediate 1 materialised via a register vs inline); no behavioural change"],
+      "key_changes": [
+        "Register allocation differences (immediate 1 materialised via a register vs inline); no behavioural change"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -99,7 +113,9 @@
     {
       "name": "DriverEntry (0x1C000A078 -> 0x1C000A008)",
       "change_type": "cosmetic",
-      "key_changes": ["Stack-frame layout shift and inline-vs-memset version-info zeroing; same version check and lookaside setup"],
+      "key_changes": [
+        "Stack-frame layout shift and inline-vs-memset version-info zeroing; same version check and lookaside setup"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -107,7 +123,9 @@
     {
       "name": "DriverUnload / SecUninitializeKernelInterface",
       "change_type": "cosmetic",
-      "key_changes": ["Relocated call/branch targets only"],
+      "key_changes": [
+        "Relocated call/branch targets only"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""

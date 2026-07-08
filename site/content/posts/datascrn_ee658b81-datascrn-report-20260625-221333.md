@@ -1,4 +1,4 @@
-Title: datascrn.sys — No security-relevant change (overflow-guard consolidation and allocation-API modernization)
+Title: datascrn.sys — overflow-guard consolidation and allocation-API modernization
 Date: 2026-06-25
 Slug: datascrn_ee658b81-datascrn-report-20260625-221333
 Category: Corpus

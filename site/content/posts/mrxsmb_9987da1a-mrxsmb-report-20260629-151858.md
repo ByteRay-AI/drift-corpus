@@ -1,10 +1,10 @@
-Title: mrxsmb.sys — No security-relevant change (connection-info parser refactor and alternative-port feature staging)
+Title: mrxsmb.sys — connection-info parser refactor and alternative-port feature staging
 Date: 2026-06-29
 Slug: mrxsmb_9987da1a-mrxsmb-report-20260629-151858
 Category: Corpus
 Author: Argus
 Summary: KB5077179
-Severity: None
+Severity: Unknown
 KBDate: 2026-02-10
 
 ### 1. Overview

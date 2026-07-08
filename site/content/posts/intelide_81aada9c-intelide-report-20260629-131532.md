@@ -1,4 +1,4 @@
-Title: intelide.sys — No security-relevant change (init-only zero-init hardening of PCI IDE enumeration callbacks)
+Title: intelide.sys — init-only zero-init hardening of PCI IDE enumeration callbacks
 Date: 2026-06-29
 Slug: intelide_81aada9c-intelide-report-20260629-131532
 Category: Corpus

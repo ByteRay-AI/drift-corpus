@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ci.dll (Windows Code Integrity) - No security-relevant change: defensive termination hardening (iteration caps + error propagation) added to statically-linked SymCrypt ML-DSA rejection samplers; the loop-driving bytes are SHAKE sponge output and the thresholds are compile-time constants, so the guarded non-termination is not attacker-reachable",
+    "title": "ci.dll (Windows Code Integrity) - defensive termination hardening (iteration caps + error propagation) added to statically-linked SymCrypt ML-DSA rejection samplers; the loop-driving bytes are SHAKE sponge output and the thresholds are compile-time constants, so the guarded non-termination is not attacker-reachable",
     "id_unpatched": "ci_unpatched.dll",
     "id_patched": "ci_patched.dll",
     "overall_similarity": 0.9574,
@@ -40,7 +40,7 @@
     },
     {
       "name": "SymCryptMlDsaSampleInBall (sub_18002a288)",
-      "similarity": 0.7630,
+      "similarity": 0.763,
       "change_type": "behavioral",
       "key_changes": [
         "Added iteration counter (edi, capped at 0x79=121) to the inner rejection loop that squeezes single bytes from the SHAKE state; unpatched has no such limit",
@@ -145,7 +145,7 @@
     },
     {
       "name": "wil_details_GetCurrentFeatureEnabledState (sub_180019264)",
-      "similarity": 0.7480,
+      "similarity": 0.748,
       "change_type": "behavioral",
       "key_changes": [
         "WIL feature-state evaluator - new logic for 0xc00 flag bits",

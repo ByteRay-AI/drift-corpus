@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb10.sys (SMB 1.0 Redirector) - No security-relevant change (WIL feature-staging rollout of server-transport reference validation)",
+    "title": "mrxsmb10.sys (SMB 1.0 Redirector) - WIL feature-staging rollout of server-transport reference validation",
     "id_unpatched": "mrxsmb10_unpatched.sys",
     "id_patched": "mrxsmb10_patched.sys",
     "overall_similarity": 0.9816,
@@ -94,7 +94,12 @@
       "severity": "none",
       "function": "MRxSmbHandOverSrvCall (unpatched 0x1C000FFD0, patched 0x1C000EFE0)",
       "entry_point": "SMB server-call handover dispatch, invoked by the RDBSS framework during SMB server connection establishment (user-mode SMB tree connect via NtCreateFile / WNetAddConnection2 to \\\\server\\share)",
-      "call_chain": ["RDBSS SrvCall dispatch (user-mode SMB tree connect)", "MRxSmbHandOverSrvCall", "Feature_84197691__private_IsEnabledDeviceUsage selects code path (runtime WIL feature flag, not attacker input)", "SmbCeUpdateTransportDispatchVectors called with the server-transport pointer"],
+      "call_chain": [
+        "RDBSS SrvCall dispatch (user-mode SMB tree connect)",
+        "MRxSmbHandOverSrvCall",
+        "Feature_84197691__private_IsEnabledDeviceUsage selects code path (runtime WIL feature flag, not attacker input)",
+        "SmbCeUpdateTransportDispatchVectors called with the server-transport pointer"
+      ],
       "vulnerability_class": "No security-relevant change (WIL feature-staging rollout; defense-in-depth hardening of server-transport reference validation)",
       "description": "The unpatched MRxSmbHandOverSrvCall branches on the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage. When enabled, SmbCepReferenceServerTransport reads the server-transport pointer P from the argument slot, validates it (P != NULL and state field [P+0x0C] == 0, else 0xC000020C), takes a transient reference (lock xadd [P+8],1), and returns P. When disabled, the same pointer P is loaded directly from the same slot (mov r15,[rbp+0x1E0]) without validation and without a transient reference. In both paths, and in the patched build, the identical pointer P is stored at SrvCall+0x140 and passed to SmbCeUpdateTransportDispatchVectors. There is no type confusion and no arg5-vs-*arg5 indirection difference: SmbCepReferenceServerTransport returns the value of the argument slot, which is exactly what the direct-load path uses. The transient reference is released by SmbCepDereferenceServerTransport within the same function (net-zero), so no persistent reference-count imbalance exists in either build. The patch removes the feature gate so the validation and transient reference are always performed. This is a hardening/servicing change with no demonstrable reachable primitive.",
       "trigger_conditions": "MRxSmbHandOverSrvCall runs during SMB server-call handover when a client establishes a connection to \\\\server\\share. Which unpatched path executes is determined solely by the runtime state of the WIL feature flag Feature_84197691__private_IsEnabledDeviceUsage, not by attacker-controlled input. Because both paths store and use the same transport pointer P, reaching either path does not produce a distinct corruptible memory operation.",

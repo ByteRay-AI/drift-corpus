@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "cng.sys (Windows CNG Kernel Cryptography Driver) - No security-relevant change: statically-linked SymCrypt ML-DSA rejection-sampling bounded-iteration hardening",
+    "title": "cng.sys (Windows CNG Kernel Cryptography Driver) - statically-linked SymCrypt ML-DSA rejection-sampling bounded-iteration hardening",
     "id_unpatched": "cng_unpatched.sys",
     "id_patched": "cng_patched.sys",
     "overall_similarity": 0.9625,

@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys - No security-relevant change (tracing/feature rebuild; request/chunked/trailer parser logic identical)",
+    "title": "http.sys - tracing/feature rebuild; request/chunked/trailer parser logic identical",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.8777,

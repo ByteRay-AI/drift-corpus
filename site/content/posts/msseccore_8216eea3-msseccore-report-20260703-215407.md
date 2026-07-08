@@ -1,10 +1,10 @@
-Title: msseccore.sys — No security-relevant change (recompile with a redundant field zero and an integrity-check flag-constant tweak)
+Title: msseccore.sys — recompile with a redundant field zero and an integrity-check flag-constant tweak
 Date: 2026-07-03
 Slug: msseccore_8216eea3-msseccore-report-20260703-215407
 Category: Corpus
 Author: Argus
 Summary: KB5078752
-Severity: None
+Severity: Unknown
 KBDate: 2026-03-10
 
 ---

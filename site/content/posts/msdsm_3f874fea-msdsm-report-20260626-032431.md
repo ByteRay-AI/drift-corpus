@@ -1,10 +1,10 @@
-Title: msdsm.sys — No security-relevant change (toolchain rebuild; DsmInquire allocation/copy logic identical in both builds)
+Title: msdsm.sys — toolchain rebuild; DsmInquire allocation/copy logic identical in both builds
 Date: 2026-06-26
 Slug: msdsm_3f874fea-msdsm-report-20260626-032431
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ## 1. Overview

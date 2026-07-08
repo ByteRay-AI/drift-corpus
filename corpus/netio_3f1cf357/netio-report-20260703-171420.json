@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "netio.sys - No security-relevant change: feature-gated audit-mode registry robustness bugfix in KfdStartModuleEx, old path retained",
+    "title": "netio.sys - feature-gated audit-mode registry robustness bugfix in KfdStartModuleEx, old path retained",
     "id_unpatched": "netio_unpatched.sys",
     "id_patched": "netio_patched.sys",
     "overall_similarity": 0.9914,
@@ -39,7 +39,12 @@
       "function": "KfdStartModuleEx",
       "address": "0x1400A425C",
       "entry_point": "Module start; also reached from IoctlKfdResetState (0x140065840) on WFP engine reset via the direct call at 0x1400658A0",
-      "call_chain": ["IoctlKfdResetState (0x140065840)", "KfdStartModuleEx (0x1400A425C) - reads BFE registry config, may register an audit-mode change notification", "WfpRegOpenKey (0x14006E848)", "WfpRegNotifyCreate (0x14006E5D0) - opens and owns its own key handle, self-contained cleanup on failure"],
+      "call_chain": [
+        "IoctlKfdResetState (0x140065840)",
+        "KfdStartModuleEx (0x1400A425C) - reads BFE registry config, may register an audit-mode change notification",
+        "WfpRegOpenKey (0x14006E848)",
+        "WfpRegNotifyCreate (0x14006E5D0) - opens and owns its own key handle, self-contained cleanup on failure"
+      ],
       "vulnerability_class": "none (no security-relevant change delivered)",
       "description": "The report's original claims are not supported by the binaries. (1) Claimed registry handle leak: the second key handle (BFE\\Parameters\\Policy\\Options, stored in the KeyHandle local slot) is not closed by KfdStartModuleEx in EITHER build - both builds close only the first key (Handle slot) via ZwClose at function exit (unpatched 0x1400A43A0, patched 0x1400A43F8). The patch does not add any ZwClose for the second key and does not add lifetime tracking for it, so no handle leak is fixed. (2) Claimed dangling notification pointer from ignoring the ZwNotifyChangeKey registration return: WfpRegNotifyCreate is self-contained - it opens its own key handle, zeroes gFwAuditModeNotificationHandle on entry, sets it only on success, and on failure destroys its own allocation and closes its own key. Ignoring the return is benign, and the patched default (feature-off) path still ignores it. The genuine change is the introduction of the WIL feature gate Feature_Firewall_BugFixes_25D_AuditMode_regKey_exists (new in the patched build): when enabled it skips the EnableAuditMode query and notification registration if the Policy\\Options key does not exist, and checks the WfpRegNotifyCreate NTSTATUS. The original behavior is retained verbatim in the else branch, making this a staged feature rollout rather than a delivered fix.",
       "trigger_conditions": "No attacker-reachable security defect exists to trigger in either build. KfdStartModuleEx runs at module start and on the IoctlKfdResetState engine-reset path. Because the second-key handle close behavior and the notification registration handling are identical between builds on the default path, repeated invocation produces no patch-introduced behavioral difference.",

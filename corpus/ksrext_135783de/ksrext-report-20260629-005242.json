@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ksrext.sys - No security-relevant change (memory-partition-list ownership and reference counting refactored into KsrPersistMemoryPartition)",
+    "title": "ksrext.sys - memory-partition-list ownership and reference counting refactored into KsrPersistMemoryPartition",
     "id_unpatched": "ksrext_unpatched.sys",
     "id_patched": "ksrext_patched.sys",
     "overall_similarity": 0.4998,

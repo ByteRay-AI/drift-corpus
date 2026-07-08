@@ -1,10 +1,10 @@
-Title: mrxsmb.sys — No security-relevant change (WIL feature-staging library churn)
+Title: mrxsmb.sys — WIL feature-staging library churn
 Date: 2026-06-29
 Slug: mrxsmb_1bf547b7-mrxsmb-report-20260629-131146
 Category: Corpus
 Author: Argus
 Summary: KB5095051
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 ---

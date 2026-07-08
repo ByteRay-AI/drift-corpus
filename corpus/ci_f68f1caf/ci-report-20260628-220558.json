@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ci.dll (Windows Code Integrity) - No security-relevant change (WIL feature-staging, staged catalog-policy enforcement, signature-database parser refactor)",
+    "title": "ci.dll (Windows Code Integrity) - WIL feature-staging, staged catalog-policy enforcement, signature-database parser refactor",
     "id_unpatched": "ci_unpatched.dll",
     "id_patched": "ci_patched.dll",
     "overall_similarity": 0.9627,

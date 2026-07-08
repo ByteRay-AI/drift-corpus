@@ -1,10 +1,10 @@
-Title: cmimcext.sys — No security-relevant change (WIL feature-staging library churn, pool-API modernization, and a feature-gated rollout)
+Title: cmimcext.sys — WIL feature-staging library churn, pool-API modernization, and a feature-gated rollout
 Date: 2026-06-28
 Slug: cmimcext_7d73f626-cmimcext-report-20260628-214407
 Category: Corpus
 Author: Argus
 Summary: KB5082142
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ### 1. Overview

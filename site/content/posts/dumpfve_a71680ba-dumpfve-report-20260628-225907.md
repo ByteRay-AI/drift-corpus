@@ -1,4 +1,4 @@
-Title: dumpfve.sys — No security-relevant change (WIL feature-staging framework adds a variant-override value)
+Title: dumpfve.sys — WIL feature-staging framework adds a variant-override value
 Date: 2026-06-28
 Slug: dumpfve_a71680ba-dumpfve-report-20260628-225907
 Category: Corpus

@@ -1,10 +1,10 @@
-Title: cmimcext.sys — No security-relevant change (WIL feature-staging library rebuild and IMC feature-flag rollout)
+Title: cmimcext.sys — WIL feature-staging library rebuild and IMC feature-flag rollout
 Date: 2026-06-28
 Slug: cmimcext_999b73d3-cmimcext-report-20260628-223224
 Category: Corpus
 Author: Argus
 Summary: KB5094128
-Severity: None
+Severity: Unknown
 KBDate: 2026-06-09
 
 ## 1. Overview

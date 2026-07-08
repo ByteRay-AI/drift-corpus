@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ntfs.sys - No security-relevant change (version-drift recompilation; misattributed EDP telemetry)",
+    "title": "ntfs.sys - version-drift recompilation; misattributed EDP telemetry",
     "id_unpatched": "ntfs_unpatched.sys",
     "id_patched": "ntfs_patched.sys",
     "overall_similarity": 0.5882,

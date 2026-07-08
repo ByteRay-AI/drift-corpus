@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys - No security-relevant change (WIL feature-staging cache bookkeeping bit 0x40000 in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState)",
+    "title": "http.sys - WIL feature-staging cache bookkeeping bit 0x40000 in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.9925,

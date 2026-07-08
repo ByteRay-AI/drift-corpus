@@ -1,10 +1,10 @@
-Title: msgpioclx.sys — No security-relevant change (PoFx registration structure layout/version update)
+Title: msgpioclx.sys — PoFx registration structure layout/version update
 Date: 2026-06-26
 Slug: msgpioclx_9570782c-msgpioclx-report-20260626-114459
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ---

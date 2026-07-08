@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndis.sys - No security-relevant change: WIL feature-staged relocation of per-file-object FsContext free in ndisDispatchRequest (0x140042480)",
+    "title": "ndis.sys - WIL feature-staged relocation of per-file-object FsContext free in ndisDispatchRequest (0x140042480)",
     "id_unpatched": "ndis_unpatched.sys",
     "id_patched": "ndis_patched.sys",
     "overall_similarity": 0.992,

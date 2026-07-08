@@ -1,4 +1,4 @@
-Title: appvstrm.sys — No security-relevant change (code byte-identical; re-sign and version bump only)
+Title: appvstrm.sys — code byte-identical; re-sign and version bump only
 Date: 2026-06-25
 Slug: appvstrm_1e621cba-appvstrm-report-20260625-191516
 Category: Corpus

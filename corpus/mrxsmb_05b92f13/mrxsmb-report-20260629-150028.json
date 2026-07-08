@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb.sys (SMB Redirector) - No security-relevant change (reparse-tag classification tweak and SMB-over-QUIC teardown feature-staging)",
+    "title": "mrxsmb.sys (SMB Redirector) - reparse-tag classification tweak and SMB-over-QUIC teardown feature-staging",
     "id_unpatched": "mrxsmb_unpatched.sys",
     "id_patched": "mrxsmb_patched.sys",
     "overall_similarity": 0.9605,
@@ -277,7 +277,10 @@
       "severity": "none",
       "function": "FsRtlValidateReparsePointBufferEx",
       "entry_point": "REPARSE_DATA_BUFFER validation (reparse data received during path/reparse handling)",
-      "call_chain": ["Reparse handling path", "FsRtlValidateReparsePointBufferEx"],
+      "call_chain": [
+        "Reparse handling path",
+        "FsRtlValidateReparsePointBufferEx"
+      ],
       "vulnerability_class": "No security-relevant change (reparse-tag classification change)",
       "description": "Previously suspected as an out-of-bounds validation bypass. Verification against both builds shows the only logic change in FsRtlValidateReparsePointBufferEx is the removal of a single tag-acceptance predicate term, (ReparseTag & 0xC0000000) != 0x40000000. The symbolic-link (0xA000000C) and mount-point (0xA0000003) offset/length validation (the RtlULongAdd accumulation and bounds comparisons) is byte-identical in both builds. The removed term only distinguishes tags with bit 31 clear and bit 30 set (0x40000000 reserved-bit pattern), which are never symlink or mount-point tags. Such a tag reaches no field-walk handler and returns STATUS_REPARSE (0x80000005) with no memory access. Removing the term makes the predicate true for more tags, reclassifying these reserved-bit tags from STATUS_IO_REPARSE_TAG_NOT_HANDLED (0xC0000276) to STATUS_REPARSE (0x80000005). This is a reparse-tag classification change (a relaxation), with no reachable out-of-bounds read or write in either build.",
       "trigger_conditions": "None. The changed predicate only reclassifies certain reserved-bit reparse tags; it does not alter the symlink/mount-point field validation that server-supplied reparse data would exercise, and the reclassified tags reach no offset/length arithmetic or memory access.",
@@ -307,7 +310,10 @@
       "severity": "none",
       "function": "SmbQuicDisconnectConnection",
       "entry_point": "SMB-over-QUIC connection teardown path",
-      "call_chain": ["QUIC connection teardown", "SmbQuicDisconnectConnection"],
+      "call_chain": [
+        "QUIC connection teardown",
+        "SmbQuicDisconnectConnection"
+      ],
       "vulnerability_class": "No security-relevant change (SMB-over-QUIC teardown feature code added)",
       "description": "Previously suspected as a missing-synchronization / use-after-free fix. Verification against both builds shows the unpatched SmbQuicDisconnectConnection (0x1C0046A74) contains no push lock and no callback dereference at a1+0xB8; it only emits WPP traces and calls the MsQuic shutdown vtable (MsQuic+0x88) under a NULL check on *(a1+0x70). The patched build (0x1C0046464) ADDS a new block that, under a newly added push lock (ExAcquirePushLockExclusiveEx/ExReleasePushLockExclusiveEx on a1+0xA8), checks *(a1+0xB4), clears a field, and invokes vtable slot 3 with status 0xC000020C (STATUS_CONNECTION_DISCONNECTED). Because the lock and the callback are introduced together as new teardown code, there is no pre-existing unlocked callback in the unpatched build for the lock to protect. This is SMB-over-QUIC teardown feature-staging, not a fix for a demonstrable race/UAF.",
       "trigger_conditions": "None. The unpatched build has no unlocked callback invocation at this site, so there is no race window to trigger.",

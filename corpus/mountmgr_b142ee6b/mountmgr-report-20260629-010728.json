@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mountmgr.sys - No security-relevant change (device-characteristic gate added to remote-database reconciliation)",
+    "title": "mountmgr.sys - device-characteristic gate added to remote-database reconciliation",
     "id_unpatched": "mountmgr_unpatched.sys",
     "id_patched": "mountmgr_patched.sys",
     "overall_similarity": 0.9587,
@@ -15,7 +15,9 @@
       "name": "sub_1C00014C0",
       "similarity": 0.599,
       "change_type": "cosmetic",
-      "key_changes": ["Compiler-generated memset/memfill routine replaced with different optimization variant (SSE/AVX vectorization). No behavioral change."],
+      "key_changes": [
+        "Compiler-generated memset/memfill routine replaced with different optimization variant (SSE/AVX vectorization). No behavioral change."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -24,7 +26,9 @@
       "name": "sub_1C0001010",
       "similarity": 0.771,
       "change_type": "behavioral",
-      "key_changes": ["IRP cancel routine iteration refactored — loop structure reorganized around cancel spinlock. Control flow simplified but semantics unchanged."],
+      "key_changes": [
+        "IRP cancel routine iteration refactored — loop structure reorganized around cancel spinlock. Control flow simplified but semantics unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -58,7 +62,9 @@
       "name": "sub_1C000F390",
       "similarity": 0.8469,
       "change_type": "behavioral",
-      "key_changes": ["List iteration refactored — loop that searches for an entry with flag 0x100 restructured for clarity. Semantics unchanged."],
+      "key_changes": [
+        "List iteration refactored — loop that searches for an entry with flag 0x100 restructured for clarity. Semantics unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -67,7 +73,9 @@
       "name": "sub_1C0016760",
       "similarity": 0.8668,
       "change_type": "behavioral",
-      "key_changes": ["Buffer allocation retry loop refactored — control flow simplified around ExAllocatePoolWithTag + IOCTL query. Error path cleanup restructured. No semantic change to memory handling."],
+      "key_changes": [
+        "Buffer allocation retry loop refactored — control flow simplified around ExAllocatePoolWithTag + IOCTL query. Error path cleanup restructured. No semantic change to memory handling."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -76,7 +84,9 @@
       "name": "sub_1C0002DF0",
       "similarity": 0.8678,
       "change_type": "behavioral",
-      "key_changes": ["Worker thread dispatch loop refactored — event wait loop restructured. Global data references changed (data_1c00061d0 → data_1c0006220, data_1c00061f0 → data_1c0006250) reflecting version-specific data layout differences."],
+      "key_changes": [
+        "Worker thread dispatch loop refactored — event wait loop restructured. Global data references changed (data_1c00061d0 → data_1c0006220, data_1c00061f0 → data_1c0006250) reflecting version-specific data layout differences."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -85,7 +95,9 @@
       "name": "sub_1C0019120",
       "similarity": 0.8753,
       "change_type": "cosmetic",
-      "key_changes": ["Control flow refactored with no semantic change."],
+      "key_changes": [
+        "Control flow refactored with no semantic change."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -106,7 +118,9 @@
       "name": "sub_1C00183D4",
       "similarity": 0.8844,
       "change_type": "behavioral",
-      "key_changes": ["Linked list removal and reinsertion logic refactored — control flow restructured but list manipulation semantics preserved. Added trap(0xd) assertion guard."],
+      "key_changes": [
+        "Linked list removal and reinsertion logic refactored — control flow restructured but list manipulation semantics preserved. Added trap(0xd) assertion guard."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -115,7 +129,9 @@
       "name": "sub_1C000D898",
       "similarity": 0.8988,
       "change_type": "behavioral",
-      "key_changes": ["Buffer allocation retry loop refactored for clarity. Error path restructured with early returns. No semantic change."],
+      "key_changes": [
+        "Buffer allocation retry loop refactored for clarity. Error path restructured with early returns. No semantic change."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -124,7 +140,9 @@
       "name": "sub_1C00152E4",
       "similarity": 0.908,
       "change_type": "behavioral",
-      "key_changes": ["Volume database file creation logic refactored — IoCreateFile + sub_1c000c878/sub_1c000c8e0 fallback path restructured. Error handling consolidated. No semantic change."],
+      "key_changes": [
+        "Volume database file creation logic refactored — IoCreateFile + sub_1c000c878/sub_1c000c8e0 fallback path restructured. Error handling consolidated. No semantic change."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -133,7 +151,9 @@
       "name": "sub_1C0014C24",
       "similarity": 0.9129,
       "change_type": "behavioral",
-      "key_changes": ["Large volume processing function refactored. Control flow restructured but no new security checks added or removed."],
+      "key_changes": [
+        "Large volume processing function refactored. Control flow restructured but no new security checks added or removed."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -142,7 +162,9 @@
       "name": "sub_1C0018990",
       "similarity": 0.9223,
       "change_type": "cosmetic",
-      "key_changes": ["Integer overflow protection: '*arg4 + 2' computed as r14_1 in unpatched, moved to inline r14+2 in patched. Semantics identical. Loop and IOCTL dispatch structure unchanged."],
+      "key_changes": [
+        "Integer overflow protection: '*arg4 + 2' computed as r14_1 in unpatched, moved to inline r14+2 in patched. Semantics identical. Loop and IOCTL dispatch structure unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -151,7 +173,9 @@
       "name": "sub_1C00162A0",
       "similarity": 0.9303,
       "change_type": "behavioral",
-      "key_changes": ["Registry query and volume list building refactored — error path consolidated, cleanup loop restructured. No semantic change."],
+      "key_changes": [
+        "Registry query and volume list building refactored — error path consolidated, cleanup loop restructured. No semantic change."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -160,7 +184,9 @@
       "name": "sub_1C000E458",
       "similarity": 0.939,
       "change_type": "behavioral",
-      "key_changes": ["Volume/symbolic link matching logic refactored — loop restructured with while(true) + break pattern. Semantics unchanged."],
+      "key_changes": [
+        "Volume/symbolic link matching logic refactored — loop restructured with while(true) + break pattern. Semantics unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -169,7 +195,9 @@
       "name": "sub_1C000C878",
       "similarity": 0.9402,
       "change_type": "behavioral",
-      "key_changes": ["Work item dispatch helper refactored — error path restructured with label consolidation. Memory handling (ExAllocatePoolWithTag/ExFreePoolWithTag) semantics unchanged."],
+      "key_changes": [
+        "Work item dispatch helper refactored — error path restructured with label consolidation. Memory handling (ExAllocatePoolWithTag/ExFreePoolWithTag) semantics unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -178,7 +206,9 @@
       "name": "sub_1C0009E90",
       "similarity": 0.942,
       "change_type": "behavioral",
-      "key_changes": ["Large processing function refactored — control flow restructured."],
+      "key_changes": [
+        "Large processing function refactored — control flow restructured."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -187,7 +217,9 @@
       "name": "sub_1C0015EBC",
       "similarity": 0.9502,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -196,7 +228,9 @@
       "name": "sub_1C0010D18",
       "similarity": 0.9523,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -205,7 +239,9 @@
       "name": "sub_1C001085C",
       "similarity": 0.9528,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -239,7 +275,9 @@
       "name": "sub_1C00091D0",
       "similarity": 0.9624,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -248,7 +286,9 @@
       "name": "sub_1C0009940",
       "similarity": 0.9671,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -257,7 +297,9 @@
       "name": "sub_1C0012CCC",
       "similarity": 0.9704,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -266,7 +308,9 @@
       "name": "sub_1C0009010",
       "similarity": 0.9716,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -275,7 +319,9 @@
       "name": "sub_1C000A280",
       "similarity": 0.9727,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -284,7 +330,9 @@
       "name": "sub_1C00110C8",
       "similarity": 0.9738,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -293,7 +341,9 @@
       "name": "sub_1C00185C0",
       "similarity": 0.9747,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -302,7 +352,9 @@
       "name": "sub_1C000E124",
       "similarity": 0.9786,
       "change_type": "cosmetic",
-      "key_changes": ["Variable renames and loop restructuring only."],
+      "key_changes": [
+        "Variable renames and loop restructuring only."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -311,7 +363,9 @@
       "name": "sub_1C000DDC0",
       "similarity": 0.9821,
       "change_type": "cosmetic",
-      "key_changes": ["Variable renames only — IoCreateSymbolicLink path unchanged."],
+      "key_changes": [
+        "Variable renames only — IoCreateSymbolicLink path unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -320,7 +374,9 @@
       "name": "sub_1C00157D0",
       "similarity": 0.9892,
       "change_type": "cosmetic",
-      "key_changes": ["Variable renames only."],
+      "key_changes": [
+        "Variable renames only."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -329,7 +385,9 @@
       "name": "sub_1C00197C0",
       "similarity": 0.9895,
       "change_type": "cosmetic",
-      "key_changes": ["Variable renames only."],
+      "key_changes": [
+        "Variable renames only."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -338,7 +396,9 @@
       "name": "sub_1C000CA20",
       "similarity": 0.9896,
       "change_type": "cosmetic",
-      "key_changes": ["Variable renames only — work item callback unchanged."],
+      "key_changes": [
+        "Variable renames only — work item callback unchanged."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -347,7 +407,9 @@
       "name": "sub_1C0013F14",
       "similarity": 0.9899,
       "change_type": "behavioral",
-      "key_changes": ["Control flow refactored."],
+      "key_changes": [
+        "Control flow refactored."
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -362,7 +424,11 @@
       "severity": "none",
       "function": "ReconcileThisDatabaseWithMaster (sub_1C0016FBC / patched sub_1C0016FFC)",
       "entry_point": "Mounted-device arrival notification (MountMgrMountedDeviceArrival, sub_1C000F7E4) and driver reinitialization (MountMgrDriverReinitialization, sub_1C000F2D0), among other internal callers of ReconcileThisDatabaseWithMaster.",
-      "call_chain": ["Mounted-device arrival / driver reinitialization", "ReconcileThisDatabaseWithMaster (queues the reconcile work item)", "ReconcileThisDatabaseWithMasterWorker (callback; re-validates the entry under the device mutex via MntMgrFindDevice)"],
+      "call_chain": [
+        "Mounted-device arrival / driver reinitialization",
+        "ReconcileThisDatabaseWithMaster (queues the reconcile work item)",
+        "ReconcileThisDatabaseWithMasterWorker (callback; re-validates the entry under the device mutex via MntMgrFindDevice)"
+      ],
       "vulnerability_class": "N/A — behavioral change, no demonstrable security impact",
       "description": "The patched ReconcileThisDatabaseWithMaster adds a second device-property test before it queues the reconcile work item: the unpatched build tests only the byte at offset 0x7c (Characteristics & 1, FILE_REMOVABLE_MEDIA), while the patched build additionally tests the byte at offset 0x7d and bails if either is non-zero. Both bytes are set once, in QueryDeviceInformation (0x1C00157D0 / 0x1C00157F8), directly from the target device object's Characteristics field; 0x7d = BYTE2(Characteristics) & 1 (bit 0x10000) and is a new field in the patched build (its insertion shifted subsequent fields up by one byte). Because 0x7d is a static device characteristic latched at examination time and never mutated, it cannot function as a concurrent-teardown guard. The change is a behavioral filter that excludes one class of device from remote-database reconciliation and from the follow-on OnlineMountedVolumes call. This is NOT a use-after-free fix: the work-item callback ReconcileThisDatabaseWithMasterWorker already re-validates the entry under the device mutex (KeWaitForSingleObject at Context+56) by calling MntMgrFindDevice (0x1C000E1A4), which returns the entry only if it is still linked in the device list, and this re-validation is present and unchanged in BOTH builds.",
       "trigger_conditions": "Not applicable. No vulnerable condition exists in either build along this path. The only observable difference is that the patched build skips the reconcile work item and OnlineMountedVolumes for devices whose target device object Characteristics have bit 0x10000 set.",

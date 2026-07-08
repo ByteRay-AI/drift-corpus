@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ndproxy.sys (NDIS Proxy Driver) - No security-relevant change: new IOCTL 0x8FFF23DC query handler added (returns an already-exposed counter)",
+    "title": "ndproxy.sys (NDIS Proxy Driver) - new IOCTL 0x8FFF23DC query handler added (returns an already-exposed counter)",
     "id_unpatched": "ndproxy_unpatched.sys",
     "id_patched": "ndproxy_patched.sys",
     "overall_similarity": 0.9913,

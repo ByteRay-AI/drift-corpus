@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb.sys - No security-relevant change (WIL feature-staging library rebuild)",
+    "title": "mrxsmb.sys - WIL feature-staging library rebuild",
     "id_unpatched": "mrxsmb_unpatched.sys",
     "id_patched": "mrxsmb_patched.sys",
     "overall_similarity": 0.9925,

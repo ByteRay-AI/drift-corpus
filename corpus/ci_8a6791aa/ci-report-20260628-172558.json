@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "Windows Code Integrity (ci.dll) - No security-relevant change: CodeIntegrity servicing feature-flag retirement & bundled SymCrypt library churn",
+    "title": "Windows Code Integrity (ci.dll) - CodeIntegrity servicing feature-flag retirement & bundled SymCrypt library churn",
     "id_unpatched": "ci_unpatched.dll",
     "id_patched": "ci_patched.dll",
     "overall_similarity": 0.9804,
@@ -52,7 +52,7 @@
     },
     {
       "name": "CipGetEmbeddedSignatureAndFindFirstMatch (sub_1800DB414)",
-      "similarity": 0.90,
+      "similarity": 0.9,
       "change_type": "behavioral",
       "key_changes": [
         "Removed the Feature_Servicing_CodeIntegrityMissing3077Events (sub_1800199b0) gate before setting flag bits in the signature path",
@@ -123,7 +123,9 @@
       "name": "SymCryptParallelHashProcess (sub_180006910)",
       "similarity": 0.99,
       "change_type": "cosmetic",
-      "key_changes": ["Address shifts only"],
+      "key_changes": [
+        "Address shifts only"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -132,7 +134,9 @@
       "name": "CiInitializePolicyFromPolicies (sub_18001A91C)",
       "similarity": 0.99,
       "change_type": "cosmetic",
-      "key_changes": ["CI policy initialization - address shifts only"],
+      "key_changes": [
+        "CI policy initialization - address shifts only"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -141,7 +145,9 @@
       "name": "CipProcessSIPolicyLogs (sub_1800DDCB4)",
       "similarity": 0.24,
       "change_type": "cosmetic",
-      "key_changes": ["Spurious match - low-similarity call-graph match"],
+      "key_changes": [
+        "Spurious match - low-similarity call-graph match"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -150,7 +156,9 @@
       "name": "wil_details_RegisterFeatureUsageProvider (sub_180054718)",
       "similarity": 0.99,
       "change_type": "cosmetic",
-      "key_changes": ["Feature usage provider registration - added var_c=0, var_10=1 (telemetry)"],
+      "key_changes": [
+        "Feature usage provider registration - added var_c=0, var_10=1 (telemetry)"
+      ],
       "security_relevant": false,
       "security_notes": "Telemetry change only.",
       "assembly_diff": ""
@@ -159,7 +167,9 @@
       "name": "CipShouldRevalidateForPolicyChange (sub_180067DC4)",
       "similarity": 0.56,
       "change_type": "cosmetic",
-      "key_changes": ["Spurious / low-similarity match"],
+      "key_changes": [
+        "Spurious / low-similarity match"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""
@@ -174,7 +184,10 @@
       "severity": "informational",
       "function": "SymCryptFdefDecideModulusType (sub_18000E700)",
       "entry_point": "Internal SymCrypt modular-arithmetic setup - reached when SymCrypt decides which modulus implementation type to use; not attacker-triggerable via signatures",
-      "call_chain": ["SymCryptFdefIntToModulus (sub_18000B7CC)", "SymCryptFdefDecideModulusType (sub_18000E700)"],
+      "call_chain": [
+        "SymCryptFdefIntToModulus (sub_18000B7CC)",
+        "SymCryptFdefDecideModulusType (sub_18000E700)"
+      ],
       "vulnerability_class": "Behavioral change in bundled crypto library (no code-integrity impact)",
       "description": "sub_18000E700 is SymCryptFdefDecideModulusType, part of the SymCrypt library statically linked into ci.dll. It iterates the SymCryptModulusTypeSelections table (0x10-byte entries: +0 modulus-type descriptor/result, +4 CPU-feature requirement flags, +8 size bound, +0xc mask) and picks an internal modular-arithmetic implementation based on which CPU features are present (the bitmap g_SymCryptCpuFeaturesNotPresent). The unpatched loop only tests each entry's flags against g_SymCryptCpuFeaturesNotPresent. The patched loop adds an unconditional 'test eax, 0xC000 / jnz' that skips entries whose flags include bits 14-15 before that feature test. This is not part of the Authenticode/PE signature-verification path, does not select or accept signature hash algorithms, and the 0xC000 bits are CPU-feature requirement flags rather than weak/deprecated/test hash markers. It is a bundled SymCrypt library update with no code-integrity security impact.",
       "trigger_conditions": "Not attacker-triggerable as a security condition. To observe the behavioral difference: break on SymCryptFdefDecideModulusType, dump SymCryptModulusTypeSelections, and note that the patched build skips entries with flag bits 14-15 set before the g_SymCryptCpuFeaturesNotPresent test. The selected modulus-type descriptor in eax may differ on hardware where such an entry would otherwise match; there is no signature-verification effect.",
@@ -213,7 +226,11 @@
       "severity": "informational",
       "function": "CiRevalidateImage (sub_180065AB0)",
       "entry_point": "Image revalidation decision - CiRevalidateImage decides whether a (PPL) image must be re-validated; registered via the CI callout table at +0x98",
-      "call_chain": ["CI image validation / revalidation path", "CiRevalidateImage (sub_180065AB0)", "returns 1 = must revalidate"],
+      "call_chain": [
+        "CI image validation / revalidation path",
+        "CiRevalidateImage (sub_180065AB0)",
+        "returns 1 = must revalidate"
+      ],
       "vulnerability_class": "Servicing feature-flag retirement / WIL feature-staging graduation (no demonstrable code-integrity impact)",
       "description": "CiRevalidateImage returns 1 to mean an image must be (re)validated. In the unpatched version, the a5-range block and the following Protected Process Light (PPL) decision are both wrapped in the Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019584) feature flag. The patched version removes both Feature_...WinTcbPplTocTou() calls, so the a5 block runs whenever a5 != 0 && a5 < *MmSystemRangeStart and the PPL branch becomes 'PsIsProtectedProcessLight(...) && (a4 != 7 || v10)' - the guarded branch runs regardless of feature state. This is one of three CodeIntegrity Feature_Servicing_ flags retired module-wide in this patch and is a WIL servicing feature-flag retirement, not a delivered code-integrity fix. The flag's unpatched default is resolved from external WIL configuration (sub_180019584 falls through to wil_details_IsEnabledFallback), so it cannot be shown from the binaries that any real system ran with this branch suppressed; no reachable time-of-check/time-of-use window is demonstrable. The direction here is a hardening (branch graduated on), but the sibling NonConformantNotBlockedByResources retirement graduates a permissive path on, confirming feature-staging lifecycle rather than a targeted TOCTOU fix. CWE-367/CWE-693 are not asserted because no reachable window is demonstrable.",
       "trigger_conditions": "Not an attacker-triggerable security condition. Observable difference only: the unpatched build calls Feature_Servicing_CodeIntegrityWinTcbPplTocTou at 0x180065B87 and 0x180065C29 and skips the a5/PPL path when the helper returns 0; the patched build (0x180068570) has no such call and always runs it. Whether the unpatched helper ever returned 0 on a real system depends on WIL feature configuration external to the binary and cannot be established here.",

@@ -1,10 +1,10 @@
-Title: ialpss2i_i2c.sys — No security-relevant change (hardware-support gate relaxed in CheckSupportedHardware)
+Title: ialpss2i_i2c.sys — hardware-support gate relaxed in CheckSupportedHardware
 Date: 2026-06-26
 Slug: ialpss2i_i2c_3f1f9ec7-ialpss2i_i2c-report-20260626-002321
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ### 1. Overview

@@ -1,10 +1,10 @@
-Title: ialpss2i_i2c_bxt_p.sys — No security-relevant change (compiler codegen refactor of identical I2C command / RX-FIFO-threshold logic)
+Title: ialpss2i_i2c_bxt_p.sys — compiler codegen refactor of identical I2C command / RX-FIFO-threshold logic
 Date: 2026-06-26
 Slug: ialpss2i_i2c_bxt_p_bf354297-ialpss2i_i2c_bxt_p-report-20260626-003439
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ## 1. Overview

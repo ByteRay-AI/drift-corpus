@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "netio.sys - No security-relevant change (staged iBFT WIL feature-gate removal in NsipInitializeBootFirmwareTableData)",
+    "title": "netio.sys - staged iBFT WIL feature-gate removal in NsipInitializeBootFirmwareTableData",
     "id_unpatched": "netio_unpatched.sys",
     "id_patched": "netio_patched.sys",
     "overall_similarity": 0.9914,

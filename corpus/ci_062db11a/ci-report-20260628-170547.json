@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ci.dll (Windows Code Integrity) - No security-relevant change; Code Integrity feature-staging graduation plus SymCrypt/ECC library rebuild",
+    "title": "ci.dll (Windows Code Integrity) - Code Integrity feature-staging graduation plus SymCrypt/ECC library rebuild",
     "id_unpatched": "ci_unpatched.dll",
     "id_patched": "ci_patched.dll",
     "overall_similarity": 0.9466,
@@ -178,7 +178,9 @@
       "severity": "informational",
       "function": "CipShouldRevalidateForPolicyChange (sub_1800670B4 unpatched / sub_18006A874 patched)",
       "entry_point": "Called from CiRevalidateImage (unpatched 0x180064EAE / 0x180064FD7; patched 0x180068631 / 0x180068799) on the Code Integrity image-validation path",
-      "call_chain": ["CiRevalidateImage -> CipShouldRevalidateForPolicyChange"],
+      "call_chain": [
+        "CiRevalidateImage -> CipShouldRevalidateForPolicyChange"
+      ],
       "vulnerability_class": "Feature-staging graduation of an internal consistency mask (no delivered exploitable check)",
       "description": "CipShouldRevalidateForPolicyChange decides whether a cached image validation must be re-run after a policy change, comparing a value against the internal policy generation counter g_CiPolicyGenerationCounter (data_180043330 / data_180045368). g_CiPolicyState (data_180043e00 / data_180045e70) gates whether the check runs (its sign bit must be set). On the below-MmSystemRangeStart value path the unpatched build applies the mask (clear bits 58-63) only when Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) returns non-zero; the patched build applies it unconditionally. The masked/compared value is an internal generation counter, not an attacker-supplied pointer, and the mask affects only values with bits 58-63 set (never true for a legitimate generation counter). The unpatched build already contains the masked path behind the flag. This is a feature-staging graduation, not a delivered exploitable check; no unsigned-code-execution primitive is demonstrable.",
       "trigger_conditions": "For the masked and unmasked comparisons to differ at all, the value on the below-MmSystemRangeStart path would need bits 58-63 set, which does not occur for a legitimate policy generation counter. No attacker-controlled input reaching this comparison in that state is demonstrated. g_CiPolicyState must be negative (sign bit set) and g_CiPolicyGenerationCounter must not equal 0x3ffffffffffffff for the compare to run.",
@@ -191,7 +193,9 @@
       "severity": "informational",
       "function": "CiRevalidateImage (sub_180064DF0 unpatched / sub_180068570 patched)",
       "entry_point": "Code Integrity image-validation path",
-      "call_chain": ["CiRevalidateImage"],
+      "call_chain": [
+        "CiRevalidateImage"
+      ],
       "vulnerability_class": "Feature-staging graduation (no delivered exploitable check)",
       "description": "The unpatched build gates a block of pointer-validity checks (non-null, below MmSystemRangeStart, server-silo test on bit 0x3B) behind Feature_Servicing_CodeIntegrityWinTcbPplTocTou (sub_180019514) (call at 0x180064EC3). The patched build removes the gate and runs those checks unconditionally, i.e. it behaves as the unpatched build did with the feature enabled. Both builds reach the same Protected-Process-Light handling and fall through to the Feature_TrustedLaunch path.",
       "trigger_conditions": "N/A. The change is the removal of a runtime staging gate; the unpatched build already contains the graduated path.",

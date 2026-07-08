@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mountmgr.sys - No security-relevant change (Cluster-Shared-Volume characteristic tracking field plus IoCreateSymbolicLink2 modernization)",
+    "title": "mountmgr.sys - Cluster-Shared-Volume characteristic tracking field plus IoCreateSymbolicLink2 modernization",
     "id_unpatched": "mountmgr_unpatched.sys",
     "id_patched": "mountmgr_patched.sys",
     "overall_similarity": 0.9587,

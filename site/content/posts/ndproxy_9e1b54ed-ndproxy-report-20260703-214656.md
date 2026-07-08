@@ -1,10 +1,10 @@
-Title: ndproxy.sys — No security-relevant change (new IOCTL 0x8FFF23DC query handler added, returns an already-exposed counter)
+Title: ndproxy.sys — new IOCTL 0x8FFF23DC query handler added, returns an already-exposed counter
 Date: 2026-07-03
 Slug: ndproxy_9e1b54ed-ndproxy-report-20260703-214656
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ## 1. Overview

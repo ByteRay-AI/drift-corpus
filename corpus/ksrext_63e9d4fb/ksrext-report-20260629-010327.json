@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ksrext.sys (Windows Secure Kernel Runtime Extension / Soft Restart) - No security-relevant change: loader-callback locking refactor and pool-API modernization",
+    "title": "ksrext.sys (Windows Secure Kernel Runtime Extension / Soft Restart) - loader-callback locking refactor and pool-API modernization",
     "id_unpatched": "ksrext_unpatched.sys",
     "id_patched": "ksrext_patched.sys",
     "overall_similarity": 0.3722,
@@ -130,7 +130,9 @@
       "name": "sub_1c0001010 (bitmap operation)",
       "similarity": 0.9877,
       "change_type": "cosmetic",
-      "key_changes": ["Register allocation and code generation differences only"],
+      "key_changes": [
+        "Register allocation and code generation differences only"
+      ],
       "security_relevant": false,
       "security_notes": "",
       "assembly_diff": ""

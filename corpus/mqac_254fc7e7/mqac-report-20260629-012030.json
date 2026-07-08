@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mqac.sys (Microsoft Message Queuing AC driver) - No security-relevant change (compiler rebuild with function inlining)",
+    "title": "mqac.sys (Microsoft Message Queuing AC driver) - compiler rebuild with function inlining",
     "id_unpatched": "mqac_unpatched.sys",
     "id_patched": "mqac_patched.sys",
     "overall_similarity": 0.6206,

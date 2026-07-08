@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "netio.sys - No security-relevant change in NsiEnumerateObjectsAllParametersEx / NsiGetParameterEx (NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds)",
+    "title": "netio.sys - in NsiEnumerateObjectsAllParametersEx / NsiGetParameterEx (NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds)",
     "id_unpatched": "netio_unpatched.sys",
     "id_patched": "netio_patched.sys",
     "overall_similarity": 0.6138,

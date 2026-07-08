@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb.sys - No security-relevant change (feature-staged SMB-over-QUIC compression message routing)",
+    "title": "mrxsmb.sys - feature-staged SMB-over-QUIC compression message routing",
     "id_unpatched": "mrxsmb_unpatched.sys",
     "id_patched": "mrxsmb_patched.sys",
     "overall_similarity": 0.9916,

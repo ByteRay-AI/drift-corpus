@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ataport.sys - No security-relevant change (cross-version PassThrough refactor and defense-in-depth stack initialization)",
+    "title": "ataport.sys - cross-version PassThrough refactor and defense-in-depth stack initialization",
     "id_unpatched": "ataport_unpatched.sys",
     "id_patched": "ataport_patched.sys",
     "overall_similarity": 0.6819,

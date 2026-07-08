@@ -1,10 +1,10 @@
-Title: ksrext.sys — No security-relevant change (loader-callback locking refactor + pool-API modernization)
+Title: ksrext.sys — loader-callback locking refactor + pool-API modernization
 Date: 2026-06-29
 Slug: ksrext_63e9d4fb-ksrext-report-20260629-010327
 Category: Corpus
 Author: Argus
 Summary: KB5082123
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ## 1. Overview

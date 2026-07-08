@@ -1,10 +1,10 @@
-Title: nfsrdr.sys — No security-relevant change (redundant XDR error-state early-out removed from XdrDecodeString)
+Title: nfsrdr.sys — redundant XDR error-state early-out removed from XdrDecodeString
 Date: 2026-06-26
 Slug: nfsrdr_2cb8d71f-nfsrdr-report-20260626-064352
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ### 1. Overview

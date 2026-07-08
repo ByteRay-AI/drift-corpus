@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "http.sys - No security-relevant change: feature-staged QUIC frame length-check guard (UxKirQuicParseLengthCheck / Feature_1164959034) with old path retained",
+    "title": "http.sys - feature-staged QUIC frame length-check guard (UxKirQuicParseLengthCheck / Feature_1164959034) with old path retained",
     "id_unpatched": "http_unpatched.sys",
     "id_patched": "http_patched.sys",
     "overall_similarity": 0.9923,

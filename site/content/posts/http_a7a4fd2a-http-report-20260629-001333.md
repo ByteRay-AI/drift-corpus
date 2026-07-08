@@ -1,4 +1,4 @@
-Title: http.sys — No security-relevant change (WIL feature-staging cache bookkeeping bit in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState)
+Title: http.sys — WIL feature-staging cache bookkeeping bit in wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState
 Date: 2026-06-29
 Slug: http_a7a4fd2a-http-report-20260629-001333
 Category: Corpus

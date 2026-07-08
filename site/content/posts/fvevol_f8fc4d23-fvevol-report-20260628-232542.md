@@ -1,4 +1,4 @@
-Title: fvevol.sys — No security-relevant change (major OS-build refresh; the one flagged edit adds a pointer test after the pointer is already dereferenced)
+Title: fvevol.sys — major OS-build refresh; the one flagged edit adds a pointer test after the pointer is already dereferenced
 Date: 2026-06-28
 Slug: fvevol_f8fc4d23-fvevol-report-20260628-232542
 Category: Corpus

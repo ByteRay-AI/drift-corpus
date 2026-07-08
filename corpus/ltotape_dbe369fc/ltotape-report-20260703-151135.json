@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ltotape.sys - No security-relevant change: LTO-9 density code (0x60) support added to GetMediaTypes callback",
+    "title": "ltotape.sys - LTO-9 density code (0x60) support added to GetMediaTypes callback",
     "id_unpatched": "ltotape_unpatched.sys",
     "id_patched": "ltotape_patched.sys",
     "overall_similarity": 0.9823,

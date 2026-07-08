@@ -1,4 +1,4 @@
-Title: dmvsc.sys — No security-relevant change (non-security refactor / code reorganization)
+Title: dmvsc.sys — non-security refactor / code reorganization
 Date: 2026-06-28
 Slug: dmvsc_5c1d1aa0-dmvsc-report-20260628-224237
 Category: Corpus

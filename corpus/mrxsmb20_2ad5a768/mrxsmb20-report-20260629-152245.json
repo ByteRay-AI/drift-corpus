@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "mrxsmb20.sys (SMB 2.0 Redirector) - No security-relevant change (WIL feature-staging / telemetry churn)",
+    "title": "mrxsmb20.sys (SMB 2.0 Redirector) - WIL feature-staging / telemetry churn",
     "id_unpatched": "mrxsmb20_unpatched.sys",
     "id_patched": "mrxsmb20_patched.sys",
     "overall_similarity": 0.9825,

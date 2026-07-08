@@ -1,10 +1,10 @@
-Title: ialpssi_i2c.sys — No security-relevant change (I2C spike-suppression register programming added; speed-mode writes refactored per mode)
+Title: ialpssi_i2c.sys — I2C spike-suppression register programming added; speed-mode writes refactored per mode
 Date: 2026-06-26
 Slug: ialpssi_i2c_8445e41b-ialpssi_i2c-report-20260626-004629
 Category: Corpus
 Author: Argus
 Summary: KB5073723
-Severity: None
+Severity: Unknown
 KBDate: 2026-01-13
 
 ---

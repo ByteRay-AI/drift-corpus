@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "ksecdd.sys - No security-relevant change: staged, feature-gated address-space check added to protected-process free paths (SecFreeForKsecCaller / SecFreeCommon)",
+    "title": "ksecdd.sys - staged, feature-gated address-space check added to protected-process free paths (SecFreeForKsecCaller / SecFreeCommon)",
     "id_unpatched": "ksecdd_unpatched.sys",
     "id_patched": "ksecdd_patched.sys",
     "overall_similarity": 0.9887,

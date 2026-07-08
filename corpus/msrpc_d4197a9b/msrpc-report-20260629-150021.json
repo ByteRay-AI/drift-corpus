@@ -1,6 +1,6 @@
 {
   "binaries": {
-    "title": "msrpc.sys - No security-relevant change (MES type-pickling refactor and toolchain rebuild)",
+    "title": "msrpc.sys - MES type-pickling refactor and toolchain rebuild",
     "id_unpatched": "msrpc_unpatched.sys",
     "id_patched": "msrpc_patched.sys",
     "overall_similarity": 0.6907,
@@ -81,7 +81,7 @@
     },
     {
       "name": "NdrMesTypeAlignSize3",
-      "similarity": 0.80,
+      "similarity": 0.8,
       "change_type": "behavioral",
       "key_changes": [
         "Register reallocation in the format-string iteration loop; no logic change"

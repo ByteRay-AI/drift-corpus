@@ -1,10 +1,10 @@
-Title: msisadrv.sys — No security-relevant change (KMDF static-stub rebuild and compiler stack-init churn)
+Title: msisadrv.sys — KMDF static-stub rebuild and compiler stack-init churn
 Date: 2026-07-03
 Slug: msisadrv_a4481dbc-msisadrv-report-20260703-155135
 Category: Corpus
 Author: Argus
 Summary: KB5082142
-Severity: None
+Severity: Unknown
 KBDate: 2026-04-14
 
 ## 1. Overview

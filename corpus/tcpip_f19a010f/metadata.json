@@ -1,0 +1,15 @@
+{
+  "binary": "tcpip.sys",
+  "kb": "KB5093998",
+  "prev_kb": "KB5087420",
+  "windows_version": "11-23H2",
+  "patched": {
+    "version": "10.0.22621.7219",
+    "sha256_prefix": "f19a010f"
+  },
+  "prev": {
+    "version": "10.0.22621.7079",
+    "sha256_prefix": "a793af1e"
+  },
+  "note": "KB recovered via WinBIndex sha256 lookup after the binaries and original metadata.json were deleted; 'kb' is the patched (fix) build."
+}

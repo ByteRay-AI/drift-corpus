@@ -1,0 +1,108 @@
+{
+  "binaries": {
+    "title": "tcpip.sys - FseProcessIncomingMessages kernel pool out-of-bounds write in FSE message reassembly (missing 0x400 bounds check)",
+    "id_unpatched": "tcpip_unpatched.sys",
+    "id_patched": "tcpip_patched.sys",
+    "overall_similarity": 0.9924,
+    "matched": 6053,
+    "changed": 2,
+    "identical": 6051,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "FseProcessIncomingMessages",
+      "similarity": 0.6679,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version adds explicit upper-bound guards `if (*r14 > 0x400 || rsi > 0x400)` before buffering an incomplete trailing fragment into the reassembly buffer at ctx+0x88 (the unpatched trailing-fragment path does `memcpy(rbx+0x88, rsi, rdi)` with no size limit).",
+        "Patched version adds accumulation guard `r8_6 = *(ctx+0x488) + rsi; if (r8_6 < result || r8_6 > 0x400)` (integer-overflow AND 0x400 cap) before the accumulate paths `memcpy(rbx+0x88+rbp_1, rsi, rdi); *(rbx+0x488) += rdi`, which were previously unbounded.",
+        "All new bounds checks are gated behind Feature_3924026683__private_IsEnabledDeviceUsageNoInline() (a staged feature/velocity flag), and on failure the code drops the data (result=0) and emits WPP trace codes 0x2f/0x30/0x32.",
+        "Buffer geometry confirmed: reassembly buffer at ctx+0x88, accumulated-length counter at ctx+0x488 => fixed capacity 0x488-0x88 = 0x400 (1024) bytes.",
+        "Message framing: 4-byte length prefix at buffer start, internal message length validated only against [0x21,0x400] (r14_1-0x21 <= 0x3df); the raw remaining-fragment length rdi/rsi was never validated against 0x400 in the unpatched code."
+      ],
+      "security_relevant": true,
+      "security_notes": "Pre-patch, the FSE stream-reassembly accumulator copies an attacker-controlled number of bytes (rdi = *(arg2+0x38), incoming length) into a fixed 0x400-byte kernel pool buffer at ctx+0x88 without bounding the copy length or the running accumulated length (ctx+0x488) to 0x400. When the trailing bytes of a receive form an 'incomplete' fragment (rdi > 0x20 and the next 4-byte length prefix *rsi > rdi), the code executes `memcpy(rbx+0x88, rsi, rdi); *(rbx+0x488)=rdi` with rdi unbounded; likewise the accumulate branches do `memcpy(rbx+0x88+rbp_1, rsi, rdi); *(rbx+0x488)+=rdi` without checking rbp_1+rdi <= 0x400. This is a linear kernel pool out-of-bounds write with fully attacker-controlled length and contents, reachable from the network receive-completion callback OnReceiveComplete.",
+      "assembly_diff": "--- tcpip_unpatched.sys/FseProcessIncomingMessages.assembly (0x1401bd224) verbatim unpatched listing ---\nmov  qword [rsp+0x18], rbx\npush rbp\npush rsi\npush rdi\npush r12\npush r13\npush r14\npush r15\nsub  rsp, 0x70\nmov  rax, qword [rel 0x140228ac0]\nxor  rax, rsp\nmov  qword [rsp+0x60], rax\nmov  rax, qword [rcx+0x20]\nmov  rsi, qword [rcx+0x30]        ; rsi = data pointer (arg1+0x30)\nmov  edi, dword [rdx+0x38]        ; edi = incoming length (arg2+0x38) ATTACKER-CONTROLLED\nmov  rbx, qword [rax+0xa8]        ; rbx = FSE reassembly context\nmov  rcx, qword [rel 0x140228268]\nlea  r13, [rel 0x140228268]\nmov  r12b, 0x5\ncmp  rcx, r13\nje   0x1401bd292\ncmp  dword [rbx+0x488], 0x0       ; accumulated length counter\nje   0x1401bd488\ncmp  byte [rcx+0x29], r12b\njb   0x1401bd292\ntest edi, edi\nje   0x1401bd4ef\n... (WPP trace)\nmov  al, 0x1\nmov  rdx, rsi\ncmp  edi, 0x20\njbe  0x1401bd4da\nmov  ebp, dword [rbx+0x488]       ; ebp = rbp_1 accumulated bytes\ncmp  ebp, 0x4\njb   0x1401bd36d\n...\nmov  r8d, edi                     ; 0x1401bd4da  r8 = rdi (UNBOUNDED length)\nlea  rcx, [rbx+0x88]              ; dst = buffer base (0x400-byte buffer)\ncall 0x1401c2880                 ; memcpy(rbx+0x88, rsi, rdi)  <-- OOB WRITE\nmov  dword [rbx+0x488], edi        ; *(ctx+0x488) = rdi  (no 0x400 cap)\nmov  r8d, dword [rsi]             ; 0x1401bd494  r8 = *rsi next-msg len prefix\ncmp  r8d, edi\nja   0x1401bd4da                 ; if prefix > remaining => treat as incomplete -> memcpy above\n...\nlea  rcx, [rbx+0x88]              ; 0x1401bd2f1 accumulate path\nsub  edx, ebp                     ; edx = r14_1 - rbp_1\nadd  rcx, rbp                     ; dst = rbx+0x88+rbp_1\ncmp  edi, edx\njae  0x1401bd336\nmov  r8, rdi                      ; 0x1401bd301  r8 = rdi\nmov  rdx, rsi\ncall 0x1401c2880                 ; memcpy(rbx+0x88+rbp_1, rsi, rdi)  <-- OOB WRITE\nadd  dword [rbx+0x488], edi        ; *(ctx+0x488) += rdi  (no rbp_1+rdi<=0x400 check)\n...\nlea  rcx, [rbx+0x88]              ; 0x1401bd37b else branch\nmov  r8, rdi\nadd  rcx, rbp\nmov  rdx, rsi\ncall 0x1401c2880                 ; memcpy(rbx+0x88+rbp_1, rsi, rdi)\nadd  dword [rbx+0x488], edi\n...\nmov  ecx, dword [rbx+0x488]        ; 0x1401bd463 label_1401bd463 process/reset\nmov  eax, r14d\nsub  eax, ecx\nmov  r8d, r14d\nsub  ecx, r14d\nadd  rsi, rax\nadd  edi, ecx\nmov  rcx, rbx\ncall 0x1401bd108                 ; FseProcessIncomingMessage(ctx, buf, r14_1)\nand  dword [rbx+0x488], 0x0\n...\nmov  rcx, qword [rsp+0x60]\nxor  rcx, rsp\ncall 0x1401c2520                 ; __security_check_cookie\nadd  rsp, 0x70\npop  r15\npop  r14\npop  r13\npop  r12\npop  rdi\npop  rsi\npop  rbp\nretn\n(Full 41-basic-block, 754-byte listing obtained via diff_function_code side=unpatched; PATCH inserts at the equivalent sites: `mov eax,0x400 / cmp r8d,eax / ja <drop>` and `lea r8d,[rax+rsi] / cmp r8d,eax / jb <overflow-check>` guards gated by Feature_3924026683.)"
+    },
+    {
+      "name": "IppCreateForwardPath",
+      "similarity": 0.8227,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Moved `*(Entry+0x78) = rax_1` (gsbase+0x1a4 processor value) to earlier in the function (before field init) - ordering only.",
+        "The single unconditional `*(Entry+0x70) |= 1` flag set was split into two Feature_277588282-gated sites: one set before RtlRestructureHashTable if the feature is enabled, and one set after if the feature is disabled - preserving the net effect but relocating it relative to the hash-table restructure/lock window.",
+        "Pure register renaming otherwise (rax_1->rax_3, rax_4->rax_6, etc.)."
+      ],
+      "security_relevant": false,
+      "security_notes": "This change only relocates a flag-set (Entry+0x70 |=1) and a field store under a feature flag; there is no change to allocation size, bounds, or lifetime. It is a behavioral/feature-flag reordering (likely to set the entry's 'usable' flag at the correct point relative to the hash-table lock), not a memory-safety fix. Not the patched vulnerability.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "critical",
+      "function": "FseProcessIncomingMessages",
+      "entry_point": "Network inbound data on the FSE transport channel -> registered receive-completion callback tcpip!OnReceiveComplete (indirect call at 0x1401bdfb9) -> FseProcessIncomingMessages",
+      "call_chain": [
+        "network transport receive indication (inbound bytes)",
+        "OnReceiveComplete (0x1401bdf50, installed as a receive-completion callback pointer)",
+        "FseProcessIncomingMessages (0x1401bd224)",
+        "memcpy(ctx+0x88, data, len) @ 0x1401bd4e4 / 0x1401bd307 / 0x1401bd38b / 0x1401bd419"
+      ],
+      "vulnerability_class": "Kernel pool out-of-bounds write (heap/pool buffer overflow, CWE-787 / CWE-120; accumulation path also CWE-190 integer-overflow-to-overflow)",
+      "description": "FseProcessIncomingMessages reassembles a length-prefixed message stream into a fixed 0x400 (1024) byte pool buffer located at offset 0x88 inside the FSE context object (ctx = *(*(arg1+0x20)+0xa8)), tracking the number of buffered bytes in the DWORD at ctx+0x488. The incoming chunk pointer is rsi = *(arg1+0x30) and its length is rdi = *(arg2+0x38), both attacker-controlled. The function validates the *internal* per-message length field (first 4 bytes) to the range [0x21,0x400] (r14_1-0x21 <= 0x3df), but it never bounds the raw fragment length that gets buffered. In the trailing-fragment branch (loop at 0x1401bd48a): when rdi > 0x20 and the next 4-byte length prefix *rsi is greater than rdi (message declared but not fully present), control falls to `memcpy(rbx+0x88, rsi, rdi); *(rbx+0x488)=rdi` at 0x1401bd4da/0x1401bd4e4 with rdi unbounded -> writes up to (rdi-0x400) attacker bytes past the 1024-byte buffer. The accumulate branches at 0x1401bd301 and 0x1401bd37b do `memcpy(rbx+0x88+rbp_1, rsi, rdi); *(rbx+0x488)+=rdi` without checking rbp_1+rdi <= 0x400, so a partial message left in the buffer (rbp_1) combined with a new fragment (rdi) also overflows, and the 32-bit `*(rbx+0x488)+=rdi` counter can wrap. The patch adds the missing guards (`*r14 > 0x400 || rsi > 0x400` and `acc+rsi < acc || acc+rsi > 0x400`) gated behind Feature_3924026683 and drops the connection on violation.",
+      "trigger_conditions": "Establish an FSE channel/connection that drives OnReceiveComplete, then deliver a crafted inbound byte stream. Two triggers: (1) TRAILING-FRAGMENT OVERFLOW: send a stream whose already-consumed messages leave a trailing remainder of length rdi in the range 0x401..(pool slack) where the trailing remainder's leading 4-byte length prefix is set to a value strictly greater than rdi (so *rsi > rdi and rdi > 0x20). This routes to memcpy(ctx+0x88, remainder, rdi) with rdi > 0x400. (2) ACCUMULATION OVERFLOW: first send a fragment that leaves rbp_1 = *(ctx+0x488) partially filled (e.g. near 0x400), then send another fragment of length rdi such that rbp_1 + rdi > 0x400 while each per-message header still passes the [0x21,0x400] check; memcpy(ctx+0x88+rbp_1, data, rdi) writes past the buffer, and *(ctx+0x488)+=rdi can also integer-wrap. Overflow length and content are fully attacker-controlled.",
+      "primitive": "Linear kernel pool out-of-bounds write with attacker-controlled length and contents adjacent to the FSE context allocation -> pool corruption leading to remote kernel code execution / privilege escalation (or at minimum remote BSOD/DoS). Because the write is contiguous and controllable, it can corrupt adjacent pool object headers/pointers for a write-what-where style escalation via pool grooming.",
+      "evidence": "uint64_t rbp_1 = *(rbx + 0x488);\n... valid message length only bounded as: if (r14_1 - 0x21 > 0x3df) { error }\n// trailing-fragment path (loop label_1401bd48a):\nwhile (rdi) {\n    int64_t* rdx_11 = rsi;\n    if (rdi > 0x20) {\n        int32_t r8_12 = *rsi;            // next-message length prefix (attacker)\n        if (r8_12 <= rdi) {\n            FseProcessIncomingMessage(rbx, rdx_11, r8_12);\n            result = *rsi; rsi += result; rdi = rdi - result; continue;\n        }\n    }\n    memcpy(rbx + 0x88, rdx_11, rdi);      // <-- OOB WRITE: rdi never checked <= 0x400\n    *(rbx + 0x488) = rdi;                  // counter set past capacity\n    break;\n}\n// accumulate path:\nmemcpy(rbx + 0x88 + rbp_1, rsi, rdi);     // <-- OOB WRITE: rbp_1+rdi never checked <= 0x400\n*(rbx + 0x488) += rdi;                     // 32-bit counter can wrap",
+      "assembly": "0x1401bd224  mov  qword [rsp+0x18], rbx\n0x1401bd229  push rbp\n0x1401bd22a  push rsi\n0x1401bd22b  push rdi\n0x1401bd22c  push r12\n0x1401bd22e  push r13\n0x1401bd230  push r14\n0x1401bd232  push r15\n0x1401bd234  sub  rsp, 0x70\n0x1401bd238  mov  rax, qword [rel 0x140228ac0]\n0x1401bd23f  xor  rax, rsp\n0x1401bd242  mov  qword [rsp+0x60], rax\n0x1401bd247  mov  rax, qword [rcx+0x20]\n0x1401bd24b  mov  rsi, qword [rcx+0x30]        ; rsi = inbound data ptr (arg1+0x30)\n0x1401bd24f  mov  edi, dword [rdx+0x38]        ; edi = inbound length (arg2+0x38) ATTACKER-CONTROLLED\n0x1401bd252  mov  rbx, qword [rax+0xa8]        ; rbx = FSE context (buffer @ rbx+0x88, count @ rbx+0x488)\n0x1401bd259  mov  rcx, qword [rel 0x140228268]\n0x1401bd260  lea  r13, [rel 0x140228268]\n0x1401bd267  mov  r12b, 0x5\n0x1401bd292  cmp  dword [rbx+0x488], 0x0\n0x1401bd299  je   0x1401bd488\n0x1401bd488  test edi, edi\n0x1401bd48a  je   0x1401bd4ef\n0x1401bd2ca  mov  ebp, dword [rbx+0x488]       ; rbp_1 = accumulated bytes\n0x1401bd2d0  cmp  ebp, 0x4\n0x1401bd2d3  jb   0x1401bd36d\n0x1401bd48c  mov  rdx, rsi\n0x1401bd48f  cmp  edi, 0x20\n0x1401bd492  jbe  0x1401bd4da\n0x1401bd494  mov  r8d, dword [rsi]             ; r8_12 = next-message length prefix\n0x1401bd497  cmp  r8d, edi\n0x1401bd49a  ja   0x1401bd4da                  ; prefix > remaining => incomplete => buffer remainder\n0x1401bd4da  mov  r8d, edi                     ; r8 = rdi (UNBOUNDED)\n0x1401bd4dd  lea  rcx, [rbx+0x88]              ; dst = 0x400-byte buffer base\n0x1401bd4e4  call 0x1401c2880                 ; memcpy(rbx+0x88, rsi, rdi)  <-- OOB WRITE\n0x1401bd4e9  mov  dword [rbx+0x488], edi        ; *(ctx+0x488)=rdi (no cap)\n0x1401bd36d  mov  r14d, 0x20\n0x1401bd373  sub  r14d, ebp\n0x1401bd376  cmp  edi, r14d\n0x1401bd379  jae  0x1401bd3ba\n0x1401bd2f1  lea  rcx, [rbx+0x88]\n0x1401bd2f8  sub  edx, ebp\n0x1401bd2fa  add  rcx, rbp                     ; dst = rbx+0x88+rbp_1\n0x1401bd2fd  cmp  edi, edx\n0x1401bd2ff  jae  0x1401bd336\n0x1401bd301  mov  r8, rdi\n0x1401bd304  mov  rdx, rsi\n0x1401bd307  call 0x1401c2880                 ; memcpy(rbx+0x88+rbp_1, rsi, rdi) <-- OOB WRITE\n0x1401bd30c  add  dword [rbx+0x488], edi        ; *(ctx+0x488)+=rdi (no rbp_1+rdi<=0x400 check, 32-bit wrap)\n0x1401bd37b  lea  rcx, [rbx+0x88]\n0x1401bd382  mov  r8, rdi\n0x1401bd385  add  rcx, rbp\n0x1401bd388  mov  rdx, rsi\n0x1401bd38b  call 0x1401c2880                 ; memcpy(rbx+0x88+rbp_1, rsi, rdi) <-- OOB WRITE (else branch)\n0x1401bd390  add  dword [rbx+0x488], edi\n0x1401bd2e0  mov  r14d, dword [r15]            ; per-message length field (first 4 bytes)\n0x1401bd2e3  lea  eax, [r14-0x21]\n0x1401bd2e7  cmp  eax, 0x3df                   ; ONLY validates internal msg len to [0x21,0x400]\n0x1401bd2ec  ja   0x1401bd349\n0x1401bd463  mov  ecx, dword [rbx+0x488]\n0x1401bd47c  call 0x1401bd108                 ; FseProcessIncomingMessage(ctx, buf, r14_1)\n0x1401bd481  and  dword [rbx+0x488], 0x0\n0x1401bd4f1  mov  rcx, qword [rsp+0x60]\n0x1401bd4f6  xor  rcx, rsp\n0x1401bd4f9  call 0x1401c2520                 ; __security_check_cookie\n0x1401bd515  retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "tcpip!FseProcessIncomingMessages",
+            "address": "0x1401bd224",
+            "why": "Function entry. Inspect rcx=arg1 and rdx=arg2. rsi:=[rcx+0x30] is the inbound data pointer; edi:=[rdx+0x38] is the attacker-controlled inbound length; rbx:=[[rcx+0x20]+0xa8] is the FSE context whose 0x400-byte reassembly buffer starts at rbx+0x88 and whose accumulated-length counter is the DWORD at rbx+0x488."
+          },
+          {
+            "symbol": "tcpip!FseProcessIncomingMessages+0x2b6 (trailing-fragment memcpy)",
+            "address": "0x1401bd4e4",
+            "why": "This is `call memcpy` for the trailing incomplete fragment. Watch r8d (=edi=rdi) as the copy length and rcx (=rbx+0x88) as the destination. If r8d > 0x400 the copy overflows the pool buffer. Also step to 0x1401bd4e9 to see *(rbx+0x488) set to the oversize length."
+          },
+          {
+            "symbol": "tcpip!FseProcessIncomingMessages+0xe3 (accumulate memcpy)",
+            "address": "0x1401bd307",
+            "why": "`call memcpy` for the accumulate path. Watch rcx (=rbx+0x88+rbp_1) as destination, r8 (=rdi) as length. Overflow if rbp_1 (value at rbx+0x488 on entry) + rdi > 0x400. 0x1401bd30c then does the unchecked `add dword [rbx+0x488], edi`."
+          },
+          {
+            "symbol": "tcpip!OnReceiveComplete",
+            "address": "0x1401bdf50",
+            "why": "Receive-completion callback that invokes the vulnerable function at 0x1401bdfb9. Break here to observe how the inbound network buffer/length are marshalled into arg1+0x30 / arg2+0x38 before reassembly."
+          }
+        ],
+        "watch": [
+          "edi / rdi = inbound fragment length (arg2+0x38) - the value that must exceed 0x400 (trailing path) or combine with rbp_1 to exceed 0x400 (accumulate path)",
+          "rbx = FSE context base; rbx+0x88 = 1024-byte reassembly buffer; dword [rbx+0x488] = accumulated byte count (rbp_1)",
+          "dword [rsi] at 0x1401bd494 = next-message 4-byte length prefix (r8_12); set it > rdi to force the incomplete-fragment memcpy path",
+          "dword [r15]/[rbx+0x88] at 0x1401bd2e0 = per-message length field validated only to [0x21,0x400] (cmp eax,0x3df) - note this check does NOT cover the raw fragment copy",
+          "destination pointer rcx at the three memcpy sites (0x1401bd4e4, 0x1401bd307, 0x1401bd38b) vs. the rbx+0x88..rbx+0x488 buffer window"
+        ],
+        "key_offsets": [
+          "0x1401bd2e7 `cmp eax, 0x3df` - the ONLY length bound present pre-patch (validates internal per-message length to [0x21,0x400], not the fragment copy size)",
+          "0x1401bd497 `cmp r8d, edi` / 0x1401bd49a `ja 0x1401bd4da` - decides 'incomplete fragment' and routes to the unbounded buffering memcpy",
+          "0x1401bd4da-0x1401bd4e9 - trailing-fragment `memcpy(rbx+0x88, rsi, rdi)` + `mov [rbx+0x488], edi` (no 0x400 cap) = primary OOB write",
+          "0x1401bd307 / 0x1401bd38b - accumulate-path `memcpy(rbx+0x88+rbp_1, rsi, rdi)` (no rbp_1+rdi<=0x400 check) with `add [rbx+0x488], edi` 32-bit counter wrap",
+          "In the PATCHED binary the added guards appear as `mov eax,0x400 / cmp r8d,eax / ja 0x1401bd705` and `lea r8d,[rax+rsi] / cmp r8d,eax / jb ...` gated by call 0x1401bd084 (Feature_3924026683) - these are the missing checks"
+        ],
+        "trigger_setup": "Bring up the FSE channel that feeds OnReceiveComplete (an inband framed-message stream over the connected tcpip transport). From the peer, send a message stream so that after the framed messages are consumed a trailing remainder of length > 0x400 is left, with that remainder's leading 4-byte length prefix set greater than the remainder length (forces the incomplete-fragment buffering path). Alternatively, first send a fragment that leaves the buffer partially filled (dword [ctx+0x488] near 0x400), then send a second fragment whose length pushes ctx+0x488 past 0x400. Set the breakpoints above and inspect the copy length vs. 0x400.",
+        "expected_observation": "At 0x1401bd4e4 (or 0x1401bd307) the memcpy length register (r8d) exceeds 0x400 while the destination is inside the ctx+0x88 buffer; single-stepping over the call corrupts adjacent pool memory. Expect a pool corruption BSOD (e.g. BAD_POOL_HEADER 0x19, or KERNEL_MODE_HEAP_CORRUPTION 0x13A, or DRIVER_OVERRAN_STACK_BUFFER / 0x139 if the pool cookie is tripped) on subsequent allocation/free, with the fault trail pointing back into tcpip!FseProcessIncomingMessages. dword [ctx+0x488] holding a value > 0x400 after return is direct confirmation the bound was never enforced.",
+        "notes": "Buffer capacity is exactly 0x488-0x88 = 0x400 (1024) bytes; the accumulated-count field at ctx+0x488 is 32-bit, so `add [rbx+0x488], edi` can also integer-wrap. The safe/patched path is distinguished by calls to 0x1401bd084 (Feature_3924026683 gate) followed by `cmp ...,0x400` comparisons and WPP trace ids 0x2f/0x30/0x32 on the drop path; the unpatched path has none of these. The FSE context is reached as *(*(arg1+0x20)+0xa8); arg1+0x30 = data ptr, arg2+0x38 = length. Symbols: FseProcessIncomingMessages=0x1401bd224 (754 bytes), FseProcessIncomingMessage (single-message handler)=0x1401bd108, OnReceiveComplete=0x1401bdf50."
+      }
+    }
+  ],
+  "summary": "The patch to tcpip.sys fixes a critical, remotely-reachable kernel pool out-of-bounds write in FseProcessIncomingMessages, the FSE framed-message stream reassembler (reached from the network receive-completion callback OnReceiveComplete). The function buffers inbound bytes into a fixed 0x400-byte buffer at ctx+0x88 (byte count at ctx+0x488) but pre-patch never bounds the raw fragment copy length: the trailing 'incomplete fragment' path does memcpy(ctx+0x88, data, rdi) with attacker-controlled rdi, and the accumulate paths do memcpy(ctx+0x88+rbp_1, data, rdi); *(ctx+0x488)+=rdi without checking rbp_1+rdi <= 0x400 (also a 32-bit counter wrap). The patch adds the missing `> 0x400` and integer-overflow guards (gated behind Feature_3924026683), dropping the data on violation. A PoC must drive the FSE channel and send a crafted length-prefixed stream whose trailing fragment length exceeds 0x400 (with a next-message length prefix larger than the remaining bytes), or split a message across fragments so the accumulated length crosses 0x400, to overflow the pool buffer with fully controlled contents."
+}

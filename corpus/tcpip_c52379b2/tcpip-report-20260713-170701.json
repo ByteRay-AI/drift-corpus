@@ -1,0 +1,259 @@
+{
+  "binaries": {
+    "title": "tcpip.sys - UdpConnectRedirect stack use-after-return via async WFP ALE connect-redirect (Feature_TCPIP_Stack_Var_To_Heap_Fix)",
+    "id_unpatched": "tcpip_unpatched.sys",
+    "id_patched": "tcpip_patched.sys",
+    "overall_similarity": 0.9915,
+    "matched": 6063,
+    "changed": 18,
+    "identical": 6045,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "UdpConnectRedirect",
+      "similarity": 0.5157,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version is gated on a new WIL feature flag literally named 'Feature_TCPIP_Stack_Var_To_Heap_Fix'; when disabled it calls UdpConnectRedirectObsolete (the old vulnerable code path).",
+        "Unpatched stores the redirect destination sockaddr and the local/source sockaddr in STACK buffers var_148 and var_c8 (each memset(...,0,0x80)); their addresses &var_c8/&var_148 are passed into AleInspectConnectRequest which registers an asynchronous callback (UdpConnectRedirectCallback @ 0x140082aa0).",
+        "Patched introduces CreateUdpConnectRedirectCallbackContext which allocates a ref-counted HEAP context P_1; the sockaddrs now live at &P_1[5] and &P_1[0x15] (heap) instead of the stack, and the context lifetime is managed with an interlocked refcount at *P_1 with ExFreePoolWithTag cleanup.",
+        "Unpatched returns STATUS_PENDING (0x103) directly when AleInspectConnectRequest defers, abandoning the stack frame while the registered async callback still holds pointers into it.",
+        "The IN6_IS_ADDR_V4MAPPED validation was inlined/expanded (rsi_1[4..8]==0 && rsi_1[9]==0xffff) in the patched version but this is functionally equivalent and not the core fix."
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched build the connect-redirect destination sockaddr (var_148) and local sockaddr (var_c8) are stack-allocated. Pointers to these stack buffers are handed to AleInspectConnectRequest, which can register the WFP redirect callback and return STATUS_PENDING (0x103). On the pending path UdpConnectRedirect returns immediately, so when the asynchronous callback later fires it dereferences pointers into the freed/reused stack frame — a stack use-after-return / dangling-pointer condition on attacker-influenced address data. The fix moves this state to a ref-counted heap object so it survives the async completion.",
+      "assembly_diff": "UNPATCHED tcpip!UdpConnectRedirect @ 0x140071050:\n0x140071050 push rbp\n0x140071052 push rbx\n0x140071053 push rsi\n0x140071054 push r13\n0x140071056 lea rbp,[rsp-0xe8]\n0x14007105e sub rsp,0x1e8\n0x140071065 mov rax,[rel 0x14022db00]\n0x14007106c xor rax,rsp\n0x14007106f mov [rbp+0xc0],rax   ; security cookie\n0x140071076 mov rbx,rdx\n0x140071079 mov rsi,rcx\n0x14007107c xor edx,edx\n0x14007107e lea rcx,[rbp+0x40]   ; &var_c8 stack buffer\n0x140071082 mov r8d,0x80\n0x140071088 call 0x1401c2700     ; memset(&var_c8,0,0x80)\n0x14007108d xor r13d,r13d\n0x140071090 lea rcx,[rbp-0x40]   ; &var_148 stack buffer\n0x140071094 xor edx,edx\n0x140071096 mov [rsp+0x68],r13\n0x14007109b mov r8d,0x80\n0x1400710a1 mov [rsp+0x60],r13b\n0x1400710a6 call 0x1401c2700     ; memset(&var_148,0,0x80)\n0x1400710ab mov rdx,[rsi+0x20]\n0x1400710bd cmp [rsi+0x28],rax   ; arg1[5] redirect-data length == 0 ?\n0x1400710c1 je 0x140071427       ; -> UdpSetDestinationEndpoint\n0x1400710c7 mov eax,[rbx+0x18]\n0x1400710d2 mov r12d,0x10\n0x1400710e0 mov r15d,0x1c\n0x1400710e6 test al,0x20\n0x1400710e8 jne 0x1400712d0\n0x1400712d0 cmp word [rdx],0x17   ; AF_INET6 ?\n0x1400710ee cmp word [rdx],0x17\n0x1400710f6 mov r8,r15 (0x1c)\n0x1400710f9 cmovne r8,r12 (0x10)\n0x1400710fd call 0x1401c2400     ; memcpy(&var_148, rdx, 0x1c/0x10) into STACK buffer\n0x1400712da lea rcx,[rdx+0x8]\n0x1400712de call 0x14000b0c0     ; IN6_IS_ADDR_V4MAPPED\n0x1400712e3 test al,al\n0x1400712e5 je 0x1400713c9       ; -> 0xc0000207 STATUS_INVALID_ADDRESS_COMPONENT\n0x14007111a call qword [rel 0x140252630] ; KeAcquireInStackQueuedSpinLock(arg2,&var_198)\n0x140071156 call qword [rel 0x140252700] ; KeReleaseInStackQueuedSpinLock\n0x140071172 call qword [rel 0x1402529b0] ; ExAllocatePool2(0x40,0x20,'Curt') -> P\n0x14007117e mov rdi,rax\n0x140071184 je 0x1400713f3       ; alloc fail -> 0xc0000017\n0x14007119e call qword [rel 0x1402529b0] ; ExAllocatePool2(0x42,arg1[5],'Curt') -> P[2]\n0x1400711c2 call 0x1401c2400     ; memcpy(P[2], arg1[4], arg1[5])\n0x1400711de lock xadd [rbx+0x10],rax\n0x140071200 lea r9,[rel 0x140082aa0]   ; UdpConnectRedirectCallback (async completion)\n0x140071216 lea rax,[rbp-0x40]   ; &var_148 (STACK) passed to inspection\n0x140071222 lea rax,[rbp+0x40]   ; &var_c8 (STACK) passed to inspection\n0x14007123d call 0x140071fb0     ; AleInspectConnectRequest(..., &var_c8, &var_148, &var_1a0)\n0x140071249 mov esi,eax\n0x14007125a cmp esi,0x103        ; STATUS_PENDING ?\n0x140071260 je 0x1400712cc       ; yes -> return 0x103, ABANDON stack frame while callback holds &var_c8/&var_148\n0x1400712cc mov eax,esi\n0x1400712ce jmp 0x14007128f       ; epilogue\n0x140071285 call 0x14008330c     ; UdpConnectRedirectCallbackContinue (sync path)\n0x1400712af mov rcx,[rbp+0xc0]\n0x1400712b6 xor rcx,rsp\n0x1400712b9 call 0x1401c20c0      ; __security_check_cookie\n0x1400712ca retn"
+    },
+    {
+      "name": "AleInspectConnectRequest",
+      "similarity": 0.6514,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Signature/argument marshaling adjusted to accept the redirect state from the new heap context instead of caller stack pointers.",
+        "Handles the STATUS_PENDING (0x103) deferral path that registers the redirect completion callback holding the passed sockaddr pointers."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the inspection routine that can defer (return STATUS_PENDING) and register the asynchronous completion callback. In the unpatched flow it receives &var_c8/&var_148 which are stack pointers of the caller UdpConnectRedirect, so a deferred inspection captures dangling stack pointers. It is a co-participant in the bug rather than the root allocation site.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UdpConnectRedirectCallback",
+      "similarity": 0.7903,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "This is the async completion callback (registered at 0x140082aa0 in unpatched) that consumes the redirect context and sockaddr pointers.",
+        "Patched version consumes the heap context (&P_1[...]) with proper refcount, closing the dangling-pointer window."
+      ],
+      "security_relevant": true,
+      "security_notes": "The callback fires asynchronously after AleInspectConnectRequest defers. In the unpatched build it dereferences pointers that, in the pending path, alias the returned stack frame of UdpConnectRedirect, causing the use-after-return read/write.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "UdpConnectRedirectCallbackContinue",
+      "similarity": 0.7546,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Adjusted to the new heap-context object model (patched) vs consuming caller state (unpatched)."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlpMulticastListSet",
+      "similarity": 0.9312,
+      "change_type": "behavioral",
+      "key_changes": ["Framing-layer refactor unrelated to the connect-redirect fix."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "KfdDispatchDevCtl",
+      "similarity": 0.9367,
+      "change_type": "behavioral",
+      "key_changes": ["IOCTL dispatcher changes; large function, no evident security boundary change tied to this patch."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Fl4tMapAddress",
+      "similarity": 0.8406,
+      "change_type": "cosmetic",
+      "key_changes": ["Address-mapping helper refactor; not tied to the connect-redirect fix."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Fl6tMapAddress",
+      "similarity": 0.9122,
+      "change_type": "cosmetic",
+      "key_changes": ["Address-mapping helper refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "Fl68MapAddress",
+      "similarity": 0.8174,
+      "change_type": "cosmetic",
+      "key_changes": ["Address-mapping helper refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IppProcessInternetConnectivityFlags",
+      "similarity": 0.8432,
+      "change_type": "behavioral",
+      "key_changes": ["Connectivity-flag logic change unrelated to the redirect stack fix."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlpAddInterfaceComplete",
+      "similarity": 0.8813,
+      "change_type": "cosmetic",
+      "key_changes": ["Interface add completion refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlUnbindAdapter",
+      "similarity": 0.9296,
+      "change_type": "cosmetic",
+      "key_changes": ["Adapter unbind refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlRdmaUnbindAdapter",
+      "similarity": 0.7611,
+      "change_type": "cosmetic",
+      "key_changes": ["RDMA adapter unbind refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlIfCreateVirtualInterface",
+      "similarity": 0.9368,
+      "change_type": "behavioral",
+      "key_changes": ["Virtual interface creation refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "FlpSetIpAddress",
+      "similarity": 0.9453,
+      "change_type": "behavioral",
+      "key_changes": ["IP address set refactor."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "IppCommitSetAllInterfaceParameters",
+      "similarity": 0.9827,
+      "change_type": "cosmetic",
+      "key_changes": ["Minor parameter-commit changes."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "similarity": 0.975,
+      "change_type": "behavioral",
+      "key_changes": ["WIL feature-state cache updated to include the new Feature_TCPIP_Stack_Var_To_Heap_Fix flag — supporting evidence that the connect-redirect change is a gated security fix."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "similarity": 0.9853,
+      "change_type": "cosmetic",
+      "key_changes": ["WIL feature usage provider registration; telemetry plumbing for the new feature flag."],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "UdpConnectRedirect",
+      "entry_point": "Local UDP connect()/WSAConnect() traversing the WFP ALE connect-redirect layer (FWPM_LAYER_ALE_CONNECT_REDIRECT_V4/V6); UdpConnectRedirect is invoked indirectly through the ALE redirect classify dispatch (no static callers/refs — called via registered function pointer).",
+      "call_chain": [
+        "user: socket(AF_INET6/AF_INET, SOCK_DGRAM) + connect()/WSAConnect() to attacker-chosen remote endpoint",
+        "afd.sys -> tcpip UDP endpoint connect path",
+        "WFP ALE connect-redirect classify dispatch (function pointer)",
+        "tcpip!UdpConnectRedirect (0x140071050)",
+        "tcpip!AleInspectConnectRequest (0x140071fb0) -> returns STATUS_PENDING (0x103), registers UdpConnectRedirectCallback (0x140082aa0)",
+        "async: tcpip!UdpConnectRedirectCallback dereferences &var_c8/&var_148 after UdpConnectRedirect returned (stack use-after-return)"
+      ],
+      "vulnerability_class": "Stack use-after-return / dangling pointer to caller stack frame across asynchronous callback (CWE-825 / CWE-562)",
+      "description": "UdpConnectRedirect allocates two sockaddr work buffers on its own stack: var_c8 at [rbp+0x40] and var_148 at [rbp-0x40] (each zeroed with memset(...,0,0x80)). The attacker-supplied redirect destination address (from arg1[4]/arg1[5]) is copied into var_148, and the local/source address is composed into var_c8. Pointers to both stack buffers (&var_c8, &var_148) plus &var_1a0 are passed to AleInspectConnectRequest at 0x14007123d. If the ALE inspection is deferred — which occurs whenever a connect-redirect provider/callout arbitrates the operation out-of-band — AleInspectConnectRequest returns STATUS_PENDING (0x103) and registers the completion callback UdpConnectRedirectCallback (referenced at 0x140071200 as 0x140082aa0). At 0x14007125a UdpConnectRedirect compares the result to 0x103 and, on match, returns 0x103 immediately (0x1400712cc), unwinding its stack frame. The still-pending async callback later dereferences the captured pointers into that reclaimed stack region, producing an out-of-bounds/stale-memory read and write on kernel stack memory. The fix (gated on Feature_TCPIP_Stack_Var_To_Heap_Fix) relocates this state into a reference-counted heap context created by CreateUdpConnectRedirectCallbackContext (buffers at &P_1[5]/&P_1[0x15]) whose lifetime spans the async completion, and falls back to UdpConnectRedirectObsolete when the flag is off.",
+      "trigger_conditions": "1) Local process opens a UDP socket and performs connect()/WSAConnect() so the ALE_CONNECT_REDIRECT layer classifies the operation. 2) arg1[5] (redirect data length) must be non-zero so the redirect/heap path (not UdpSetDestinationEndpoint) is taken (branch at 0x1400710bd/je 0x140071427 must fall through). 3) For the IPv6 path, the socket family word at [rdx]==0x17 (AF_INET6) with flag bit 0x20 set (test al,0x20 @ 0x1400710e6) reaches the V4MAPPED validation; a plain path copies 0x1c/0x10 bytes into stack var_148. 4) The ALE inspection must defer so AleInspectConnectRequest returns STATUS_PENDING (0x103) — achievable by installing/registering a WFP connect-redirect callout or connection-redirect provider (or otherwise inducing arbitration) so classification completes asynchronously. When it defers, the function returns 0x103 (0x14007125a -> 0x1400712cc) and the callback subsequently touches the freed stack buffers.",
+      "primitive": "Kernel stack use-after-return: stale/out-of-bounds read of sockaddr data (potential kernel info leak of adjacent stack contents into the redirect result) and a write via the async callback into memory that no longer belongs to the buffers, corruptible by grooming subsequent kernel stack frames — leading to memory corruption and potential local privilege escalation / DoS.",
+      "evidence": "int16_t var_c8; memset(&var_c8,0,0x80); int16_t var_148; memset(&var_148,0,0x80); ... memcpy(&var_148, rdx, r8_2); ... int32_t result_1 = AleInspectConnectRequest(r14_1, nullptr, 0, 0x40082aa0, var_1e8, 0x11, nullptr, &var_c8, &var_148, &var_1a0); ... if (result_1 == 0x103) result = result_1;  // returns PENDING, stack frame (&var_c8/&var_148) abandoned while callback 0x140082aa0 still references them",
+      "assembly": "UNPATCHED tcpip!UdpConnectRedirect @ 0x140071050:\n0x140071050 push rbp / push rbx / push rsi / push r13\n0x140071056 lea rbp,[rsp-0xe8]\n0x14007105e sub rsp,0x1e8\n0x140071065 mov rax,[rel 0x14022db00] ; __security_cookie\n0x14007106c xor rax,rsp ; 0x14007106f mov [rbp+0xc0],rax\n0x140071076 mov rbx,rdx ; mov rsi,rcx\n0x14007107e lea rcx,[rbp+0x40]  ; &var_c8 (STACK)\n0x140071082 mov r8d,0x80 ; call 0x1401c2700 memset(&var_c8,0,0x80)\n0x140071090 lea rcx,[rbp-0x40]  ; &var_148 (STACK)\n0x14007109b mov r8d,0x80 ; call 0x1401c2700 memset(&var_148,0,0x80)\n0x1400710ab mov rdx,[rsi+0x20]\n0x1400710bd cmp [rsi+0x28],rax   ; arg1[5]==0 ? je 0x140071427 (UdpSetDestinationEndpoint)\n0x1400710c7 mov eax,[rbx+0x18] ; 0x1400710e6 test al,0x20 ; jne 0x1400712d0\n0x1400712d0 cmp word [rdx],0x17 ; AF_INET6\n0x1400710f6 mov r8,r15(0x1c) ; cmovne r8,r12(0x10)\n0x1400710fd call 0x1401c2400   ; memcpy(&var_148, rdx, 0x1c/0x10)  -> STACK buffer\n0x1400712da lea rcx,[rdx+0x8] ; call 0x14000b0c0 IN6_IS_ADDR_V4MAPPED ; je 0x1400713c9 (0xc0000207)\n0x14007111a call [rel 0x140252630] ; KeAcquireInStackQueuedSpinLock(arg2,&var_198)\n0x140071156 call [rel 0x140252700] ; KeReleaseInStackQueuedSpinLock\n0x140071172 call [rel 0x1402529b0] ; ExAllocatePool2(0x40,0x20,'Curt') -> P (rdi)\n0x140071184 je 0x1400713f3      ; 0xc0000017 on failure\n0x14007119e call [rel 0x1402529b0] ; ExAllocatePool2(0x42,arg1[5],'Curt') -> P[2]\n0x1400711c2 call 0x1401c2400    ; memcpy(P[2], arg1[4], arg1[5])\n0x1400711de lock xadd [rbx+0x10],rax\n0x140071200 lea r9,[rel 0x140082aa0] ; UdpConnectRedirectCallback (async completion)\n0x140071216 lea rax,[rbp-0x40]  ; &var_148 (STACK) into inspection args\n0x140071222 lea rax,[rbp+0x40]  ; &var_c8  (STACK) into inspection args\n0x14007123d call 0x140071fb0    ; AleInspectConnectRequest(..., &var_c8, &var_148, &var_1a0)\n0x140071249 mov esi,eax\n0x14007125a cmp esi,0x103       ; STATUS_PENDING ?\n0x140071260 je 0x1400712cc      ; -> mov eax,esi ; jmp epilogue: RETURN while callback holds &var_c8/&var_148\n0x140071285 call 0x14008330c    ; (sync) UdpConnectRedirectCallbackContinue\n0x1400712af mov rcx,[rbp+0xc0] ; xor rcx,rsp ; call 0x1401c20c0 __security_check_cookie\n0x1400712ca retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "tcpip!UdpConnectRedirect",
+            "address": "0x140071050",
+            "why": "Entry of the vulnerable function. rcx=arg1 (redirect request; arg1[4]=redirect data ptr @ [rcx+0x20], arg1[5]=redirect data length @ [rcx+0x28]); rdx=arg2 (endpoint/connection object). Inspect [rcx+0x28] to confirm the non-zero-length heap/redirect path is taken."
+          },
+          {
+            "symbol": "tcpip!UdpConnectRedirect+0x1ed",
+            "address": "0x14007123d",
+            "why": "The call to AleInspectConnectRequest. At this point rsp+0x38 = &var_c8 ([rbp+0x40]) and rsp+0x40 = &var_148 ([rbp-0x40]) — the stack pointers being handed to the async inspection. r9 was loaded with the callback 0x140082aa0. Record the two stack addresses; they are the dangling pointers."
+          },
+          {
+            "symbol": "tcpip!UdpConnectRedirect+0x20a",
+            "address": "0x14007125a",
+            "why": "cmp esi,0x103 — eax/esi holds the AleInspectConnectRequest return. If esi==0x103 (STATUS_PENDING) the function returns without running the continuation and the stack frame is released while the callback is still queued. This is the branch that arms the use-after-return."
+          },
+          {
+            "symbol": "tcpip!UdpConnectRedirectCallback",
+            "address": "0x140082aa0",
+            "why": "The asynchronous completion callback. Break here and compare its context/sockaddr argument pointers against the &var_c8/&var_148 stack addresses captured at 0x14007123d; if they match a frame that has since returned, you are observing the dangling access."
+          }
+        ],
+        "watch": [
+          "rcx at entry = arg1 (redirect request); [rcx+0x20]=redirect data pointer (attacker-controlled), [rcx+0x28]=redirect data length (must be non-zero)",
+          "rdx at entry = arg2 (endpoint object); [rdx+0x18] flags, bit 0x20 selects the IPv6 V4MAPPED branch",
+          "Stack addresses of var_c8 = [rbp+0x40] and var_148 = [rbp-0x40] (rbp = rsp-0xe8 at prologue) — the two buffers whose pointers escape into the async callback",
+          "esi/eax == 0x103 (STATUS_PENDING) at 0x14007125a — the trigger discriminator",
+          "r9 == 0x140082aa0 at 0x140071200 — registered async callback"
+        ],
+        "key_offsets": [
+          "cmp qword [rsi+0x28], rax @ 0x1400710bd — arg1[5] length==0 gate (fall-through selects redirect/heap path)",
+          "call 0x1401c2400 @ 0x1400710fd — memcpy(&var_148, rdx, 0x1c/0x10) into the STACK sockaddr buffer",
+          "lea r9,[rel 0x140082aa0] @ 0x140071200 — loads the async completion callback pointer",
+          "lea rax,[rbp-0x40] @ 0x140071216 and lea rax,[rbp+0x40] @ 0x140071222 — the escaping stack pointers marshalled as inspection args",
+          "call 0x140071fb0 @ 0x14007123d — AleInspectConnectRequest",
+          "cmp esi,0x103 @ 0x14007125a / je 0x1400712cc — STATUS_PENDING early-return that abandons the stack frame"
+        ],
+        "trigger_setup": "On the UNPATCHED tcpip.sys, ensure Feature_TCPIP_Stack_Var_To_Heap_Fix is NOT applied (any build predating the fix, or the obsolete path). From a local process: create a UDP socket (AF_INET6 with the dual-stack/redirect flag path, or AF_INET), register a WFP connect-redirect callout/provider at FWPM_LAYER_ALE_CONNECT_REDIRECT_V4/V6 (or use a connection-redirect helper) that arbitrates the connect so classification defers, then issue connect()/WSAConnect() to an attacker-chosen remote endpoint with redirect data present (so [rcx+0x28] != 0). The deferral makes AleInspectConnectRequest return STATUS_PENDING, arming the callback against the returned stack frame.",
+        "expected_observation": "After UdpConnectRedirect returns 0x103, the queued UdpConnectRedirectCallback dereferences the old stack addresses. With kernel verifier / a groomed stack you observe a read/write to reclaimed stack memory: corrupted sockaddr contents delivered to the redirect result, an access to an address matching the earlier [rbp+0x40]/[rbp-0x40], or a bugcheck (e.g., DRIVER_OVERRAN_STACK_BUFFER / KERNEL_SECURITY_CHECK_FAILURE / access to reused stack) inside the tcpip async completion path. The patched build instead shows a heap context pointer (from ExAllocatePool2 in CreateUdpConnectRedirectCallbackContext) being used by the callback, with a refcount at *P_1 and ExFreePoolWithTag('Curt') on release.",
+        "notes": "Pool tag is 'Curt' (0x74727543). In the unpatched frame, rbp = rsp-0xe8; var_c8=[rbp+0x40], var_148=[rbp-0x40], spinlock handle var_198, and the heap redirect-data buffer is P[2]. Distinguish the vulnerable async path from the safe synchronous path by the 0x103 return at 0x14007125a: the sync path instead falls through to UdpConnectRedirectCallbackContinue (call 0x14008330c @ 0x140071285). The equivalent patched function is at 0x140086ce0 and is guarded by the feature check at its top (test against data_140237670 / Feature_TCPIP_Stack_Var_To_Heap_Fix)."
+      }
+    }
+  ],
+  "summary": "The patch fixes a kernel stack use-after-return in tcpip!UdpConnectRedirect (unpatched @ 0x140071050), the WFP ALE connect-redirect handler for UDP. The pre-patch code keeps the redirect-destination and local sockaddr buffers on its own stack (var_148 @ [rbp-0x40], var_c8 @ [rbp+0x40]) and passes their addresses into AleInspectConnectRequest, which can defer and register the async callback UdpConnectRedirectCallback (0x140082aa0). When inspection returns STATUS_PENDING (0x103) the function returns immediately (0x14007125a -> 0x1400712cc), leaving the callback holding pointers into the reclaimed stack frame — an out-of-bounds stale-memory read/write. The fix, gated on the new WIL flag Feature_TCPIP_Stack_Var_To_Heap_Fix, moves this state into a reference-counted heap context via CreateUdpConnectRedirectCallbackContext so it outlives the async completion. A PoC must: open a UDP socket, arrange a WFP connect-redirect callout/provider that defers classification, and issue a connect() with non-zero redirect data so the redirect path allocates the context, AleInspectConnectRequest returns 0x103, and the async callback later dereferences the freed stack buffers."
+}

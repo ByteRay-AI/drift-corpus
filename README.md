@@ -5,7 +5,7 @@
 
 **Drift Corpus** is the definitive, open-source repository of Windows Kernel patch diffs. 
 
-These artifacts are produced using **Drift Agent**, ByteRay's automatic reverse engineering engine and part of the Argus-Systems platform. With Drift, we have successfully mapped, analyzed, and annotated Windows kernel vulnerabilities patched by Microsoft. The collection currently covers entries from 2026 (240+), with additional entries being added over time.
+These artifacts are produced using **Drift Agent**, ByteRay's automatic reverse engineering engine and part of the Argus-Systems platform. With Drift, we have successfully mapped, analyzed, and annotated Windows kernel vulnerabilities patched by Microsoft. The collection currently covers entries from 2026 (248), with additional entries being added over time.
 
 
 ## 🚀 Community

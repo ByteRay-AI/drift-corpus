@@ -1,0 +1,196 @@
+{
+  "binaries": {
+    "title": "afd.sys - SAN/Winsock-Direct accept path: 16-bit integer-underflow OOB-write fix is STAGED behind feature flag g_Feature_990641464_61054032 (not delivered); the delivered changes are a SAN accept cancellation-race/UAF hardening (g_Feature_556471608 gate removed) and transport-open access-control scoping (g_Feature_1432032569 gate removed)",
+    "id_unpatched": "afd_unpatched.sys",
+    "id_patched": "afd_patched.sys",
+    "overall_similarity": 0.9846,
+    "matched": 1180,
+    "changed": 27,
+    "identical": 1153,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "AfdSanConnectHandler",
+      "similarity": 0.942,
+      "change_type": "security_relevant",
+      "delivery": "staged",
+      "key_changes": [
+        "Contains a 16-bit integer underflow: remaining length read as 32-bit dword (mov ebx,[r14+18h] @0x1C007FD26) and guarded 'cmp ebx,6/jb', but the length math subtracts 8 on the low 16 bits (sub bx,r12w @0x1C007FE58) -> 0xFFFE/0xFFFF for low-word 6/7",
+        "Signed clamp cmp r9d,eax / cmovge dx,bx @0x1C007FE62 (eax=(uint16)len-8=-2 signed) is always taken -> installs 0xFFFE as memmove size",
+        "OOB memmove(r13+8, src, 0xFFFE) @0x1C007FE71 (call memmove sub_1C0008740) into the AcceptEx output MDL mapping (MappedSystemVa) intended to hold ~6-7 bytes",
+        "PATCH IS STAGED: the safe path (if ((uint16)len<8) memset else bounded clamp) runs ONLY when EvaluateCurrentState(&g_Feature_990641464_61054032) is true; when the feature is disabled the patched binary executes the identical '-8' underflow via 'if (!EvaluateCurrentState(...)) { ... }'. g_Feature_990641464_61054032 has 0 refs in unpatched, 2 in patched. The >=6 outer guard is unchanged.",
+        "Also picks up the AfdCreateConnection_Old -> AfdCreateConnection gate removal (g_Feature_1432032569 removed binary-wide)"
+      ],
+      "security_relevant": true,
+      "security_notes": "Real 16-bit integer-underflow -> kernel OOB write, but the fix is STAGED behind a newly added feature flag with the vulnerable path retained (executes when the feature evaluates disabled). Not delivered binary-wide. Reachability requires the AFD Winsock-Direct/SAN provider path (legacy) and the 32-bit/WOW64 capture branch; low-privilege reachability is not proven by the diff.",
+      "assembly": "0x1C007FD26 mov ebx,[r14+18h]        ; remaining length (32-bit read)\n0x1C007FD2A cmp ebx,6 / jb              ; guard >= 6 (unchanged)\n0x1C007FD64 cmp byte [rdi+0ACh],0 / jz  ; branch selector == 0 -> -8 path\n0x1C007FE4E movzx eax,bx\n0x1C007FE51 lea r12d,[rcx+4]            ; r12d = 8\n0x1C007FE55 sub eax,r12d               ; signed int32: 6-8 = -2\n0x1C007FE58 sub bx,r12w                ; 16-bit UNDERFLOW -> 0xFFFE\n0x1C007FE5F cmp r9d,eax / 0x1C007FE62 cmovge dx,bx  ; always taken -> 0xFFFE\n0x1C007FE66 movzx r8d,dx / 0x1C007FE6A lea rcx,[r13+8] / 0x1C007FE6E mov rdx,r10 / 0x1C007FE71 call memmove  ; OOB write\n// patched: safe '(uint16)len<8 -> memset' path gated by g_Feature_990641464_61054032; feature-off path = identical underflow"
+    },
+    {
+      "name": "AfdSanAcceptCore",
+      "similarity": 0.93,
+      "change_type": "security_relevant",
+      "delivery": "staged",
+      "key_changes": [
+        "Same 16-bit underflow copy pattern as AfdSanConnectHandler, and the same staged fix behind g_Feature_990641464_61054032 (second of the flag's 2 patched references)",
+        "Original report mis-triaged this as cosmetic SAN-cluster churn"
+      ],
+      "security_relevant": true,
+      "security_notes": "Second site of the staged underflow OOB-write fix.",
+      "assembly": ""
+    },
+    {
+      "name": "AfdSanCancelAccept (with AfdSanAcquireContext, AfdSanRedirectRequest, AfdSanFastCompleteRequest, AfdSanInitEndpoint)",
+      "similarity": 0.93,
+      "change_type": "security_relevant",
+      "delivery": "delivered",
+      "key_changes": [
+        "g_Feature_556471608_60363862 gate removed binary-wide (7 refs unpatched -> 0 patched)",
+        "AfdSanCancelAccept now UNCONDITIONALLY sets the abort byte *(ctx+145)=1, unlinks all queued accept IRPs from the +112 list (with __fastfail(3) LIST_ENTRY integrity checks) and completes them STATUS_CANCELLED BEFORE tearing down (AfdDereferenceEndpointInline + memset(ctx+80,0,0x48)). Unpatched feature-OFF branch tore down first, without draining.",
+        "AfdSanAcquireContext/AfdSanRedirectRequest/AfdSanFastCompleteRequest now unconditionally refuse to queue new IRPs when the abort byte +145 is set; AfdSanInitEndpoint initializes it to 0"
+      ],
+      "security_relevant": true,
+      "security_notes": "DELIVERED use-after-free / cancellation-race hardening in the SAN accept path. The original report missed this entirely.",
+      "assembly": ""
+    },
+    {
+      "name": "AfdGetFreeConnection / AfdAddFreeConnection",
+      "similarity": 0.7583,
+      "change_type": "security_relevant",
+      "delivery": "delivered",
+      "key_changes": [
+        "g_Feature_1432032569_60360715 gate removed binary-wide (12 refs unpatched -> 0 patched)",
+        "Callers now unconditionally call the scoped AfdCreateConnection (MAXIMUM_ALLOWED 0x2000000 + Options 0x101 with IO_FORCE_ACCESS_CHECK for flagged endpoints) instead of AfdCreateConnection_Old (hardcoded DesiredAccess 0xC0100000, Options 0x100, no forced access check)",
+        "Backlog/push-to-free-list reorderings are De-Morgan-equivalent"
+      ],
+      "security_relevant": true,
+      "security_notes": "DELIVERED access-control scoping on the transport-file open; the unsafe AfdCreateConnection_Old open path is no longer referenced in the patched image.",
+      "assembly": ""
+    },
+    {
+      "name": "AfdSanFastTransferCtx",
+      "similarity": 0.9,
+      "change_type": "security_relevant",
+      "delivery": "delivered",
+      "key_changes": [
+        "g_Feature_2030245178_60366528 gate removed; the descriptor type-tag reject 'if ((desc[0] & 7) != 3) return STATUS_INVALID_PARAMETER' is now unconditional, ahead of AfdCalcBufferArrayByteLength + overflow check + pool copy"
+      ],
+      "security_relevant": true,
+      "security_notes": "DELIVERED input-validation hardening (low severity).",
+      "assembly": ""
+    },
+    {
+      "name": "AfdUnBindSocket / AfdPnpPower / AfdTLListenComplete / AfdStartListen",
+      "similarity": 0.9,
+      "change_type": "security_relevant",
+      "delivery": "staged",
+      "key_changes": [
+        "AfdUnBindSocket: g_Feature_2564028728_60975736 defers free of endpoint+224 + g_Feature_1596455227_60987273 drain spin-wait (while *(endpoint+248)!=0 _mm_pause()) before free",
+        "AfdPnpPower: g_Feature_2016143675_61232256 wraps AfdPassQueryDeviceRelation in AfdPreventUnbind/AfdReallowUnbind with a state re-check (TOCTOU/lifetime guard)",
+        "AfdTLListenComplete/AfdStartListen: g_Feature_2748579128_61057654 / g_Feature_4139760955_62124451 add AfdDrainListeningIrps on listen-failure paths"
+      ],
+      "security_relevant": true,
+      "security_notes": "STAGED lifetime/UAF-prevention behind new gates; old behavior retained when disabled. Not delivered.",
+      "assembly": ""
+    },
+    {
+      "name": "AfdCommonDisconnectEventHandler",
+      "similarity": 0.8557,
+      "change_type": "behavioral",
+      "delivery": "staged",
+      "key_changes": [
+        "IRP send/recv completion ordering on disconnect restructured behind g_Feature_3301964088_60976495",
+        "WPP trace GUID/id churn"
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-staged ordering refactor; no isolated attacker-triggerable memory-safety delta."
+    },
+    {
+      "name": "AfdSocketTransferBegin",
+      "similarity": 0.8667,
+      "change_type": "behavioral",
+      "delivery": "staged",
+      "key_changes": [
+        "WSADuplicateSocket / cross-process handle-transfer path; g_Feature_3014129978_60995570 reorganizes the endpoint-state gate before AfdPreventUnbind",
+        "Register renames otherwise"
+      ],
+      "security_relevant": false,
+      "security_notes": "Staged tightening of unbind-prevention checks; not a delivered memory-safety fix."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "delivery": "staged-not-delivered",
+      "function": "AfdSanConnectHandler / AfdSanAcceptCore",
+      "entry_point": "AFD Winsock-Direct/SAN accept/connect indication path (requires a registered SAN service provider; low-privilege reachability unproven), 32-bit/WOW64 capture branch (IoIs32bitProcess==TRUE)",
+      "call_chain": [
+        "user: SAN/Winsock-Direct accept flow -> AFD internal SAN connect/accept indication",
+        "afd!AfdSanConnectHandler (0x1C007F540) / afd!AfdSanAcceptCore (0x1C007E0B8)",
+        "16-bit sub bx,8 @0x1C007FE58 -> cmovge dx,bx @0x1C007FE62",
+        "OOB memmove @0x1C007FE71 (sub_1C0008740)"
+      ],
+      "vulnerability_class": "16-bit integer underflow leading to kernel MDL/pool out-of-bounds write (CWE-191 -> CWE-787)",
+      "description": "The remaining accept-buffer length is read as a 32-bit dword (mov ebx,[r14+18h] @0x1C007FD26, i.e. p_MajorFunction[6]) and guarded only 'cmp ebx,6/jb'. In the *(connection+0xAC)==0 branch the length math subtracts 8 on the low 16 bits (sub bx,8 @0x1C007FE58), so a length whose low word is 6 or 7 wraps to 0xFFFE/0xFFFF. The intended min() clamp 'cmp r9d,eax / cmovge dx,bx' @0x1C007FE62 fails because eax=(uint16)len-8 is a signed -2 while r9d=attacker_len+4>=4, so 4>=-2 is always true and the wrapped 0xFFFE is installed as the memmove size. memmove(r13+8, src, 0xFFFE) @0x1C007FE71 then writes ~65534 bytes into the AcceptEx output MDL mapping (r13=MappedSystemVa+p_MajorFunction[2]) intended to receive ~6-7 bytes. THE FIX IS STAGED: in the patched build the safe path (if ((uint16)len<8) memset(dst,0,len) else bounded clamp) executes only when EvaluateCurrentState(&g_Feature_990641464_61054032) returns true; when the feature is disabled the patched binary runs the identical '-8' underflow. g_Feature_990641464_61054032 has 0 references in the unpatched image and 2 in the patched image (AfdSanConnectHandler, AfdSanAcceptCore). The >=6 outer guard is unchanged. Because the vulnerable path is retained behind the gate, this is not a delivered binary-wide fix.",
+      "trigger_conditions": "Reach the SAN accept/connect indication (magic *(v8)==0xAFD and *(v8+40)==IoGetCurrentProcess()) via a Winsock-Direct/SAN provider, on the 32-bit/WOW64 capture branch, with input length *(arg2+0x10) in [0x20,0xFFFFFFF3]; drive the connection IRP's remaining-length field p_MajorFunction[6] ([r14+0x18]) low word to 6 or 7 and take the *(connection+0xAC)==0 branch. On the unpatched build (or a patched build with g_Feature_990641464_61054032 disabled) sub bx,8 wraps to 0xFFFE and the memmove copies ~65534 bytes.",
+      "primitive": "Linear kernel out-of-bounds write of a FIXED size (0xFFFE/0xFFFF, not attacker-chosen) with partially attacker-influenced contents (captured connect data). The diff does not evidence pointer control, an info leak, or any specific escalation.",
+      "evidence": "0x1C007FD26 mov ebx,[r14+18h]\n0x1C007FD2A cmp ebx,6 / jb\n0x1C007FE55 sub eax,r12d   (=-2 signed)\n0x1C007FE58 sub bx,r12w    (16-bit underflow -> 0xFFFE)\n0x1C007FE62 cmovge dx,bx   (always taken)\n0x1C007FE71 call memmove   (size r8d=0xFFFE, OOB write)\n// patched safe path gated by EvaluateCurrentState(&g_Feature_990641464_61054032); feature-off path retains the underflow",
+      "notes": "STAGED, NOT DELIVERED. Reachability of the SAN path from low privilege and the runtime default state of g_Feature_990641464_61054032 are unproven from the binary. Severity reflects the raw OOB-write primitive; a patched-but-feature-disabled machine remains exposed."
+    },
+    {
+      "severity": "medium",
+      "delivery": "delivered",
+      "function": "AfdSanCancelAccept",
+      "entry_point": "IRP cancellation on a queued SAN accept (AfdSanCancelAccept cancel routine), racing SAN endpoint-context teardown",
+      "call_chain": [
+        "user/system: cancel of a pending SAN accept IRP",
+        "afd!AfdSanCancelAccept (0x1C007F030)",
+        "endpoint-context teardown (AfdDereferenceEndpointInline + memset(ctx+80,0,0x48))"
+      ],
+      "vulnerability_class": "use-after-free / cancellation race (CWE-416)",
+      "description": "In the unpatched build the SAN accept cancellation path was gated by g_Feature_556471608_60363862; when the feature was disabled, AfdSanCancelAccept tore down the endpoint context (AfdDereferenceEndpointInline(*(ctx+80)); memset(ctx+80,0,0x48); *(ctx+8)=0; ...) WITHOUT first draining the accept IRPs queued on the context list at +112, allowing a cancel racing in-flight queued accepts to reference/complete a concurrently dereferenced-and-zeroed context. The patch removes g_Feature_556471608_60363862 binary-wide (7 refs -> 0) and makes the abort-and-drain protocol unconditional: set abort byte *(ctx+145)=1, unlink every queued IRP from +112 (with __fastfail(3) integrity checks), complete each STATUS_CANCELLED, then tear down. Sibling handlers (AfdSanAcquireContext, AfdSanRedirectRequest, AfdSanFastCompleteRequest) now unconditionally refuse to queue onto a context whose +145 abort byte is set.",
+      "trigger_conditions": "Cancel a pending SAN accept IRP while queued accept IRPs are in flight on the same endpoint context; requires the Winsock-Direct/SAN provider path (same legacy reachability caveat as the underflow) and a precise cancel/teardown race.",
+      "primitive": "Kernel use-after-free / cancellation race on the SAN endpoint context.",
+      "evidence": "unpatched AfdSanCancelAccept @0x1C007F030: 'if (EvaluateCurrentState(&g_Feature_556471608_60363862)) { *(ctx+145)=1; drain +112 } else { AfdDereferenceEndpointInline(*(ctx+80)); memset(ctx+80,0,0x48); ... }'\npatched @0x1C007E0C0: gate gone; '*(ctx+145)=1; drain +112' then complete-STATUS_CANCELLED then teardown, all unconditional",
+      "notes": "DELIVERED fix (gate removed -> safe behavior binary-wide). Missed by the original report."
+    },
+    {
+      "severity": "low",
+      "delivery": "delivered",
+      "function": "AfdCreateConnection_Old (call sites in AfdGetFreeConnection / AfdAddFreeConnection / AfdSanConnectHandler and others)",
+      "entry_point": "Connection free-list fill / accept-reuse paths that create a transport connection",
+      "call_chain": [
+        "user: AcceptEx/listen/connect on an AFD socket",
+        "afd!AfdGetFreeConnection (0x1C005572C) / afd!AfdAddFreeConnection (0x1C003F37C)",
+        "unpatched (feature off): afd!AfdCreateConnection_Old (0x1C0007DE4) -> IoCreateFile(0xC0100000, Options 0x100)"
+      ],
+      "vulnerability_class": "improper authorization scoping on transport-file open (CWE-862)",
+      "description": "AfdCreateConnection_Old opens the transport file with hardcoded DesiredAccess=0xC0100000 (GENERIC_READ|GENERIC_WRITE|SYNCHRONIZE) and Options=0x100 (IO_NO_PARAMETER_CHECKING only, no IO_FORCE_ACCESS_CHECK). Which of AfdCreateConnection (scoped) vs AfdCreateConnection_Old (unscoped) was used was chosen at runtime by EvaluateCurrentState(&g_Feature_1432032569_60360715). The patch removes that gate binary-wide (12 refs -> 0); all callers unconditionally use the scoped AfdCreateConnection, which for flagged endpoints ((*(a1+0x10)&0x10000) or (*(a1+8)&0x8000000)) uses DesiredAccess=0x2000000 (MAXIMUM_ALLOWED) and Options=0x101 (adds IO_FORCE_ACCESS_CHECK). The unsafe _Old open is no longer referenced in the patched image; the scoped AfdCreateConnection is byte-identical across builds.",
+      "trigger_conditions": "Unpatched driver with g_Feature_1432032569_60360715 disabled, on a connection-create path for a flagged endpoint class; the transport is opened with fixed full access and no forced access check.",
+      "primitive": "Access-control scoping / defense-in-depth on a kernel-initiated open; no memory-corruption primitive.",
+      "evidence": "unpatched AfdCreateConnection_Old @0x1C0007DE4: IoCreateFile((PHANDLE)(Connection+168), 0xC0100000, ..., /*Options*/0x100)\nscoped AfdCreateConnection (byte-identical both builds): Options=0x101 and DesiredAccess=0x2000000 for flagged endpoints",
+      "notes": "DELIVERED (gate removed). Low severity, defense-in-depth."
+    },
+    {
+      "severity": "low",
+      "delivery": "delivered",
+      "function": "AfdSanFastTransferCtx",
+      "entry_point": "SAN fast-transfer context path",
+      "call_chain": [
+        "afd!AfdSanFastTransferCtx (0x1C00465B0)"
+      ],
+      "vulnerability_class": "input validation graduated to unconditional (CWE-20)",
+      "description": "Unpatched gated the descriptor type-tag reject behind g_Feature_2030245178_60366528: 'if (EvaluateCurrentState(...) && (desc[0] & 7) != 3) return STATUS_INVALID_PARAMETER'. The patch removes the gate; the reject is unconditional, ahead of AfdCalcBufferArrayByteLength + an overflow check + a pool copy.",
+      "trigger_conditions": "Supply a descriptor whose low-3-bit type tag != 3 on the SAN fast-transfer path.",
+      "primitive": "Input validation; no direct memory-corruption primitive evidenced.",
+      "evidence": "unpatched AfdSanFastTransferCtx: 'if (EvaluateCurrentState(&g_Feature_2030245178_60366528) && ((desc[0]) & 7) != 3) return -1073741811;' -> patched: unconditional",
+      "notes": "DELIVERED input-validation hardening; low severity."
+    }
+  ],
+  "summary": "This afd.sys patch is a WIL/velocity feature-flag reshuffle. It does NOT deliver a fix for the headline memory-corruption bug. The 16-bit integer-underflow out-of-bounds write in the Winsock-Direct/SAN accept handlers AfdSanConnectHandler and AfdSanAcceptCore is real (remaining length read 32-bit and guarded >=6, but the -8 subtraction runs on the low 16 bits at 0x1C007FE58 so low-word 6/7 wraps to 0xFFFE; an always-true signed clamp cmovge @0x1C007FE62 installs it as the memmove size @0x1C007FE71), but the corrected copy path is gated behind a newly added feature flag g_Feature_990641464_61054032 (0 refs unpatched, 2 patched) and the vulnerable -8 path is RETAINED and still executes when that feature evaluates disabled -- a staged fix, not a delivered one. What the patch DOES deliver, by removing old runtime feature gates so the safe behavior becomes unconditional binary-wide: (1) a SAN accept cancellation-race/use-after-free hardening -- g_Feature_556471608_60363862 removed (7->0), AfdSanCancelAccept now unconditionally drains and cancels queued accept IRPs before tearing down the endpoint context (the original report missed this entirely); (2) transport-open access-control scoping -- g_Feature_1432032569_60360715 removed (12->0), callers now use the scoped AfdCreateConnection (MAXIMUM_ALLOWED + IO_FORCE_ACCESS_CHECK for flagged endpoints) instead of the unsafe AfdCreateConnection_Old (0xC0100000, no forced access check); (3) unconditional descriptor tag validation in AfdSanFastTransferCtx (g_Feature_2030245178 removed). Additional lifetime/UAF-prevention changes (AfdUnBindSocket deferred-free+drain, AfdPnpPower prevent-unbind, listen-IRP drain in AfdTLListenComplete/AfdStartListen) are staged behind new gates, not delivered. The original report's fabricated exploitation narrative (pool grooming/spray, KASLR defeat, token theft, SMEP/CFG/HVCI bypass, data-only LPE-to-SYSTEM) is removed as unsupported by the diff. Reachability of the SAN accept/connect path from low privilege is a legacy Winsock-Direct requirement and is not proven by the diff, and the runtime default state of the staged features is not encoded in the binary."
+}

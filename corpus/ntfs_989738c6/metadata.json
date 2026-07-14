@@ -1,0 +1,16 @@
+{
+  "binary": "ntfs.sys",
+  "kb": "KB5095091",
+  "prev_kb": "KB5089570",
+  "windows_version": "11-26H1",
+  "release_date": "2026-06-23",
+  "patched": {
+    "version": "10.0.28000.2340",
+    "sha256_prefix": "656d57e1"
+  },
+  "prev": {
+    "version": "10.0.28000.2179",
+    "sha256_prefix": "989738c6"
+  },
+  "note": "KB recovered via WinBIndex sha256-prefix lookup after the binaries and original metadata.json were deleted; 'kb' is the patched (fix) build."
+}

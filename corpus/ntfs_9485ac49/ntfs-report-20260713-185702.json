@@ -1,0 +1,197 @@
+{
+  "binaries": {
+    "title": "ntfs.sys - Negative-value input validation in three NtSetInformationFile handlers (NtfsSet{Position,Allocation,EndOfFile}Info) promoted from Velocity-feature-gated (g_Feature_2614832441 / EvaluateCurrentState) to unconditional; delivered defense-in-depth hardening, no demonstrated corruption/EoP",
+    "id_unpatched": "ntfs_unpatched.sys",
+    "id_patched": "ntfs_patched.sys",
+    "overall_similarity": 0.9929,
+    "matched": 4046,
+    "changed": 3,
+    "identical": 4043,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "NtfsSetPositionInfo",
+      "similarity": 0.6821,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched (@0x1C01D2D10): `v2 = *(a2+0x18); if (EvaluateCurrentState() && *v2 < 0) reject; else { *(a1+0x68) = *v2; return 0; }` — the non-negative check on the new CurrentByteOffset runs only when the Velocity gate EvaluateCurrentState() returns true.",
+        "Patched (@0x1C01D2CE0): EvaluateCurrentState() removed; validation is unconditional `if (*v2 >= 0) { store; return 0; } else return 0xC000000D`.",
+        "Effect: a negative CurrentByteOffset could be written to FileObject+0x68 in the pre-patch build only when the feature was explicitly Disabled (gate false); it is now always rejected."
+      ],
+      "security_relevant": true,
+      "security_notes": "a2+0x18 -> user FILE_POSITION_INFORMATION; *v2 is the attacker-controlled 64-bit CurrentByteOffset. Pre-patch the negative-value rejection was active by default (gate returns cachedstate!=1) and bypassed only if g_Feature_2614832441 was Disabled. Any impact requires a later position-relative ReadFile/WriteFile to consume the stored offset; no such impact is demonstrated in the binary. Defense-in-depth input validation.",
+      "assembly_diff": "; UNPATCHED NtfsSetPositionInfo @ 0x1C01D2D10 (verbatim from .asm)\nmov     [rsp+arg_0], rbx\npush    rdi\nsub     rsp, 20h\nmov     rbx, [rdx+18h]            ; user FILE_POSITION_INFORMATION\nmov     rdi, rcx\ncall    EvaluateCurrentState      ; 0x1C00303D0 Velocity gate\ntest    eax, eax\njz      loc_1C01D2D52             ; gate FALSE -> store (skip sign check)\ncmp     qword ptr [rbx], 0        ; sign check only when gate TRUE\njge     loc_1C01D2D52             ; >=0 -> store\nmov     cl, cs:NtfsStatusDebugFlags\nmov     ebx, 0C000000Dh\n... reject (trace 0xF366A) ...\nloc_1C01D2D52:\nmov     rax, [rbx]\nmov     [rdi+68h], rax            ; store CurrentByteOffset (shared target of jz AND jge)\nxor     eax, eax\n; PATCHED @ 0x1C01D2CE0: EvaluateCurrentState removed; `mov rdx,[rax]; test rdx,rdx; jns store` unconditional (reject trace 0xF3668). NOTE: the earlier report mis-ordered this listing (store shown on the jz fall-through); the store is at the shared loc_1C01D2D52 target."
+    },
+    {
+      "name": "NtfsSetAllocationInfo",
+      "similarity": 0.975,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched (@0x1C00DFA10): `v14 = EvaluateCurrentState(); if (v14) { if (v13 > *(Vcb+0x1E18) || v13 < 0) reject; } else if (v13 > *(Vcb+0x1E18)) reject;` — in the gate-false branch only the upper bound (max file size) is checked; the `v13 < 0` test is omitted.",
+        "Patched (@0x1C00DFA10): `if (v14 > *(*(a4+0xB0)+0x1E18) || v14 < 0) reject;` — single unconditional check applying both the max-size and the negative test; EvaluateCurrentState() removed.",
+        "v13/v14 = **(a3+0x18) = attacker-controlled AllocationSize from FILE_ALLOCATION_INFORMATION."
+      ],
+      "security_relevant": true,
+      "security_notes": "When the feature was Disabled (gate false), a negative AllocationSize passed (negative is not > positive max, and the <0 test was skipped) and routed to the shrink path NtfsPrepareToShrinkFileSize(a1, Scb, a4, v13). The negative-value rejection was on by default; the patch makes it unconditional and retires the feature. No downstream out-of-bounds/pool-corrupting write is demonstrated in the disassembly; impact stands as a negative size entering NTFS allocation bookkeeping under a non-default configuration.",
+      "assembly_diff": "; UNPATCHED NtfsSetAllocationInfo @ 0x1C00DFA10 (guard region):\n;   v13 = **(a3+0x18);                         // user AllocationSize\n;   v14 = EvaluateCurrentState();              // call 0x1C00303D0 Velocity gate\n;   v16 = *(a4+0xB0);                          // Vcb\n;   if (v14) { if (v13 > *(v16+0x1E18) || v13 < 0) reject; }   // full check (trace 0xF379F)\n;   else if (v13 > *(v16+0x1E18)) reject;      // gate FALSE: upper bound only (trace 0xF37A6)\n; PATCHED @ 0x1C00DFA10: EvaluateCurrentState removed; single guard `v14 > *(*(a4+0xB0)+0x1E18) || v14 < 0` -> reject (trace 0xF379A)."
+    },
+    {
+      "name": "NtfsSetEndOfFileInfo",
+      "similarity": 0.99,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched (@0x1C011B620): `v12 = **(a3+0x18); if (EvaluateCurrentState() && v12 < 0) reject;` — negative EndOfFile rejected only when the gate returns true (the && short-circuits when gate false).",
+        "Patched (@0x1C011B600): `if (v12 < 0) reject;` — negative EndOfFile always rejected; EvaluateCurrentState() removed.",
+        "v12 = attacker-controlled EndOfFile (FileSize) from FILE_END_OF_FILE_INFORMATION."
+      ],
+      "security_relevant": true,
+      "security_notes": "When the feature was Disabled, a negative EndOfFile bypassed the sign check and entered NTFS size handling (Scb size / valid-data-length). The rejection was on by default; the patch makes it unconditional. Downstream size/valid-data-length confusion is plausible but not demonstrated in the binary. Same root cause as the other two handlers.",
+      "assembly_diff": "; UNPATCHED NtfsSetEndOfFileInfo @ 0x1C011B620 (guard region):\n;   v12 = **(a3+0x18);\n;   call 0x1C00303D0 (EvaluateCurrentState); test eax,eax; je <accept>   // gate false skips sign check\n;   test v12,v12; jns <accept>                                          // reached only when gate true\n;   <reject>: STATUS_INVALID_PARAMETER 0xC000000D (trace 0xF3AD5)\n; PATCHED @ 0x1C011B600: EvaluateCurrentState removed; `test v12,v12; js <reject>` unconditional (trace 0xF3AC6)."
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "NtfsSetAllocationInfo",
+      "entry_point": "NtSetInformationFile(FileHandle, ..., FileInformationClass = FileAllocationInformation (19), InputBuffer=FILE_ALLOCATION_INFORMATION{ LONGLONG AllocationSize })",
+      "call_chain": [
+        "NtSetInformationFile (syscall)",
+        "NtfsFsdSetInformation (IRP_MJ_SET_INFORMATION dispatch)",
+        "NtfsCommonSetInformation (switch on FileInformationClass)",
+        "NtfsSetAllocationInfo @ 0x1C00DFA10",
+        "EvaluateCurrentState @ 0x1C00303D0 (Velocity gate) Disabled -> gate false",
+        "NtfsPrepareToShrinkFileSize with negative size (no demonstrated corrupting write)"
+      ],
+      "vulnerability_class": "Missing/feature-gated input validation of a signed 64-bit value (CWE-20), now unconditional",
+      "description": "In the pre-patch build the rejection of a negative new AllocationSize was performed only when EvaluateCurrentState() returned true. That helper is a WIL/Velocity gate (EvaluateFeature(&g_Feature_2614832441_60270648...) returning cachedstate != 1), so the rejection was active by default and skipped only if the feature was explicitly Disabled. In the gate-false branch only the upper bound (AllocationSize > *(Vcb+0x1E18)) was checked; a negative 64-bit AllocationSize is not greater than the positive max, so with the omitted < 0 test it was accepted and routed to NtfsPrepareToShrinkFileSize. The patch removes the gate and always applies `size > max || size < 0`, and the g_Feature_2614832441 descriptor is retired from the image. No out-of-bounds/pool-corrupting write derived from the negative value is demonstrated in the disassembly.",
+      "trigger_conditions": "Requires the g_Feature_2614832441 feature in the (non-default) Disabled state so EvaluateCurrentState() returns false. Then open a handle to a file on an NTFS volume with write/append access and issue NtSetInformationFile with FileAllocationInformation and AllocationSize = a negative LARGE_INTEGER (e.g. 0x8000000000000000). Under default settings the pre-patch build already rejects this.",
+      "primitive": "Attacker-controlled negative AllocationSize accepted into NTFS allocation bookkeeping (shrink path) under a non-default feature-disabled configuration. No memory-corruption or privilege-escalation primitive is demonstrated in the binary. Defense-in-depth input validation.",
+      "evidence": "v13 = **(_QWORD **)(a3 + 24);            // user AllocationSize\nv14 = EvaluateCurrentState();            // Velocity gate\nv16 = *(_QWORD *)(a4 + 176);             // Vcb\nif ( v14 ) {\n    if ( v13 > *(_QWORD *)(v16 + 7704) || v13 < 0 )   // full check, gate true\n        return 0xC000000D;\n}\nelse if ( v13 > *(_QWORD *)(v16 + 7704) )              // gate false: upper bound only\n    return 0xC000000D;\n// negative v13 -> NtfsPrepareToShrinkFileSize(a1, Scb, a4, v13);\n// PATCHED: if ( v14 > *(*(a4+0xB0)+0x1E18) || v14 < 0 ) return 0xC000000D;  // unconditional",
+      "assembly": "; UNPATCHED @ 0x1C00DFA10: call EvaluateCurrentState; test eax,eax; gate-true does cmp v13,[Vcb+0x1E18] AND the <0 test; gate-false does upper-bound compare only (reject trace 0xF37A6). PATCHED @ 0x1C00DFA10: EvaluateCurrentState removed; single guard `> max || < 0` (reject trace 0xF379A).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ntfs!NtfsSetAllocationInfo",
+            "address": "0x1C00DFA10",
+            "why": "Entry; new AllocationSize = **(a3+0x18). Inspect the 64-bit value for the sign bit."
+          },
+          {
+            "symbol": "ntfs!EvaluateCurrentState",
+            "address": "0x1C00303D0",
+            "why": "Velocity gate EvaluateFeature(&g_Feature_2614832441_60270648...); returns cachedstate != 1. EAX==0 (feature Disabled) selects the branch that skips the < 0 test. Note this is a non-default state."
+          }
+        ],
+        "watch": [
+          "v13 = signed 64-bit AllocationSize (**(a3+0x18))",
+          "eax after call 0x1C00303D0 (EvaluateCurrentState) — 0 only when the feature is Disabled",
+          "[Vcb+0x1E18] where Vcb = *(a4+0xB0) — the max-file-size upper bound"
+        ],
+        "key_offsets": [
+          "call 0x1C00303D0 = the removed Velocity gate (EvaluateCurrentState)",
+          "gate-false branch checks ONLY `v13 > [Vcb+0x1E18]` (missing `v13 < 0`)",
+          "unpatched gate-false reject block trace id 0xF37A6; unpatched gate-true reject 0xF379F",
+          "patched single guard reject block trace id 0xF379A"
+        ],
+        "trigger_setup": "Set g_Feature_2614832441 to Disabled (non-default), then CreateFile on an NTFS file with write access and call NtSetInformationFile(h, &iosb, &alloc, sizeof(alloc), FileAllocationInformation) with a negative AllocationSize.",
+        "expected_observation": "With the feature Disabled, the unpatched call returns STATUS_SUCCESS (0) for a negative AllocationSize; the patched call (and the default-configured unpatched call) returns STATUS_INVALID_PARAMETER (0xC000000D). No corrupting write is demonstrated.",
+        "notes": "arg4 = Scb (Vcb at Scb+0xB0, max size at Vcb+0x1E18). The three handlers shared EvaluateCurrentState @ 0x1C00303D0; it is removed in the patched image."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "NtfsSetEndOfFileInfo",
+      "entry_point": "NtSetInformationFile(FileHandle, ..., FileInformationClass = FileEndOfFileInformation (20), InputBuffer=FILE_END_OF_FILE_INFORMATION{ LONGLONG EndOfFile })",
+      "call_chain": [
+        "NtSetInformationFile (syscall)",
+        "NtfsFsdSetInformation (IRP_MJ_SET_INFORMATION dispatch)",
+        "NtfsCommonSetInformation (switch on FileInformationClass)",
+        "NtfsSetEndOfFileInfo @ 0x1C011B620",
+        "EvaluateCurrentState @ 0x1C00303D0 (Velocity gate) Disabled -> gate false"
+      ],
+      "vulnerability_class": "Missing/feature-gated input validation of a signed 64-bit value (CWE-20), now unconditional",
+      "description": "Pre-patch, `if (EvaluateCurrentState() && v12 < 0) reject;` — the negative EndOfFile (new FileSize) was rejected only when the Velocity gate returned true (active by default; skipped only when the feature was Disabled). When the gate was false the negative FileSize was accepted into NTFS size handling. The patch changes this to the unconditional `if (v12 < 0) reject;` and retires the feature.",
+      "trigger_conditions": "g_Feature_2614832441 in the non-default Disabled state. Handle to an NTFS file with write access; NtSetInformationFile with FileEndOfFileInformation and EndOfFile = a negative LARGE_INTEGER.",
+      "primitive": "Attacker-controlled negative EndOfFile/FileSize accepted into NTFS size state under a non-default feature-disabled configuration. Downstream size/valid-data-length confusion is plausible but not demonstrated; no OOB/EoP primitive is shown. Defense-in-depth input validation.",
+      "evidence": "// UNPATCHED:\nv12 = **(_QWORD **)(a3 + 24);\nif ( EvaluateCurrentState() && v12 < 0 )   // rejected only when gate true\n    return 0xC000000D;\n// PATCHED:\nif ( v12 < 0 )\n    return 0xC000000D;                      // always",
+      "assembly": "; UNPATCHED @ 0x1C011B620: call 0x1C00303D0 (EvaluateCurrentState); test eax,eax; je <accept> (gate false skips sign check); test v12,v12; jns <accept>; <reject> trace 0xF3AD5. PATCHED @ 0x1C011B600: EvaluateCurrentState removed; `test v12,v12; js <reject>` unconditional (trace 0xF3AC6).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ntfs!NtfsSetEndOfFileInfo",
+            "address": "0x1C011B620",
+            "why": "Entry; v12 = **(a3+0x18) holds the attacker-controlled new EndOfFile. Watch whether the < 0 test is reached (skipped when EvaluateCurrentState() returns false)."
+          },
+          {
+            "symbol": "ntfs!EvaluateCurrentState",
+            "address": "0x1C00303D0",
+            "why": "Velocity gate; EAX==0 (feature Disabled, non-default) short-circuits the && and skips the negative-EndOfFile rejection."
+          }
+        ],
+        "watch": [
+          "v12 = signed 64-bit EndOfFile (**(a3+0x18))",
+          "eax after call 0x1C00303D0 — 0 only when the feature is Disabled"
+        ],
+        "key_offsets": [
+          "call 0x1C00303D0 = removed Velocity gate",
+          "`EvaluateCurrentState() && v12 < 0` = conditional sign check; patched tests v12 sign unconditionally (reject trace 0xF3AC6, was 0xF3AD5)"
+        ],
+        "trigger_setup": "Set g_Feature_2614832441 Disabled; CreateFile on an NTFS file with FILE_WRITE_DATA; NtSetInformationFile(h,&iosb,&eof,sizeof(eof),FileEndOfFileInformation) with a negative EndOfFile.",
+        "expected_observation": "With the feature Disabled, unpatched returns STATUS_SUCCESS for a negative EndOfFile; patched (and default-configured unpatched) returns 0xC000000D. No corrupting write is demonstrated.",
+        "notes": "Same shared gate at 0x1C00303D0. FileInformationClass 20 = FileEndOfFileInformation."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "NtfsSetPositionInfo",
+      "entry_point": "NtSetInformationFile(FileHandle, ..., FileInformationClass = FilePositionInformation (14), InputBuffer=FILE_POSITION_INFORMATION{ LONGLONG CurrentByteOffset })",
+      "call_chain": [
+        "NtSetInformationFile (syscall)",
+        "NtfsFsdSetInformation (IRP_MJ_SET_INFORMATION dispatch)",
+        "NtfsCommonSetInformation (switch on FileInformationClass)",
+        "NtfsSetPositionInfo @ 0x1C01D2D10",
+        "EvaluateCurrentState @ 0x1C00303D0 (Velocity gate) Disabled -> gate false"
+      ],
+      "vulnerability_class": "Missing/feature-gated input validation of a signed 64-bit value (CWE-20), now unconditional",
+      "description": "Pre-patch, `v2 = *(a2+0x18); if (EvaluateCurrentState() && *v2 < 0) reject; else { *(a1+0x68) = *v2; return 0; }` — when the Velocity gate returned false (feature Disabled, non-default) the non-negative check was short-circuited and a negative CurrentByteOffset was stored at FileObject+0x68. The patch removes EvaluateCurrentState() and makes the >= 0 check unconditional.",
+      "trigger_conditions": "g_Feature_2614832441 in the non-default Disabled state. Any handle to an NTFS file; NtSetInformationFile with FilePositionInformation and CurrentByteOffset = a negative LARGE_INTEGER.",
+      "primitive": "Negative FileObject->CurrentByteOffset stored under a non-default feature-disabled configuration. Any effect requires a subsequent position-relative ReadFile/WriteFile to consume the offset; not demonstrated in the binary. Lowest-impact of the three; defense-in-depth input validation.",
+      "evidence": "// UNPATCHED @ 0x1C01D2D10:\nv2 = *(_QWORD **)(a2 + 24);              // user FILE_POSITION_INFORMATION\nif ( EvaluateCurrentState() && (__int64)*v2 < 0 )\n    return 0xC000000D;                    // reject (trace 0xF366A)\nelse {\n    *(_QWORD *)(a1 + 104) = *v2;          // store CurrentByteOffset (FileObject+0x68)\n    return 0;\n}\n// PATCHED @ 0x1C01D2CE0:\nif ( (__int64)*v2 >= 0 ) { *(_QWORD *)(a1 + 104) = *v2; return 0; }\nelse return 0xC000000D;                   // reject (trace 0xF3668), unconditional",
+      "assembly": "; UNPATCHED @ 0x1C01D2D10 (verbatim): call EvaluateCurrentState; test eax,eax; jz loc_1C01D2D52; cmp qword ptr [rbx],0; jge loc_1C01D2D52; <reject trace 0xF366A>; loc_1C01D2D52: mov rax,[rbx]; mov [rdi+68h],rax; xor eax,eax. The store is the shared target of BOTH jz and jge. PATCHED @ 0x1C01D2CE0: mov rdx,[rax]; test rdx,rdx; jns store (unconditional), else reject (trace 0xF3668). NOTE: the store must be shown at loc_1C01D2D52, not on the jz fall-through.",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ntfs!NtfsSetPositionInfo",
+            "address": "0x1C01D2D10",
+            "why": "Entry of the FilePositionInformation handler. rdx+0x18 -> user FILE_POSITION_INFORMATION; qword[rbx] is the attacker CurrentByteOffset; rcx (arg1)+0x68 is the store target."
+          },
+          {
+            "symbol": "ntfs!EvaluateCurrentState",
+            "address": "0x1C00303D0",
+            "why": "Velocity gate; when it returns 0 (feature Disabled, non-default) the jz jumps to the store, skipping cmp qword[rbx],0 / jge."
+          }
+        ],
+        "watch": [
+          "rbx = pointer to user CurrentByteOffset; qword[rbx] is the signed value",
+          "eax after call 0x1C00303D0 — 0 only when the feature is Disabled",
+          "[rdi+0x68] = FileObject->CurrentByteOffset after the store"
+        ],
+        "key_offsets": [
+          "call 0x1C00303D0 = removed Velocity gate",
+          "jz loc_1C01D2D52 after test eax,eax = gate-false path to the store (skips the sign check)",
+          "cmp qword [rbx],0 / jge loc_1C01D2D52 = the sign check, reached only when gate true",
+          "loc_1C01D2D52: mov [rdi+68h], rax = the store (shared target of jz AND jge)"
+        ],
+        "trigger_setup": "Set g_Feature_2614832441 Disabled; CreateFile on an NTFS file; NtSetInformationFile(h,&iosb,&pos,sizeof(pos),FilePositionInformation) with a negative CurrentByteOffset, then a position-relative ReadFile/WriteFile.",
+        "expected_observation": "With the feature Disabled, unpatched stores the negative value into FileObject+0x68 and returns STATUS_SUCCESS; patched (and default-configured unpatched) returns 0xC000000D. No fault/OOB is demonstrated.",
+        "notes": "FileInformationClass 14 = FilePositionInformation. The earlier report's verbatim asm mis-ordered the store; see key_offsets."
+      }
+    }
+  ],
+  "summary": "The patch to ntfs.sys touches exactly three NtSetInformationFile handlers - NtfsSetPositionInfo (FilePositionInformation, class 14), NtfsSetAllocationInfo (FileAllocationInformation, class 19), and NtfsSetEndOfFileInfo (FileEndOfFileInformation, class 20) - and in each it removes a Windows Velocity feature gate (EvaluateCurrentState @ 0x1C00303D0, which is EvaluateFeature(&g_Feature_2614832441_60270648...) returning cachedstate != 1) that made the rejection of an attacker-supplied negative 64-bit value conditional. The rejection is now unconditional, and both the EvaluateCurrentState helper and the g_Feature_2614832441 descriptor are fully retired from the patched image (a delivered fix / retired kill-switch, not staging retained). Importantly, the gate returns true (validation active, negatives rejected) unless the feature is explicitly Disabled, so the accept-negatives behavior existed only under a non-default configuration that an unprivileged local caller does not control. The proven primitive is attacker-controlled negative CurrentByteOffset / AllocationSize / EndOfFile entering NTFS position/size/allocation bookkeeping under that non-default state; no out-of-bounds access, pool corruption, information disclosure, or privilege escalation is demonstrated in the disassembly. The original report's HIGH/HIGH/MEDIUM ratings and its pool-corruption -> LPE exploit chain (with KASLR/pool-spray/token-steal/SMEP/HVCI/CFG narrative) are unsubstantiated and have been removed; corrected severity is Low (defense-in-depth input validation) with classification over-claimed-but-real."
+}

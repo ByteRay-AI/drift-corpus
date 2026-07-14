@@ -1,0 +1,185 @@
+{
+  "binaries": {
+    "title": "ntfs.sys - TxfSatisfyFlushForTopsRange RTL_BITMAP pool allocation rounded up to ULONG boundary (feature-staged; latent ~2-byte OOB bitmap access, CWE-131)",
+    "id_unpatched": "ntfs_unpatched.sys",
+    "id_patched": "ntfs_patched.sys",
+    "overall_similarity": 0.9927,
+    "matched": 4417,
+    "changed": 9,
+    "identical": 4408,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "TxfSatisfyFlushForTopsRange",
+      "similarity": 0.9586,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Pool allocation size for the TOPS RTL_BITMAP structure changed from `(r14_3>>3)+0x58` (unpatched: `mov eax,r14d; shr eax,0x3; add ax,0x58; movzx eax,ax`) to a ULONG-rounded value `((r14_3>>3)+0x5b) & 0xfffffffc` in the patched binary.",
+        "New feature gate `Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix__private_IsEnabledDeviceUsageNoInline()` selects between old (buggy) `+0x58` size and new aligned `+0x5b & ~3` size.",
+        "SizeOfBitMap for the RTL_BITMAP is stored at P[0x2a] (`mov word [r15+0x54], r14w`) with the bitmap buffer at P+0x58 (`lea rax,[r15+0x58]`); this bit count is only 16-bit aligned while Rtl bitmap APIs (RtlSetBits/RtlClearBit/RtlFindSetBits) operate on full 32-bit ULONG words.",
+        "Rest of diff (register renames r13->r12/r14->r15, ETW helper address changes) is recompilation noise."
+      ],
+      "security_relevant": true,
+      "security_notes": "The function allocates a pool buffer embedding an RTL_BITMAP whose SizeOfBitMap (v14, bits) is always a multiple of 16 (both operands masked with 0xFFFFFFF0). The allocation size (v14>>3)+0x58 gives exactly v14/8 bytes of bitmap storage at offset 0x58 and is not rounded to a ULONG boundary, so when v14 % 32 == 16 the trailing bitmap ULONG extends ~2 bytes past the logical allocation. CORRECTION: only RtlSetBits (single-bit sets, in-bounds index) touches this buffer; RtlFindSetBits/RtlClearBit/RtlAreBitsClear operate on the separate Scb bitmap at a2+0x140. The trailing-word RMW writes the OOB bytes back unchanged (no attacker data written OOB), and 16-byte pool rounding absorbs the ~2 bytes on default systems (no adjacent-object corruption, no info leak). The access is observable only as a fault under Special Pool. The patch rounds the total allocation up to a 4-byte multiple so the trailing ULONG is fully backed; it is gated behind a WIL feature flag with the old path retained. Severity: Low (correctness/hardening), not the High exploitable pool overflow originally claimed.",
+      "assembly_diff": "--- ntfs_unpatched.sys/TxfSatisfyFlushForTopsRange.assembly\n+++ ntfs_patched.sys/TxfSatisfyFlushForTopsRange.assembly\n@@ vulnerable allocation block (unpatched, '-' lines) @@\n lea     r14d, [rax+0x10]\n mov     dword [rsp+0x94], r14d\n sub     r14d, r12d\n mov     dword [rsp+0x94], r14d\n mov     eax, r14d\n shr     eax, 0x3\n add     ax, 0x58              ; <-- size = (bits/8)+0x58, NO ULONG rounding (16-bit add)\n movzx   eax, ax\n mov     qword [rsp+0xa8], rax\n mov     ecx, dword [rel 0x140097b20]\n or      ecx, 0x10\n mov     r8d, 0x3066744e       ; tag 'Ntf0'\n mov     edx, eax              ; allocation size\n call    qword [rel 0x1400ad3f0] ; ExAllocatePoolWithTag\n nop     dword [rax+rax]\n mov     r15, rax\n mov     qword [rsp+0xb0], rax\n mov     r8, qword [rsp+0xa8]\n xor     edx, edx\n mov     rcx, rax\n call    0x140058180           ; memset(P, 0, size)\n mov     word [r15], si\n mov     dword [r15+0x4], 0x15\n mov     eax, 0x58\n mov     word [r15+0x56], ax\n mov     word [r15+0x54], r14w  ; RTL_BITMAP.SizeOfBitMap = r14_3 (bits, only 16-aligned)\n mov     dword [r15+0x50], r12d\n lea     rax, [r15+0x58]       ; RTL_BITMAP.Buffer = P + 0x58\n mov     qword [rsp+0xc0], rax\n movzx   eax, word [r15+0x54]\n mov     dword [rsp+0xb8], eax\n mov     r14d, r12d\n mov     dword [rsp+0x98], r12d\n@@ patched replacement ('+' lines) @@\n+movzx   r14d, ax\n+call    0x140051978           ; Feature_NTFS_BR_...BitmapSizeAlignFix IsEnabled\n+test    eax, eax\n+je      0x140103947           ; feature OFF -> old lea [r14+0x58]\n+lea     rax, [r14+0x58]       ; OLD size (bug retained when flag off)\n+lea     rax, [r14+0x5b]       ; NEW: +0x5b\n+and     rax, 0xfffffffffffffffc ; & ~3  -> round allocation up to ULONG boundary"
+    },
+    {
+      "name": "NtfsCommitCurrentTransaction",
+      "similarity": 0.92,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Register allocation swap (rsi<->rdi) throughout.",
+        "ETW provider GUID symbol rename Microsoft_Windows_NtfsLog_1c495e8d...->98a93039... (full-binary recompile / version drift).",
+        "Branch-condition inversion with identical semantics (`if(rdx[3]&1) A else B` -> `if(!(rdx[3]&1)) B else A`).",
+        "Inline iso-snapshot cleanup loop over *(ctx+0x1a8) refactored into a call to TxfCleanupIsoSnapshots(); return value of NtfsProcessUsnRecordsForCommit/NtfsProcessNewLengthQueue no longer stored."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtfsCheckpointForVolumeSnapshot",
+      "similarity": 0.9388,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "The `if(!NtfsIsVcbAvailableForThisRequest)` error path and the `else` main-work path were swapped to `if(rax) main else error` — pure control-flow inversion, identical behavior.",
+        "ETW provider GUID rename and reordered NTSTATUS comparison chain (STATUS_CANT_WAIT/END_OF_FILE/PENDING ordering) — codegen noise."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtfsCheckpointForVolumeSnapshot$fin$0",
+      "similarity": 0.9712,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Reordered NTSTATUS equality comparisons and moved the `rbx` non-zero check earlier in the debug-trace condition.",
+        "ETW logsup symbol offset renames — recompilation artifacts."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtfsCheckpointVolume",
+      "similarity": 0.9614,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Large function; changes limited to register allocation and ETW GUID/logsup symbol renames consistent with full-binary recompile. No added bounds/validation checks observed relative to callers of the patched TxF path."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "NtfsFlushLsnStreamsOnLogTooFull",
+      "similarity": 0.9713,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Only ETW logsup symbol offset renames (logsup_c1532->c1526, c1588->c1582) and basic-block address shifts. No behavioral change."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "TxfPrepareFileForTxfLogging",
+      "similarity": 0.9922,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "Near-identical; register/ETW recompilation noise only."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_FeatureStateCache_ReevaluateCachedFeatureEnabledState",
+      "similarity": 0.975,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WIL feature-state cache logic changed to accommodate the newly added Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix flag. Telemetry/feature-gating infrastructure, not a vulnerability itself."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "wil_details_RegisterFeatureUsageProvider",
+      "similarity": 0.9853,
+      "change_type": "cosmetic",
+      "key_changes": [
+        "WIL feature-usage provider registration change tied to the new feature flag; infrastructure only."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "delivery": "staged (WIL feature flag Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix; old unrounded path retained when the flag is off; runtime default not statically determinable)",
+      "function": "TxfSatisfyFlushForTopsRange",
+      "entry_point": "IRP_MJ_WRITE (NtfsCommonWrite) — WriteFile against a TxF-transacted file/stream (file opened inside a KTM transaction via CreateFileTransacted); also reachable via IRP_MJ_SET_INFORMATION/EOF path (TxfSetAttrSize) and NtfsZeroRangeInStream.",
+      "call_chain": [
+        "NtfsCommonWrite (0x140001fc4, IRP_MJ_WRITE dispatch)",
+        "TxfLogPriorToWrite (0x140037278)",
+        "TxfAllocateTopsRange (0x140101c60)",
+        "TxfSatisfyFlushForTopsRange (0x1401037f8)",
+        "ExAllocatePoolWithTag (undersized) + RtlSetBits/RtlClearBit/RtlFindSetBits (OOB access)"
+      ],
+      "vulnerability_class": "Incorrect buffer-size calculation (CWE-131): an embedded RTL_BITMAP's pool allocation is not rounded up to a 32-bit ULONG boundary, so the trailing bitmap word can extend ~2 bytes past the logical allocation. Latent out-of-bounds access (CWE-125/CWE-787 at the ULONG-granularity level). Correctness/hardening fix, not a demonstrable exploitable overflow.",
+      "description": "TxfSatisfyFlushForTopsRange builds a TOPS (TxF Old Page Stream) log-array record that embeds an RTL_BITMAP. It computes v13 = v5 & 0xFFFFFFF0, and a bit count v14 = ((v5+v4-1)&0xFFFFFFF0) + 16 - (v5&0xFFFFFFF0), which is always a multiple of 16. It allocates Size = (v14>>3)+0x58 bytes with ExAllocatePoolWithTag(tag 0x3066744E 'Ntf0'), stores SizeOfBitMap = v14 (bits) at P+0x54 and Buffer = P+0x58, and sets bits with RtlSetBits(&BitMapHeader, i-v13, 1) inside a loop. The allocation provides exactly v14/8 bytes of bitmap storage; because the Rtl bitmap helpers touch whole 32-bit ULONGs, when v14 % 32 == 16 the trailing ULONG of the bitmap extends ~2 bytes past the logical allocation end. IMPORTANT CORRECTIONS to the original engine report: (1) the ONLY Rtl operation on the undersized buffer is RtlSetBits (single-bit sets, index always in-bounds); RtlFindSetBits, RtlClearBit, and RtlAreBitsClear in this function operate on a DIFFERENT persistent Scb bitmap at a2+0x140 (asm: lea rcx,[rdi+0x28], rdi=a2+0x118), not on the allocation. (2) The trailing-word access is a read plus a value-preserving read-modify-write; the modified bit is always in-bounds, so no attacker-controlled data is written out of bounds. (3) ExAllocatePoolWithTag rounds allocations up to 16-byte granularity, so on production pool the ~2 trailing bytes fall inside the block's own rounding slack (minimum slack is exactly 2 bytes in the tightest case) and never reach an adjacent allocation. (4) The over-read feeds only internal bitmap logic and is not returned to user mode. Net: a latent out-of-bounds access observable only as a fault under Special Pool / Driver Verifier. The patch, gated by Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix, changes the size from ((v14>>3)+0x58) to (((v14>>3)+0x58+3) & ~3) so the final bitmap ULONG is fully backed; the old path is retained when the flag is off.",
+      "trigger_conditions": "A local user opens a file inside a KTM transaction (CreateTransaction + CreateFileTransacted) so writes route through the TxF old-page-stream flush path and reach TxfSatisfyFlushForTopsRange with a 16-aligned span v14 satisfying v14 & 0x1F == 0x10 (16, 48, 80, ...), with the entry RtlAreBitsClear(a2+0x140, a3, a4) returning FALSE so the allocation branch is taken. When that holds, RtlSetBits and a _bittest64 read touch the trailing ULONG at r15+0x58+((v14/8)&~3). Under Special Pool / Driver Verifier on tag 'Ntf0' this can fault against the guard page; without Special Pool the access lands in the allocation's 16-byte rounding slack with no observable effect. The exact WriteFile offset/length -> v14 mapping and reachability of the allocation branch were NOT proven end-to-end; they are inferred from the function arithmetic.",
+      "primitive": "Latent kernel non-paged-pool out-of-bounds access of up to ~2 bytes past a 'Ntf0'-tagged allocation: an over-read plus a value-preserving read-modify-write via RtlSetBits. NOT a controllable OOB write of attacker data. Contained within 16-byte pool rounding on default systems (no adjacent-object corruption, no info leak to user mode). Realistic worst case is a local fault/DoS only when Special Pool / Driver Verifier is enabled on tag 'Ntf0' (non-default). No pool grooming, adjacent-object corruption, arbitrary write, or privilege escalation is supported by the diff.",
+      "evidence": "uint32_t r12_1 = r14 & 0xfffffff0;\nint32_t rax_5 = (r15 - 1 + r14) & 0xfffffff0;\nint32_t r14_3 = rax_5 + 0x10 - r12_1;\nuint64_t rax_8 = (r14_3 >> 3) + 0x58;              // <-- size NOT rounded to ULONG\nuint64_t var_70 = rax_8;\nuint128_t* P_1 = ExAllocatePoolWithTag(data_140097b20 | 0x10, rax_8, 0x3066744e);\nint16_t* P_2 = P_1;\nmemset(P_1, 0, var_70);\n*P_2 = 1;\n*(P_2 + 4) = 0x15;\nP_2[0x2b] = 0x58;\nP_2[0x2a] = r14_3;                                  // SizeOfBitMap (bits, 16-aligned only)\n*(P_2 + 0x50) = r12_1;\nint64_t var_5c = &P_2[0x2c];                        // Buffer = P + 0x58\nint64_t BitMapHeader = P_2[0x2a];\nuint32_t i = r12_1;\nwhile (i < r14_3 + r12_1) {\n    if (TEST_BITQ(**(arg2 + 0x148), i) && !TEST_BITQ(**(arg2 + 0x138), i))\n        RtlSetBits(&BitMapHeader, i - r12_1, 1);    // OOB when r14_3 % 32 == 16\n    i += 1;\n}\n... RtlClearBit(arg2 + 0x140, BitNumber); ...",
+      "assembly": "unpatched TxfSatisfyFlushForTopsRange @ 0x1401037f8 (vulnerable allocation block, verbatim):\nlea     r14d, [rax+0x10]\nmov     dword [rsp+0x94], r14d\nsub     r14d, r12d                 ; r14_3 = ((r15-1+r14)&~0xf)+0x10 - (r14&~0xf)\nmov     dword [rsp+0x94], r14d\nmov     eax, r14d\nshr     eax, 0x3                   ; eax = r14_3 / 8 (bitmap bytes)\nadd     ax, 0x58                   ; +0x58 header; 16-bit add, NO ULONG rounding  <-- BUG\nmovzx   eax, ax\nmov     qword [rsp+0xa8], rax       ; allocation size\nmov     ecx, dword [rel 0x140097b20]\nor      ecx, 0x10\nmov     r8d, 0x3066744e            ; pool tag 'Ntf0'\nmov     edx, eax\ncall    qword [rel 0x1400ad3f0]     ; ExAllocatePoolWithTag\nnop     dword [rax+rax]\nmov     r15, rax\nmov     qword [rsp+0xb0], rax\nmov     r8, qword [rsp+0xa8]\nxor     edx, edx\nmov     rcx, rax\ncall    0x140058180                ; memset(P,0,size)\nmov     word [r15], si\nmov     dword [r15+0x4], 0x15\nmov     eax, 0x58\nmov     word [r15+0x56], ax\nmov     word [r15+0x54], r14w       ; RTL_BITMAP.SizeOfBitMap = r14_3 (bits)\nmov     dword [r15+0x50], r12d\nlea     rax, [r15+0x58]            ; RTL_BITMAP.Buffer = P + 0x58\nmov     qword [rsp+0xc0], rax\nmovzx   eax, word [r15+0x54]\nmov     dword [rsp+0xb8], eax\nmov     r14d, r12d\nmov     dword [rsp+0x98], r12d\n; ... later: call [rel 0x1400ac300] = RtlSetBits(&BitMapHeader, i-r12, 1)  <-- OOB write on final ULONG\n; ... call [rel 0x1400aca38] = RtlFindSetBits / RtlClearBit on ctx+0x140\n;\n; PATCHED replacement (feature-gated fix):\n; movzx r14d, ax\n; call 0x140051978            ; Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix IsEnabled\n; test eax, eax ; je <old path lea [r14+0x58]>\n; lea rax, [r14+0x5b] ; and rax, 0xfffffffffffffffc   ; round total size up to ULONG (4-byte) boundary",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "ntfs!TxfSatisfyFlushForTopsRange",
+            "address": "0x1401037f8",
+            "why": "Break at function entry. arg1(rcx)=IrpContext, arg2(rdx)=Scb/TOPS context (bitmap at rdx+0x140, mapping bitmaps at rdx+0x138/0x148), arg3(r8d)=range start bit, arg4(r9d)=range bit count. These four determine r14_3 and thus the undersized allocation."
+          },
+          {
+            "symbol": "ntfs!TxfSatisfyFlushForTopsRange+alloc (ExAllocatePoolWithTag call site)",
+            "address": "0x1401038d0",
+            "why": "Set a bp on the ExAllocatePoolWithTag call (call qword [rel 0x1400ad3f0], tag 0x3066744e). Inspect edx = requested size. Compute r14_3 = size*... ; if ((size-0x58)*8) % 32 == 16 the bitmap trailing ULONG overflows. Watch that rax (returned pool ptr) + size is the block end and the bitmap runs [rax+0x58 .. rax+0x58+(r14_3/8))."
+          },
+          {
+            "symbol": "nt!RtlSetBits",
+            "address": "resolve at runtime (call [rel 0x1400ac300] inside the function)",
+            "why": "Break to observe the OOB write: RCX=&BitMapHeader (SizeOfBitMap=r14_3, Buffer=P+0x58), RDX=start index, R8=1. When start index maps into the final (partial) ULONG beyond P+0x58+(r14_3/8), the write lands in the next pool chunk."
+          }
+        ],
+        "watch": [
+          "r8d/arg3 = TOPS range start bit, r9d/arg4 = TOPS range bit count (attacker-influenced via write offset/length)",
+          "r14_3 = (( (r15-1+r14) & ~0xf ) + 0x10) - (r14 & ~0xf)  — must satisfy r14_3 & 0x1f == 0x10 to overflow",
+          "edx at the ExAllocatePoolWithTag call = (r14_3>>3)+0x58 (unpatched) — the undersized size",
+          "r15 = returned 'Ntf0' pool pointer; bitmap buffer = r15+0x58; SizeOfBitMap word at r15+0x54",
+          "The ULONG at r15 + 0x58 + ((r14_3/8) & ~3) — this is the trailing ULONG that spills past the allocation"
+        ],
+        "key_offsets": [
+          "shr eax,0x3 ; add ax,0x58 @ ~0x1401038b8 — the unpatched size calc missing ULONG rounding (the exact removed/fixed instruction)",
+          "call qword [rel 0x1400ad3f0] (ExAllocatePoolWithTag, tag 0x3066744e) @ ~0x1401038d0 — allocation of the undersized bitmap record",
+          "mov word [r15+0x54], r14w @ ~0x140103905 — stores RTL_BITMAP.SizeOfBitMap = r14_3 bits",
+          "lea rax,[r15+0x58] @ ~0x14010390f — RTL_BITMAP.Buffer",
+          "call qword [rel 0x1400ac300] (RtlSetBits) — OOB write sink; call qword [rel 0x1400aca38] (RtlFindSetBits) and RtlClearBit(ctx+0x140) — additional bitmap sinks",
+          "patched fix: lea rax,[r14+0x5b]; and rax,0xfffffffffffffffc — the added 4-byte alignment (present only in patched @ 0x140103808)"
+        ],
+        "trigger_setup": "As a standard user: 1) CreateTransaction (KTM). 2) CreateFileTransacted on an NTFS volume to open/create a file within the transaction (this arms the TxF TOPS logging path). 3) Issue WriteFile calls whose offsets/lengths dirty pages so NtfsCommonWrite -> TxfLogPriorToWrite -> TxfAllocateTopsRange -> TxfSatisfyFlushForTopsRange is invoked with a TOPS bit range where r14_3 & 0x1f == 0x10 (choose start bit r14 and count r15 so the 16-aligned span is 16/48/80/... bits). Ensure the entry RtlAreBitsClear(ctx+0x140, r14, arg4) returns FALSE (target bits already set) so the allocation branch is taken. Pre-groom nonpaged pool so a target object follows the 'Ntf0' chunk.",
+        "expected_observation": "At RtlSetBits/RtlClearBit the write/read touches bytes at or past r15+0x58+(r14_3/8), i.e. beyond the ExAllocatePoolWithTag size in edx. With Special Pool / verifier enabled on tag 'Ntf0' (Ntf0), the OOB access faults immediately (DRIVER_VERIFIER_DETECTED_VIOLATION / PAGE_FAULT_IN_NONPAGED_AREA at the bitmap ULONG address). Without verifier, expect intermittent pool corruption BSODs (BAD_POOL_HEADER / 0x19, or KERNEL_MODE_HEAP_CORRUPTION) when the adjacent chunk is later freed. Compare against the patched build where edx is rounded up (…&~3) and the same input no longer overflows.",
+        "notes": "RTL_BITMAP layout here: SizeOfBitMap (ULONG) at struct+0x54 (P[0x2a]), Buffer at struct+0x58. The record header sets *P=1, dword[P+4]=0x15, word[P+0x56]=0x58, dword[P+0x50]=r12_1. Overflow only manifests when r14_3 is 16 mod 32 because Rtl bitmap ops round the bit count up to 32-bit ULONG granularity; multiples of 32 are safe (this is why the bug is intermittent). The fix is gated behind WIL feature Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix — on the unpatched binary the alignment is unconditionally absent. Distinguish vulnerable vs safe path by the `add ax,0x58` (vuln) vs `lea [r14+0x5b]; and ~3` (fixed) at the size computation."
+      }
+    }
+  ],
+  "summary": "The patch rounds an RTL_BITMAP pool allocation up to a 32-bit ULONG boundary in ntfs.sys!TxfSatisfyFlushForTopsRange (Transactional NTFS TOPS flush). The pre-patch code allocates an 'Ntf0'-tagged buffer sized (SizeOfBitMap_bits/8)+0x58 without ULONG rounding, while SizeOfBitMap is always a multiple of 16; when the bit count is 16 mod 32 the trailing 32-bit bitmap word extends ~2 bytes past the logical allocation. This is a latent correctness/hardening bug (CWE-131), NOT the exploitable pool overflow the engine originally claimed: only RtlSetBits (single-bit, in-bounds) touches the undersized buffer (RtlFindSetBits/RtlClearBit/RtlAreBitsClear operate on a separate Scb bitmap at a2+0x140); the trailing-word read-modify-write preserves the out-of-bounds bytes (no attacker data written OOB); and 16-byte pool rounding absorbs the ~2 bytes on default systems, so no adjacent allocation is reached and nothing leaks to user mode. The access surfaces only as a fault under Special Pool / Driver Verifier on tag 'Ntf0'. Severity Low. The fix is STAGED behind the WIL feature flag Feature_NTFS_BR_TxfSatisfyFlushForTopsRangeBitmapSizeAlignFix (old unrounded path retained when the flag is off; runtime default not statically determinable). An independent pass over the other 8 changed functions confirmed none adds or changes a bounds check, allocation size, copy length, loop bound, or input validation; the true fix is solely TxfSatisfyFlushForTopsRange."
+}

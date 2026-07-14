@@ -1,0 +1,13 @@
+{
+  "binary": "hvsocket.sys",
+  "kb": null,
+  "windows_version": null,
+  "release_date": null,
+  "patched": {
+    "sha256_prefix": "f69c44ef"
+  },
+  "prev": {
+    "sha256_prefix": "99e1f76e"
+  },
+  "note": "KB unresolved: this build's hvsocket.sys is not present in WinBIndex (likely a preview/insider build); binaries and original metadata.json were deleted."
+}

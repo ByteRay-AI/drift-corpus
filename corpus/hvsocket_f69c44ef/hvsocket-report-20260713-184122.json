@@ -1,0 +1,236 @@
+{
+  "binaries": {
+    "title": "hvsocket.sys - Velocity feature gate removed: guest-reachable listener accept-state validation (and loopback lifetime handling) promoted from a staged feature to unconditional",
+    "id_unpatched": "hvsocket_unpatched.sys",
+    "id_patched": "hvsocket_patched.sys",
+    "overall_similarity": 0.9742,
+    "matched": 269,
+    "changed": 9,
+    "identical": 260,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "VmbusTlProviderListen",
+      "similarity": 0.5854,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Largest structural diff, but it is the same Velocity feature-gate fold plus churn: two EvaluateCurrentState() gates removed, keeping the feature-enabled listen path.",
+        "Feature-enabled path enforces the base-endpoint requirement early (if (v5 >= 0) -> 0xC0000010 'Required base endpoint not present', trace 191) and uses the 3-way refcount-release cleanup.",
+        "Incidental churn: VmbusTlCreateListenEndpoint inlined to VmbusTlCreateEndpoint(...,3,...); ExchangeAdd(-1)->Decrement64 codegen; trace-ordinal renumbering; Hex-Rays arg-count artifact."
+      ],
+      "security_relevant": false,
+      "security_notes": "Host-side listen setup path. Folds to the feature-enabled branch (safer refcount/cleanup handling). No independent new bounds/validation/authorization check beyond the feature-gate fold.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackAcceptConnection",
+      "similarity": 0.7703,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Velocity feature-gate fold only. The 'reference the delivery queue first and bail 0xC000020D if NULL before VmbusTlCreateObject' behavior was ALREADY the feature-enabled path in the unpatched build (unpatched ~lines 13591-13605); it is NOT a new check.",
+        "The fold drops the feature-disabled path that read the delivery-queue pointer raw (*((_QWORD*)P + 87)) without a reference.",
+        "CORRECTION: the original report's claim that this added a new delivery-queue precondition is refuted."
+      ],
+      "security_relevant": false,
+      "security_notes": "In-host (host-local) AF_HYPERV loopback accept, not guest-reachable. Folds to the pre-existing feature-enabled refcounted path. No independent new check introduced by the patch.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlNotifyListenerAccept",
+      "similarity": 0.8058,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "PRIMARY FIX. Unpatched splits on opaque predicate `EvaluateCurrentState()` (asm: `call 0x1c0001d78; test eax,eax; je 0x1c00060a0`) into two accept paths.",
+        "The `je 0x1c00060a0` branch (predicate==0) increments the inbound-connection refcount [rbx+0x130] and jumps straight to the accept-dispatch invocation WITHOUT the `cmp byte [rbx+0x128],0` listener-accept-guard check.",
+        "Only the other branch performs `cmp byte [rbx+0x128],0 / jne <error 0xC0000236>` before accepting.",
+        "Patched linearizes to a single loop that ALWAYS executes `cmp byte [rbx+0x128], 0x0 / jne 0x1c0005d18` (return 0xC0000236) before invoking the accept-dispatch callback `call qword [rel 0x1c00152b0]` = `(*(arg1[0x2a]+8))(arg1[0x2c], &var_a8)`."
+      ],
+      "security_relevant": true,
+      "security_notes": "Velocity feature-gate fold. EvaluateCurrentState() (sub_1c0001d78) is feature 1542768955_57582472, not a race predicate. Pre-patch feature-disabled branch reaches the accept-dispatch callback without the byte[endpoint+0x128] accept-guard check; patched keeps only the checked (feature-enabled) path, returning 0xC0000236 when the guard is set. Guest-reachable (VmbusTlInboundConnectComplete). This is a state-validation hardening; the endpoint is reference-held across the callback, so no use-after-free/controlled-indirect-call is evidenced by the diff. Severity Low.",
+      "assembly_diff": "; UNPATCHED VmbusTlNotifyListenerAccept @0x1c0005f18 (key blocks; '-' lines are unpatched-only)\nmov     qword [rsp+0x18], rbx\nmov     qword [rsp+0x20], rsi\npush    rbp\npush    rdi\npush    r12\npush    r14\npush    r15\nmov     rax, qword [rel 0x1c0013090]\nxor     rax, rsp\nmov     qword [rbp+0x2f], rax\nmov     r15, rdx\nmov     rbx, rcx\ncall    0x1c0001d78            ; EvaluateCurrentState() opaque predicate\nlea     r12, [rel 0x1c000f430]\nmov     esi, 0xc0000236\nlea     r14, [rel 0x1c000f468]\nlea     rdi, [rbx+0x130]        ; rdi = &inbound-connection refcount (arg1[0x26])\ntest    eax, eax\nje      0x1c00060a0            ; predicate==0 -> BYPASS branch (no [rbx+0x128] guard)\ncmp     dword [rel 0x1c0013058], 0x4\njbe     0x1c00060c1\ncmp     dword [rel 0x1c0013058], 0x4\njbe     0x1c0005f92\nprefetchw zmmword [rdi]\nmov     rax, qword [rdi]\nlea     rcx, [rax+0x1]\njmp     0x1c00060de\nmov     r9, qword [rdi]\nmov     r8, rbx\nmov     edx, 0xd3\nmov     qword [rsp+0x20], r12\nmov     rcx, r14\ncall    0x1c000bd34\nprefetchw zmmword [rdi]\nmov     rax, qword [rdi]\nlea     rcx, [rax+0x1]\njmp     0x1c0005fab\nmov     r9, qword [rdi]\nmov     r8, rbx\nmov     edx, 0xca\nmov     qword [rsp+0x20], r12\nmov     rcx, r14\ncall    0x1c000bd34\ncmp     rcx, 0x1\nja      0x1c00060cd\ncmp     rcx, 0x1\nja      0x1c0005f9e\nlock cmpxchg qword [rdi], rcx  ; CAS increment refcount\nmov     rcx, rax\nje      0x1c0005ffa\ncmp     rcx, 0x1\nje      0x1c00060f1\nlock cmpxchg qword [rdi], rcx\nmov     rcx, rax\nje      0x1c0005ff1\ncmp     rcx, 0x1\nje      0x1c0005fbe\n; ---- accept dispatch (label 0x1c000600b) reached WITHOUT byte[rbx+0x128] check on the je-branch ----\nmovups  xmm0, xmmword [r15+0x88]\nmov     eax, dword [r15+0xa8]\nxor     edx, edx\nmovups  xmm1, xmmword [r15+0x98]\nlea     rcx, [rbp-0x49]\nmov     dword [rbp+0x27], eax\nmovups  xmmword [rbp+0x7], xmm0\nlea     r8d, [rdx+0x50]\nmovups  xmmword [rbp+0x17], xmm1\ncall    0x1c000d740\nmov     rcx, qword [rbx+0x160]\nlea     rax, [rbp+0x7]\nmov     qword [rbp-0x39], rax\nlea     rdx, [rbp-0x49]\nlea     rax, [r15+0x1e0]\nmov     qword [rbp-0x29], r15\nmov     qword [rbp-0x31], rax\nlea     rax, [rel 0x1c000e000]  ; &VmbusTlProviderConnectDispatch\nmov     qword [rbp-0x21], rax\ncall    qword [rel 0x1c00152b0] ; (*(arg1[0x2a]+8))(arg1[0x2c], &var_a8)  ACCEPT CALLBACK\nmov     esi, eax\ntest    eax, eax\njs      0x1c0006169\n; ---- the guard check exists only on the OTHER branch: ----\ncmp     byte [rbx+0x128], 0x0   ; listener accept-guard flag (arg1[0x25])\njne     0x1c0005fda            ; if set -> error 0xC0000236 (only enforced on non-bypass branch)\ninc     rcx\ncmp     dword [rel 0x1c0013058], 0x0\njbe     0x1c0006127\nmov     ecx, 0xe\nint     0x29\n; PATCHED: single path always does `cmp byte [rbx+0x128],0 / jne 0x1c0005d18` before the accept callback"
+    },
+    {
+      "name": "VmbusTlLoopbackNotifyReceiveConsumed",
+      "similarity": 0.8456,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Loopback receive-consumed notification restructured consistently with the loopback endpoint refcount/delivery-queue changes.",
+        "Same opaque-predicate simplification pattern; no independent new bounds/authorization check identified."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackSend",
+      "similarity": 0.8744,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Loopback send path adjusted alongside the loopback endpoint lifecycle refactor.",
+        "Refcount/trace-index adjustments; no distinct memory-safety delta beyond the shared lifecycle hardening."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackDisconnect",
+      "similarity": 0.9158,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Disconnect path updated to match new endpoint delivery-queue reference ownership.",
+        "Ensures the delivery-queue reference acquired in the patched accept is correctly released on disconnect."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlLoopbackSetupConnection",
+      "similarity": 0.9501,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Loopback connection setup adjusted to initialize the endpoint delivery-queue / accept-guard fields consistently with the accept-path changes.",
+        "Minor control-flow reorganization; supports the primary fix rather than introducing an independent bug."
+      ],
+      "security_relevant": false,
+      "security_notes": "",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlCommonConnectCompletion",
+      "similarity": 0.9619,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Velocity feature-gate fold: the `EvaluateCurrentState() &&` conjunct is dropped from `if (EvaluateCurrentState() && (*(_DWORD*)(a1+528) & 0x80) != 0)`.",
+        "Effect: the connection-reference release + VmbusTlQueueEndpointAction(...,9) now runs whenever the 0x80 flag is set (previously only when the feature was enabled).",
+        "Only other diff is trace ordinal 582->580."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature-gate fold, host-local completion path. Folds to the feature-enabled behavior (always run the ref-release/queue-action when the 0x80 flag is set). No independent new check.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "VmbusTlProcessNewConnectionForListener",
+      "similarity": 0.9758,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Under the mutex, unpatched reads `if (EvaluateCurrentState()) r12 = *(endpoint+0x1a9)` then gates connection creation with `if (!EvaluateCurrentState() || r12)`.",
+        "Patched reads `rdi = *(endpoint+0x1a9)` unconditionally and gates with a hard `if (rdi)` before `VmbusTlCreateConnection`, otherwise returns error 0xC0000236 (trace ordinals 0x23c/0x243).",
+        "Adds explicit endpoint-accepting-state requirement before associating the new inbound connection to the partition (VmbusTlAssociateConnectionToPartition / VmbusTlSetEndpointId / VmbusTlSetCancellable)."
+      ],
+      "security_relevant": true,
+      "security_notes": "Velocity feature-gate fold (same feature 1542768955_57582472). Pre-patch the endpoint accepting-state byte at endpoint+0x1a9 is read and enforced only when the feature is enabled; patched reads it unconditionally under the fast mutex and hard-requires it before VmbusTlCreateConnection (0xC0000236 otherwise). Guest-reachable state-validation hardening. No memory-corruption primitive is evidenced by the diff. Severity Low.",
+      "assembly_diff": "; UNPATCHED VmbusTlProcessNewConnectionForListener @0x1c0019e60 (key gate region, pseudo-anchored):\n; KeEnterCriticalRegion(); ExAcquireFastMutexUnsafe(&rbx_4[2]);\n;   if (EvaluateCurrentState())  r12 = *(rbx_4 + 0x1a9);   <- endpoint accept-state byte read only conditionally\n;   rax_7 = *(rbx_4 + 0xba);  r14 = *(rbx_4 + 0xb9);\n; ExReleaseFastMutexUnsafe(&rbx_4[2]); KeLeaveCriticalRegion();\n;   rax_8 = EvaluateCurrentState();\n;   if (!rax_8 || r12) {              <- WEAK gate (unpatched)\n;       if (!r14) { r14 = rax_7; goto label_1c001a268; }  ; -> VmbusTlCreateConnection\n;       else { rdx_4 = 0x254; HvsocketTraceEndpointError(...,0xc0000236,rbx_4); }\n;   } else { rdx_4 = 0x24c; HvsocketTraceEndpointError(...,0xc0000236,rbx_4); }\n; PATCHED replaces the gate with: rdi = *(r14 + 0x1a9); if (rdi) { if(!r12){...goto create...} else err 0x243 } else err 0x23c"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "low",
+      "function": "VmbusTlNotifyListenerAccept",
+      "entry_point": "Guest→host inbound AF_HYPERV/VMBus connect completion (hvsocket). Reached host-side via VmbusTlInboundConnectComplete (sub_1C00027E8) on a guest-initiated inbound connection.",
+      "call_chain": [
+        "Guest issues connect() on an AF_HYPERV socket to a host-registered service GUID / listener",
+        "guest-driven inbound VMBus processing -> VmbusTlProcessNewConnection / VmbusTlProcessNewConnectionForListener",
+        "inbound connection completion -> VmbusTlInboundConnectComplete (0x1c00027e8)",
+        "VmbusTlNotifyListenerAccept (0x1c0005f18 unpatched / 0x1c0005c68 patched)",
+        "accept-dispatch callback: (*(*(endpoint+0x150)+8))(*(endpoint+0x160), &localbuf) on a reference-held endpoint"
+      ],
+      "vulnerability_class": "Missing state validation on a guest-reachable accept path, gated behind a removed Velocity feature (defense-in-depth hardening)",
+      "description": "The change is the removal of a Windows Feature-Management (Velocity) staging gate, not a race fix. EvaluateCurrentState() (sub_1c0001d78) reads Velocity feature 1542768955_57582472 (EvaluateFeature -> EvaluateCurrentStateFromRegistry queries ...\\Microsoft\\FeatureManagement\\Overrides; returns g_Feature_1542768955_57582472_cachedstate != 1). In the unpatched build VmbusTlNotifyListenerAccept has two twin paths selected by `if (EvaluateCurrentState())`: the feature-ENABLED branch checks the listener accept-guard byte at endpoint+0x128 before the accept-dispatch callback and returns 0xC0000236 (STATUS_CONNECTION_REFUSED) when set; the feature-DISABLED branch reaches the accept-dispatch callback without that check. The patched build deletes the gate and keeps only the checked (feature-enabled) path, so the guard is evaluated unconditionally. The endpoint object is reference-held across the callback (the CAS on endpoint+0x130 is a try-reference that only proceeds when the refcount is already >= 1), so this closes a state-validation gap; the diff does NOT demonstrate a use-after-free, a controlled indirect call, or any memory-corruption primitive. endpoint+0x128 is a logical accept-not-allowed/closing flag, not a liveness/free marker.",
+      "trigger_conditions": "No attacker timing trigger; the patch changes a default behavior via feature-gate removal. Behavioral delta: with the feature disabled (pre-patch), an accept-dispatch callback can fire on a listener whose accept-guard byte[endpoint+0x128] is set (not-accepting/closing state); with the feature enabled (pre-patch) and unconditionally (post-patch), the driver returns 0xC0000236 and the callback does not fire. The default enablement state of feature 1542768955_57582472 in the unpatched build is not resolvable from the decompiled code.",
+      "primitive": "Guest-reachable state-validation gap: an accept callback can be dispatched on a listener/endpoint in a non-accepting/closing state on the pre-patch feature-disabled path; now refused. No use-after-free, controlled indirect call, or memory corruption is evidenced by the diff (the endpoint is reference-held across the callback). Impact is a robustness/lifecycle-consistency issue on guest input; any higher impact is unproven and would require live analysis of the listener teardown path.",
+      "evidence": "// unpatched pseudo_c (VmbusTlNotifyListenerAccept)\nrax_2 = EvaluateCurrentState();\nif (!rax_2) {\n    // refcount CAS on arg1[0x26] ...\n    for (i = rax_8 + 1; i > 1; i = rax_8 + 1) {\n        if (rax_8 == arg1[0x26]) { arg1[0x26] = i; z_2 = true; }\n        else { rax_8 = arg1[0x26]; z_2 = false; }\n        if (z_2) goto label_1c000600b;   // -> ACCEPT, no arg1[0x25] check\n    }\n    ...\n} else {\n    // refcount CAS ...\n    if (arg1[0x25]) {                      // guard ONLY on this branch\n        HvsocketTraceEndpointError(...,0xc0000236,arg1);\n    } else {\n        label_1c000600b:                    // ACCEPT\n        ... rax_16 = (*(arg1[0x2a] + 8))(arg1[0x2c], &var_a8); ...\n    }\n}\n// patched: single path -> if (!arg1[0x25]) { accept } else return 0xc0000236;",
+      "assembly": "; UNPATCHED VmbusTlNotifyListenerAccept @0x1c0005f18\ncall    0x1c0001d78            ; EvaluateCurrentState() opaque predicate -> eax\nlea     r12, [rel 0x1c000f430]\nmov     esi, 0xc0000236\nlea     r14, [rel 0x1c000f468]\nlea     rdi, [rbx+0x130]        ; &inbound-connection refcount (arg1[0x26])\ntest    eax, eax\nje      0x1c00060a0            ; predicate==0 -> guard-BYPASS accept branch\n; ... refcount CAS: lock cmpxchg qword [rdi], rcx ...\n; accept dispatch reached at label 0x1c000600b:\nmovups  xmm0, xmmword [r15+0x88]\nmov     eax, dword [r15+0xa8]\nmovups  xmm1, xmmword [r15+0x98]\nlea     rcx, [rbp-0x49]\nmovups  xmmword [rbp+0x7], xmm0\nlea     r8d, [rdx+0x50]\nmovups  xmmword [rbp+0x17], xmm1\ncall    0x1c000d740\nmov     rcx, qword [rbx+0x160]\nlea     rax, [rbp+0x7]\nmov     qword [rbp-0x39], rax\nlea     rdx, [rbp-0x49]\nlea     rax, [r15+0x1e0]\nmov     qword [rbp-0x29], r15\nmov     qword [rbp-0x31], rax\nlea     rax, [rel 0x1c000e000]  ; &VmbusTlProviderConnectDispatch\nmov     qword [rbp-0x21], rax\ncall    qword [rel 0x1c00152b0] ; (*(arg1[0x2a]+8))(arg1[0x2c], &var_a8)  <-- ACCEPT CALLBACK, no guard on je-branch\nmov     esi, eax\ntest    eax, eax\njs      0x1c0006169\ncmp     byte [rbx+0x128], 0x0   ; listener accept-guard (arg1[0x25]) -- enforced ONLY on non-bypass branch\njne     0x1c0005fda            ; -> error 0xC0000236\n; PATCHED: single path always executes cmp byte [rbx+0x128],0 / jne 0x1c0005d18 BEFORE the accept callback",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket!VmbusTlNotifyListenerAccept",
+            "address": "0x1c0005f18",
+            "why": "rcx (arg1) = listener/endpoint object; watch byte [rcx+0x128] (accept-guard flag) and qword [rcx+0x130] (inbound-connection refcount). rdx (arg2) = incoming connection descriptor."
+          },
+          {
+            "symbol": "hvsocket!VmbusTlNotifyListenerAccept+feature_disabled_branch",
+            "address": "0x1c00060a0",
+            "why": "Branch target taken when EvaluateCurrentState()==0 (Velocity feature disabled). On this pre-patch branch the accept path proceeds without the byte[endpoint+0x128] guard check; the patched build has no such branch."
+          },
+          {
+            "symbol": "hvsocket!VmbusTlNotifyListenerAccept (accept callback site)",
+            "address": "0x1c00152b0",
+            "why": "Indirect call performing (*(*(endpoint+0x150)+8))(*(endpoint+0x160), &localbuf) on the reference-held endpoint. This is the listener's legitimate accept-dispatch callback; inspect endpoint+0x150/+0x160 to confirm they are live object fields (not a proven freed object)."
+          }
+        ],
+        "watch": [
+          "rcx/rbx = arg1 (listener endpoint object)",
+          "byte [rbx+0x128] = accept-guard flag (arg1[0x25]); expect 0 on safe path, non-zero when bug is armed",
+          "qword [rbx+0x130] = inbound-connection refcount (arg1[0x26]) incremented by the CAS loop",
+          "qword [rbx+0x150] (arg1[0x2a]) = accept-dispatch object; [that+8] is the called function pointer",
+          "qword [rbx+0x160] (arg1[0x2c]) = context passed to the accept callback",
+          "eax after `call 0x1c0001d78` (EvaluateCurrentState) — value 0 selects the guard-bypass branch"
+        ],
+        "key_offsets": [
+          "call 0x1c0001d78 @ start of VmbusTlNotifyListenerAccept = the opaque state predicate",
+          "test eax,eax; je 0x1c00060a0 = the branch that leads to the guard-bypassing accept path",
+          "cmp byte [rbx+0x128], 0x0 = the listener accept-guard check present only on the non-bypass branch (patched moves it to the single common path @0x1c0005d18)",
+          "call qword [rel 0x1c00152b0] = the accept-dispatch callback invocation (sink)",
+          "lock cmpxchg qword [rdi], rcx with rdi=[rbx+0x130] = inbound-connection refcount CAS"
+        ],
+        "trigger_setup": "Host: create an AF_HYPERV (HV_PROTOCOL_RAW) listening socket bound to a service GUID and listen(). Guest: connect() to that service; the inbound connection is processed and completed host-side via VmbusTlInboundConnectComplete -> VmbusTlNotifyListenerAccept. Bring the listener into the not-accepting/closing state so byte[endpoint+0x128] is set. This exercises a behavior difference, not a race the attacker must win.",
+        "expected_observation": "Pre-patch feature-disabled path: the accept-dispatch callback fires despite byte[endpoint+0x128] being set. Pre-patch feature-enabled and post-patch unconditionally: VmbusTlNotifyListenerAccept returns 0xC0000236 (STATUS_CONNECTION_REFUSED) and the callback does not fire. Do NOT expect a freed-pool value at poi(endpoint+0x150)+8 — the endpoint is reference-held across the callback; the original report's freed-pool/bugcheck expectation is unsubstantiated by the diff.",
+        "notes": "Endpoint object uses pool tag 0x69706e56 ('Vnpi'). Fields: +0x08 object refcount; +0x130 inbound-connection refcount (try-referenced, object alive while >= 1); +0x128 accept-guard flag; +0x150 accept-dispatch object ([+8] = fptr); +0x160 callback context; +0x1a9 accepting-state byte (checked in VmbusTlProcessNewConnectionForListener). EvaluateCurrentState() @ 0x1c0001d78 is Velocity feature 1542768955_57582472, removed binary-wide in the patched build. Distinguish behavior by whether `cmp byte [rbx+0x128],0` executes before the accept-dispatch call."
+      }
+    },
+    {
+      "severity": "low",
+      "function": "VmbusTlProcessNewConnectionForListener",
+      "entry_point": "Guest→host inbound VMBus hvsocket connect request via VmbusTlProcessNewConnection",
+      "call_chain": [
+        "Guest connect() on AF_HYPERV socket",
+        "VmbusTlProcessNewConnection",
+        "VmbusTlProcessNewConnectionForListener (0x1c0019e60 unpatched / 0x1c0019db0 patched)",
+        "VmbusTlCreateConnection / VmbusTlAssociateConnectionToPartition / VmbusTlSetEndpointId / VmbusTlSetCancellable"
+      ],
+      "vulnerability_class": "Endpoint accepting-state validation made unconditional via removal of a Velocity feature gate (defense-in-depth hardening)",
+      "description": "Companion feature-gate fold to the VmbusTlNotifyListenerAccept change. In the unpatched build the endpoint accepting-state byte (endpoint+0x1a9) is read only when the Velocity feature EvaluateCurrentState() is enabled, and the refusal `if (EvaluateCurrentState() && byte==0)` (trace 588) only fires when the feature is enabled; the create path otherwise depends only on byte[endpoint+0xb9]. The patched build removes the feature gate: it reads endpoint+0x1a9 unconditionally under the fast mutex and hard-requires it (`if (byte==0) return 0xC0000236`, trace 572/579) before VmbusTlCreateConnection. This makes the accepting-state requirement permanent. Same feature (1542768955_57582472) as the primary finding.",
+      "trigger_conditions": "No timing trigger; the patch changes a default behavior via feature-gate removal. With the feature disabled (pre-patch) an inbound connection can be created/associated for an endpoint whose accepting-state byte[endpoint+0x1a9] is clear; with the feature enabled (pre-patch) and unconditionally (post-patch) the driver returns 0xC0000236 and no connection is created.",
+      "primitive": "Creation/association of an inbound connection against an endpoint whose accepting-state byte is clear on the pre-patch feature-disabled path; a state/lifecycle-consistency gap on guest input, now refused. No memory-corruption primitive is evidenced by the diff.",
+      "evidence": "// unpatched: r12 = *(rbx_4+0x1a9) only if EvaluateCurrentState(); gate = if (!EvaluateCurrentState() || r12) { if(!r14){...VmbusTlCreateConnection...} }\n// patched:  rdi = *(r14+0x1a9);  if (rdi) { if(!r12){...VmbusTlCreateConnection...} else err } else err 0xc0000236",
+      "assembly": "; UNPATCHED VmbusTlProcessNewConnectionForListener @0x1c0019e60 (gate region)\n; ExAcquireFastMutexUnsafe(&rbx_4[2]);\n;   if (EvaluateCurrentState()) r12 = *(rbx_4 + 0x1a9);   ; endpoint accepting-state byte, read conditionally\n;   rax_7 = *(rbx_4 + 0xba); r14 = *(rbx_4 + 0xb9);\n; ExReleaseFastMutexUnsafe(&rbx_4[2]);\n;   rax_8 = EvaluateCurrentState();\n;   if (!rax_8 || r12) { if (!r14) goto create; else err(0x254,0xc0000236); } else err(0x24c,0xc0000236);\n; create: label_1c001a268 -> VmbusTlCreateConnection(arg1,0,&var_48)\n; PATCHED gate: rdi = *(r14+0x1a9); if (rdi) { if(!r12) goto create; else err 0x243 } else err 0x23c",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "hvsocket!VmbusTlProcessNewConnectionForListener",
+            "address": "0x1c0019e60",
+            "why": "arg1 (rcx) = provider/partition context; var_50 = referenced listener endpoint. After the mutex block inspect byte [endpoint+0x1a9] (accepting-state) and the branch selecting VmbusTlCreateConnection."
+          },
+          {
+            "symbol": "hvsocket!VmbusTlProcessNewConnectionForListener (create branch)",
+            "address": "0x1c001a268",
+            "why": "label_1c001a268 = VmbusTlCreateConnection call site reached after the gate. Confirm byte[endpoint+0x1a9] state when this is reached in the unpatched build vs. patched."
+          }
+        ],
+        "watch": [
+          "endpoint object pointer (var_50) fetched via VmbusTlFindAndReferencePartition",
+          "byte [endpoint+0x1a9] = accepting-state flag (patched hard-requires it)",
+          "*(endpoint+0xb9) and *(endpoint+0xba) = state fields read under mutex",
+          "return status var_54 (0xC0000236 on refusal)"
+        ],
+        "key_offsets": [
+          "mutex-protected read of *(endpoint+0x1a9) = accepting-state byte",
+          "gate `if (!EvaluateCurrentState() || r12)` (unpatched) vs `if (rdi=*(endpoint+0x1a9))` (patched)",
+          "label_1c001a268 = VmbusTlCreateConnection entry to inbound-connection creation"
+        ],
+        "trigger_setup": "Same as primary: host AF_HYPERV listener + guest connect() flood, race host-side endpoint teardown to toggle byte[endpoint+0x1a9] while inbound connects are processed.",
+        "expected_observation": "Unpatched: VmbusTlCreateConnection proceeds and the connection is associated even when byte[endpoint+0x1a9] is clear; patched: returns 0xC0000236 (trace ordinal 0x23c/0x243) and no connection is created.",
+        "notes": "This function shares the endpoint object and refcount conventions (+0x08 object refcount, +0x130 inbound-connection count, tag 'Vnpi' 0x69706e56). It is the caller-side companion to the VmbusTlNotifyListenerAccept fix."
+      }
+    }
+  ],
+  "summary": "The patch to hvsocket.sys (Hyper-V Socket / VMBus transport) is the removal of a single Windows Feature-Management (Velocity) staging gate, feature 1542768955_57582472, evaluated via EvaluateCurrentState() (sub_1c0001d78; EvaluateFeature -> EvaluateCurrentStateFromRegistry reads ...\\Microsoft\\FeatureManagement\\Overrides). In the unpatched build each of the 9 changed functions has two twin paths selected by `if (EvaluateCurrentState())`: a feature-enabled path with stricter refcount/lock/state handling and a feature-disabled path with the older looser handling. The patched build deletes the gate at every call site and empties the driver's feature-descriptor table (the init loop iterates &reg_FeatureDescriptors_z..&reg_FeatureDescriptors_z, an empty range), keeping only the feature-enabled (safer) path everywhere. Per the classification rule, a removed feature gate that folds all callers to the safe path binary-wide is a DELIVERED fix. The most security-relevant delivered effect is on the guest-reachable inbound-accept path: VmbusTlNotifyListenerAccept (0x1c0005f18 -> 0x1c0005c68) now always checks the listener accept-guard byte at endpoint+0x128 before dispatching the accept callback (returning 0xC0000236 when set), and VmbusTlProcessNewConnectionForListener (0x1c0019e60 -> 0x1c0019db0) now always requires the endpoint accepting-state byte at endpoint+0x1a9 before VmbusTlCreateConnection. The other seven functions fold to safer refcount/lock handling on the in-host (host-local) loopback path. CORRECTION vs the original automated report: this is NOT a use-after-free, controlled indirect call, or guest-to-host VM escape. The endpoint is reference-held across the accept callback (a try-reference that only proceeds when the refcount is >= 1), and endpoint+0x128 is a logical accept-not-allowed/closing flag, not a liveness marker. The report's UAF/RCE/pool-grooming/KASLR/ROP/HVCI-bypass narrative is unsubstantiated by the diff and was removed. The proven primitive is a guest-reachable state-validation gap now enforced unconditionally: max severity Low. The default enablement state of the feature in the unpatched build, and the exact Windows build/KB, are not resolvable from the decompilation."
+}

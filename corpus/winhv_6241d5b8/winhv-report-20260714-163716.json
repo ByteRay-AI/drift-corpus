@@ -1,0 +1,138 @@
+{
+  "binaries": {
+    "title": "winhv.sys (Windows Hypervisor Interface Driver) - added active-processor bound in VTL per-VP hypercall path + hardened hypercall-result handling",
+    "id_unpatched": "winhv_unpatched.sys",
+    "id_patched": "winhv_patched.sys",
+    "overall_similarity": 0.6721,
+    "matched": 118,
+    "changed": 81,
+    "identical": 37,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C00038BC (patched sub_1400030F4) - VTL per-VP enablement over all processors",
+      "similarity": 0.911,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Outer hypercall wrapper call changed from sub_1c0001150(code, &out) [2 args] to sub_140003a58(code, &out, 0) [3 args].",
+        "Hypercall selector computation changed: unpatched cmovne between 0xA0011/0xA1011 based on data_65bd; patched computes rbx = (data_61d ? 0x1000 : 0) then ecx = rbx + 0xA0011.",
+        "CRITICAL: inner per-VP routine changed from parameterless sub_1c0003b90() to sub_140003408(rdi, SizeOfBitMap, rdx_5) — the active processor count (SizeOfBitMap from KeQueryActiveProcessorCountEx) is now passed in as an explicit bound, plus an affinity-derived rdx_5.",
+        "Loop still iterates rbx_2 from 0..SizeOfBitMap using RtlTestBit/RtlSetBit over data_65e8 bitmap; sub_140002ca4 (was sub_1c00035cc) now receives the VP context (rdi) explicitly."
+      ],
+      "security_relevant": true,
+      "security_notes": "In the unpatched build the inner per-VP hypercall issuer sub_1C0003B90 receives no processor-count bound, so the per-VP context index/write it performs is not constrained by the current active-processor count that the caller computed for the RTL_BITMAP. The patch threads SizeOfBitMap (and an affinity value) into the successor sub_140003408, i.e. it adds a bound to the per-VP processing. This is consistent with an out-of-range VP-index access (OOB read/write of a per-VP context array/overlay page) during VTL enable/disable when topology/processor-count assumptions differ. winhv.sys is a kernel library, so the trigger path is other kernel components (VID/securekernel/vmbus) invoking the VTL-enable export, not a direct user IOCTL; exploitability therefore depends on a caller that can influence processor-count/affinity state relative to the per-VP arrays.",
+      "assembly_diff": "UNPATCHED sub_1C00038BC (0x1c00038bc) key lines (from diff_function_diff assembly form):\nmov qword [rsp+0x10], rbx\nmov qword [rsp+0x18], rbp\npush rsi ; push r14 ; push r15\nsub rsp, 0x60\nmov rax, qword [rel 0x1c0006000] ; __security_cookie\nxor rax, rsp ; mov qword [rsp+0x58], rax\nlea r15, [rsp+0x48]\nmovzx r14d, cl                       ; arg1 (disable/enable flag)\nmov ecx, 0xffff\nxor bpl, bpl\ncall qword [rel 0x1c000c0c0]         ; KeQueryActiveProcessorCountEx -> eax = SizeOfBitMap\nmov rdx, qword [rel 0x1c00065e8]     ; bitmap buffer\nlea rcx, [rsp+0x28]\nmov r8d, eax ; mov esi, eax          ; esi = SizeOfBitMap\ncall qword [rel 0x1c000c158]         ; RtlInitializeBitMap\ncmp byte [rel 0x1c00065bd], bpl\nlea rcx, [rel 0x1c0006600]\nmov eax, 0xa1011 ; mov ebx, 0xa0011\ncmovne ebx, eax                      ; select hypercall code 0xA0011/0xA1011\ncall qword [rel 0x1c000c088]         ; ExAcquireFastMutex\nlea rdx, [rsp+0x20]\nmov ecx, ebx\ncall 0x1c0001150                     ; OUTER hypercall wrapper (2 args)\ntest eax, eax ; js 0x1c0003a63       ; status checked, bail on failure\ncmp qword [rsp+0x20], 0x1 ; jne 0x1c0003a63\nxor ebx, ebx ; test esi, esi ; je 0x1c0003a63\n... per-VP loop ...\nKeGetProcessorNumberFromIndex(rbx_1,&var_58); KeSetSystemGroupAffinityThread(&Affinity,..)\ncall 0x1c0003b90                     ; INNER per-VP hypercall issuer -- NO processor-count/bound argument (patched -> sub_140003408(rdi, SizeOfBitMap, rdx_5))\ntest eax, eax ; js 0x1c0003a4a\ncall 0x1c0003aa0\ninc ebx ; cmp ebx, esi ; jb 0x1c0003991  ; loop bounded by esi=SizeOfBitMap in bitmap only\n... call 0x1c00035cc (VP context finalize) ; RtlSetBit(&BitMapHeader, rbx_1) ...\ncall qword [rel 0x1c000c078]         ; ExReleaseFastMutex\ncall 0x1c0001200                     ; __security_check_cookie\nretn"
+    },
+    {
+      "name": "sub_1C0002B04 (patched sub_140001F00) - fast/simple hypercall issuer",
+      "similarity": 0.7966,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Per-processor input-page pointer fetch refactored from gs-based [gs:0x1a4]*0x38 + data_6068 + 0x30 to sub_140001150()+0x48.",
+        "Copies arg3 (input length, rbp) bytes into: (path1) per-processor page when data_67c2/d06a set; (path2) SLIST-popped page when rbp>0x10; (path3) 16-byte stack buffer when rbp<=0x10 with tail zero-fill.",
+        "Logic equivalent between versions; no new upper-bound on rbp added."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the core simple-hypercall issuer. The input length arg3 is copied via memmove (sub_140004640) into fixed 4KB per-processor / SLIST page buffers (paths 1 and 2) with no explicit upper bound in EITHER version — the size is trusted from the kernel caller. Not changed by the patch, so not the fix, but it is the primary place where a caller-supplied length reaches a fixed-size hypercall input page; documented as context/attack surface. Path 3 (rbp<=0x10 into 16-byte var_30) is correctly bounded.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00011B0 (patched sub_140003900) - hypervisor-status to NTSTATUS translation table",
+      "similarity": 0.5031,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Patched version greatly expands the status mapping table: adds handling for codes 0xA0011, 0xA000C-0xA000F, 0xA0012-0xA0015, 0xA1002-0xA100F ranges and 0x240/0x90002/0x90003/0x90004/0x90019/0x90022 via a switch.",
+        "Return formula arg1 + 0x3ff60070 / +0x3ff60090 branches restructured."
+      ],
+      "security_relevant": false,
+      "security_notes": "Feature/table expansion to map newly introduced hypercall result codes to NTSTATUS. No memory-safety or authorization change; included to show most of the diff is version-bump feature growth rather than a single security fix.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0002360 (patched sub_1400016B0) - generic rep-list hypercall builder (feeds Get/SetVpRegisters)",
+      "similarity": 0.8586,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Element-batching bound preserved: rcx = 0xFF0/inElemSize, rax = 0x1000/outElemSize, per-batch count r15_1 = min(bound, remaining).",
+        "memset/memcpy intrinsics replaced with out-of-line helpers (sub_140004940/sub_140004640).",
+        "Output copy still uses hypervisor-returned count (arg_20) * outElemSize into caller buffer arg9; check `returned > remaining` preserved."
+      ],
+      "security_relevant": false,
+      "security_notes": "Core rep-list hypercall page builder used by WinHvGetVpRegisters (0x50)/WinHvSetVpRegisters (0x51). Both versions retain the per-page batching bound that keeps r15_1*elemSize within the 4KB page, and the returned-count-vs-remaining guard. No bound was removed or added; change is compiler-driven. Noted because it is the highest-value copy engine in the driver.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "WinHvSignalEvent (patched 0x140002bb0)",
+      "similarity": 0.4409,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Fast-path vs slow-path selection inverted in form but equivalent (based on 'enlightened/simple hypercall' capability flag data_67c1/d069).",
+        "Connection-id argument narrowed from int64_t to int32_t; slow path builds an 8-byte input via slab allocator sub_140001520 and issues hypercall 0x5D."
+      ],
+      "security_relevant": false,
+      "security_notes": "Refactor of the SignalEvent wrapper; no validation or bounds change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "sub_1C00038BC (VTL per-VP enablement loop)",
+      "entry_point": "winhv.sys export invoked by kernel VTL/VSM setup (WinHvEnablePartitionVtl / WinHvEnableVpVtl-adjacent path); reachable from securekernel/VID during VBS/VTL configuration, not from a direct user IOCTL (winhv.sys exposes no device object).",
+      "call_chain": [
+        "VSM/VTL enable request (securekernel / VID / Hyper-V setup)",
+        "winhv.sys VTL-enable export",
+        "sub_1C00038BC (iterate active processors, RTL_BITMAP over data_65e8)",
+        "sub_1C0003B90 (inner per-VP hypercall issuer, UNBOUNDED in unpatched)"
+      ],
+      "vulnerability_class": "missing bounds argument / potential out-of-bounds VP-index access (CWE-129 improper validation of array index)",
+      "description": "sub_1C00038BC computes the active processor count via KeQueryActiveProcessorCountEx, initializes an RTL_BITMAP of that size, then loops over VP indices setting group affinity and issuing a per-VP hypercall through inner routine sub_1C0003B90. In the unpatched build sub_1C0003B90 is called with no arguments (it derives its per-VP target from ambient/affinity state). The patched build replaces it with sub_140003408(rdi, SizeOfBitMap, rdx_5), explicitly threading the active-processor-count bound (SizeOfBitMap) and an affinity-derived value into the per-VP routine. The addition of the processor-count bound indicates the pre-patch inner routine performed per-VP context indexing/writes without validating the VP index/count against the current active-processor count, permitting out-of-range access to the per-VP context/overlay array when topology or processor-count assumptions diverge from the arrays sized at init.",
+      "trigger_conditions": "A caller-controlled or state-dependent condition where the VP index range processed by sub_1C0003B90 exceeds the range covered by the per-VP context arrays (e.g., active-processor count / affinity state at the time of the VTL-enable call differs from the count used to size the per-VP context/overlay allocations set up in sub_1C00027A0). Enter sub_1C00038BC with arg1 (enable flag) non-zero so the inner hypercall path is taken for each bitmap-tested VP.",
+      "primitive": "Out-of-bounds read/write of kernel per-VP context (potential pool/overlay-page corruption in the VTL/VSM enablement path); worst case kernel memory corruption during VBS bring-up.",
+      "evidence": "Unpatched (pseudo_c): `sub_1c0001150(rbx, &var_58); if (var_58 == 1) { ... KeGetProcessorNumberFromIndex(rbx_1,&var_58); KeSetSystemGroupAffinityThread(&Affinity,..); if (sub_1c0003b90() >= 0) { sub_1c00035cc(); RtlSetBit(&BitMapHeader, rbx_1); } }` — inner issuer sub_1c0003b90() takes NO bound. Patched: `if (sub_140003a58(rbx_1 + 0xa0011, &var_58, 0) >= 0 && var_58 == 1) { ... if (sub_140003408(rdi, SizeOfBitMap_1, rdx_5) >= 0) { sub_140002ca4(rdi); RtlSetBit(&BitMapHeader, rbx_2); } }` — inner issuer now receives SizeOfBitMap_1 (active processor count) as an explicit bound.",
+      "assembly": "UNPATCHED sub_1C00038BC (start 0x1c00038bc), verbatim key basic blocks from diff_function_diff(forms=[assembly]):\nmov qword [rsp+0x10], rbx ; mov qword [rsp+0x18], rbp ; push rsi ; push r14 ; push r15 ; sub rsp, 0x60\nmov rax, qword [rel 0x1c0006000] ; xor rax, rsp ; mov qword [rsp+0x58], rax\nlea r15, [rsp+0x48]\nmovzx r14d, cl                         ; r14b = arg1 enable flag\nmov ecx, 0xffff\nxor bpl, bpl\ncall qword [rel 0x1c000c0c0]           ; KeQueryActiveProcessorCountEx -> eax\nmov rdx, qword [rel 0x1c00065e8] ; lea rcx, [rsp+0x28] ; mov r8d, eax ; mov esi, eax\ncall qword [rel 0x1c000c158]           ; RtlInitializeBitMap (SizeOfBitMap = esi)\ncmp byte [rel 0x1c00065bd], bpl ; lea rcx, [rel 0x1c0006600]\nmov eax, 0xa1011 ; mov ebx, 0xa0011 ; cmovne ebx, eax\ncall qword [rel 0x1c000c088]           ; ExAcquireFastMutex\nlea rdx, [rsp+0x20] ; mov ecx, ebx\ncall 0x1c0001150                       ; outer hypercall wrapper (2 args)\ntest eax, eax ; js 0x1c0003a63\ncmp qword [rsp+0x20], 0x1 ; jne 0x1c0003a63\nxor ebx, ebx ; test esi, esi ; je 0x1c0003a63 ; mov qword [rsp+0x80], rdi\n; --- per-VP loop @ 0x1c0003991 ---\nKeGetProcessorNumberFromIndex(rbx_1,&var_58) ; KeSetSystemGroupAffinityThread(&Affinity,PreviousAffinity_1)\ncall 0x1c0003b90                       ; INNER per-VP issuer -- NO SizeOfBitMap/bound argument\ntest eax, eax ; js 0x1c0003a4a\ncall 0x1c0003aa0\ncall 0x1c00035cc                       ; per-VP finalize (VP index)\nlea rcx, [rsp+0x28] ; mov edx, ebx ; call qword [rel 0x1c000c168] ; RtlSetBit(bitmap, rbx_1)\ninc ebx ; cmp ebx, esi ; jb 0x1c0003991\nlea rcx, [rel 0x1c0006600] ; call qword [rel 0x1c000c078]  ; ExReleaseFastMutex\nmov rcx, qword [rsp+0x58] ; xor rcx, rsp ; call 0x1c0001200 ; retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "winhv!sub_1C00038BC",
+            "address": "0x1c00038bc",
+            "why": "Entry of the VTL per-VP enablement loop. Inspect cl/r14b (arg1 enable flag) and, after the KeQueryActiveProcessorCountEx call, eax/esi = SizeOfBitMap (active processor count used to size the RTL_BITMAP)."
+          },
+          {
+            "symbol": "winhv!sub_1C0003B90",
+            "address": "0x1c0003b90",
+            "why": "Unpatched inner per-VP hypercall issuer that received NO processor-count bound. Break here each loop iteration; inspect the per-VP context pointer/index it dereferences and compare against esi (SizeOfBitMap) from the caller and against the size of the per-VP arrays allocated in sub_1C00027A0."
+          },
+          {
+            "symbol": "winhv!sub_1C00035CC",
+            "address": "0x1c00035cc",
+            "why": "Per-VP finalize called with the VP index (ebx) after a successful inner hypercall; watch for the index exceeding the per-VP context array bound."
+          }
+        ],
+        "watch": [
+          "esi = SizeOfBitMap (KeQueryActiveProcessorCountEx result) at 0x1c0003949-ish, the intended VP-count bound",
+          "ebx = current VP loop index (rbx_1), compared only against esi via `cmp ebx, esi; jb 0x1c0003991`",
+          "the per-VP context base (in patched build derived via sub_140001150()+0x48 / data_6068 table) and the offset/index sub_1C0003B90 uses",
+          "return value in eax of sub_1C0003B90 (status) — negative bails the loop"
+        ],
+        "key_offsets": [
+          "call qword [rel 0x1c000c0c0] @ ~0x1c0003920 = KeQueryActiveProcessorCountEx (defines SizeOfBitMap/esi)",
+          "cmovne ebx, eax @ ~0x1c000394x = selects hypercall 0xA0011 vs 0xA1011",
+          "call 0x1c0001150 @ ~0x1c000396x = outer hypercall wrapper (patched changes to sub_140003a58 with 3rd arg)",
+          "call 0x1c0003b90 = UNBOUNDED inner per-VP issuer (patched replaced by call sub_140003408 receiving SizeOfBitMap and an affinity value)",
+          "inc ebx / cmp ebx, esi / jb 0x1c0003991 = the only VP-index bound (bitmap loop) in the unpatched build"
+        ],
+        "trigger_setup": "No user device is exposed by winhv.sys. Reach this path by exercising VTL/VSM enablement that funnels through the winhv VTL-enable export (e.g., during VBS/HVCI or partition VTL configuration driven by securekernel/VID). To force the per-VP hypercall branch, ensure arg1 (enable flag, cl/r14b) is non-zero. Set up conditions where the active processor count / group affinity seen at this call differs from the count used when per-VP context/overlay pages were allocated in sub_1C00027A0 (init).",
+        "expected_observation": "In the unpatched binary, an OOB access (read or write) of the per-VP context/overlay array inside sub_1C0003B90 or sub_1C00035CC when the effective VP index/count exceeds the per-VP array size — observable as a pool-tag corruption, an access to an unmapped per-VP overlay page, or a bugcheck (e.g., 0xA IRQL_NOT_LESS_OR_EQUAL / 0x139 KERNEL_SECURITY_CHECK_FAILURE / pool corruption) during VTL enable. In the patched binary the same input is constrained by the SizeOfBitMap argument passed to sub_140003408 and the access stays in-bounds.",
+        "notes": "RTL_BITMAP buffer is data_1c00065e8; fast mutex guarding the section is data_1c0006600; the 0xA0011/0xA1011 selector depends on data_1c00065bd. Distinguish the vulnerable inner path (call 0x1c0003b90, no bound) from the safe patched path (call sub_140003408 with SizeOfBitMap). Per-VP context pages are set up during init in sub_1C00027A0 (per-processor pages linked via data_1c0006068 table at +0x30/+0x48)."
+      }
+    }
+  ],
+  "summary": "The compared binaries are winhv.sys (Windows Hypervisor Interface Driver) across a wide version gap, so most of the 81 changed functions are recompilation noise (register/stack reshuffling, out-of-lined memset/memcpy, and an expanded hypercall-result-to-NTSTATUS table in sub_1C00011B0). The one clear security-relevant delta is in the VTL per-VP enablement routine sub_1C00038BC: the unpatched build issues its inner per-VP hypercall via sub_1C0003B90() with no processor-count bound, whereas the patch replaces it with sub_140003408(vpContext, SizeOfBitMap, affinity), explicitly passing the active-processor count as a bound — consistent with fixing an out-of-range VP-index access to per-VP context/overlay memory during VTL/VSM bring-up. winhv.sys has no user IOCTL surface, so a PoC must drive the VTL-enable export from a kernel caller (securekernel/VID) and create a state where the VP index/count processed exceeds the per-VP arrays sized at init (sub_1C00027A0), then break on winhv!sub_1C0003B90 (0x1c0003b90) to observe the unbounded per-VP access before the RtlSetBit/finalize step."
+}

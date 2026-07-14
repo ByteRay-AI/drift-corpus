@@ -1,0 +1,97 @@
+{
+  "binaries": {
+    "title": "vhdmp.sys - Kernel-pointer information disclosure in the storage-dependency query handler (sub_1C0082CCC)",
+    "id_unpatched": "vhdmp_unpatched.sys",
+    "id_patched": "vhdmp_patched.sys",
+    "overall_similarity": 0.9918,
+    "matched": 2312,
+    "changed": 1,
+    "identical": 2311,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C0082CCC",
+      "similarity": 0.846,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Patched version introduces a new gate call at function entry: `int32_t rax = sub_1c0010298();` (assembly: `call 0x1c0010298; mov dword [rsp+0xb0], eax`), whose result (rdx_2) is combined with the request flag `*(arg2+0x40)` to decide whether to disclose pointers.",
+        "Every place the pre-patch code stored a kernel object pointer into a caller output record now conditionally zeroes it. Pre-patch: `mov qword [r14+0x28], r13` (writes i_5, the dependent VHD-chain object). Post-patch: `mov rax, r15; cmp byte [rbp+0x40], dil; cmovne rax, rdi; mov qword [r14+0x28], rax` (NULs the pointer when the trust/flag check indicates an untrusted caller).",
+        "Same NUL-on-untrusted treatment applied to the dependency object pointer `i_5[0x85]`/`[r13+0x428]` stored at record+0x30, and to the per-iteration records in both the count==2 loop and the general loop (fields record+0x20 and +0x28).",
+        "Telemetry/ETW event codes shifted (0x1d -> 0x1f at exit; new 0x1b/0x1c/0x1d/0x1e event emissions) and the event data pointer changed from &data_1c00544a0 to &data_1c0052c78 — consistent with added logging around the sanitized path; not itself the vulnerability.",
+        "Control flow otherwise preserved: level validation (r9_1-1>2 => STATUS_INVALID_LEVEL), buffer-size computation (rbp_3/r13_3), and STATUS_BUFFER_OVERFLOW/BUFFER_TOO_SMALL handling are unchanged."
+      ],
+      "security_relevant": true,
+      "security_notes": "The pre-patch handler copies raw kernel-mode object pointers (the dependent-chain object i_5 and its dependency object at i_5[0x428]/i_5[0x85]) directly into the STORAGE_DEPENDENCY_INFO records that are returned to the calling process. Because the output buffer is attacker-visible user memory, these fields disclose live kernel heap addresses, defeating KASLR and giving an attacker the exact base of internal vhdmp objects to target in a follow-on write/UAF primitive. The patch adds a caller-trust gate (sub_1c0010298) that, together with the request flag *(arg2+0x40), replaces those pointers with NULL (cmovne rax, rdi) for untrusted callers.",
+      "assembly_diff": "UNPATCHED (name_a=sub_1C0082CCC @ 0x1c0082ccc), '-' lines are the vulnerable pre-patch code; leak stores highlighted:\nmov     qword [rsp+0x8], rbx\nmov     qword [rsp+0x10], rdx\npush    rbp / push rsi / push rdi / push r12 / push r13 / push r14 / push r15\nsub     rsp, 0x40\nmov     r12, rdx            ; r12 = arg2 (request)\nmov     rbx, rcx            ; rbx = arg1\nmov     rcx, qword [rel 0x1c005f048]\nlea     rbp, [rel 0x1c005f048]\nlea     r14, [rel 0x1c00544a0]   ; ETW event data (pre-patch)\ncmp     rcx, rbp / je 0x1c0082d23\nmov     rax, qword [r12+0xb8]     ; output buffer descriptor\nmov     qword [rsp+0x90], rax\ncmp     dword [rax+0x10], 0x4     ; level/version >= 4 gate\njae     0x1c0082d6d\n... mov r15, qword [r12+0x18]      ; r15 = output buffer ptr\nmov     r9d, dword [r15]          ; r9d = query level (1..3)\nlea     eax, [r9-0x1] / cmp eax, 0x2 / ja 0x1c0083275   ; level>3 => STATUS_INVALID_LEVEL\n... size/count computation building rbp_3 (required size) ...\ncmp     eax, r9d / jb 0x1c0083245                       ; rax_12 (buf size) < required\nmov     eax, ebp / mov qword [r14+0x8], rax             ; STATUS_BUFFER_OVERFLOW path\n; ---- VULNERABLE POINTER STORES (pre-patch) ----\nmov     qword [r14+0x28], r13     ; *(record+0x28) = i_5  (KERNEL POINTER LEAK)  @~0x1c0083127\ncmp     dword [r15], 0x3 / jne 0x1c0083156\nmov     rax, qword [r13+0x428]    ; dependency object\n... mov qword [r15+0x28], rax     ; *(record+0x28) = i_5[0x85] (KERNEL POINTER LEAK) @~0x1c008314d\nmov     qword [r15+0x20], r13     ; *(record+0x20) = dependent object (KERNEL POINTER LEAK) @~0x1c008319b\nmov     rax, qword [r13+0x428] / mov qword [r15+0x28], rax   ; @~0x1c00831a5/0x1c00831c1\n... records advanced by 0x30/0x40; loop over i_5 = i_5[0x92] ...\nmov     qword [r12+0x38], rdi     ; *(arg2+0x38) = bytes written\n; ---- exit / ETW ----\nlea     r14, [rel 0x1c00544a0]\n...\nPATCHED counterpart replaces the entry with `call 0x1c0010298; mov dword [rsp+0xb0], eax` and each store becomes `cmp byte [rbp+0x40], dil; cmovne rax, rdi; mov qword [record], rax` (NUL for untrusted callers), plus new ETW codes 0x1b/0x1c/0x1d/0x1e and exit code 0x1f. (Full unified assembly diff captured via diff_function_diff forms=[assembly]; the per-binary disassembly worker was unreachable during analysis so offsets are taken from the diff hunks.)"
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "medium",
+      "function": "sub_1C0082CCC",
+      "entry_point": "DeviceIoControl / VirtDisk!GetStorageDependencyInformation path into vhdmp.sys (storage-dependency query IOCTL, e.g. IOCTL_STORAGE_GET_DEPENDENT_DISKS / the FSCTL used by GetStorageDependencyInformation) issued against a \\\\.\\... VHD or dependent-volume handle",
+      "call_chain": [
+        "user: OpenVirtualDisk / CreateFile on VHD-backed or dependent volume handle",
+        "user: GetStorageDependencyInformation() -> DeviceIoControl(storage-dependency query IOCTL)",
+        "vhdmp!IRP_MJ_DEVICE_CONTROL dispatch",
+        "vhdmp!sub_1C0082CCC (query-dependency-info handler, walks dependency chain and fills user output buffer)"
+      ],
+      "vulnerability_class": "Kernel-mode pointer information disclosure (CWE-200 / CWE-497: exposure of kernel addresses to unauthorized actor)",
+      "description": "The handler enumerates the VHD dependency chain (i_5 = current object, i_5[0x92] = next, i_5[0x85]/i_5[0x428] = dependency objects) and writes one fixed-size record per dependency into the caller-supplied output buffer at *(arg2+0x18). In the unpatched build these records include raw kernel-mode object pointers: the assembly `mov qword [r14+0x28], r13` stores the dependent-chain object pointer i_5, and `mov rax, qword [r13+0x428]; mov qword [r15+0x28], rax` stores the dependency object pointer, into fields that are copied back to user mode. No previous-mode/trust check gates the disclosure. The patched build calls sub_1c0010298() (a caller-trust/mode gate) and, when the request flag *(arg2+0x40) indicates an untrusted caller, replaces each pointer with NULL via `cmovne rax, rdi` before storing it.",
+      "trigger_conditions": "Open a handle to a VHD-backed / dependent storage object and issue the storage-dependency query with: query level/version in {2,3} (first dword of *(arg2+0x18); level 1..3 valid, else STATUS_INVALID_LEVEL); output-buffer descriptor level *(arg2+0xb8)+0x10 >= 4; and an output buffer *(arg2+0x18) whose size *(arg2+0xb8)+8 is >= the computed required size (rbp_3) so the fill path (not the STATUS_BUFFER_OVERFLOW/TOO_SMALL early-outs) is taken. At least one dependency must exist in the chain so a record is emitted. On return, read the pointer field at offset +0x28 (and +0x20 for chained entries) of each returned record to recover the kernel address.",
+      "primitive": "Arbitrary kernel-heap address disclosure to a low-privileged/user-mode caller: leaks the base addresses of internal vhdmp dependency-chain objects and their sub-objects, defeating kernel ASLR and providing precise targets for a subsequent memory-corruption / UAF exploit chain.",
+      "evidence": "Unpatched pseudo-C (sub_1C0082CCC): `*(r14_1 + 0x28) = i_5;` then `... rax_25 = i_5[0x85]; ... *(r14_1 + 0x30) = rax_25;` and in the chain loop `*(r14_2 + 0x20) = rbx_6; ... rax_28 = rbx_6[0x85]; *(r14_2 + 0x28) = rax_28;` and count==2 branch `*(r15_2 + 0x20) = i_5; ... rax_14 = i_5[0x85]; *(r15_2 + 0x28) = rax_14;`. In the patched version each becomes gated: `int64_t* i_8 = i_5; if (rdx_2 && *(arg2 + 0x40)) i_8 = nullptr; *(r14_2 + 0x28) = i_8;` where `rdx_2 = rax = sub_1c0010298();`. These pointer-bearing records are the STORAGE_DEPENDENCY_INFO entries copied back to the caller.",
+      "assembly": "Unpatched leak stores (from diff_function_diff forms=[assembly], '-' side = pre-patch; per-binary disasm worker was unreachable so exact VAs are the diff-hunk offsets):\nmov     qword [r14+0x28], r13            ; @~0x1c0083127  *(record+0x28) = i_5  (kernel ptr)\ncmp     dword [r15], 0x3\njne     0x1c0083156\nmov     rax, qword [r13+0x428]\ntest    rcx, rcx / je 0x1c0083156\n...\nmov     qword [r15+0x28], rax            ; @~0x1c008314d  *(record+0x28) = i_5[0x85] (kernel ptr)\nmov     qword [r15+0x20], r13            ; @~0x1c008319b  *(record+0x20) = dependent object (kernel ptr)\nmov     rax, qword [r13+0x428]\nmov     qword [r15+0x28], rax            ; @~0x1c00831a5/0x1c00831c1 dependency object (kernel ptr)\nmov     qword [r15+0x20], r13            ; count==2 branch: *(record+0x20)=i_5\nmov     rax, qword [r13+0x428] / mov qword [r15+0x28], rax\nmov     qword [r12+0x38], rdi            ; *(arg2+0x38) = bytes written\nPatched counterpart: `call 0x1c0010298; mov dword [rsp+0xb0], eax` at entry and for each store `cmp byte [rbp+0x40], dil; cmovne rax, rdi; mov qword [record], rax` (NUL for untrusted callers).",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "vhdmp!sub_1C0082CCC",
+            "address": "0x1c0082ccc",
+            "why": "Function entry. rcx (arg1) = internal context/device object; rdx (arg2) = request object. Inspect *(rdx+0x18) (output buffer ptr, first dword = query level 1..3), *(rdx+0xb8) (output descriptor: +8 = buffer size, +0x10 = descriptor level), *(rdx+0x38) (bytes-written out), *(rdx+0x40) (request flag that the patch consults). This is where the patched build inserts `call 0x1c0010298`."
+          },
+          {
+            "symbol": "vhdmp!sub_1C0082CCC+leak_store (record+0x28 = i_5)",
+            "address": "0x1c0083127",
+            "why": "Pre-patch `mov qword [r14+0x28], r13`: r13 holds i_5, the live kernel pointer to the dependent VHD-chain object, being written into the output record. Dump r13 and the record at r14 here — that value is what leaks to user mode. In the patched binary this store is preceded by cmovne rax,rdi and writes 0 for untrusted callers."
+          },
+          {
+            "symbol": "vhdmp!sub_1C0082CCC+dep_store (record+0x28 = i_5[0x85])",
+            "address": "0x1c008314d",
+            "why": "Pre-patch store of the dependency object pointer i_5[0x85] (from [r13+0x428] after DependentFSReferenceDependency succeeds). Watch rax/[r13+0x428]; this kernel pointer is copied into the returned record."
+          },
+          {
+            "symbol": "vhdmp!sub_1C0082CCC+chain_store (record+0x20)",
+            "address": "0x1c008319b",
+            "why": "Pre-patch `*(r14_2+0x20) = rbx_6` inside the multi-dependency loop: rbx_6 is the next chain object (kernel pointer) written into each subsequent output record. Confirms the leak scales to every dependency in the chain."
+          }
+        ],
+        "watch": [
+          "rdx/rbp = arg2 (request object); *(rbp+0x40) byte = the flag the patch ANDs with the trust-check result",
+          "*(arg2+0x18) first dword = query level (set to 2 or 3 to reach the pointer-storing branches; 1 also stores i_5)",
+          "*(arg2+0xb8)+8 = output buffer size (must be >= computed required size rbp_3/r13_3 to take the fill path)",
+          "r13 (=i_5) and [r13+0x428] (=dependency object) at the store sites — these register values are the leaked kernel addresses",
+          "r14/r15 = current output record pointer; offsets +0x20, +0x28, +0x30 within the record receive the pointers",
+          "In the patched binary: eax result of call 0x1c0010298 saved at [rsp+0xb0]; the cmovne that zeroes the pointer"
+        ],
+        "key_offsets": [
+          "call 0x1c0010298 @ patched entry (mov dword [rsp+0xb0], eax) — the ADDED trust gate; absent in unpatched",
+          "mov qword [r14+0x28], r13 @ ~0x1c0083127 — pre-patch kernel-pointer store (i_5) with no sanitization",
+          "mov qword [r15+0x28], rax @ ~0x1c008314d / ~0x1c00831c1 — pre-patch dependency-object pointer store",
+          "mov qword [r15+0x20], r13 @ ~0x1c008319b — pre-patch chained-record pointer store",
+          "lea eax,[r9-1]; cmp eax,0x2; ja 0x1c0083275 — level validation (1..3 valid) at ~0x1c0082d80",
+          "cmp eax, r9d; jb 0x1c0083245 — output-buffer size check vs required size (fill vs BUFFER_OVERFLOW)"
+        ],
+        "trigger_setup": "From user mode: obtain a handle to a VHD-backed volume/disk that has at least one storage dependency (e.g. a mounted/attached VHD with a parent or a differencing chain), then call VirtDisk!GetStorageDependencyInformation (or issue the equivalent storage-dependency query DeviceIoControl) requesting STORAGE_DEPENDENCY_INFO version 2, with a large-enough output buffer to pass the size check. Break on vhdmp!sub_1C0082CCC (0x1c0082ccc) to confirm arg2 fields, then step to the leak stores.",
+        "expected_observation": "After the call returns STATUS_SUCCESS, the returned STORAGE_DEPENDENCY_INFO record(s) contain non-zero 64-bit values at the pointer offsets (record+0x20 / +0x28 / +0x30) that fall in the kernel address range (0xFFFF...); on the patched driver those same fields read as 0 for the same unprivileged caller. In WinDbg, `!pool` on the leaked value resolves to a vhdmp-tagged nonpaged pool object, confirming a real kernel object address was disclosed.",
+        "notes": "The per-binary disassembly worker (172.29.3.3:7332) was unreachable during analysis, so exact runtime VAs should be re-confirmed with `uf vhdmp!sub_1C0082CCC`; the offsets above come from the diff hunks and are stable relative to the function base 0x1c0082ccc. sub_1c0010298 (the added gate) takes no args and returns the int32 stored at [rsp+0xb0]; treat it as the caller-trust/previous-mode check — inspect it once the worker is back to confirm whether it keys on Irp->RequestorMode / ExGetPreviousMode or a global policy flag. Distinguish the vulnerable path from the safe one by whether the cmovne/NUL sequence precedes the pointer store (patched) or the pointer is stored directly (unpatched)."
+      }
+    }
+  ],
+  "summary": "Between these two builds of vhdmp.sys exactly one function changed: sub_1C0082CCC, the kernel handler that answers storage-dependency queries (GetStorageDependencyInformation) by walking the VHD dependency chain and filling a user-supplied output buffer with per-dependency records. The pre-patch code writes raw kernel-mode object pointers (the dependent-chain object i_5 and its dependency object at i_5[0x428]/i_5[0x85]) directly into those records at offsets +0x20/+0x28/+0x30, disclosing kernel heap addresses to any caller and defeating KASLR. The patch adds a caller-trust gate (sub_1c0010298) and, together with the request flag *(arg2+0x40), replaces each disclosed pointer with NULL (cmovne rax, rdi) for untrusted callers. A PoC needs only to open a VHD-backed/dependent-volume handle, request storage-dependency info (version 2/3) with a large-enough output buffer to reach the fill path, and read the kernel pointers from the returned records."
+}

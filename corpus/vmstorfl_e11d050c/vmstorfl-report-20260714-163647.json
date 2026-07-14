@@ -1,0 +1,151 @@
+{
+  "binaries": {
+    "title": "vmstorfl.sys - Guest-triggerable OOB write in Hyper-V host SCSI sense-data translation (missing SRB offset/length validation)",
+    "id_unpatched": "vmstorfl_unpatched.sys",
+    "id_patched": "vmstorfl_patched.sys",
+    "overall_similarity": 0.8246,
+    "matched": 78,
+    "changed": 36,
+    "identical": 42,
+    "unmatched_unpatched": 0,
+    "unmatched_patched": 0
+  },
+  "changed_functions": [
+    {
+      "name": "sub_1C00034A0 (patched: sub_1C000363C)",
+      "similarity": 0.4221,
+      "change_type": "security_relevant",
+      "key_changes": [
+        "Unpatched handles only a single (legacy SCSI_REQUEST_BLOCK) sense layout with fixed offsets; patched adds discrimination of extended STORAGE_REQUEST_BLOCK via '*(arg3+2)==0x28' and reads length from +0x3c vs +0x10 accordingly.",
+        "Patched adds a bounds-checked walk over SRB extension descriptors at '*(rbx + (idx<<2) + 0x78)' validating each offset is 'rcx >= 0x80 && rcx < r9' (r9 = SRB DataTransferLength) and 'offset+0x28 <= r9' / 'offset+0x38 <= r9' BEFORE dereferencing to locate the real sense buffer and its length.",
+        "Unpatched computed the sense destination as the raw field '*(arg3+0x20)' and the memset length as the raw byte '*(arg3+0xb)' (only lower-bounded '>=0x12', no upper bound), then called memset (sub_1c0004ac0) and memmove (sub_1c0004780).",
+        "Patched replaces the direct copy destination with a validated pointer (r14_1) obtained from the descriptor walk and re-routes the copy through the rewritten copy helper sub_1c0005040."
+      ],
+      "security_relevant": true,
+      "security_notes": "This is the SCSI sense-data translation routine for guest virtual-storage requests arriving over VMBus (reached via VmbChannelGetPointer in the caller). In the unpatched build the destination sense buffer (*(arg3+0x20)) and the memset length (*(arg3+0xb), a full byte up to 0xFF) are taken directly from attacker-influenced SRB fields with no validation that the length fits the buffer and no discrimination of the extended STORAGE_REQUEST_BLOCK layout. The only upper-bound fastfail ('cmp bpl,0x14; ja __fastfail') guards a DIFFERENT field (*(arg2+0x15)), not the memset length. A malicious guest can therefore drive an out-of-bounds zero-write (and subsequent fixed-offset sense byte writes) in host non-paged pool. The patch introduces SRB-type discrimination plus per-descriptor bounds checks against the SRB DataTransferLength.",
+      "assembly_diff": "sub_1c00034a0 (unpatched) verbatim:\n0x1c00034a0 mov rax, rsp\n0x1c00034a3 mov [rax+0x8], rbx\n0x1c00034a7 mov [rax+0x10], rbp\n0x1c00034ab mov [rax+0x18], rsi\n0x1c00034af mov [rax+0x20], rdi\n0x1c00034b3 push r12 / push r14 / push r15 / sub rsp,0x20\n0x1c00034bd mov eax, dword [rdx+0x18]      ; result = *(arg2+0x18)\n0x1c00034c0 mov rdi, r8                    ; rdi = arg3\n0x1c00034c3 mov rsi, rdx                   ; rsi = arg2\n0x1c00034c6 cmp dword [r8+0x10], eax\n0x1c00034ca jb  0x1c000368e                ; -> __fastfail(0x3a) if *(arg3+0x10) < result\n0x1c00034d0 mov dword [r8+0x10], eax        ; clamp *(arg3+0x10)=result\n0x1c00034d4 mov al, byte [rdx+0xe] / mov byte [r8+0x3], al\n0x1c00034db mov al, byte [rdx+0xf] / mov byte [r8+0x4], al\n0x1c00034e2 cmp al, 0x2 / jne 0x1c0003652   ; require *(arg2+0xf)==2 (sense present)\n0x1c00034ea call qword [rel 0x1c00082c8]    ; VmbChannelGetPointer\n0x1c00034f6 mov bpl, byte [rsi+0x15]        ; rbp = *(arg2+0x15) SenseInfoBufferLength\n0x1c00034fa mov dl, byte [rax+0x75]\n0x1c00034fd cmp bpl, 0x14 / ja 0x1c000368e  ; fastfail if *(arg2+0x15) > 0x14 (guards WRONG field)\n0x1c0003507 lea rbx, [rsi+0x1c]            ; src sense = arg2+0x1c\n0x1c000350b mov cl, byte [rbx] / and cl,0x7f\n0x1c0003510 lea eax, [rcx-0x72] / cmp al,0x1 / ja 0x1c000352b   ; sense response 0x72/0x73?\n0x1c0003517 test dl,dl / je 0x1c0003527\n0x1c000351b mov al, byte [rdi+0xb] / cmp al,bpl / jae 0x1c000352b\n0x1c0003523 cmp al,0x12 / jb 0x1c000352b\n0x1c000352b xor al,al / ... / 0x1c0003527 mov al,0x1\n0x1c000352d mov dl, byte [rdi+0xb]         ; dl = *(arg3+0xb) sense length (attacker byte)\n0x1c0003530 test al,al / je 0x1c0003671\n0x1c0003538 mov rsi, qword [rdi+0x20]      ; rsi = *(arg3+0x20) SenseInfoBuffer (dest)\n0x1c0003545 test rbx,rbx / je 0x1c000364e\n0x1c0003551 test bpl,bpl / je 0x1c000364e\n0x1c0003557 test rsi,rsi / je 0x1c000364e\n0x1c0003560 cmp dl,0x12 / jb 0x1c000364e   ; only lower bound on dl (>=0x12)\n0x1c0003569 sub cl,0x72 / cmp cl,0x1 / ja 0x1c000364e\n0x1c0003575 movzx r8d, dl                  ; count = dl (*(arg3+0xb)), NO upper bound\n0x1c0003579 mov rcx, rsi                   ; dest = SenseInfoBuffer\n0x1c000357c xor edx, edx\n0x1c000357e call 0x1c0004ac0               ; memset(SenseInfoBuffer, 0, dl)  <-- OOB write\n0x1c0003583 ... descriptor->fixed sense conversion, writes *rsi,*(rsi+2),*(rsi+7),*(rsi+0xc),*(rsi+0xd)\n0x1c0003635 mov byte [rsi], al ... 0x1c000364a mov byte [rsi+0xd], r14b\n0x1c000364e mov byte [rdi+0xb], 0x12\n0x1c0003671 cmp dl, bpl / jb 0x1c0003652   ; else-if *(arg3+0xb) >= *(arg2+0x15)\n0x1c0003676 mov rcx, qword [rdi+0x20]      ; dest = *(arg3+0x20)\n0x1c000367a mov rdx, rbx                   ; src  = arg2+0x1c\n0x1c000367d movzx r8d, bpl                 ; count = *(arg2+0x15) (<=0x14)\n0x1c0003681 call 0x1c0004780               ; memmove(dest, src, len)\n0x1c0003686 mov al, byte [rsi+0x15] / mov byte [rdi+0xb], al\n0x1c000368e mov ecx,0x3a / int 0x29        ; __fastfail(FAST_FAIL_INVALID_BUFFER_ACCESS)"
+    },
+    {
+      "name": "sub_1C0004780 (patched: sub_1C0005040)",
+      "similarity": 0.2828,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inlined memmove/memcpy primitive fully re-implemented (different SSE unrolling and small-size fast paths for <8, <=0x10, <=0x20).",
+        "This is the copy helper invoked by the vulnerable sub_1C00034A0 for the sense-data memmove path."
+      ],
+      "security_relevant": false,
+      "security_notes": "Callee (memmove) of the vulnerable function; itself just a re-optimized copy routine. Relevant only as the sink for the attacker-controlled length in the sense-copy path.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0004AC0 (patched: sub_1C0005300)",
+      "similarity": 0.599,
+      "change_type": "behavioral",
+      "key_changes": [
+        "Inlined memset primitive (dest, fill byte, count) re-implemented with SSE zero-fill loops.",
+        "This is the exact sink of the unbounded OOB write: sub_1C00034A0 calls it as memset(*(arg3+0x20), 0, *(arg3+0xb))."
+      ],
+      "security_relevant": false,
+      "security_notes": "Callee (memset) that performs the out-of-bounds zero-write when sub_1C00034A0 passes the unvalidated attacker length *(arg3+0xb). Not vulnerable in isolation; it is the corruption sink.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C00022F0 (patched: sub_1C00022C0)",
+      "similarity": 0.9826,
+      "change_type": "behavioral",
+      "key_changes": [
+        "VMBus SCSI request completion/response handler; calls VmbChannelGetPointer(), fetches request from *(arg4+0x18), and dispatches sub_1C00034A0(arg1, arg3, rdi) when opcode arg2==1.",
+        "Establishes that arg2/arg3 of the vulnerable function are guest-controlled SRB structures."
+      ],
+      "security_relevant": false,
+      "security_notes": "Sole caller of the vulnerable function; documents the attacker-reachable path (guest SRB over VMBus -> response handler -> sense translation).",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C0003D58 (patched: sub_1C00041BC)",
+      "similarity": 0.9124,
+      "change_type": "behavioral",
+      "key_changes": [
+        "VMBus storage packet dispatcher; calls sub_1C00022F0 (the completion handler that reaches the vulnerable sense-translation routine).",
+        "Upstream node in the entry-point -> vulnerable-function call chain."
+      ],
+      "security_relevant": false,
+      "security_notes": "Dispatch layer that routes guest VMBus storage packets to the completion handler; part of the reachability chain.",
+      "assembly_diff": ""
+    },
+    {
+      "name": "sub_1C000333C (FxStubBindClasses)",
+      "similarity": 0.1362,
+      "change_type": "behavioral",
+      "key_changes": [
+        "WDF class-bind loop stub: patched adds NULL/'*i != 0x50' guards and DbgPrintEx diagnostics and returns 0xc000007b on malformed class info.",
+        "Internal WDF loader hardening; not attacker-reachable input path."
+      ],
+      "security_relevant": false,
+      "security_notes": "Cosmetic/robustness hardening of a WDF version-bind stub; no external attack surface. Included for completeness because it is the lowest-similarity change.",
+      "assembly_diff": ""
+    }
+  ],
+  "unmatched": {
+    "removed": [],
+    "added": []
+  },
+  "security_findings": [
+    {
+      "severity": "high",
+      "function": "sub_1C00034A0 (unpatched @ 0x1c00034a0)",
+      "entry_point": "Hyper-V guest virtual SCSI request over VMBus (StorVSC guest driver -> host vmstorfl.sys VSP); request received via VmbChannelGetPointer and dispatched by sub_1C0003D58 -> sub_1C00022F0 with opcode arg2==1",
+      "call_chain": [
+        "VMBus channel packet (guest SRB completion)",
+        "sub_1C0003D58 (VMBus storage packet dispatcher)",
+        "sub_1C00022F0 (SCSI request completion/response handler, calls VmbChannelGetPointer)",
+        "sub_1C00034A0 (SCSI sense-data translation)",
+        "sub_1C0004AC0 (memset) / sub_1C0004780 (memmove) - corruption sink"
+      ],
+      "vulnerability_class": "Out-of-bounds write due to missing bounds/length validation (and SRB layout type-confusion) on attacker-controlled sense buffer offset and length; CWE-787 / CWE-119 / CWE-843",
+      "description": "sub_1C00034A0 translates SCSI sense data between descriptor (0x72/0x73) and fixed (0x70/0x71) formats for a guest SRB. It reads the destination SenseInfoBuffer pointer directly from '*(arg3+0x20)' and the sense length directly from the single byte '*(arg3+0xb)'. On the conversion path it calls memset(sub_1C0004AC0) with dest=*(arg3+0x20) and count=*(arg3+0xb), guarded only by a lower bound ('cmp dl,0x12; jb'), with NO upper bound and NO check that the length fits the actual sense buffer. The only upper-bound fastfail present ('cmp bpl,0x14; ja __fastfail') validates a different field, *(arg2+0x15) (SenseInfoBufferLength of the source), not the memset length. The unpatched routine also assumes a single (legacy) SRB layout and does not discriminate the extended STORAGE_REQUEST_BLOCK (SrbType) format, so fields at fixed offsets can be mis-parsed. The patched routine (sub_1C000363C) adds STORAGE_REQUEST_BLOCK discrimination via '*(arg3+2)==0x28', walks the SRB extension descriptor array at '*(rbx+(idx<<2)+0x78)' and validates each offset ('offset>=0x80 && offset<DataTransferLength', 'offset+0x28<=len', 'offset+0x38<=len') before dereferencing to locate the real sense buffer and length.",
+      "trigger_conditions": "Guest sends a virtual SCSI request whose completion in vmstorfl carries: (1) *(arg2+0xf) == 2 to select the sense-processing path; (2) source sense response code (*(arg2+0x1c) & 0x7f) in {0x72,0x73} (descriptor format) so the conversion/memset branch (0x1c0003538/0x1c000357e) is taken; (3) *(arg3+0xb) (dest sense length) set >= 0x12 and as large as 0xFF while the backing SenseInfoBuffer at *(arg3+0x20) is smaller; (4) *(arg3+0x10) >= *(arg2+0x18) and *(arg2+0x15) <= 0x14 to pass the two fastfail checks. This drives memset(SenseInfoBuffer, 0, up-to-0xFF) beyond the allocation. Sending an extended STORAGE_REQUEST_BLOCK (SrbType!=0 / marker 0x28) that the unpatched code mis-parses further lets the attacker control which bytes are treated as the sense pointer/length.",
+      "primitive": "Out-of-bounds zero-write (and subsequent small fixed-offset sense-byte writes) in host non-paged pool of up to ~255 bytes past the sense buffer, controllable in position/size via SRB fields -> host kernel pool corruption -> denial of service and, with heap grooming, guest-to-host privilege escalation / VM escape.",
+      "evidence": "// unpatched sub_1c00034a0 (from diff, pre-patch side)\nuint64_t result = *(arg2 + 0x18);\nif (*(arg3 + 0x10) < result) __fastfail(0x3a);\n*(arg3 + 0x10) = result;\n*(arg3+3) = *(arg2+0xe);\nif (*(arg2+0xf) != 2) return result;\nvmb = VmbChannelGetPointer();\nrbp = *(arg2 + 0x15);            // SenseInfoBufferLength (source)\nif (rbp > 0x14) __fastfail(0x3a);// guards WRONG field\n...\nchar rdx = *(arg3 + 0xb);        // attacker sense length (dest)\nif (flag) {\n    rsi_1 = *(arg3 + 0x20);      // dest SenseInfoBuffer (attacker ptr/field)\n    if (arg2 != -0x1c && rbp && rsi_1 && rdx >= 0x12) {   // only lower bound on rdx\n        if ((cl - 0x72) <= 1) {\n            sub_1c0004ac0(rsi_1, 0, rdx);   // memset(dest, 0, rdx up to 0xFF) -> OOB write\n            ... *rsi_1 = ...; *(rsi_1+2) ^= ...; *(rsi_1+7)=0xa; *(rsi_1+0xc)=r12; *(rsi_1+0xd)=r14;\n        }\n    }\n    *(arg3 + 0xb) = 0x12;\n} else if (rdx >= rbp) {\n    sub_1c0004780(*(arg3 + 0x20), arg2 + 0x1c, rbp);  // memmove(dest, src, len<=0x14)\n    *(arg3 + 0xb) = *(arg2 + 0x15);\n}",
+      "assembly": "sub_1c00034a0 (unpatched) @ 0x1c00034a0, 154 instrs, size 0x1f5:\n0x1c00034a0 mov rax, rsp\n0x1c00034a3 mov [rax+0x8], rbx ; [rax+0x10], rbp ; [rax+0x18], rsi ; [rax+0x20], rdi\n0x1c00034b3 push r12 ; push r14 ; push r15 ; sub rsp,0x20\n0x1c00034bd mov eax, dword [rdx+0x18]        ; result = *(arg2+0x18)\n0x1c00034c0 mov rdi, r8                       ; rdi = arg3\n0x1c00034c3 mov rsi, rdx                      ; rsi = arg2\n0x1c00034c6 cmp dword [r8+0x10], eax\n0x1c00034ca jb  0x1c000368e                   ; __fastfail if *(arg3+0x10) < result\n0x1c00034d0 mov dword [r8+0x10], eax\n0x1c00034d4 mov al,[rdx+0xe] ; mov [r8+0x3],al\n0x1c00034db mov al,[rdx+0xf] ; mov [r8+0x4],al\n0x1c00034e2 cmp al,0x2 ; jne 0x1c0003652       ; require *(arg2+0xf)==2\n0x1c00034ea call qword [rel 0x1c00082c8]       ; VmbChannelGetPointer\n0x1c00034f6 mov bpl,[rsi+0x15]                 ; rbp = *(arg2+0x15)\n0x1c00034fa mov dl,[rax+0x75]\n0x1c00034fd cmp bpl,0x14 ; ja 0x1c000368e      ; fastfail on WRONG field (*(arg2+0x15))\n0x1c0003507 lea rbx,[rsi+0x1c]\n0x1c000350b mov cl,[rbx] ; and cl,0x7f\n0x1c0003510 lea eax,[rcx-0x72] ; cmp al,0x1 ; ja 0x1c000352b\n0x1c0003517 test dl,dl ; je 0x1c0003527\n0x1c000351b mov al,[rdi+0xb] ; cmp al,bpl ; jae 0x1c000352b\n0x1c0003523 cmp al,0x12 ; jb 0x1c000352b\n0x1c000352b xor al,al  / 0x1c0003527 mov al,0x1 ; jmp 0x1c000352d\n0x1c000352d mov dl,[rdi+0xb]                   ; dl = *(arg3+0xb) (attacker length)\n0x1c0003530 test al,al ; je 0x1c0003671\n0x1c0003538 mov rsi,[rdi+0x20]                 ; dest SenseInfoBuffer = *(arg3+0x20)\n0x1c000353c xor r15b/r12b/r14b\n0x1c0003545 test rbx,rbx ; je 0x1c000364e\n0x1c000354e test bpl,bpl ; je 0x1c000364e\n0x1c0003557 test rsi,rsi ; je 0x1c000364e\n0x1c0003560 cmp dl,0x12 ; jb 0x1c000364e       ; ONLY lower bound on dl\n0x1c0003569 sub cl,0x72 ; cmp cl,0x1 ; ja 0x1c000364e\n0x1c0003575 movzx r8d,dl                       ; count = *(arg3+0xb) up to 0xFF\n0x1c0003579 mov rcx,rsi ; xor edx,edx\n0x1c000357e call 0x1c0004ac0                   ; memset(dest,0,count) -> OOB WRITE\n0x1c0003583..0x1c000364a  descriptor->fixed sense conversion writes to [rsi],[rsi+2],[rsi+7],[rsi+0xc],[rsi+0xd]\n0x1c000364e mov byte [rdi+0xb],0x12\n0x1c0003671 cmp dl,bpl ; jb 0x1c0003652        ; else-if branch\n0x1c0003676 mov rcx,[rdi+0x20] ; mov rdx,rbx ; movzx r8d,bpl\n0x1c0003681 call 0x1c0004780                   ; memmove(*(arg3+0x20), arg2+0x1c, *(arg2+0x15))\n0x1c0003686 mov al,[rsi+0x15] ; mov [rdi+0xb],al\n0x1c000368e mov ecx,0x3a ; int 0x29            ; __fastfail(FAST_FAIL_INVALID_BUFFER_ACCESS)\n0x1c0003652 (epilogue) mov rbx,[rsp+0x40]; mov rbp,[rsp+0x48]; mov rsi,[rsp+0x50]; mov rdi,[rsp+0x58]; add rsp,0x20; pop r15; pop r14; pop r12; retn",
+      "debugging_aids": {
+        "breakpoints": [
+          {
+            "symbol": "vmstorfl!sub_1c00034a0 (unpatched sense-translation)",
+            "address": "0x1c00034a0",
+            "why": "Entry of the vulnerable routine. rdx=arg2 (source SRB/sense struct), r8=arg3 (destination response struct). Inspect *(rdx+0xf) (must be 2), *(rdx+0x15) (source sense len, must be <=0x14), *(r8+0xb) (attacker dest length used for memset), *(r8+0x20) (dest SenseInfoBuffer pointer)."
+          },
+          {
+            "symbol": "call site of memset (sub_1c0004ac0)",
+            "address": "0x1c000357e",
+            "why": "The OOB write sink. At this point rcx=dest=*(arg3+0x20)=SenseInfoBuffer, r8b=count=*(arg3+0xb) with only a >=0x12 guard. Compare r8 against the true pool allocation size of rcx to observe the overflow."
+          },
+          {
+            "symbol": "memmove call (sub_1c0004780)",
+            "address": "0x1c0003681",
+            "why": "Secondary copy path; rcx=dest=*(arg3+0x20), rdx=src=arg2+0x1c, r8b=len=*(arg2+0x15). Bounded to <=0x14 here but useful to confirm which branch executed."
+          }
+        ],
+        "watch": [
+          "r8b at 0x1c000357e = memset count = *(arg3+0xb) (attacker byte, 0x12..0xFF) — the OOB length",
+          "rcx/rsi at 0x1c0003538/0x1c000357e = *(arg3+0x20) = destination SenseInfoBuffer pointer",
+          "dl at 0x1c000352d = *(arg3+0xb)",
+          "bpl at 0x1c00034f6 = *(arg2+0x15) (source SenseInfoBufferLength, gated <=0x14 — note this is NOT the memset length)",
+          "cl at 0x1c000350b = (*(arg2+0x1c) & 0x7f) sense response code selecting descriptor vs fixed path (needs 0x72/0x73 to reach memset)",
+          "eax at 0x1c00034bd = *(arg2+0x18) DataTransferLength clamp value"
+        ],
+        "key_offsets": [
+          "cmp bpl,0x14 @ 0x1c00034fd — upper-bound fastfail applied to the WRONG field (*(arg2+0x15)), not to the memset length",
+          "cmp dl,0x12 / jb @ 0x1c0003560 — the ONLY bound on the memset length *(arg3+0xb) (lower bound only)",
+          "call 0x1c0004ac0 @ 0x1c000357e — memset(dest,0,*(arg3+0xb)) unbounded OOB write",
+          "call 0x1c0004780 @ 0x1c0003681 — memmove sense copy path",
+          "In the patched build (sub_1c000363c) the descriptor-walk bounds checks 'offset<r9', 'offset+0x28<=r9', 'offset+0x38<=r9' around 0x1c0003703/0x1c000372b are the added mitigation"
+        ],
+        "trigger_setup": "From inside a Hyper-V guest, open the virtual SCSI/StorVSC path and issue a SCSI command whose completion returns sense data: set the returned sense response code to 0x72 or 0x73 (descriptor format), set the SRB SenseInfoBufferLength field that lands at *(arg3+0xb) to a value >=0x12 up to 0xFF while providing an undersized sense buffer, keep *(arg2+0x15)<=0x14 and *(arg3+0x10)>=*(arg2+0x18) to pass the two __fastfail checks. Delivery is via the guest StorVSC miniport -> VMBus channel to host vmstorfl.sys (dispatch sub_1c0003d58 -> sub_1c00022f0 with opcode==1).",
+        "expected_observation": "Pool corruption / bugcheck when memset at 0x1c000357e writes zeros past the SenseInfoBuffer allocation — expect DRIVER_OVERRAN_STACK_BUFFER/ BAD_POOL_HEADER / KERNEL_MODE_HEAP_CORRUPTION or a special-pool access violation at the tail of the buffer. With Driver Verifier special pool enabled on vmstorfl.sys, the fault triggers exactly at buffer_end. Confirm r8 (count) > allocation size at the breakpoint.",
+        "notes": "arg2/arg3 mapping comes from caller sub_1c00022f0: it calls sub_1c00034a0(arg1, arg3_caller, rdi) where rdi=*(arg4+0x18) is the destination response (arg3) and arg3_caller is the source SRB (arg2). Distinguish the vulnerable path from the safe memmove path by watching the branch at 0x1c0003530 (test al,al): al!=0 -> memset/conversion path (vulnerable), al==0 -> memmove path. The patched function starts at 0x1c000363c and is ~557 lines with the 0x28 SRB-type discrimination; absence of that discrimination + the descriptor bounds loop is the signature of the unpatched vulnerable build."
+      }
+    }
+  ],
+  "summary": "The patch to vmstorfl.sys (Hyper-V host storage VSP/filter) hardens sub_1C00034A0, the SCSI sense-data translation routine invoked when handling guest virtual-SCSI (SRB) completions received over VMBus (via VmbChannelGetPointer, dispatched through sub_1C0003D58 -> sub_1C00022F0). The pre-patch code takes the destination sense buffer pointer (*(arg3+0x20)) and the sense length (*(arg3+0xb)) straight from attacker-influenced SRB fields and calls memset (sub_1C0004AC0) with that length bounded only by a '>=0x12' lower check — the only upper-bound __fastfail guards a different field (*(arg2+0x15)) — and it never discriminates the extended STORAGE_REQUEST_BLOCK layout, producing an out-of-bounds pool write of up to ~255 bytes in the host kernel. The patched version adds SRB-type discrimination (*(arg3+2)==0x28) and a bounds-checked SRB-extension descriptor walk (offset<DataTransferLength, offset+0x28<=len) to locate a validated sense buffer. A PoC would run in a guest, issue a virtual SCSI command whose completion returns descriptor-format sense (response code 0x72/0x73) with an oversized *(arg3+0xb) length and undersized backing buffer while satisfying the two fastfail constraints, corrupting host non-paged pool for DoS or, with heap grooming, guest-to-host escalation."
+}

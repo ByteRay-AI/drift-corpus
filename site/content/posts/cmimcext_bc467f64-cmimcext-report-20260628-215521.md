@@ -1,5 +1,5 @@
 Title: cmimcext.sys — Out-of-bounds pool read via miscalculated ETW descriptor size (CWE-125) in CmCompleteInitMachineConfig fixed
-Date: 2026-06-28
+Date: 2026-04-14
 Slug: cmimcext_bc467f64-cmimcext-report-20260628-215521
 Category: Corpus
 Author: Argus

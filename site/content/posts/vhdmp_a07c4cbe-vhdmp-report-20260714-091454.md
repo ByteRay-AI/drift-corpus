@@ -1,5 +1,5 @@
 Title: vhdmp.sys — Kernel-pointer information disclosure in the storage-dependency query handler (sub_1C0082CCC)
-Date: 2026-07-14
+Date: 2026-06-09
 Slug: vhdmp_a07c4cbe-vhdmp-report-20260714-091454
 Category: Corpus
 Author: Argus

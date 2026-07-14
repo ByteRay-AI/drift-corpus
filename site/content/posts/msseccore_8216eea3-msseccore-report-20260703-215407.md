@@ -1,5 +1,5 @@
 Title: msseccore.sys — recompile with a redundant field zero and an integrity-check flag-constant tweak
-Date: 2026-07-03
+Date: 2026-03-10
 Slug: msseccore_8216eea3-msseccore-report-20260703-215407
 Category: Corpus
 Author: Argus

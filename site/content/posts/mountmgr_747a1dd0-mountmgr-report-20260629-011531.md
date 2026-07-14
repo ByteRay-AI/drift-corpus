@@ -1,5 +1,5 @@
 Title: mountmgr.sys — Cluster-Shared-Volume characteristic tracking field + IoCreateSymbolicLink2 modernization
-Date: 2026-06-29
+Date: 2026-06-09
 Slug: mountmgr_747a1dd0-mountmgr-report-20260629-011531
 Category: Corpus
 Author: Argus

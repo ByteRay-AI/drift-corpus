@@ -1,5 +1,5 @@
 Title: appvvemgr.sys — version rebuild and re-sign, 3570 to 3636
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: appvvemgr_8f17c4e5-appvvemgr-report-20260625-193800
 Category: Corpus
 Author: Argus

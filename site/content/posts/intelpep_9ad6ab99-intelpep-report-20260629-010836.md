@@ -1,5 +1,5 @@
 Title: intelpep.sys — idle-state reporting refactor and device/processor struct-layout revision
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: intelpep_9ad6ab99-intelpep-report-20260629-010836
 Category: Corpus
 Author: Argus

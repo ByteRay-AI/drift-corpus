@@ -1,5 +1,5 @@
 Title: mssecflt.sys — Use-after-free during process-context enumeration under shared lock (CWE-416) fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: mssecflt_d7e598a5-mssecflt-report-20260629-151630
 Category: Corpus
 Author: Argus

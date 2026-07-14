@@ -1,5 +1,5 @@
 Title: dxgkrnl.sys — DXGSYNCOBJECT refcount integer-overflow guard made unconditional (CWE-190) fixed
-Date: 2026-06-25
+Date: 2026-02-10
 Slug: dxgkrnl_216057ae-dxgkrnl-report-20260625-224809
 Category: Corpus
 Author: Argus

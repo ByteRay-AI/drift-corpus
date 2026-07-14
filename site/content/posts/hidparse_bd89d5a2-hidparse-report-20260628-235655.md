@@ -1,5 +1,5 @@
 Title: hidparse.sys — input-validation relaxation / recompilation
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: hidparse_bd89d5a2-hidparse-report-20260628-235655
 Category: Corpus
 Author: Argus

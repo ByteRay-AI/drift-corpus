@@ -1,5 +1,5 @@
 Title: cmimcext.sys — WIL feature-staging library churn, pool-API modernization, and a feature-gated rollout
-Date: 2026-06-28
+Date: 2026-04-14
 Slug: cmimcext_7d73f626-cmimcext-report-20260628-214407
 Category: Corpus
 Author: Argus

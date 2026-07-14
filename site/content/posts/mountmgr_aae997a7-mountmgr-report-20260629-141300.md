@@ -1,5 +1,5 @@
 Title: mountmgr.sys — new device-characteristic field and reconcile gate
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: mountmgr_aae997a7-mountmgr-report-20260629-141300
 Category: Corpus
 Author: Argus

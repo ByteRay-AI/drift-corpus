@@ -1,5 +1,5 @@
 Title: intelide.sys — Uninitialized PCI-config stack buffers zero-initialized in init-only enumeration callbacks (CWE-908, not attacker-reachable) fixed
-Date: 2026-06-29
+Date: 2026-05-12
 Slug: intelide_ab4ab95d-intelide-report-20260629-004619
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: ksecdd.sys — staged, feature-gated address-space check in protected-process free paths
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: ksecdd_527d8cd3-ksecdd-report-20260629-011930
 Category: Corpus
 Author: Argus

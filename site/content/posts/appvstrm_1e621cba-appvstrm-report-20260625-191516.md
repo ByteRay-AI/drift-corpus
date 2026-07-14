@@ -1,5 +1,5 @@
 Title: appvstrm.sys — code byte-identical; re-sign and version bump only
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: appvstrm_1e621cba-appvstrm-report-20260625-191516
 Category: Corpus
 Author: Argus

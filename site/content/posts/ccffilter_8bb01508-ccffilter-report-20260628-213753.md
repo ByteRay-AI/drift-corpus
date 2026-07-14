@@ -1,5 +1,5 @@
 Title: ccffilter.sys — ECP lifetime use-after-free / double-free in CCFPreCreate (CWE-416) fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: ccffilter_8bb01508-ccffilter-report-20260628-213753
 Category: Corpus
 Author: Argus

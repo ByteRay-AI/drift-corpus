@@ -1,5 +1,5 @@
 Title: cldflt.sys — Missing sign/bounds/overflow validation of file-range values on cloud-files control paths (CWE-20) made unconditional; fixed
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: cldflt_86e404ec-cldflt-report-20260628-224026
 Category: Corpus
 Author: Argus

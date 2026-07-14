@@ -1,5 +1,5 @@
 Title: mssecwfp.sys — WFP guard-policy struct layout revision and gated comparison-mode addition
-Date: 2026-07-03
+Date: 2026-02-10
 Slug: mssecwfp_c5fb4ff2-mssecwfp-report-20260703-220917
 Category: Corpus
 Author: Argus

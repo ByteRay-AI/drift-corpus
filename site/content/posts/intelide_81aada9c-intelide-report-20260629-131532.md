@@ -1,5 +1,5 @@
 Title: intelide.sys — init-only zero-init hardening of PCI IDE enumeration callbacks
-Date: 2026-06-29
+Date: 2026-06-09
 Slug: intelide_81aada9c-intelide-report-20260629-131532
 Category: Corpus
 Author: Argus

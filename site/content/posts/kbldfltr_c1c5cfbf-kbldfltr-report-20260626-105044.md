@@ -1,5 +1,5 @@
 Title: kbldfltr.sys — modifier-key state-tracking feature, lock-scope refactor, and debug tracing
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: kbldfltr_c1c5cfbf-kbldfltr-report-20260626-105044
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: classpnp.sys — zone-command CDB builder unchanged; async dispatch placed behind a registry flag
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: classpnp_3950aa3d-classpnp-report-20260628-172518
 Category: Corpus
 Author: Argus

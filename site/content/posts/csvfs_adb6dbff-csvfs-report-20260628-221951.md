@@ -1,5 +1,5 @@
 Title: csvfs.sys — TOCTOU Race Condition / Use-After-Free (CWE-362, CWE-416) in CsvCamSetSecurityInfo fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: csvfs_adb6dbff-csvfs-report-20260628-221951
 Category: Corpus
 Author: Argus

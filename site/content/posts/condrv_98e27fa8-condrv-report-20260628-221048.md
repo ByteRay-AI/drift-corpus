@@ -1,5 +1,5 @@
 Title: condrv.sys — Use-After-Free (CWE-416) due to premature object reference release in CdCreateDefaultObjectClient fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: condrv_98e27fa8-condrv-report-20260628-221048
 Category: Corpus
 Author: Argus

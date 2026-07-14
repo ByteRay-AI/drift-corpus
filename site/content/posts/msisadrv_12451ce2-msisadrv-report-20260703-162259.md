@@ -1,5 +1,5 @@
 Title: msisadrv.sys — KMDF static-stub rebuild: init-time bounds-check hardening plus stack-init/codegen refactors
-Date: 2026-07-03
+Date: 2026-06-09
 Slug: msisadrv_12451ce2-msisadrv-report-20260703-162259
 Category: Corpus
 Author: Argus

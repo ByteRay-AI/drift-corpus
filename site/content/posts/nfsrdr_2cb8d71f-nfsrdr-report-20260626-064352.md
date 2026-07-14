@@ -1,5 +1,5 @@
 Title: nfsrdr.sys — redundant XDR error-state early-out removed from XdrDecodeString
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: nfsrdr_2cb8d71f-nfsrdr-report-20260626-064352
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: ccffilter.sys — Out-of-bounds read due to inverted bounds check (CWE-125, CWE-697) in CCFFilterAppInstanceEA fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: ccffilter_aec44ab5-ccffilter-report-20260625-204530
 Category: Corpus
 Author: Argus

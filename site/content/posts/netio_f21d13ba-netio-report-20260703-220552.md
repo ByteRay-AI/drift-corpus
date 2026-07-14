@@ -1,5 +1,5 @@
 Title: netio.sys — NBL refcount hardening + WFP stream-inspection verifier/telemetry
-Date: 2026-07-03
+Date: 2026-05-12
 Slug: netio_f21d13ba-netio-report-20260703-220552
 Category: Corpus
 Author: Argus

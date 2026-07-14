@@ -1,5 +1,5 @@
 Title: ataport.sys — cross-version refactor and defense-in-depth stack initialization
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: ataport_b903c70e-ataport-report-20260628-170648
 Category: Corpus
 Author: Argus

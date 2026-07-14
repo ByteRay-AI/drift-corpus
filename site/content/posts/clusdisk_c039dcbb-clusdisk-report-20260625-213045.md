@@ -1,5 +1,5 @@
 Title: clusdisk.sys — Exclusive lock held across a subsystem callback in Pool::PendDefenseIrp (CWE-662) fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: clusdisk_c039dcbb-clusdisk-report-20260625-213045
 Category: Corpus
 Author: Argus

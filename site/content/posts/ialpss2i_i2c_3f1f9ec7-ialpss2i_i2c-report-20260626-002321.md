@@ -1,5 +1,5 @@
 Title: ialpss2i_i2c.sys — hardware-support gate relaxed in CheckSupportedHardware
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: ialpss2i_i2c_3f1f9ec7-ialpss2i_i2c-report-20260626-002321
 Category: Corpus
 Author: Argus

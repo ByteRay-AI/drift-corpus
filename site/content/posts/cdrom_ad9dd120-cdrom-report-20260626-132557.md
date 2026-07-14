@@ -1,5 +1,5 @@
 Title: cdrom.sys — Request IRP AssociatedIrp.SystemBuffer left dangling after synchronous forward in RequestHandleVolumeOnline (CWE-459) fixed
-Date: 2026-06-26
+Date: 2026-03-10
 Slug: cdrom_ad9dd120-cdrom-report-20260626-132557
 Category: Corpus
 Author: Argus

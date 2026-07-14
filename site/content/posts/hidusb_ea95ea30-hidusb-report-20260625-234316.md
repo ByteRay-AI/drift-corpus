@@ -1,5 +1,5 @@
 Title: hidusb.sys — integer underflow leading to out-of-bounds read (CWE-191, CWE-125) in HumParseHidInterface fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: hidusb_ea95ea30-hidusb-report-20260625-234316
 Category: Corpus
 Author: Argus

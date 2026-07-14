@@ -1,5 +1,5 @@
 Title: ksrext.sys — KSR persistence-subsystem feature expansion, no reachable vulnerability
-Date: 2026-06-29
+Date: 2026-02-10
 Slug: ksrext_6a5dd972-ksrext-report-20260629-133944
 Category: Corpus
 Author: Argus

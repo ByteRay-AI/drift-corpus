@@ -1,5 +1,5 @@
 Title: msseccore.sys — Insufficient required signing level in the kernel-integrity check callback (CWE-347) fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: msseccore_ef35a43c-msseccore-report-20260629-142133
 Category: Corpus
 Author: Argus

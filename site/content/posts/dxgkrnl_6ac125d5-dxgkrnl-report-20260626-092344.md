@@ -1,5 +1,5 @@
 Title: dxgkrnl.sys — Use-After-Free (CWE-416) — missing reference count on DXGSHAREDVMOBJECT in DXG_HOST_REMOTEOBJECTCHANNEL::ProcessChannelMessage fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: dxgkrnl_6ac125d5-dxgkrnl-report-20260626-092344
 Category: Corpus
 Author: Argus

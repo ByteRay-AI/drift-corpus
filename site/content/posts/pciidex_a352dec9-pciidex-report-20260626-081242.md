@@ -1,5 +1,5 @@
 Title: pciidex.sys — MMIO BAR mapped executable via deprecated MmMapIoSpace, non-executable protection enforced with MmMapIoSpaceEx (CWE-732) — fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: pciidex_a352dec9-pciidex-report-20260626-081242
 Category: Corpus
 Author: Argus

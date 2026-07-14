@@ -1,5 +1,5 @@
 Title: fastfat.sys — CWE-190 guards emitted in both
-Date: 2026-06-28
+Date: 2026-04-14
 Slug: fastfat_b86c186d-fastfat-report-20260628-232510
 Category: Corpus
 Author: Argus

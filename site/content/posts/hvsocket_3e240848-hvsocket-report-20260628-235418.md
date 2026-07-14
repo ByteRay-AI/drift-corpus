@@ -1,5 +1,5 @@
 Title: hvsocket.sys — One delivered security fix: an unconditional connection-establishment race hardening (CWE-362) in the AF_HYPERV connect() path (VmbusTlProviderConnect); the originally-claimed socket-address/authorization bypass remains a false positive (validation identical in both builds)
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: hvsocket_3e240848-hvsocket-report-20260628-235418
 Category: Corpus
 Author: Argus

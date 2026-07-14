@@ -1,5 +1,5 @@
 Title: ndproxy.sys — new IOCTL 0x8FFF23DC query handler added, returns an already-exposed counter
-Date: 2026-07-03
+Date: 2026-01-13
 Slug: ndproxy_9e1b54ed-ndproxy-report-20260703-214656
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: netio.sys — NSI pool allocation refactored to a low-priority wrapper; size arithmetic unchanged in both builds
-Date: 2026-07-03
+Date: 2026-04-14
 Slug: netio_7eaf807a-netio-report-20260703-220743
 Category: Corpus
 Author: Argus

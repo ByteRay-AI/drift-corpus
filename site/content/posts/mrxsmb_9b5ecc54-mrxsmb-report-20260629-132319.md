@@ -1,5 +1,5 @@
 Title: mrxsmb.sys — Read-after-free of VNetRoot device-object pointer in tree-connect completion (CWE-416) fixed
-Date: 2026-06-29
+Date: 2026-06-09
 Slug: mrxsmb_9b5ecc54-mrxsmb-report-20260629-132319
 Category: Corpus
 Author: Argus

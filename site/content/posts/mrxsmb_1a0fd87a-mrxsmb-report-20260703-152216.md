@@ -1,5 +1,5 @@
 Title: mrxsmb.sys — Use-after-free read of VNetRoot context in tree-connect completion (CWE-416), mitigated behind a feature flag
-Date: 2026-07-03
+Date: 2026-05-12
 Slug: mrxsmb_1a0fd87a-mrxsmb-report-20260703-152216
 Category: Corpus
 Author: Argus

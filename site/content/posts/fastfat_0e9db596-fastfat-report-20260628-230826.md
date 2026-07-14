@@ -1,5 +1,5 @@
 Title: fastfat.sys — integer-overflow-check refactor and ExAllocatePool2 migration in the EFS PFile-header builder
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: fastfat_0e9db596-fastfat-report-20260628-230826
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: msgpioclx.sys — PoFx registration structure layout/version update
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: msgpioclx_9570782c-msgpioclx-report-20260626-114459
 Category: Corpus
 Author: Argus

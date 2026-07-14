@@ -1,5 +1,5 @@
 Title: cimfs.sys — signed integer-underflow hardening in CIM image metadata parser (CWE-190) fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: cimfs_c3a00cc5-cimfs-report-20260625-211100
 Category: Corpus
 Author: Argus

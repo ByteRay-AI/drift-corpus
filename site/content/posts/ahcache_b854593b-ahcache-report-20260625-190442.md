@@ -1,5 +1,5 @@
 Title: ahcache.sys — Out-of-bounds read of a version-resource block (CWE-125) in AslpFileMakeStringVersionAttributes fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: ahcache_b854593b-ahcache-report-20260625-190442
 Category: Corpus
 Author: Argus

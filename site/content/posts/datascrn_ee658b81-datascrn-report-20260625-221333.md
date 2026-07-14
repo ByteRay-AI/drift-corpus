@@ -1,5 +1,5 @@
 Title: datascrn.sys — overflow-guard consolidation and allocation-API modernization
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: datascrn_ee658b81-datascrn-report-20260625-221333
 Category: Corpus
 Author: Argus

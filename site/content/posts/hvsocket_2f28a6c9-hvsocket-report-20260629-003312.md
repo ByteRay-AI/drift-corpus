@@ -1,5 +1,5 @@
 Title: hvsocket.sys — Feature-gated missing spinlock synchronization in VmbusTl loopback delivery queue (CWE-362/CWE-416) fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: hvsocket_2f28a6c9-hvsocket-report-20260629-003312
 Category: Corpus
 Author: Argus

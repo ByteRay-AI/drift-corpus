@@ -1,5 +1,5 @@
 Title: ksecdd.sys — feature-gated defense-in-depth address-range check in protected-process free path
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: ksecdd_a3c93f1c-ksecdd-report-20260629-131823
 Category: Corpus
 Author: Argus

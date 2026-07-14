@@ -1,5 +1,5 @@
 Title: hvsocket.sys — VMBus loopback endpoint spinlock conditionally skipped behind a feature gate, allowing an unsynchronized access race (CWE-362) — fixed by making locking unconditional
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: hvsocket_b903f3ca-hvsocket-report-20260629-003328
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: cldflt.sys — Missing authorization on feature-gated sync-root disconnect and insert (CWE-862) fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: cldflt_021bde84-cldflt-report-20260628-213327
 Category: Corpus
 Author: Argus

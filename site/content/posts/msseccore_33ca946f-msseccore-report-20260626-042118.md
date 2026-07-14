@@ -1,5 +1,5 @@
 Title: msseccore.sys — Uninitialized OSVERSIONINFOW zeroed before RtlGetVersion in DriverEntry (CWE-908), fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: msseccore_33ca946f-msseccore-report-20260626-042118
 Category: Corpus
 Author: Argus

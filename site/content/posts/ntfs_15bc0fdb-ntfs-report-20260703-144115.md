@@ -1,5 +1,5 @@
 Title: ntfs.sys — Negative file size/offset accepted in NtSetInformationFile handlers (CWE-839) fixed
-Date: 2026-07-03
+Date: 2026-03-10
 Slug: ntfs_15bc0fdb-ntfs-report-20260703-144115
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: hvcrash.sys — Uninitialized stack bytes in crash-dump writer descriptor (CWE-908) zeroed / fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: hvcrash_706d8ffd-hvcrash-report-20260629-002358
 Category: Corpus
 Author: Argus

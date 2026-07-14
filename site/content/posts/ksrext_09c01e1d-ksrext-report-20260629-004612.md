@@ -1,5 +1,5 @@
 Title: ksrext.sys — Integer overflow in soft-reboot partition-restore allocation (CWE-190) removed and restore error path hardened to fail-fast; fixed
-Date: 2026-06-29
+Date: 2026-06-09
 Slug: ksrext_09c01e1d-ksrext-report-20260629-004612
 Category: Corpus
 Author: Argus

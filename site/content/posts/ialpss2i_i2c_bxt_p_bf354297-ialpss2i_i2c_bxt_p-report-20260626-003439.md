@@ -1,5 +1,5 @@
 Title: ialpss2i_i2c_bxt_p.sys — compiler codegen refactor of identical I2C command / RX-FIFO-threshold logic
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: ialpss2i_i2c_bxt_p_bf354297-ialpss2i_i2c_bxt_p-report-20260626-003439
 Category: Corpus
 Author: Argus

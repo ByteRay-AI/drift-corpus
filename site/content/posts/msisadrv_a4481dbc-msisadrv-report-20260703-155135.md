@@ -1,5 +1,5 @@
 Title: msisadrv.sys — KMDF static-stub rebuild and compiler stack-init churn
-Date: 2026-07-03
+Date: 2026-04-14
 Slug: msisadrv_a4481dbc-msisadrv-report-20260703-155135
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: dxgkrnl.sys — Race condition (insufficient lock strength) leading to double-free / use-after-free in DXGSWAPCHAIN swapchain sync-object teardown (CWE-362) fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: dxgkrnl_63e9ddff-dxgkrnl-report-20260628-223412
 Category: Corpus
 Author: Argus

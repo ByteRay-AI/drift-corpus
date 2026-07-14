@@ -1,5 +1,5 @@
 Title: msisadrv.sys — KMDF static-stub rebuild plus defensive stack-slot zeroing in init/enumeration paths
-Date: 2026-06-29
+Date: 2026-05-12
 Slug: msisadrv_0dfb0ac9-msisadrv-report-20260629-140058
 Category: Corpus
 Author: Argus

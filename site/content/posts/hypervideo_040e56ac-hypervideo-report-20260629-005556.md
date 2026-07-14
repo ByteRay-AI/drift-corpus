@@ -1,5 +1,5 @@
 Title: hypervideo.sys — Uninitialized 7th argument to VMBus channel send on the bugcheck-display path (CWE-908) fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: hypervideo_040e56ac-hypervideo-report-20260629-005556
 Category: Corpus
 Author: Argus

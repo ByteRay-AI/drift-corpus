@@ -1,5 +1,5 @@
 Title: csvnsflt.sys — Use-After-Free race from unlocked global reads in CsvCamSetSecurityInfo (CWE-416, CWE-362) fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: csvnsflt_fe1360eb-csvnsflt-report-20260628-214549
 Category: Corpus
 Author: Argus

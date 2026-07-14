@@ -1,5 +1,5 @@
 Title: mountmgr.sys — device-characteristic gate added to remote-database reconciliation
-Date: 2026-06-29
+Date: 2026-05-12
 Slug: mountmgr_b142ee6b-mountmgr-report-20260629-010728
 Category: Corpus
 Author: Argus

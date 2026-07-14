@@ -1,5 +1,5 @@
 Title: iorate.sys — Integer overflow in I/O rate-limit accounting bypasses Storage QoS throttling (CWE-190) fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: iorate_aa6f06d6-iorate-report-20260626-005725
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: exfat.sys — Improper input validation of negative file size/offset in IRP_MJ_SET_INFORMATION handlers (CWE-20) fixed
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: exfat_dd7b981e-exfat-report-20260628-223213
 Category: Corpus
 Author: Argus

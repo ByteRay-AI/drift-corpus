@@ -1,5 +1,5 @@
 Title: msircomm.sys — Uninitialized PagedPool device-name buffer zeroed before IoGetDeviceProperty (CWE-908), defense-in-depth hardening fixed
-Date: 2026-07-03
+Date: 2026-03-10
 Slug: msircomm_bf0ec8a1-msircomm-report-20260703-143616
 Category: Corpus
 Author: Argus

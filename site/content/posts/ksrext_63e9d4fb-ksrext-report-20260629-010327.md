@@ -1,5 +1,5 @@
 Title: ksrext.sys — loader-callback locking refactor + pool-API modernization
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: ksrext_63e9d4fb-ksrext-report-20260629-010327
 Category: Corpus
 Author: Argus

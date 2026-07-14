@@ -1,5 +1,5 @@
 Title: kbdclass.sys — KernelMode RequestorMode bypass of the SeTcbPrivilege check in KeyboardClassCreate (CWE-863) fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: kbdclass_0b23ba25-kbdclass-report-20260626-095057
 Category: Corpus
 Author: Argus

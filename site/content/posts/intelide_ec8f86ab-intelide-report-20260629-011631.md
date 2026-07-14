@@ -1,5 +1,5 @@
 Title: intelide.sys — init-only PCI-config stack buffers zero-initialized; CWE-908 hardening, not attacker-reachable
-Date: 2026-06-29
+Date: 2026-04-14
 Slug: intelide_ec8f86ab-intelide-report-20260629-011631
 Category: Corpus
 Author: Argus

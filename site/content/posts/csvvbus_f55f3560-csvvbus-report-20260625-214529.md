@@ -1,5 +1,5 @@
 Title: csvvbus.sys — Use-after-free from unsynchronized EncryptionManager access (CWE-416) fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: csvvbus_f55f3560-csvvbus-report-20260625-214529
 Category: Corpus
 Author: Argus

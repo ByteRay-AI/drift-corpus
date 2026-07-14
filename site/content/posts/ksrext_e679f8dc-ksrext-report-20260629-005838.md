@@ -1,5 +1,5 @@
 Title: ksrext.sys — rebuild/refactor: secure-call page-chain format addition, unlock-path consolidation, boot-restore database-lock hardening
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: ksrext_e679f8dc-ksrext-report-20260629-005838
 Category: Corpus
 Author: Argus

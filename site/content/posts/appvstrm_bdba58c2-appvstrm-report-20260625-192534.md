@@ -1,5 +1,5 @@
 Title: appvstrm.sys — code-identical rebuild; version bump 10.0.17763.3469 → 10.0.17763.4010
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: appvstrm_bdba58c2-appvstrm-report-20260625-192534
 Category: Corpus
 Author: Argus

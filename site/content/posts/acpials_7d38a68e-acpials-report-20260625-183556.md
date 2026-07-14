@@ -1,5 +1,5 @@
 Title: acpials.sys — KMDF framework stub library rebuild
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: acpials_7d38a68e-acpials-report-20260625-183556
 Category: Corpus
 Author: Argus

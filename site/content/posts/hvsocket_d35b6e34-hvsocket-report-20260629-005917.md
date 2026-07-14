@@ -1,5 +1,5 @@
 Title: hvsocket.sys — Feature-gated loopback endpoint use-after-free / race in teardown (CWE-416/CWE-362) fixed
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: hvsocket_d35b6e34-hvsocket-report-20260629-005917
 Category: Corpus
 Author: Argus

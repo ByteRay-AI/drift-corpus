@@ -1,5 +1,5 @@
 Title: hvsocket.sys — Use-after-free / race on loopback socket endpoint access (CWE-416 / CWE-362) fixed by removing a feature gate and making reference-counted endpoint access unconditional
-Date: 2026-06-29
+Date: 2026-05-12
 Slug: hvsocket_ee1a427a-hvsocket-report-20260629-004311
 Category: Corpus
 Author: Argus

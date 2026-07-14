@@ -1,5 +1,5 @@
 Title: kbdhid.sys — IRP_MJ_CREATE device-name string correction, no authorization change
-Date: 2026-06-29
+Date: 2026-03-10
 Slug: kbdhid_1d27d4f3-kbdhid-report-20260629-004010
 Category: Corpus
 Author: Argus

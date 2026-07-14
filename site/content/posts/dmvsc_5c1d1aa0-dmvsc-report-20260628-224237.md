@@ -1,5 +1,5 @@
 Title: dmvsc.sys — non-security refactor / code reorganization
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: dmvsc_5c1d1aa0-dmvsc-report-20260628-224237
 Category: Corpus
 Author: Argus

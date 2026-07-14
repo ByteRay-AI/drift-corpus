@@ -1,5 +1,5 @@
 Title: ataport.sys — Use-after-free fix in `IdePortTickHandler`: periodic tick now holds the device remove lock (plus an unrelated ATA error-retry refactor)
-Date: 2026-06-28
+Date: 2026-04-14
 Slug: ataport_4c92ca01-ataport-report-20260628-170736
 Category: Corpus
 Author: Argus

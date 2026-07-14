@@ -1,5 +1,5 @@
 Title: bowser.sys — Uninitialized paged-pool memory disclosure to user mode (CWE-908, CWE-200) in BowserAllocateName / AddBowserName / AsyncCreateTransportName fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: bowser_d18adee0-bowser-report-20260625-203554
 Category: Corpus
 Author: Argus

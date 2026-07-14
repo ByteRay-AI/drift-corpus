@@ -1,5 +1,5 @@
 Title: ndistapi.sys — Uninitialized pool fields passed to TAPI provider callback (CWE-908) fixed
-Date: 2026-06-26
+Date: 2026-01-13
 Slug: ndistapi_26456c1b-ndistapi-report-20260626-051805
 Category: Corpus
 Author: Argus

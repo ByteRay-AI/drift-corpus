@@ -1,5 +1,5 @@
 Title: csvflt.sys — Race Condition (CWE-362) leading to Use-After-Free (CWE-416) in CsvCamSetSecurityInfo fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: csvflt_fbd25564-csvflt-report-20260628-225541
 Category: Corpus
 Author: Argus

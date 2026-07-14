@@ -1,5 +1,5 @@
 Title: fsdepends.sys — Missing authorization / access check (CWE-862) in DepFSPreCreate fixed
-Date: 2026-06-25
+Date: 2026-01-13
 Slug: fsdepends_308a0c48-fsdepends-report-20260625-233200
 Category: Corpus
 Author: Argus

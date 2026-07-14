@@ -1,5 +1,5 @@
 Title: ksecpkg.sys — Missing minimum-length validation before TLS/DTLS record header reads (CWE-125) fixed
-Date: 2026-06-29
+Date: 2026-06-09
 Slug: ksecpkg_111e8a9c-ksecpkg-report-20260629-125630
 Category: Corpus
 Author: Argus

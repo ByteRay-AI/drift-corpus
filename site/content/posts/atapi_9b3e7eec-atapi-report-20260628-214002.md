@@ -1,5 +1,5 @@
 Title: atapi.sys — Missing 0xFF floating-bus status check in AtapiNoDeviceConnected (CWE-755) fixed
-Date: 2026-06-28
+Date: 2026-05-12
 Slug: atapi_9b3e7eec-atapi-report-20260628-214002
 Category: Corpus
 Author: Argus

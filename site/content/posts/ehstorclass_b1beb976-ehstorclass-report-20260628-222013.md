@@ -1,5 +1,5 @@
 Title: ehstorclass.sys — Missing device-type check before installing IEEE 1667 silo completion routine (CWE-697/CWE-843) — fixed
-Date: 2026-06-28
+Date: 2026-03-10
 Slug: ehstorclass_b1beb976-ehstorclass-report-20260628-222013
 Category: Corpus
 Author: Argus

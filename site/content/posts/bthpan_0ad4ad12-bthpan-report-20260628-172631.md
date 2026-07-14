@@ -1,5 +1,5 @@
 Title: bthpan.sys — feature-staged async request-lifetime refactor
-Date: 2026-06-28
+Date: 2026-06-09
 Slug: bthpan_0ad4ad12-bthpan-report-20260628-172631
 Category: Corpus
 Author: Argus

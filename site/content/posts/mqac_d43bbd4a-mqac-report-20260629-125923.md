@@ -1,5 +1,5 @@
 Title: mqac.sys — cross-branch rebuild; validation inlined from callees
-Date: 2026-06-29
+Date: 2026-02-10
 Slug: mqac_d43bbd4a-mqac-report-20260629-125923
 Category: Corpus
 Author: Argus

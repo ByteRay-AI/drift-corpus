@@ -1,5 +1,5 @@
 Title: mrxsmb.sys — Use-after-free via missing zero-check on VcEndpoint reference during SMB negotiate handling (CWE-416) fixed
-Date: 2026-06-26
+Date: 2026-02-10
 Slug: mrxsmb_36de68c3-mrxsmb-report-20260626-023502
 Category: Corpus
 Author: Argus

@@ -1,5 +1,5 @@
 Title: ltotape.sys — LTO-9 density code 0x60 support added to GetMediaTypes
-Date: 2026-07-03
+Date: 2026-03-10
 Slug: ltotape_dbe369fc-ltotape-report-20260703-151135
 Category: Corpus
 Author: Argus

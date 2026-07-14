@@ -1,5 +1,5 @@
 Title: vmstorfl.sys — Guest-triggerable OOB write in Hyper-V host SCSI sense-data translation (missing SRB offset/length validation)
-Date: 2026-07-14
+Date: 2026-06-09
 Slug: vmstorfl_e11d050c-vmstorfl-report-20260714-163647
 Category: Corpus
 Author: Argus

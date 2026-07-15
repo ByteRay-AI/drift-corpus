@@ -38,7 +38,7 @@ jobs:
           # Project GitHub Pages URL (no custom domain configured yet):
           # https://<owner>.github.io/<repo>. Override by setting a repository
           # variable named SITEURL if a custom domain is added later.
-          SITEURL: ${{ vars.SITEURL || 'https://byteray-ai.github.io/drift-corpus' }}
+          SITEURL: ${{ vars.SITEURL || 'https://drift.argus-systems.ai' }}
         run: uv run pelican content --settings publishconf.py
 
       - name: Upload Pages artifact
